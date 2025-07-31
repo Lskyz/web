@@ -14,9 +14,9 @@ struct CustomWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
 
-        // 오디오 세션 완전 비활성화
-        try? AVAudioSession.sharedInstance().setCategory(.soloAmbient, options: [])
-        try? AVAudioSession.sharedInstance().setActive(false)
+        // 오디오 세션 설정: 타 앱과 혼합 가능
+        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
 
         webView.navigationDelegate = context.coordinator
         if let url = stateModel.currentURL {
@@ -51,6 +51,19 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
+
+            // 모든 비디오 음소거 강제 적용
+            let script = """
+            document.querySelectorAll('video').forEach(video => {
+                video.muted = true;
+            });
+            setInterval(() => {
+                document.querySelectorAll('video').forEach(video => {
+                    video.muted = true;
+                });
+            }, 1000);
+            """
+            webView.evaluateJavaScript(script)
         }
     }
 }
