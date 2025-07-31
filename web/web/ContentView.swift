@@ -4,7 +4,6 @@ struct ContentView: View {
     @StateObject private var state = WebViewStateModel()
     @State private var inputURL = "https://www.apple.com"
 
-    // AVPlayer 재생 관련 상태
     @State private var playerURL: URL?
     @State private var showAVPlayer = false
 
@@ -34,11 +33,14 @@ struct ContentView: View {
                 }
                 .padding(8)
 
-                // CustomWebView에 AVPlayer 바인딩 전달
+                // CustomWebView에 AVPlayer 바인딩 전달 및 Pull to Refresh 구현
                 CustomWebView(stateModel: state, playerURL: $playerURL, showAVPlayer: $showAVPlayer)
                     .edgesIgnoringSafeArea(.bottom)
+                    .refreshable {
+                        state.reload()
+                    }
 
-                // 뒤로가기, 앞으로가기 버튼
+                // 네비게이션 버튼
                 HStack {
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left")
@@ -62,7 +64,7 @@ struct ContentView: View {
                 .background(Color(UIColor.secondarySystemBackground))
             }
 
-            // AVPlayer 오버레이 표시
+            // AVPlayer 오버레이 뷰
             if showAVPlayer, let url = playerURL {
                 AVPlayerOverlayView(videoURL: url) {
                     showAVPlayer = false
@@ -80,12 +82,11 @@ struct ContentView: View {
         }
     }
 
-    // URL에 http/https 스킴 없으면 https:// 자동 추가
+    // http/https 없으면 https:// 자동 추가
     private func addSchemeIfNeeded(_ urlString: String) -> String {
         if urlString.hasPrefix("http://") || urlString.hasPrefix("https://") {
             return urlString
-        } else {
-            return "https://" + urlString
         }
+        return "https://" + urlString
     }
 }
