@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- 서명 방식을 수동으로 설정 -->
+    <key>signingStyle</key>
+    <string>manual</string>
+
+    <!-- 프로비저닝 프로파일 지정하지 않음 (빈 서명용) -->
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.web</key>
+        <string></string>
+    </dict>
+
+    <!-- 팀 ID 없이 빈 서명으로 빌드 -->
+    <key>teamID</key>
+    <string></string>
+
+    <!-- 비트코드 포함 여부 (보통 false로 설정) -->
+    <key>compileBitcode</key>
+    <false/>
+
+    <!-- .ipa 파일로 추출 -->
+    <key>destination</key>
+    <string>export</string>
+
+    <!-- Swift 심볼 제거 -->
+    <key>stripSwiftSymbols</key>
+    <true/>
+
+</dict>
+</plist>
