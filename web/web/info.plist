@@ -14,7 +14,7 @@
 
     <!-- 번들 ID -->
     <key>CFBundleIdentifier</key>
-    <string>com.web</string>
+    <string>com.view.web</string>
 
     <!-- 사용자 표시용 버전 -->
     <key>CFBundleShortVersionString</key>
@@ -22,7 +22,7 @@
 
     <!-- 빌드 번호 -->
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>1.0.0</string>
 
     <!-- 최소 iOS 버전 -->
     <key>MinimumOSVersion</key>
@@ -30,7 +30,7 @@
 
     <!-- 실행 파일 이름 -->
     <key>CFBundleExecutable</key>
-    <string>web</string>
+    <string>$(EXECUTABLE_NAME)</string>
 
     <!-- Main Nib (스토리보드 또는 SwiftUI면 생략) -->
     <key>NSMainNibFile</key>
