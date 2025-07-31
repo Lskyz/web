@@ -16,30 +16,9 @@ jobs:
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_15.0.app
 
-      # --- DEBUGGING START ---
-
-      - name: Debug: List project contents (before any changes)
-        run: |
-          echo "--- Listing project directory contents ---"
-          ls -la web/web/ # Assuming web/web/ is your main app directory
-          echo "--- Original Info.plist content (before sed) ---"
-          cat web/web/Info.plist || echo "Info.plist not found at web/web/Info.plist"
-
       - name: (Optional) Fix Info.plist executable
         run: |
-          # The -i '' is for BSD sed (macOS). If you were on Linux, it would be -i
-          # Make sure the path 'web/web/Info.plist' is correct for your project
           sed -i '' 's|\$(EXECUTABLE_NAME)|web|g' web/web/Info.plist
-        # Add an 'if' condition to run this only if needed, or based on a flag
-        # Example: if: contains(github.event.head_commit.message, '[fix-info-plist]')
-
-      - name: Debug: Check Info.plist after sed (if applicable)
-        run: |
-          echo "--- Info.plist content after sed ---"
-          cat web/web/Info.plist || echo "Info.plist still not found after sed"
-          plutil -p web/web/Info.plist || echo "plutil failed on source Info.plist"
-
-      # --- DEBUGGING END ---
 
       - name: Build project (no signing)
         run: |
@@ -50,70 +29,20 @@ jobs:
             -archivePath build/web.xcarchive \
             -derivedDataPath build/DerivedData \
             archive \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-            # Adding verbose output to xcodebuild for more details
-            -sdk iphoneos -verbose
-
-      # --- DEBUGGING START ---
-
-      - name: Debug: List archive contents
-        run: |
-          echo "--- Listing archive directory contents ---"
-          ls -laR build/web.xcarchive/
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Check .app and Info.plist after archive
         run: |
-          echo "--- Contents of web.app directory in archive ---"
           ls -la build/web.xcarchive/Products/Applications/web.app
-          echo "--- Info.plist file details in web.app ---"
           ls -la build/web.xcarchive/Products/Applications/web.app/Info.plist
-          echo "--- Contents of Info.plist in web.app ---"
-          # This is the most crucial step for the previous error
-          plutil -p build/web.xcarchive/Products/Applications/web.app/Info.plist || {
-            echo "ERROR: Could not read Info.plist from archived .app! This is the core problem."
-            exit 1 # Fail the step if plutil cannot read it
-          }
-
-      - name: Debug: Verify crucial Info.plist keys in archived .app
-        run: |
-          echo "--- Verifying specific Info.plist keys in archived .app ---"
-          INFO_PLIST_PATH="build/web.xcarchive/Products/Applications/web.app/Info.plist"
-          BUNDLE_ID=$(plutil -p "$INFO_PLIST_PATH" | grep CFBundleIdentifier | awk '{print $NF}' | tr -d '"')
-          BUNDLE_VERSION=$(plutil -p "$INFO_PLIST_PATH" | grep CFBundleVersion | awk '{print $NF}' | tr -d '"')
-          BUNDLE_EXECUTABLE=$(plutil -p "$INFO_PLIST_PATH" | grep CFBundleExecutable | awk '{print $NF}' | tr -d '"')
-
-          echo "Bundle ID: $BUNDLE_ID"
-          echo "Bundle Version: $BUNDLE_VERSION"
-          echo "Bundle Executable: $BUNDLE_EXECUTABLE"
-
-          if [[ -z "$BUNDLE_ID" || "$BUNDLE_ID" == "null" ]]; then
-            echo "Error: CFBundleIdentifier is missing or null in archived Info.plist."
-            exit 1
-          fi
-          if [[ -z "$BUNDLE_VERSION" || "$BUNDLE_VERSION" == "null" ]]; then
-            echo "Error: CFBundleVersion is missing or null in archived Info.plist."
-            exit 1
-          fi
-          if [[ -z "$BUNDLE_EXECUTABLE" || "$BUNDLE_EXECUTABLE" == "null" ]]; then
-            echo "Error: CFBundleExecutable is missing or null in archived Info.plist."
-            exit 1
-          fi
-          echo "All crucial Info.plist keys are present and valid."
-
-      # --- DEBUGGING END ---
+          plutil -p build/web.xcarchive/Products/Applications/web.app/Info.plist
 
       - name: Create IPA manually
         run: |
           rm -rf Payload build/ipa
           mkdir -p build/ipa Payload
-          # Ensure the .app exists before copying
-          if [ ! -d "build/web.xcarchive/Products/Applications/web.app" ]; then
-            echo "Error: web.app not found in archive. IPA creation will fail."
-            exit 1
-          fi
           cp -r build/web.xcarchive/Products/Applications/web.app Payload/
           chmod -R 755 Payload/web.app
-          echo "--- Contents of Payload/web.app before zipping ---"
           ls -la Payload/web.app
           zip -r build/ipa/web.ipa Payload
 
