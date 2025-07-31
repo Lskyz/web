@@ -16,6 +16,17 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true       // PiP 허용
         config.mediaTypesRequiringUserActionForPlayback = []    // 자동재생 제한 해제
 
+        // 음소거 JS 스크립트를 문서 시작 시점에 삽입 (처음부터 음소거 적용)
+        let muteScript = """
+        document.querySelectorAll('video').forEach(video => {
+            video.muted = true;
+            video.setAttribute('muted', 'true');
+            video.volume = 0;
+        });
+        """
+        let userScript = WKUserScript(source: muteScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        config.userContentController.addUserScript(userScript)
+
         // JS 메시지 핸들러 등록 (웹→네이티브 메시지용)
         config.userContentController.add(context.coordinator, name: "playVideo")
 
@@ -85,7 +96,7 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
 
-            // JS: video 음소거 및 클릭 시 네이티브 AVPlayer 호출 이벤트 등록
+            // 추가 음소거 및 클릭 시 네이티브 AVPlayer 호출 이벤트 등록
             let script = """
             document.querySelectorAll('video').forEach(video => {
                 video.muted = true;
@@ -134,7 +145,7 @@ struct CustomWebView: UIViewRepresentable {
     }
 }
 
-// AVPlayer 오버레이 뷰 (CustomWebView.swift에 같이 포함)
+// AVPlayer 오버레이 뷰 (CustomWebView.swift 내 포함)
 struct AVPlayerOverlayView: UIViewControllerRepresentable {
     let videoURL: URL
     let onClose: () -> Void
