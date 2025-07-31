@@ -10,7 +10,7 @@
 
     <!-- 내부용 번들 이름 -->
     <key>CFBundleName</key>
-    <string>web</string>
+    <string>viewweb</string>
 
     <!-- 번들 ID -->
     <key>CFBundleIdentifier</key>
