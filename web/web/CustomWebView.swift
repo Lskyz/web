@@ -9,13 +9,14 @@ struct CustomWebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = [.audio, .video]
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
 
-        // 오디오 동시 재생 설정
-        try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // 오디오 세션 완전 비활성화
+        try? AVAudioSession.sharedInstance().setCategory(.soloAmbient, options: [])
+        try? AVAudioSession.sharedInstance().setActive(false)
 
         webView.navigationDelegate = context.coordinator
         if let url = stateModel.currentURL {
@@ -28,6 +29,11 @@ struct CustomWebView: UIViewRepresentable {
         if let url = stateModel.currentURL, uiView.url != url {
             uiView.load(URLRequest(url: url))
         }
+    }
+
+    func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.stopLoading()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     func makeCoordinator() -> Coordinator {
