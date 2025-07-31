@@ -31,7 +31,7 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath build/web.xcarchive \
             -exportPath build/web \
-            -exportOptionsPlist exportOptions.plist \
+            -exportOptionsPlist web/web/exportOptions.plist \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
       - name: Upload IPA
