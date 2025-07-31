@@ -28,12 +28,12 @@ jobs:
 
       - name: Create IPA manually
         run: |
-          mkdir -p Payload
+          mkdir -p Payload build/ipa
           cp -r build/web.xcarchive/Products/Applications/web.app Payload/
-          zip -r build/web/web.ipa Payload
+          zip -r build/ipa/web.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: web-ipa
-          path: build/web/web.ipa
+          path: build/ipa/web.ipa
