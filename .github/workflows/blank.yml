@@ -7,18 +7,16 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Xcode
-        uses: actions/setup-xcode@v2
-        with:
-          xcode-version: '15.0' # 원하는 Xcode 버전으로 조정
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.0.app
 
-      - name: Build Xcode Project
+      - name: Build project
         run: |
           xcodebuild -project web/web.xcodeproj \
             -scheme web \
