@@ -19,13 +19,6 @@ struct ContentView: View {
                     }
                 }
                 .padding(.horizontal, 8)
-
-                Button("즐겨찾기") {
-                    if let url = state.currentURL, !state.bookmarks.contains(url) {
-                        state.bookmarks.append(url)
-                    }
-                }
-                .padding(.horizontal, 8)
             }
             .padding(8)
 
@@ -33,36 +26,25 @@ struct ContentView: View {
                 .edgesIgnoringSafeArea(.bottom)
 
             HStack {
-                Button(action: { if state.canGoBack { state.currentURL = nil; state.currentURL = state.currentURL } }) {
+                Button(action: { state.goBack() }) {
                     Image(systemName: "chevron.left")
                 }
                 .disabled(!state.canGoBack)
                 .padding()
 
-                Button(action: { if state.canGoForward { state.currentURL = nil; state.currentURL = state.currentURL } }) {
+                Button(action: { state.goForward() }) {
                     Image(systemName: "chevron.right")
                 }
                 .disabled(!state.canGoForward)
                 .padding()
             }
             .background(Color(UIColor.secondarySystemBackground))
-
-            List {
-                Section(header: Text("즐겨찾기")) {
-                    ForEach(state.bookmarks, id: \.self) { url in
-                        Button(action: {
-                            state.currentURL = url
-                            inputURL = url.absoluteString
-                        }) {
-                            Text(url.absoluteString)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .onDelete { state.bookmarks.remove(atOffsets: $0) }
-                }
+        }
+        .onAppear {
+            // 앱 시작 시 초기 URL 설정
+            if state.currentURL == nil, let url = URL(string: inputURL) {
+                state.currentURL = url
             }
-            .listStyle(.plain)
         }
     }
 }
