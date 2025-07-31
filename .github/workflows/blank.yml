@@ -16,10 +16,6 @@ jobs:
       - name: Select Xcode version
         run: sudo xcode-select -s /Applications/Xcode_15.0.app
 
-      - name: (Optional) Fix Info.plist executable
-        run: |
-          sed -i '' 's|\$(EXECUTABLE_NAME)|web|g' web/web/Info.plist
-
       - name: Build project (no signing)
         run: |
           xcodebuild -project web/web.xcodeproj \
