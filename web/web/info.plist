@@ -30,7 +30,7 @@
 
     <!-- 실행 파일 이름 -->
     <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
+    <string>web</string>
 
     <!-- Main Nib (스토리보드 또는 SwiftUI면 생략) -->
     <key>NSMainNibFile</key>
