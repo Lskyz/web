@@ -26,16 +26,14 @@ jobs:
             archive \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      - name: Export unsigned IPA
+      - name: Create IPA manually
         run: |
-          xcodebuild -exportArchive \
-            -archivePath build/web.xcarchive \
-            -exportPath build/web \
-            -exportOptionsPlist web/web/exportOptions.plist \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          mkdir -p Payload
+          cp -r build/web.xcarchive/Products/Applications/web.app Payload/
+          zip -r build/web/web.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: web-ipa
-          path: build/web/*.ipa
+          path: build/web/web.ipa
