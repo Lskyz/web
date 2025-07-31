@@ -6,19 +6,16 @@ struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
 
     func makeUIView(context: Context) -> WKWebView {
+        configureAudioSessionForMixing()
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = [.audio, .video]
+        config.mediaTypesRequiringUserActionForPlayback = []
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
-
-        // 오디오 세션 설정: 타 앱과 혼합 가능
-        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
-
         webView.navigationDelegate = context.coordinator
+
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
@@ -33,37 +30,66 @@ struct CustomWebView: UIViewRepresentable {
 
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        deactivateAudioSession()
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    // MARK: Audio Session Helpers
+
+    private func configureAudioSessionForMixing() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, options: [.mixWithOthers])
+        try? session.setActive(true, options: [])
+    }
+
+    private func deactivateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     class Coordinator: NSObject, WKNavigationDelegate {
         var parent: CustomWebView
+        weak var webView: WKWebView?
 
         init(_ parent: CustomWebView) {
             self.parent = parent
+            super.init()
+            NotificationCenter.default.addObserver(self,
+                selector: #selector(goBack), name: .init("WebViewGoBack"), object: nil)
+            NotificationCenter.default.addObserver(self,
+                selector: #selector(goForward), name: .init("WebViewGoForward"), object: nil)
         }
 
+        @objc func goBack() { webView?.goBack() }
+        @objc func goForward() { webView?.goForward() }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            self.webView = webView
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
 
-            // 모든 비디오 음소거 강제 적용
+            // 모든 media 요소 음소거
             let script = """
-            document.querySelectorAll('video').forEach(video => {
-                video.muted = true;
+            [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
+              media.muted = true;
+              media.volume = 0;
+              media.setAttribute('muted','true');
             });
             setInterval(() => {
-                document.querySelectorAll('video').forEach(video => {
-                    video.muted = true;
-                });
-            }, 1000);
+              [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
+                media.muted = true;
+                media.volume = 0;
+                media.setAttribute('muted','true');
+              });
+            }, 500);
             """
             webView.evaluateJavaScript(script)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
     }
 }
