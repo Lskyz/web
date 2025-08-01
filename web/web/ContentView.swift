@@ -19,6 +19,16 @@ struct ContentView: View {
                     .disableAutocorrection(true)
                     .keyboardType(.URL)
 
+                    if !inputURL.isEmpty {
+                        Button(action: {
+                            inputURL = ""
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
                     Button("이동") {
                         loadInput()
                     }
@@ -26,11 +36,12 @@ struct ContentView: View {
                 }
                 .padding(8)
 
+                // 웹뷰 바로 감싸서 끌어당겨 새로고침 추가
                 CustomWebView(stateModel: state, playerURL: $playerURL, showAVPlayer: $showAVPlayer)
-                    .edgesIgnoringSafeArea(.bottom)
                     .refreshable {
                         state.reload()
                     }
+                    .edgesIgnoringSafeArea(.bottom)
 
                 HStack {
                     Button(action: { state.goBack() }) {
@@ -80,13 +91,11 @@ struct ContentView: View {
     private func loadInput() {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 1. 정확한 URL (http/https)인 경우 바로 이동
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             state.currentURL = url
             return
         }
 
-        // 2. 스킴 없지만 도메인 형태 (예: apple.com)
         if trimmed.contains(".") && !trimmed.contains(" ") {
             if let url = URL(string: "https://\(trimmed)") {
                 state.currentURL = url
@@ -94,7 +103,6 @@ struct ContentView: View {
             }
         }
 
-        // 3. 그 외는 무조건 구글 검색
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let searchURL = URL(string: "https://www.google.com/search?q=\(encoded)") {
             state.currentURL = searchURL
