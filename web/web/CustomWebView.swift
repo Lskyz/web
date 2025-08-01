@@ -14,29 +14,15 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        // mute + 영상 클릭 핸들러
-        let muteScript = """
-        document.querySelectorAll('video').forEach(video => {
-            video.muted = true;
-            video.setAttribute('muted', 'true');
-            video.volume = 0;
-
-            if (!video.hasAttribute('nativeAVPlayerListener')) {
-                video.addEventListener('click', () => {
-                    window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                });
-                video.setAttribute('nativeAVPlayerListener', 'true');
-            }
-        });
-        """
-        let userScript = WKUserScript(source: muteScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        config.userContentController.addUserScript(userScript)
-        config.userContentController.add(context.coordinator, name: "playVideo")
-
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
 
+        // UIRefreshControl 설정
+        let refreshControl = UIRefreshControl()
+        refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
+        webView.scrollView.refreshControl = refreshControl
+        
         // 타앱 오디오 유지 설정
         try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -88,6 +74,12 @@ struct CustomWebView: UIViewRepresentable {
             webView?.goForward()
         }
 
+        // Handle refresh (triggered by UIRefreshControl)
+        @objc func handleRefresh(_ sender: UIRefreshControl) {
+            webView?.reload() // Trigger the web view reload
+            sender.endRefreshing() // Stop the refresh animation
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
 
@@ -128,34 +120,5 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
-    }
-}
-
-struct AVPlayerOverlayView: UIViewControllerRepresentable {
-    let videoURL: URL
-    let onClose: () -> Void
-
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.player = AVPlayer(url: videoURL)
-        controller.showsPlaybackControls = true
-        controller.entersFullScreenWhenPlaybackBegins = false
-        controller.exitsFullScreenWhenPlaybackEnds = false
-
-        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
-                                               object: controller.player?.currentItem,
-                                               queue: .main) { _ in
-            onClose()
-        }
-
-        controller.player?.play()
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
-
-    static func dismantleUIViewController(_ uiViewController: AVPlayerViewController, coordinator: ()) {
-        uiViewController.player?.pause()
-        NotificationCenter.default.removeObserver(uiViewController)
     }
 }
