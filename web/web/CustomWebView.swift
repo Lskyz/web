@@ -125,8 +125,10 @@ struct CustomWebView: UIViewRepresentable {
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
-            // ✅ 모든 링크를 현재 WebView에서 열도록 강제 변경
-webView.load(navigationAction.request)
+            // ✅ 새 탭 요청인 경우에만 현재 WebView에서 로드
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+            }
             return nil
         }
 
