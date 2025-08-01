@@ -1,122 +1,128 @@
 import SwiftUI
 import WebKit
 import AVFoundation
-import AVKit
 
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
-    @Binding var playerURL: URL?
-    @Binding var showAVPlayer: Bool
-
+    
     func makeUIView(context: Context) -> WKWebView {
+        configureAudioSessionForMixing()
+        
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-
+        
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
-        webView.navigationDelegate = context.coordinator
-
-        // UIRefreshControl 설정
+        
+        // pull to refresh 연결
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
         
-        // 타앱 오디오 유지 설정
-        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
-
+        webView.navigationDelegate = context.coordinator
+        
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
-
-        NotificationCenter.default.addObserver(forName: NSNotification.Name("WebViewReload"), object: nil, queue: .main) { [weak webView] _ in
-            webView?.reload()
-        }
-
+        
+        // NotificationCenter 등록
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.goBack),
+                                               name: NSNotification.Name("WebViewGoBack"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.goForward),
+                                               name: NSNotification.Name("WebViewGoForward"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.reloadWebView),
+                                               name: NSNotification.Name("WebViewReload"),
+                                               object: nil)
+        
         return webView
     }
-
+    
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        guard let targetURL = stateModel.currentURL else { return }
-        if uiView.url != targetURL {
-            uiView.load(URLRequest(url: targetURL))
+        if let url = stateModel.currentURL, uiView.url != url {
+            uiView.load(URLRequest(url: url))
         }
     }
-
+    
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("WebViewReload"), object: nil)
+        deactivateAudioSession()
+        NotificationCenter.default.removeObserver(coordinator)
     }
-
+    
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    
+    // MARK: Audio Session Helpers
+    
+    private func configureAudioSessionForMixing() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, options: [.mixWithOthers])
+        try? session.setActive(true, options: [])
+    }
+    
+    private func deactivateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+    
+    class Coordinator: NSObject, WKNavigationDelegate {
         var parent: CustomWebView
         weak var webView: WKWebView?
-
+        
         init(_ parent: CustomWebView) {
             self.parent = parent
             super.init()
-            NotificationCenter.default.addObserver(self, selector: #selector(goBack), name: NSNotification.Name("WebViewGoBack"), object: nil)
-            NotificationCenter.default.addObserver(self, selector: #selector(goForward), name: NSNotification.Name("WebViewGoForward"), object: nil)
         }
-
+        
         @objc func goBack() {
             webView?.goBack()
         }
-
+        
         @objc func goForward() {
             webView?.goForward()
         }
-
-        // Handle refresh (triggered by UIRefreshControl)
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            webView?.reload() // Trigger the web view reload
-            sender.endRefreshing() // Stop the refresh animation
+        
+        @objc func reloadWebView() {
+            webView?.reload()
         }
-
+        
+        @objc func handleRefresh(_ sender: UIRefreshControl) {
+            webView?.reload()
+            sender.endRefreshing()
+        }
+        
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
-
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
-
-            if let currentURL = webView.url, parent.stateModel.currentURL != currentURL {
-                parent.stateModel.currentURL = currentURL
-            }
-
-            // mute + click 핸들러 보강
+            parent.stateModel.currentURL = webView.url
+            
+            // 모든 media 요소 음소거
             let script = """
-            document.querySelectorAll('video').forEach(video => {
-                video.muted = true;
-                video.setAttribute('muted', 'true');
-                video.volume = 0;
-
-                if (!video.hasAttribute('nativeAVPlayerListener')) {
-                    video.addEventListener('click', () => {
-                        window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                    });
-                    video.setAttribute('nativeAVPlayerListener', 'true');
-                }
+            [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
+              media.muted = true;
+              media.volume = 0;
+              media.setAttribute('muted','true');
             });
+            setInterval(() => {
+              [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
+                media.muted = true;
+                media.volume = 0;
+                media.setAttribute('muted','true');
+              });
+            }, 500);
             """
             webView.evaluateJavaScript(script)
         }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "playVideo", let urlString = message.body as? String, let url = URL(string: urlString) {
-                DispatchQueue.main.async {
-                    self.parent.playerURL = url
-                    self.parent.showAVPlayer = true
-                }
-            }
-        }
-
+        
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
