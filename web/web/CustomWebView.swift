@@ -111,6 +111,7 @@ struct CustomWebView: UIViewRepresentable {
             controller.player = player
             controller.allowsPictureInPicturePlayback = true
             controller.canStartPictureInPictureAutomaticallyFromInline = true
+            controller.entersFullScreenWhenPlaybackBegins = false // ✅ PiP 진입을 위해 전체화면 자동 진입 방지
 
             if let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController {
                 rootVC.present(controller, animated: true) {
