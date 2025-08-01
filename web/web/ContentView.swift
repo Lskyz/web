@@ -1,17 +1,16 @@
 import SwiftUI
 
 struct ContentView: View {
-    // 웹뷰 상태를 관리하는 모델 (뒤로가기/앞으로가기 가능 여부 등)
     @StateObject private var state = WebViewStateModel()
-    
-    // 주소 입력 필드 값
     @State private var inputURL = "https://www.apple.com"
+    
+    // ✅ 방문 기록 배열
+    @State private var visitHistory: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
-            // 상단 주소 입력 영역
             HStack {
-                // URL 입력 필드 + X버튼 (오른쪽에 오버레이로)
+                // ✅ 주소 입력 필드 + X 버튼
                 TextField("URL 입력", text: $inputURL)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
@@ -20,13 +19,13 @@ struct ContentView: View {
                     .onSubmit {
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
+                            addToHistory(inputURL)
                         }
                     }
                     .overlay(
                         HStack {
                             Spacer()
                             if !inputURL.isEmpty {
-                                // X 버튼: 입력값 초기화
                                 Button(action: { inputURL = "" }) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundColor(.gray)
@@ -36,69 +35,104 @@ struct ContentView: View {
                         }
                     )
 
-                // 이동 버튼: 입력된 주소로 이동
+                // ✅ 이동 버튼
                 Button("이동") {
                     if let url = fixedURL(from: inputURL) {
                         state.currentURL = url
+                        addToHistory(inputURL)
                     }
                 }
                 .padding(.horizontal, 8)
             }
             .padding(8)
 
-            // 웹 콘텐츠 표시 영역
+            // ✅ 방문 기록 목록 (최대 5개) + 스와이프 삭제 기능
+            if !visitHistory.isEmpty {
+                List {
+                    Section(header: Text("최근 방문").font(.caption)) {
+                        ForEach(visitHistory.prefix(5), id: \.self) { item in
+                            Text(item)
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                                .onTapGesture {
+                                    inputURL = item
+                                    if let url = fixedURL(from: item) {
+                                        state.currentURL = url
+                                    }
+                                }
+                        }
+                        .onDelete(perform: deleteHistory)
+                    }
+                }
+                .listStyle(.plain)
+                .frame(maxHeight: 160) // 방문기록 리스트 높이 제한
+            }
+
+            // ✅ 웹 콘텐츠 영역
             CustomWebView(stateModel: state)
                 .edgesIgnoringSafeArea(.bottom)
 
-            // 하단 뒤로/앞으로/새로고침 버튼
+            // ✅ 하단 탐색 버튼들 (여백 축소)
             HStack {
-                // 뒤로가기 버튼
                 Button(action: { state.goBack() }) {
                     Image(systemName: "chevron.left")
                 }
                 .disabled(!state.canGoBack)
-                .padding()
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
 
-                // 앞으로가기 버튼
                 Button(action: { state.goForward() }) {
                     Image(systemName: "chevron.right")
                 }
                 .disabled(!state.canGoForward)
-                .padding()
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
 
-                // 새로고침 버튼
                 Button(action: { state.reload() }) {
                     Image(systemName: "arrow.clockwise")
                 }
-                .padding()
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
             }
             .background(Color(UIColor.secondarySystemBackground))
         }
         .onAppear {
-            // 앱이 처음 나타날 때 초기 URL 설정
             if state.currentURL == nil {
                 loadInput()
             }
         }
         .onReceive(state.$currentURL) { url in
-            // 웹뷰가 이동한 URL을 주소 입력창에 반영
             if let url = url {
                 inputURL = url.absoluteString
             }
         }
     }
 
-    // 입력된 텍스트를 기반으로 URL 판단 → 웹뷰로 전달
+    // ✅ 주소 입력값을 URL 또는 검색어로 처리
+    private func fixedURL(from input: String) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        }
+
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+
+    // ✅ 앱 시작 시 주소 자동 로드
     private func loadInput() {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 정확한 URL (http:// 또는 https://)인 경우
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             state.currentURL = url
             return
         }
 
-        // 도메인 형태 (예: apple.com)인 경우 https:// 붙이기
         if trimmed.contains(".") && !trimmed.contains(" ") {
             if let url = URL(string: "https://\(trimmed)") {
                 state.currentURL = url
@@ -106,29 +140,28 @@ struct ContentView: View {
             }
         }
 
-        // 그 외는 구글 검색으로 처리
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         if let searchURL = URL(string: "https://www.google.com/search?q=\(encoded)") {
             state.currentURL = searchURL
         }
     }
 
-    // 입력값을 URL로 해석하거나 구글 검색 URL로 fallback
-    private func fixedURL(from input: String) -> URL? {
+    // ✅ 중복 없이 방문 기록 추가
+    private func addToHistory(_ input: String) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // http:// 또는 https:// 있는 경우 그대로 사용
-        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
-            return url
+        if !trimmed.isEmpty && !visitHistory.contains(trimmed) {
+            visitHistory.insert(trimmed, at: 0)
         }
+    }
 
-        // 도메인으로 판단되면 https:// 추가
-        if trimmed.contains(".") && !trimmed.contains(" ") {
-            return URL(string: "https://\(trimmed)")
+    // ✅ 방문 기록에서 항목 삭제 (스와이프 삭제 동작)
+    private func deleteHistory(at offsets: IndexSet) {
+        // prefix로 잘라진 리스트 기준이므로 원본 인덱스로 변환
+        let limited = Array(visitHistory.prefix(5))
+        for index in offsets {
+            if let originalIndex = visitHistory.firstIndex(of: limited[index]) {
+                visitHistory.remove(at: originalIndex)
+            }
         }
-
-        // 검색어는 구글 검색 URL로 변환
-        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
 }
