@@ -42,9 +42,10 @@ struct CustomWebView: UIViewRepresentable {
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
 
-        if let url = stateModel.currentURL {
-            webView.load(URLRequest(url: url))
-        }
+        // ✅ 기본 URL 설정 (초기 페이지 보이도록 수정)
+        let defaultURL = stateModel.currentURL ?? URL(string: "https://www.google.com")!
+        stateModel.currentURL = defaultURL
+        webView.load(URLRequest(url: defaultURL))
 
         // ✅ NotificationCenter 연결
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: NSNotification.Name("WebViewGoBack"), object: nil)
@@ -123,9 +124,8 @@ struct CustomWebView: UIViewRepresentable {
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
-            }
+            // ✅ 모든 링크를 현재 WebView에서 열도록 강제 변경
+webView.load(navigationAction.request)
             return nil
         }
 
