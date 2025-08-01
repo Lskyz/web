@@ -13,48 +13,26 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        // ✅ userContentController 생성: 메시지 핸들러와 JS 삽입용
-        let controller = WKUserContentController()
-        controller.add(context.coordinator, name: "redirectHandler") // JS → native 메시지 수신
-
-        // ✅ JavaScript: window.location.href 리디렉션 감지 스크립트
-        let redirectionScript = """
-        (function() {
-            const pushURL = (url) => {
-                if (!url) return;
-                window.webkit.messageHandlers.redirectHandler.postMessage(url);
-            };
-            // 진입 시 전송
-            pushURL(window.location.href);
-            // SPA 혹은 location 변경 감지
-            const observer = new MutationObserver(() => {
-                pushURL(window.location.href);
-            });
-            observer.observe(document, {childList: true, subtree: true});
-        })();
-        """
-        let userScript = WKUserScript(source: redirectionScript,
-                                      injectionTime: .atDocumentEnd,
-                                      forMainFrameOnly: false)
-        controller.addUserScript(userScript)
-
-        config.userContentController = controller
-
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
-        webView.navigationDelegate = context.coordinator
+
+        // ✅ 새 창(target="_blank")을 현재 탭에서 열도록 설정
         webView.uiDelegate = context.coordinator
 
-        // ✅ pull to refresh 연결
+        // ✅ Pull to refresh 연결
         let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
+        refreshControl.addTarget(context.coordinator,
+                                 action: #selector(Coordinator.handleRefresh(_:)),
+                                 for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
+
+        webView.navigationDelegate = context.coordinator
 
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
 
-        // ✅ NotificationCenter 등록
+        // ✅ 알림 센터 연결 (탐색 버튼 동작용)
         NotificationCenter.default.addObserver(context.coordinator,
                                                selector: #selector(Coordinator.goBack),
                                                name: NSNotification.Name("WebViewGoBack"),
@@ -132,25 +110,43 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
 
-            // ✅ 모든 media 요소 음소거
+            // ✅ 모든 video (iframe 포함) 자동 음소거 + PIP 실행
             let script = """
-            [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
-              media.muted = true;
-              media.volume = 0;
-              media.setAttribute('muted','true');
-            });
+            function processVideos(doc) {
+                [...doc.querySelectorAll('video')].forEach(video => {
+                    video.muted = true;
+                    video.volume = 0;
+                    video.setAttribute('muted','true');
+                    if (document.pictureInPictureEnabled && !video.disablePictureInPicture && !document.pictureInPictureElement) {
+                        try {
+                            video.requestPictureInPicture().catch(() => {});
+                        } catch (e) {}
+                    }
+                });
+            }
+
+            // 초기 처리
+            processVideos(document);
+
+            // iframe 포함 반복 처리
             setInterval(() => {
-              [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
-                media.muted = true;
-                media.volume = 0;
-                media.setAttribute('muted','true');
-              });
-            }, 500);
+                processVideos(document);
+                [...document.querySelectorAll('iframe')].forEach(iframe => {
+                    try {
+                        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                        if (doc) {
+                            processVideos(doc);
+                        }
+                    } catch (e) {
+                        // cross-origin iframe은 무시
+                    }
+                });
+            }, 1000);
             """
             webView.evaluateJavaScript(script)
         }
 
-        // ✅ target="_blank" 새 창 → 현재 창에서 열기
+        // ✅ 새창 방지: target="_blank" → 현재 탭에서 열기
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
@@ -160,23 +156,9 @@ struct CustomWebView: UIViewRepresentable {
             }
             return nil
         }
-    }
-}
 
-// ✅ JavaScript → Swift 메시지 처리 확장
-extension CustomWebView.Coordinator: WKScriptMessageHandler {
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
-        // ✅ JS에서 전달한 리디렉션 주소 수신
-        if message.name == "redirectHandler",
-           let urlString = message.body as? String,
-           let url = URL(string: urlString) {
-
-            // ✅ 중복 방지 후 수동 로드
-            if webView?.url?.absoluteString != url.absoluteString {
-                parent.stateModel.currentURL = url
-                webView?.load(URLRequest(url: url))
-            }
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
     }
 }
