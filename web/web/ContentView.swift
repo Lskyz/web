@@ -57,4 +57,11 @@ struct ContentView: View {
         }
     }
     
-    func f
+    func fixedURL(from input: String) -> URL? {
+        var input = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !input.contains("://") {
+            input = "https://" + input
+        }
+        return URL(string: input)
+    }
+}
