@@ -1,4 +1,67 @@
 import SwiftUI
+import WebKit
+
+struct CustomWebView: UIViewRepresentable {
+    @ObservedObject var stateModel: WebViewStateModel
+    @Binding var playerURL: URL?
+    @Binding var showAVPlayer: Bool
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.allowsPictureInPictureMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.allowsBackForwardNavigationGestures = true
+        webView.navigationDelegate = context.coordinator
+
+        // UIRefreshControl을 추가하여 상단 끌어당기기 새로고침 구현
+        let refreshControl = UIRefreshControl()
+        refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
+        webView.scrollView.refreshControl = refreshControl
+        
+        if let url = stateModel.currentURL {
+            webView.load(URLRequest(url: url))
+        }
+
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        guard let targetURL = stateModel.currentURL else { return }
+        if uiView.url != targetURL {
+            uiView.load(URLRequest(url: targetURL))
+        }
+    }
+
+    func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.stopLoading()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, WKNavigationDelegate {
+        var parent: CustomWebView
+
+        init(_ parent: CustomWebView) {
+            self.parent = parent
+            super.init()
+        }
+
+        @objc func handleRefresh(_ sender: UIRefreshControl) {
+            // 웹뷰 새로고침 호출
+            parent.stateModel.reload() // 모델을 통해 새로고침 처리
+            sender.endRefreshing() // 새로고침 종료
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            self.parent.stateModel.currentURL = webView.url
+        }
+    }
+}
 
 struct ContentView: View {
     @StateObject private var state = WebViewStateModel() // 웹 뷰 상태를 관리하는 모델
@@ -44,11 +107,10 @@ struct ContentView: View {
                 }
                 .padding(8) // 상단에 패딩 추가
 
-                // ScrollView로 감싸서 `refreshable` 사용 가능하게 함
-                ScrollView {
-                    CustomWebView(stateModel: state, playerURL: $playerURL, showAVPlayer: $showAVPlayer)
-                        .edgesIgnoringSafeArea(.bottom) // 화면 하단까지 확장
-                }
+                // CustomWebView 사용
+                CustomWebView(stateModel: state, playerURL: $playerURL, showAVPlayer: $showAVPlayer)
+                    .edgesIgnoringSafeArea(.bottom) // 화면 하단까지 확장
+                    .padding(.top, 8)
 
                 // 하단 네비게이션 버튼들: 뒤로가기, 앞으로가기, 새로고침
                 HStack {
