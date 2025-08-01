@@ -2,67 +2,86 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
+// SwiftUI UIViewRepresentable 로 감싼 WKWebView
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
     
+    // 1) UIView 생성 시 호출
     func makeUIView(context: Context) -> WKWebView {
+        // 1-a) 오디오 믹싱 세션 활성화
         configureAudioSessionForMixing()
         
+        // 1-b) 웹뷰 설정: 인라인 재생, PIP 허용, 자동 재생 금지 해제
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         
+        // 1-c) WKWebView 인스턴스 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         
-        // Pull to refresh 연결
+        // 1-d) Pull to Refresh 연결
         let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
+        refreshControl.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.handleRefresh(_:)),
+            for: .valueChanged
+        )
         webView.scrollView.refreshControl = refreshControl
         
+        // 1-e) 델리게이트 지정 (Navigation + UI)
         webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator // 새 탭 열기를 위해 uiDelegate 추가
+        webView.uiDelegate = context.coordinator
         
+        // 1-f) 초기 URL 로드
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
         
-        // NotificationCenter 등록
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goBack),
-                                               name: NSNotification.Name("WebViewGoBack"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goForward),
-                                               name: NSNotification.Name("WebViewGoForward"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.reloadWebView),
-                                               name: NSNotification.Name("WebViewReload"),
-                                               object: nil)
+        // 1-g) NotificationCenter 로 뒤로/앞으로/새로고침 제어 메시지 받기
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.goBack),
+            name: .init("WebViewGoBack"),
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.goForward),
+            name: .init("WebViewGoForward"),
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.reloadWebView),
+            name: .init("WebViewReload"),
+            object: nil
+        )
         
-        context.coordinator.currentWebView = webView
         return webView
     }
     
+    // 2) State 변경 시 호출
     func updateUIView(_ uiView: WKWebView, context: Context) {
         if let url = stateModel.currentURL, uiView.url != url {
             uiView.load(URLRequest(url: url))
         }
     }
     
+    // 3) UIView 파괴 시 호출
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
         deactivateAudioSession()
         NotificationCenter.default.removeObserver(coordinator)
     }
     
+    // Coordinator 생성
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    // MARK: Audio Session Helpers
+    // MARK: – Audio Session Helpers
     
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
@@ -75,15 +94,18 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
     
+    // MARK: – Coordinator: WKNavigationDelegate & WKUIDelegate
+    
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var parent: CustomWebView
-        weak var currentWebView: WKWebView?
-        var webViews: [WKWebView] = [] // 여러 WKWebView 관리
+        weak var webView: WKWebView?
         
-        // 도메인 리디렉션 매핑
-        let domainRedirects: [String: String] = [
-            "example.com": "new-example.com",
-            "old-site.com": "new-site.com"
+        /// domainRedirectMap:
+        /// - 키: 접속한 호스트(host), "*" 은 와일드카드(모든 도메인)
+        /// - 값: 강제 리디렉트할 호스트(host)
+        let domainRedirectMap: [String: String] = [
+            "*"             : "example.com",  // 모든 도메인 → example.com
+            // "m.example.com": "example.com", // 특정 도메인만 매핑하려면 주석 해제
         ]
         
         init(_ parent: CustomWebView) {
@@ -91,32 +113,43 @@ struct CustomWebView: UIViewRepresentable {
             super.init()
         }
         
-        @objc func goBack() {
-            currentWebView?.goBack()
-        }
-        
-        @objc func goForward() {
-            currentWebView?.goForward()
-        }
-        
-        @objc func reloadWebView() {
-            currentWebView?.reload()
-        }
-        
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            currentWebView?.reload()
-            sender.endRefreshing()
-        }
-        
         // MARK: WKNavigationDelegate
         
+        /// 네비게이션 액션 전 리디렉션 정책 결정
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            if let url = navigationAction.request.url,
+               let host = url.host {
+                // 1) 호스트에 매핑된 타겟 호스트가 있는지 찾기
+                let targetHost = domainRedirectMap[host]
+                    ?? domainRedirectMap["*"]  // 없으면 와일드카드 검사
+                if let redirectHost = targetHost {
+                    // 2) URLComponents 로 path/query 그대로 유지하며 host 교체
+                    if var comp = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                        comp.host = redirectHost
+                        if let newURL = comp.url {
+                            webView.load(URLRequest(url: newURL))
+                            decisionHandler(.cancel)  // 원 요청 취소
+                            return
+                        }
+                    }
+                }
+            }
+            // 3) 매핑 대상이 아니면 정상 진행
+            decisionHandler(.allow)
+        }
+        
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            self.currentWebView = webView
-            parent.stateModel.canGoBack = webView.canGoBack
+            self.webView = webView
+            // 뒤로/앞으로 가능 여부, 현재 URL 상태 업데이트
+            parent.stateModel.canGoBack    = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
-            parent.stateModel.currentURL = webView.url
+            parent.stateModel.currentURL   = webView.url
             
-            // 모든 media 요소 음소거
+            // 모든 미디어 요소(비디오/오디오) 음소거 스크립트 삽입
             let script = """
             [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
               media.muted = true;
@@ -134,88 +167,43 @@ struct CustomWebView: UIViewRepresentable {
             webView.evaluateJavaScript(script)
         }
         
-        // 링크 클릭 시 동작 처리
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url else {
-                decisionHandler(.allow)
-                return
-            }
-            
-            // 도메인 리디렉션 처리
-            if let redirectedURL = redirectURLIfNeeded(url) {
-                webView.load(URLRequest(url: redirectedURL))
-                decisionHandler(.cancel)
-                return
-            }
-            
-            // 새 탭 요청은 createWebViewWith에서 처리하므로 현재 창에서 기본적으로 로드
-            decisionHandler(.allow)
-        }
-        
         // MARK: WKUIDelegate
         
-        // 새 탭 요청 처리 (target="_blank" 등)
-        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            guard let url = navigationAction.request.url else { return nil }
-            
-            // 새 WKWebView 생성
-            let newWebView = WKWebView(frame: .zero, configuration: configuration)
-            newWebView.navigationDelegate = self
-            newWebView.uiDelegate = self
-            newWebView.allowsBackForwardNavigationGestures = true
-            
-            // 새 WKWebView를 배열에 추가
-            webViews.append(newWebView)
-            
-            // 새로운 WebViewStateModel 생성
-            let newStateModel = WebViewStateModel()
-            newStateModel.currentURL = url
-            newStateModel.canGoBack = false
-            newStateModel.canGoForward = false
-            
-            // 새로운 CustomWebView를 SwiftUI 뷰로 표시
-            let newWebViewRepresentable = CustomWebView(stateModel: newStateModel)
-            
-            // 현재 WebView를 새 WebView로 교체
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let window = windowScene.windows.first {
-                let hostingController = UIHostingController(rootView: newWebViewRepresentable)
-                window.rootViewController = hostingController
-                window.makeKeyAndVisible()
+        /// target="_blank" 등의 새창 요청을 현재 창에서 로드하도록 처리
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            // targetFrame 이 nil 이면 새탭 요청 → 메인 웹뷰에 load
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
             }
-            
-            // 새 WebView에 URL 로드
-            newWebView.load(URLRequest(url: url))
-            
-            return newWebView
+            return nil
         }
         
-        // MARK: Helper Methods
+        // MARK: – Actions
         
-        private func redirectURLIfNeeded(_ url: URL) -> URL? {
-            guard let host = url.host else { return nil }
-            
-            // 도메인 리디렉션 매핑 확인
-            for (originalDomain, newDomain) in domainRedirects {
-                if host.contains(originalDomain) {
-                    var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-                    components?.host = newDomain
-                    return components?.url
-                }
-            }
-            
-            return nil
+        @objc func goBack() {
+            webView?.goBack()
+        }
+        
+        @objc func goForward() {
+            webView?.goForward()
+        }
+        
+        @objc func reloadWebView() {
+            webView?.reload()
+        }
+        
+        @objc func handleRefresh(_ sender: UIRefreshControl) {
+            webView?.reload()
+            sender.endRefreshing()
         }
         
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
     }
-}
-
-// WebViewStateModel 정의 (기존 코드에서 사용 중인 것으로 가정)
-class WebViewStateModel: ObservableObject {
-    @Published var currentURL: URL?
-    @Published var canGoBack: Bool = false
-    @Published var canGoForward: Bool = false
 }
