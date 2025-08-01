@@ -23,8 +23,9 @@ struct CustomWebView: UIViewRepresentable {
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
 
-        // ✅ navigation delegate 연결
+        // ✅ delegate 연결 (navigation + uiDelegate)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator // ✅ 새탭 링크 처리를 위해 추가됨
 
         // ✅ 초기 URL 로딩
         if let url = stateModel.currentURL {
@@ -111,6 +112,11 @@ struct CustomWebView: UIViewRepresentable {
             sender.endRefreshing()
         }
 
+        // ✅ 리디렉션 포함한 페이지 로딩 시작 시 URL 반영
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            parent.stateModel.currentURL = webView.url
+        }
+
         // ✅ 페이지 로딩 완료 시 호출됨
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
@@ -140,5 +146,18 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
+    }
+}
+
+// ✅ 새탭(window.open, target=_blank) 요청이 들어올 경우 현재 웹뷰에 로드
+extension CustomWebView.Coordinator: WKUIDelegate {
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if navigationAction.targetFrame == nil {
+            webView.load(navigationAction.request)
+        }
+        return nil
     }
 }
