@@ -2,34 +2,48 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var state = WebViewStateModel()
-    @State private var inputURL = "https://www.google.com" // ✅ 첫 로딩 구글
+    @State private var inputURL = "https://www.google.com"
     @State private var visitHistory: [String] = []
 
-    // ✅ 포커스 상태: 주소창에 커서가 있는지 여부
     @FocusState private var isTextFieldFocused: Bool
+    @State private var didSelectAll = false // ✅ 전체 선택 1회만 트리거
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                // ✅ 주소 입력 필드 + X버튼 + 포커스 추적
+                // ✅ 주소 입력창
                 TextField("URL 입력", text: $inputURL)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
                     .keyboardType(.URL)
-                    .focused($isTextFieldFocused) // 포커스 바인딩
+                    .focused($isTextFieldFocused)
+                    .onChange(of: isTextFieldFocused) { focused in
+                        // ✅ 처음 포커스 진입 시 전체 선택
+                        if focused && !didSelectAll {
+                            DispatchQueue.main.async {
+                                // 커서 지연 후 전체 선택
+                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                                didSelectAll = true
+                            }
+                        }
+                    }
                     .onSubmit {
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
                             addToHistory(inputURL)
                         }
-                        isTextFieldFocused = false // 제출 후 포커스 해제
+                        isTextFieldFocused = false
+                        didSelectAll = false
                     }
                     .overlay(
                         HStack {
                             Spacer()
                             if !inputURL.isEmpty {
-                                Button(action: { inputURL = "" }) {
+                                Button(action: {
+                                    inputURL = ""
+                                    didSelectAll = false
+                                }) {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundColor(.gray)
                                 }
@@ -44,13 +58,14 @@ struct ContentView: View {
                         addToHistory(inputURL)
                     }
                     isTextFieldFocused = false
+                    didSelectAll = false
                 }
                 .padding(.horizontal, 8)
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
 
-            // ✅ 주소창에 포커스가 있을 때만 최근 방문 표시
+            // ✅ 최근 방문 기록 표시
             if isTextFieldFocused && !visitHistory.isEmpty {
                 List {
                     Section {
@@ -63,6 +78,7 @@ struct ContentView: View {
                                     if let url = fixedURL(from: item) {
                                         state.currentURL = url
                                         isTextFieldFocused = false
+                                        didSelectAll = false
                                     }
                                 }
                         }
@@ -76,18 +92,18 @@ struct ContentView: View {
                 .listStyle(.plain)
                 .frame(maxHeight: 140)
                 .padding(.horizontal, 8)
-                .padding(.bottom, 0) // ✅ 주소창과 간격 최소화
+                .padding(.bottom, 0)
             }
 
-            // ✅ 웹 콘텐츠
+            // ✅ 웹 뷰 본체
             CustomWebView(stateModel: state)
                 .edgesIgnoringSafeArea(.bottom)
 
-            // ✅ 하단 탐색 버튼 (아이콘 크기 ↑, 여백 ↓)
+            // ✅ 하단 탐색 버튼
             HStack {
                 Button(action: { state.goBack() }) {
                     Image(systemName: "chevron.left")
-                        .font(.title2) // 아이콘 크기 키움
+                        .font(.title2)
                 }
                 .disabled(!state.canGoBack)
                 .padding(.vertical, 6)
@@ -111,10 +127,11 @@ struct ContentView: View {
             .background(Color(UIColor.secondarySystemBackground))
         }
         .onAppear {
-            // ✅ 앱 첫 실행 시 구글 홈페이지 로드
+            // ✅ 앱 시작 시 기본 URL 설정
             if state.currentURL == nil {
-                state.currentURL = URL(string: "https://www.google.com")
-                inputURL = "https://www.google.com"
+                let initial = URL(string: "https://www.google.com")!
+                state.currentURL = initial
+                inputURL = initial.absoluteString
             }
         }
         .onReceive(state.$currentURL) { url in
@@ -124,7 +141,7 @@ struct ContentView: View {
         }
     }
 
-    // ✅ 입력 텍스트를 URL 또는 검색어로 변환
+    // ✅ 입력을 URL 또는 검색어로 보정
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -140,7 +157,7 @@ struct ContentView: View {
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
 
-    // ✅ 방문 기록에 추가 (중복 방지)
+    // ✅ 방문 기록 저장
     private func addToHistory(_ input: String) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty && !visitHistory.contains(trimmed) {
@@ -148,7 +165,7 @@ struct ContentView: View {
         }
     }
 
-    // ✅ 방문 기록 삭제 (스와이프)
+    // ✅ 방문 기록 삭제
     private func deleteHistory(at offsets: IndexSet) {
         let limited = Array(visitHistory.prefix(5))
         for index in offsets {
