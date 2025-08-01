@@ -79,24 +79,25 @@ struct ContentView: View {
 
     private func loadInput() {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = urlFrom(input: trimmed) {
+
+        // 1. 정확한 URL (http/https)인 경우 바로 이동
+        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             state.currentURL = url
-        } else if let googleSearchURL = googleSearchURL(query: trimmed) {
-            state.currentURL = googleSearchURL
+            return
         }
-    }
 
-    private func urlFrom(input: String) -> URL? {
-        if let url = URL(string: input), url.scheme == "http" || url.scheme == "https" {
-            return url
-        } else if let url = URL(string: "https://\(input)"), UIApplication.shared.canOpenURL(url) {
-            return url
+        // 2. 스킴 없지만 도메인 형태 (예: apple.com)
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            if let url = URL(string: "https://\(trimmed)") {
+                state.currentURL = url
+                return
+            }
         }
-        return nil
-    }
 
-    private func googleSearchURL(query: String) -> URL? {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        return URL(string: "https://www.google.com/search?q=\(encoded)")
+        // 3. 그 외는 무조건 구글 검색
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        if let searchURL = URL(string: "https://www.google.com/search?q=\(encoded)") {
+            state.currentURL = searchURL
+        }
     }
 }
