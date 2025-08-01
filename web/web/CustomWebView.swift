@@ -1,11 +1,11 @@
 import SwiftUI
 import WebKit
 import AVFoundation
+import AVKit
 
-// ✅ SwiftUI에서 WKWebView를 사용할 수 있도록 UIViewRepresentable로 래핑
 struct CustomWebView: UIViewRepresentable {
-    @ObservedObject var stateModel: WebViewStateModel
-    
+    var stateModel: WebViewStateModel
+
     func makeUIView(context: Context) -> WKWebView {
         configureAudioSessionForMixing()
 
@@ -14,34 +14,42 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
+        let controller = WKUserContentController()
+
+        // ✅ JavaScript: video 클릭 시 native AVPlayer로 전달
+        let scriptSource = """
+        document.querySelectorAll('video').forEach(video => {
+            if (!video.hasAttribute('nativeAVPlayerListener')) {
+                video.addEventListener('click', () => {
+                    window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
+                });
+                video.setAttribute('nativeAVPlayerListener', 'true');
+            }
+        });
+        """
+        let userScript = WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        controller.addUserScript(userScript)
+        controller.add(context.coordinator, name: "playVideo")
+        config.userContentController = controller
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
 
-        // ✅ 새로고침
+        // ✅ pull to refresh
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
-
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator // ✅ 새창 처리용
 
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
 
-        // ✅ 알림 기반 이동/새로고침
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goBack),
-                                               name: NSNotification.Name("WebViewGoBack"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goForward),
-                                               name: NSNotification.Name("WebViewGoForward"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.reloadWebView),
-                                               name: NSNotification.Name("WebViewReload"),
-                                               object: nil)
+        // ✅ NotificationCenter 연결
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: NSNotification.Name("WebViewGoBack"), object: nil)
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goForward), name: NSNotification.Name("WebViewGoForward"), object: nil)
+        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.reloadWebView), name: NSNotification.Name("WebViewReload"), object: nil)
 
         return webView
     }
@@ -62,6 +70,7 @@ struct CustomWebView: UIViewRepresentable {
         Coordinator(self)
     }
 
+    // ✅ Audio Session: mixWithOthers 설정
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
@@ -73,7 +82,8 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate {
+    // ✅ Coordinator
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
 
@@ -82,39 +92,56 @@ struct CustomWebView: UIViewRepresentable {
             super.init()
         }
 
-        @objc func goBack() {
-            webView?.goBack()
+        // ✅ JavaScript 메시지 수신: video 클릭 시 호출
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "playVideo",
+               let urlString = message.body as? String,
+               let url = URL(string: urlString) {
+                playWithAVPlayer(url)
+            }
         }
 
-        @objc func goForward() {
-            webView?.goForward()
+        // ✅ AVPlayer 재생 + 자동 PiP + 음소거
+        private func playWithAVPlayer(_ url: URL) {
+            let player = AVPlayer(url: url)
+            player.isMuted = true // 🔇 음소거 설정
+
+            let controller = AVPlayerViewController()
+            controller.player = player
+            controller.allowsPictureInPicturePlayback = true
+            controller.canStartPictureInPictureAutomaticallyFromInline = true
+
+            if let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+                rootVC.present(controller, animated: true) {
+                    player.play()
+                }
+            }
         }
 
-        @objc func reloadWebView() {
-            webView?.reload()
+        // ✅ 새 탭 방지 (target="_blank") → 현재 웹뷰에서 열기
+        func webView(_ webView: WKWebView,
+                     createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+            }
+            return nil
         }
 
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            webView?.reload()
-            sender.endRefreshing()
+        // ✅ 리디렉션 대응
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            parent.stateModel.currentURL = webView.url
         }
 
-        // ✅ 리디렉션된 최종 주소를 정확히 가져오기 (JS 기반)
+        // ✅ 네비게이션 완료 시 상태 업데이트 + 영상 음소거 스크립트 삽입
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
+            parent.stateModel.currentURL = webView.url
 
-            // ✅ JS로 현재 최종 URL을 가져와 주소창에 반영
-            webView.evaluateJavaScript("window.location.href") { result, error in
-                if let finalURLString = result as? String, let finalURL = URL(string: finalURLString) {
-                    self.parent.stateModel.currentURL = finalURL
-                } else {
-                    self.parent.stateModel.currentURL = webView.url
-                }
-            }
-
-            // ✅ 자동 음소거
+            // 모든 media 요소 음소거 유지
             let script = """
             [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
               media.muted = true;
@@ -132,26 +159,27 @@ struct CustomWebView: UIViewRepresentable {
             webView.evaluateJavaScript(script)
         }
 
-        // ✅ 중간 리디렉션 감지도 가능
-        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            parent.stateModel.currentURL = webView.url
+        // ✅ Pull to refresh 동작
+        @objc func handleRefresh(_ sender: UIRefreshControl) {
+            webView?.reload()
+            sender.endRefreshing()
+        }
+
+        // ✅ NotificationCenter 동작
+        @objc func goBack() {
+            webView?.goBack()
+        }
+
+        @objc func goForward() {
+            webView?.goForward()
+        }
+
+        @objc func reloadWebView() {
+            webView?.reload()
         }
 
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
-    }
-}
-
-// ✅ 새탭 열기 대응 (target="_blank", window.open)
-extension CustomWebView.Coordinator: WKUIDelegate {
-    func webView(_ webView: WKWebView,
-                 createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction,
-                 windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
-        }
-        return nil
     }
 }
