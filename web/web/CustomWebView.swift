@@ -6,33 +6,30 @@ import AVFoundation
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
     
-    // ✅ WKWebView 생성 및 설정
     func makeUIView(context: Context) -> WKWebView {
-        configureAudioSessionForMixing() // 오디오 믹싱 설정 (백그라운드 재생 대비)
+        configureAudioSessionForMixing()
 
         let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true // 인라인 재생 허용
-        config.allowsPictureInPictureMediaPlayback = true // PiP 모드 허용
-        config.mediaTypesRequiringUserActionForPlayback = [] // 자동재생 허용
+        config.allowsInlineMediaPlayback = true
+        config.allowsPictureInPictureMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
 
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true // 스와이프 네비게이션 허용
+        webView.allowsBackForwardNavigationGestures = true
 
-        // ✅ 당겨서 새로고침 구성
+        // ✅ 새로고침
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
 
-        // ✅ delegate 연결 (navigation + uiDelegate)
         webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator // ✅ 새탭 링크 처리를 위해 추가됨
+        webView.uiDelegate = context.coordinator // ✅ 새창 처리용
 
-        // ✅ 초기 URL 로딩
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
 
-        // ✅ Notification을 통해 외부에서 웹뷰 동작 제어 (뒤로가기, 앞으로가기, 새로고침)
+        // ✅ 알림 기반 이동/새로고침
         NotificationCenter.default.addObserver(context.coordinator,
                                                selector: #selector(Coordinator.goBack),
                                                name: NSNotification.Name("WebViewGoBack"),
@@ -48,40 +45,34 @@ struct CustomWebView: UIViewRepresentable {
 
         return webView
     }
-    
-    // ✅ URL이 바뀌었을 경우 새 요청 로드
+
     func updateUIView(_ uiView: WKWebView, context: Context) {
         if let url = stateModel.currentURL, uiView.url != url {
             uiView.load(URLRequest(url: url))
         }
     }
-    
-    // ✅ 웹뷰 해제 시 정리
+
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
         deactivateAudioSession()
         NotificationCenter.default.removeObserver(coordinator)
     }
-    
-    // ✅ Coordinator 생성
+
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-    
-    // MARK: - 오디오 세션 설정 (다른 앱 오디오와 믹싱 허용)
+
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
         try? session.setActive(true, options: [])
     }
 
-    // ✅ 오디오 세션 비활성화
     private func deactivateAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
-    
-    // ✅ 웹뷰 이벤트를 처리할 Coordinator 클래스
+
     class Coordinator: NSObject, WKNavigationDelegate {
         var parent: CustomWebView
         weak var webView: WKWebView?
@@ -91,40 +82,39 @@ struct CustomWebView: UIViewRepresentable {
             super.init()
         }
 
-        // ✅ 외부 알림으로부터 웹뷰를 뒤로 이동
         @objc func goBack() {
             webView?.goBack()
         }
 
-        // ✅ 외부 알림으로부터 웹뷰를 앞으로 이동
         @objc func goForward() {
             webView?.goForward()
         }
 
-        // ✅ 외부 알림으로부터 웹뷰를 새로고침
         @objc func reloadWebView() {
             webView?.reload()
         }
 
-        // ✅ 당겨서 새로고침 동작
         @objc func handleRefresh(_ sender: UIRefreshControl) {
             webView?.reload()
             sender.endRefreshing()
         }
 
-        // ✅ 리디렉션 포함한 페이지 로딩 시작 시 URL 반영
-        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            parent.stateModel.currentURL = webView.url
-        }
-
-        // ✅ 페이지 로딩 완료 시 호출됨
+        // ✅ 리디렉션된 최종 주소를 정확히 가져오기 (JS 기반)
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
-            parent.stateModel.currentURL = webView.url
 
-            // ✅ 자동 음소거 스크립트: video/audio 요소들을 반복적으로 mute 처리
+            // ✅ JS로 현재 최종 URL을 가져와 주소창에 반영
+            webView.evaluateJavaScript("window.location.href") { result, error in
+                if let finalURLString = result as? String, let finalURL = URL(string: finalURLString) {
+                    self.parent.stateModel.currentURL = finalURL
+                } else {
+                    self.parent.stateModel.currentURL = webView.url
+                }
+            }
+
+            // ✅ 자동 음소거
             let script = """
             [...document.querySelectorAll('video'), ...document.querySelectorAll('audio')].forEach(media => {
               media.muted = true;
@@ -142,14 +132,18 @@ struct CustomWebView: UIViewRepresentable {
             webView.evaluateJavaScript(script)
         }
 
-        // ✅ 해제 시 옵저버 제거
+        // ✅ 중간 리디렉션 감지도 가능
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            parent.stateModel.currentURL = webView.url
+        }
+
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
     }
 }
 
-// ✅ 새탭(window.open, target=_blank) 요청이 들어올 경우 현재 웹뷰에 로드
+// ✅ 새탭 열기 대응 (target="_blank", window.open)
 extension CustomWebView.Coordinator: WKUIDelegate {
     func webView(_ webView: WKWebView,
                  createWebViewWith configuration: WKWebViewConfiguration,
