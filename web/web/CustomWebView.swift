@@ -14,27 +14,32 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
-        // 처음부터 음소거 설정 JS (페이지 시작 시)
+        // mute + 영상 클릭 핸들러
         let muteScript = """
         document.querySelectorAll('video').forEach(video => {
             video.muted = true;
             video.setAttribute('muted', 'true');
             video.volume = 0;
+
+            if (!video.hasAttribute('nativeAVPlayerListener')) {
+                video.addEventListener('click', () => {
+                    window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
+                });
+                video.setAttribute('nativeAVPlayerListener', 'true');
+            }
         });
         """
         let userScript = WKUserScript(source: muteScript, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
-
-        // 영상 클릭 이벤트 감지용 메시지 핸들러 추가
         config.userContentController.add(context.coordinator, name: "playVideo")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
+        webView.navigationDelegate = context.coordinator
 
+        // 타앱 오디오 유지 설정
         try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
-
-        webView.navigationDelegate = context.coordinator
 
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
@@ -93,7 +98,7 @@ struct CustomWebView: UIViewRepresentable {
                 parent.stateModel.currentURL = currentURL
             }
 
-            // 음소거 및 클릭 이벤트 재적용 JS
+            // mute + click 핸들러 보강
             let script = """
             document.querySelectorAll('video').forEach(video => {
                 video.muted = true;
@@ -107,29 +112,8 @@ struct CustomWebView: UIViewRepresentable {
                     video.setAttribute('nativeAVPlayerListener', 'true');
                 }
             });
-
-            setInterval(() => {
-                document.querySelectorAll('video').forEach(video => {
-                    video.muted = true;
-                    video.setAttribute('muted', 'true');
-                    video.volume = 0;
-
-                    if (!video.hasAttribute('nativeAVPlayerListener')) {
-                        video.addEventListener('click', () => {
-                            window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                        });
-                        video.setAttribute('nativeAVPlayerListener', 'true');
-                    }
-                });
-            }, 500);
             """
             webView.evaluateJavaScript(script)
-        }
-
-        func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-            if let url = webView.url {
-                parent.stateModel.currentURL = url
-            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
