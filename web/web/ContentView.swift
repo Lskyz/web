@@ -86,12 +86,12 @@ struct ContentView: View {
 
                 Spacer()
 
-                Toggle(isOn: $enablePIP) {
+                /*Toggle(isOn: $enablePIP) {
                     Image(systemName: "pip.enter").font(.title3)
                 }
                 .labelsHidden()
                 .padding(.horizontal, 10)
-            }
+            }*/
             .background(Color(UIColor.secondarySystemBackground))
         }
 
