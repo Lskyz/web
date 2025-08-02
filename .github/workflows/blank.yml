@@ -10,13 +10,13 @@ jobs:
     runs-on: macos-13
 
     steps:
-      - name: Checkout code
+      - name: ✅ 코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: Select Xcode version
+      - name: ✅ Xcode 버전 선택
         run: sudo xcode-select -s /Applications/Xcode_15.0.app
 
-      - name: Build project (no signing)
+      - name: ✅ 프로젝트 빌드 (서명 없이)
         run: |
           xcodebuild -project web/web.xcodeproj \
             -scheme web \
@@ -27,23 +27,21 @@ jobs:
             archive \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      - name: Check .app and Info.plist after archive
-        run: |
-          ls -la build/web.xcarchive/Products/Applications/web.app
-          ls -la build/web.xcarchive/Products/Applications/web.app/Info.plist
-          plutil -p build/web.xcarchive/Products/Applications/web.app/Info.plist
-
-      - name: Create IPA manually
+      - name: 📦 IPA 수동 생성
         run: |
           rm -rf Payload build/ipa
           mkdir -p build/ipa Payload
           cp -r build/web.xcarchive/Products/Applications/web.app Payload/
           chmod -R 755 Payload/web.app
-          ls -la Payload/web.app
           zip -r build/ipa/web.ipa Payload
 
-      - name: Upload IPA
+      - name: ☁️ IPA 업로드
         uses: actions/upload-artifact@v4
         with:
           name: web-ipa
           path: build/ipa/web.ipa
+
+      - name: 📎 다운로드 링크 summary에 출력
+        run: |
+          echo "### ✅ 다운로드 링크" >> $GITHUB_STEP_SUMMARY
+          echo "[📥 web.ipa 다운로드](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
