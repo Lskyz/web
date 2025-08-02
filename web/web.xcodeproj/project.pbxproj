@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		3322308E2E3B73F100EB7526 /* exportOptions.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3322308C2E3B71DB00EB7526 /* exportOptions.plist */; };
+		332230902E3D85B600EB7526 /* web.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 3322308F2E3D85B600EB7526 /* web.mp3 */; };
+		332230922E3D88F700EB7526 /* avp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332230912E3D88F700EB7526 /* avp.swift */; };
 		3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */; };
 		3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241D2E3B6D5500A5963D /* ContentView.swift */; };
 		336424202E3B6D5700A5963D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3364241F2E3B6D5700A5963D /* Assets.xcassets */; };
@@ -36,6 +38,8 @@
 /* Begin PBXFileReference section */
 		3322308A2E3B717B00EB7526 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3322308C2E3B71DB00EB7526 /* exportOptions.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = exportOptions.plist; sourceTree = "<group>"; };
+		3322308F2E3D85B600EB7526 /* web.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = web.mp3; sourceTree = "<group>"; };
+		332230912E3D88F700EB7526 /* avp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = avp.swift; sourceTree = "<group>"; };
 		336424182E3B6D5500A5963D /* web.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = web.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewStateModel.swift; sourceTree = "<group>"; };
 		3364241D2E3B6D5500A5963D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -98,6 +102,8 @@
 				336424452E3B6EAC00A5963D /* CustomWebView.swift */,
 				3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */,
 				3322308A2E3B717B00EB7526 /* Info.plist */,
+				3322308F2E3D85B600EB7526 /* web.mp3 */,
+				332230912E3D88F700EB7526 /* avp.swift */,
 				3322308C2E3B71DB00EB7526 /* exportOptions.plist */,
 				3364241F2E3B6D5700A5963D /* Assets.xcassets */,
 				336424212E3B6D5700A5963D /* Preview Content */,
@@ -217,6 +223,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				332230902E3D85B600EB7526 /* web.mp3 in Resources */,
 				336424232E3B6D5700A5963D /* Preview Assets.xcassets in Resources */,
 				336424202E3B6D5700A5963D /* Assets.xcassets in Resources */,
 			);
@@ -244,6 +251,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				332230922E3D88F700EB7526 /* avp.swift in Sources */,
 				336424482E3B6EB700A5963D /* MyBrowserAppApp.swift in Sources */,
 				3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */,
 				336424462E3B6EAC00A5963D /* CustomWebView.swift in Sources */,
