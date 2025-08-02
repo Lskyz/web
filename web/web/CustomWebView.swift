@@ -16,8 +16,8 @@ struct CustomWebView: UIViewRepresentable {
         config.mediaTypesRequiringUserActionForPlayback = []
 
         let controller = WKUserContentController()
-        
-        // ✅ JS로 video 요소 클릭 시 AVPlayerView 전환 요청
+
+        // ✅ JavaScript: video 클릭 시 native AVPlayer 전환 요청
         let scriptSource = """
         function processVideos(doc) {
             [...doc.querySelectorAll('video')].forEach(video => {
@@ -54,10 +54,7 @@ struct CustomWebView: UIViewRepresentable {
                                   injectionTime: .atDocumentEnd,
                                   forMainFrameOnly: false)
         controller.addUserScript(script)
-
-        // ✅ Swift와 연결된 메시지 핸들러 등록
         controller.add(context.coordinator, name: "playVideo")
-
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -72,11 +69,13 @@ struct CustomWebView: UIViewRepresentable {
                                  for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
 
+        // ✅ 초기 로딩 보장
         if let url = stateModel.currentURL {
+            print("🌐 초기 로딩: \(url.absoluteString)")
             webView.load(URLRequest(url: url))
         }
 
-        // ✅ 알림 등록
+        // ✅ WebView 조작용 알림 등록
         NotificationCenter.default.addObserver(context.coordinator,
                                                selector: #selector(Coordinator.goBack),
                                                name: NSNotification.Name("WebViewGoBack"),
@@ -94,8 +93,12 @@ struct CustomWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        if let url = stateModel.currentURL, uiView.url != url {
-            uiView.load(URLRequest(url: url))
+        // ✅ URL이 nil이 아니고, 다르면 강제 로딩
+        if let url = stateModel.currentURL {
+            if uiView.url == nil || uiView.url?.absoluteString != url.absoluteString {
+                print("🔄 updateUIView 강제 로딩: \(url.absoluteString)")
+                uiView.load(URLRequest(url: url))
+            }
         }
     }
 
@@ -152,9 +155,10 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
+            print("✅ 페이지 로딩 완료: \(webView.url?.absoluteString ?? "nil")")
         }
 
-        // ✅ 새창 막고 현재 WebView에서 열도록 처리
+        // ✅ 새 창 요청 무시하고 현재 WebView에 로드
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
@@ -165,7 +169,7 @@ struct CustomWebView: UIViewRepresentable {
             return nil
         }
 
-        // ✅ JS → Swift로 영상 URL 전달 받음 → AVPlayerViewController 호출
+        // ✅ 영상 클릭 시 Swift로 URL 전달 → AVPlayerView로 전환
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             if message.name == "playVideo",
