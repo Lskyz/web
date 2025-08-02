@@ -62,14 +62,20 @@ struct AVPlayerView: View {
             }
         }
         .onAppear {
-            SilentAudioPlayer.shared  // ✅ 오디오 세션 유지
+            _ = SilentAudioPlayer.shared  // ✅ 오디오 세션 유지 (경고 제거용)
         }
     }
 
     // ✅ PIP 진입/종료 수동 토글
     private func togglePIP() {
-        if let playerVC = AVPlayerViewControllerManager.shared.playerViewController {
-            if let pipController = AVPictureInPictureController(playerLayer: playerVC.playerLayer) {
+        if let playerVC = AVPlayerViewControllerManager.shared.playerViewController,
+           let player = playerVC.player {
+
+            // ✅ AVPlayerLayer를 따로 생성하여 넘김
+            let playerLayer = AVPlayerLayer(player: player)
+            let pipController = AVPictureInPictureController(playerLayer: playerLayer)
+
+            if let pipController = pipController {
                 if pipController.isPictureInPictureActive {
                     pipController.stopPictureInPicture()
                 } else if pipController.isPictureInPicturePossible {
@@ -99,11 +105,10 @@ struct VideoPlayerContainer: UIViewControllerRepresentable {
         playerVC.exitsFullScreenWhenPlaybackEnds = true
         player.play()
 
+        // ✅ 싱글톤에 참조 저장
         AVPlayerViewControllerManager.shared.playerViewController = playerVC
         return playerVC
     }
 
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
 }
-
-   
