@@ -1,9 +1,10 @@
 import Foundation
 import Combine
-import SwiftUI  // 뷰를 위한 import 추가
+import SwiftUI
 
 class WebViewStateModel: ObservableObject {
-    @Published private(set) var currentURL: URL? = nil {
+    // ✅ 외부에서도 접근 가능하게 수정
+    @Published var currentURL: URL? = nil {
         didSet {
             if let url = currentURL {
                 UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
@@ -16,8 +17,6 @@ class WebViewStateModel: ObservableObject {
     @Published var canGoForward = false
     @Published var playerURL: URL? = nil
     @Published var showAVPlayer = false
-
-    // ✅ 방문기록 관련
     @Published var history: [URL] = [] {
         didSet { saveHistory() }
     }
@@ -30,10 +29,6 @@ class WebViewStateModel: ObservableObject {
            let url = URL(string: lastURLString) {
             self.currentURL = url
         }
-    }
-
-    func setCurrentURL(_ url: URL) {
-        self.currentURL = url
     }
 
     private func addToHistory(_ url: URL) {
@@ -76,7 +71,7 @@ class WebViewStateModel: ObservableObject {
         NotificationCenter.default.post(name: Notification.Name("WebViewReload"), object: nil)
     }
 
-    // ✅ 내부에 방문기록 뷰 정의
+    // ✅ HistoryPage 뷰는 내부에 그대로 유지
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
 
@@ -100,7 +95,7 @@ class WebViewStateModel: ObservableObject {
                     ForEach(state.history.reversed(), id: \.self) { url in
                         HStack {
                             Button(action: {
-                                state.setCurrentURL(url)
+                                state.currentURL = url
                             }) {
                                 Text(url.absoluteString)
                                     .lineLimit(1)
