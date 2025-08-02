@@ -91,20 +91,18 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .padding(.horizontal, 10)
-                .hidden() 
+            }
             .background(Color(UIColor.secondarySystemBackground))
         }
 
         // 🌐 앱 실행 시 초기 로딩
         .onAppear {
-    if let lastURLString = UserDefaults.standard.string(forKey: "lastURL"),
-       let url = URL(string: lastURLString) {
-        state.currentURL = url
-    } else {
-        // 기본 URL
-        state.currentURL = URL(string: "https://www.google.com")
-    }
-}
+            if state.currentURL == nil {
+                let url = URL(string: "https://www.google.com")!
+                state.currentURL = url
+                inputURL = url.absoluteString
+            }
+        }
 
         // 🔁 WebView URL 바뀌면 입력창도 업데이트
         .onReceive(state.$currentURL) { url in
