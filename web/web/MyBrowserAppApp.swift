@@ -10,7 +10,9 @@ struct MyBrowserAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            NavigationStack {   // ✅ 필수: 화면 전환이 가능한 네비게이션 컨테이너
+                ContentView()
+            }
         }
     }
 }
