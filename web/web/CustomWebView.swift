@@ -1,108 +1,119 @@
 import SwiftUI
 import WebKit
 import AVFoundation
-import AVKit
 
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
-    @Binding var playerURL: URL?                // ✅ AVPlayer용 URL 바인딩
-    @Binding var showAVPlayer: Bool             // ✅ AVPlayer 표시 여부 바인딩
+    
+    // ✅ AVPlayer 연동용 바인딩
+    @Binding var playerURL: URL?
+    @Binding var showAVPlayer: Bool
 
     func makeUIView(context: Context) -> WKWebView {
         configureAudioSessionForMixing()
-
+        
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-
-        let controller = WKUserContentController()
-
-        // ✅ JavaScript: video 요소 클릭 시 AVPlayerViewController로 전환하도록 설정
-        let jsScript = """
-        document.querySelectorAll('video').forEach(video => {
-            video.muted = true;
-            video.setAttribute('muted', 'true');
-            video.volume = 0;
-
-            if (!video.hasAttribute('nativeAVPlayerListener')) {
-                video.addEventListener('click', () => {
-                    window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                });
-                video.setAttribute('nativeAVPlayerListener', 'true');
-            }
-        });
-        """
-        let userScript = WKUserScript(source: jsScript, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-        controller.addUserScript(userScript)
-
-        // ✅ Swift → JavaScript 통신 연결
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
-
+        
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
-
-        // ✅ Pull to refresh
+        
+        // ✅ pull to refresh 연결
         let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
+        refreshControl.addTarget(context.coordinator,
+                                 action: #selector(Coordinator.handleRefresh(_:)),
+                                 for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
-
-        // ✅ 최초 로딩
+        
+        // ✅ 알림 센터 등록
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.goBack),
+                                               name: NSNotification.Name("WebViewGoBack"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.goForward),
+                                               name: NSNotification.Name("WebViewGoForward"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.reloadWebView),
+                                               name: NSNotification.Name("WebViewReload"),
+                                               object: nil)
+        
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
 
-        // ✅ 알림 연결
-        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: NSNotification.Name("WebViewGoBack"), object: nil)
-        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goForward), name: NSNotification.Name("WebViewGoForward"), object: nil)
-        NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.reloadWebView), name: NSNotification.Name("WebViewReload"), object: nil)
+        // ✅ JavaScript 핸들러 등록: 영상 클릭 시 AVPlayer로 전송
+        let controller = webView.configuration.userContentController
+        controller.add(context.coordinator, name: "playVideo")
+        let js = """
+        function setupNativeVideoPlayer() {
+          [...document.querySelectorAll('video')].forEach(video => {
+            video.muted = true;
+            video.volume = 0;
+            video.setAttribute('muted', 'true');
+
+            if (!video.hasAttribute('nativeAVPlayerListener')) {
+              video.addEventListener('click', () => {
+                window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
+              });
+              video.setAttribute('nativeAVPlayerListener', 'true');
+            }
+          });
+        }
+        setupNativeVideoPlayer();
+        setInterval(setupNativeVideoPlayer, 1000);
+        """
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        controller.addUserScript(userScript)
 
         return webView
     }
-
+    
     func updateUIView(_ uiView: WKWebView, context: Context) {
         if let url = stateModel.currentURL, uiView.url != url {
             uiView.load(URLRequest(url: url))
         }
     }
-
+    
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
         deactivateAudioSession()
         NotificationCenter.default.removeObserver(coordinator)
     }
-
+    
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
-
-    // ✅ 오디오 세션: 다른 앱과 동시 재생 허용
+    
+    // MARK: Audio Session
     private func configureAudioSessionForMixing() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.mixWithOthers])
-        try? session.setActive(true, options: [])
+        try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+        try? AVAudioSession.sharedInstance().setActive(true, options: [])
     }
 
     private func deactivateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
+    // MARK: Coordinator
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
 
         init(_ parent: CustomWebView) {
             self.parent = parent
-            super.init()
         }
 
-        // ✅ AVPlayer로 재생 요청이 들어왔을 때 처리
+        // ✅ AVPlayer로 URL 전송
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "playVideo", let urlString = message.body as? String, let url = URL(string: urlString) {
+            if message.name == "playVideo",
+               let urlString = message.body as? String,
+               let url = URL(string: urlString) {
                 parent.playerURL = url
                 parent.showAVPlayer = true
             }
@@ -132,8 +143,11 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.currentURL = webView.url
         }
 
-        // ✅ 새창 방지: target="_blank" → 현재 창에서 열기
-        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // ✅ 새창 방지 처리
+        func webView(_ webView: WKWebView,
+                     createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil {
                 webView.load(navigationAction.request)
             }
