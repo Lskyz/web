@@ -2,6 +2,13 @@ import Foundation
 import Combine
 
 class WebViewStateModel: ObservableObject {
+    var currentURL: URL? {
+    didSet {
+        if let url = currentURL {
+            UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
+        }
+    }
+}
     // ✅ 현재 표시 중인 URL
     @Published var currentURL: URL? = nil
 
