@@ -113,6 +113,15 @@ struct ContentView: View {
                 .labelsHidden()
                 .hidden() // 👈 UI는 보이지 않지만 기능은 작동함
             }
+                    // 🕘 방문기록 보기 버튼
+        .toolbar {
+            ToolbarItemGroup(placement: .bottomBar) {
+                NavigationLink(destination: WebViewStateModel.HistoryPage(state: state)) {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+            }
+        }
+    }
             .background(Color(UIColor.secondarySystemBackground))
         }
 
