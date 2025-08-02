@@ -1,17 +1,26 @@
 import SwiftUI
 import AVKit
 
-// ✅ 메인 브라우저 화면
+// ✅ 메인 브라우저 화면 View
 struct ContentView: View {
-    @StateObject private var state = WebViewStateModel()     // 🔄 상태 객체
-    @State private var inputURL = "https://www.google.com"   // 🌐 입력 주소 초기값
-    @FocusState private var isTextFieldFocused: Bool         // 🔍 포커스 상태
 
-    // 🎬 AVPlayer 재생용
+    // 🔄 WebView 상태 모델 객체 생성
+    @StateObject private var state = WebViewStateModel()
+
+    // 🌐 입력창 URL 텍스트 바인딩 변수
+    @State private var inputURL = "https://www.google.com"
+
+    // 🔍 주소창 포커스 상태 관리
+    @FocusState private var isTextFieldFocused: Bool
+
+    // ☑️ 전체 선택 중복 방지용 상태값
+    @State private var textFieldSelectedAll = false
+
+    // 🎬 AVPlayer 관련 상태
     @State private var playerURL: URL? = nil
     @State private var showAVPlayer: Bool = false
 
-    // 🔄 PIP 사용 여부 (UI는 숨김)
+    // 🖼️ PIP 토글 상태 (UI는 숨기고 기능만 유지)
     @State private var enablePIP: Bool = true
 
     // 📜 방문기록 sheet 열기 여부
@@ -29,14 +38,20 @@ struct ContentView: View {
                     .keyboardType(.URL)
                     .focused($isTextFieldFocused)
                     .onTapGesture {
-                        // 전체 선택 자동
-                        DispatchQueue.main.async {
-                            self.isTextFieldFocused = true
-                            UITextField.appearance().selectAll(nil)
+                        if !textFieldSelectedAll {
+                            DispatchQueue.main.async {
+                                self.inputURL = self.inputURL // 값 변경 트리거
+                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                                textFieldSelectedAll = true
+                            }
+                        }
+                    }
+                    .onChange(of: isTextFieldFocused) { focused in
+                        if !focused {
+                            textFieldSelectedAll = false
                         }
                     }
                     .onSubmit {
-                        // 입력값 처리
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
                         }
@@ -55,6 +70,7 @@ struct ContentView: View {
                         }
                     )
 
+                // ▶️ 이동 버튼
                 Button("이동") {
                     if let url = fixedURL(from: inputURL) {
                         state.currentURL = url
@@ -66,7 +82,7 @@ struct ContentView: View {
             .padding(.horizontal, 8)
             .padding(.top, 4) // 꼭대기 여백 최소화
 
-            // 🌐 WebView 삽입
+            // 🌐 WebView 표시
             CustomWebView(
                 stateModel: state,
                 playerURL: $playerURL,
@@ -109,20 +125,20 @@ struct ContentView: View {
 
                 Spacer()
 
-                // 🖼 PIP (UI는 숨김)
+                // 🖼️ PIP 토글 (UI 숨김)
                 Toggle(isOn: $enablePIP) {
-                    Image(systemName: "pip.enter").font(.title3)
+                    Image(systemName: "pip.enter")
                 }
                 .labelsHidden()
-                .hidden() // UI 숨기기
+                .hidden()
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 6)
             .background(Color(UIColor.secondarySystemBackground))
         }
-        .ignoresSafeArea(.keyboard) // 키보드 시 뷰 밀림 방지
+        .ignoresSafeArea(.keyboard)
 
-        // 🟡 앱 실행 시 마지막 URL 또는 기본 URL 로드
+        // 앱 시작 시 마지막 URL 로드
         .onAppear {
             if state.currentURL == nil {
                 if let saved = UserDefaults.standard.string(forKey: "lastURL"),
@@ -135,21 +151,21 @@ struct ContentView: View {
             }
         }
 
-        // 🔁 WebView URL 변경 → 주소 입력창 자동 업데이트
+        // 주소창 동기화
         .onReceive(state.$currentURL) { url in
             if let url = url {
                 inputURL = url.absoluteString
             }
         }
 
-        // 🎥 AVPlayer 전체화면 표시
+        // AVPlayer 전체화면
         .fullScreenCover(isPresented: $showAVPlayer) {
             if let url = playerURL {
                 AVPlayerView(url: url)
             }
         }
 
-        // 📜 방문기록 페이지를 sheet로 표시
+        // 방문기록 시트
         .sheet(isPresented: $showHistorySheet) {
             NavigationView {
                 WebViewStateModel.HistoryPage(state: state)
@@ -157,22 +173,18 @@ struct ContentView: View {
         }
     }
 
-    // ✅ 입력된 문자열 → URL 객체로 변환
+    // ✅ 문자열 → URL 또는 검색 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 1. http/https 스킴 포함
-        if let url = URL(string: trimmed),
-           url.scheme == "http" || url.scheme == "https" {
+        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             return url
         }
 
-        // 2. 도메인 형식
         if trimmed.contains(".") && !trimmed.contains(" ") {
             return URL(string: "https://\(trimmed)")
         }
 
-        // 3. 검색어 → 구글 검색 URL
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
