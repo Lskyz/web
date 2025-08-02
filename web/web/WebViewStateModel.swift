@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-
+import SwiftUI
 // ✅ WebView의 상태를 관리하는 ViewModel
 class WebViewStateModel: ObservableObject {
 
