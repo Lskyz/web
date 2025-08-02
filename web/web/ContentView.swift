@@ -1,199 +1,140 @@
 import SwiftUI
-import WebKit
-import AVFoundation
+import AVKit
 
-/// ✅ WebView + AVPlayer + PIP 를 한 번에 관리하는 커스텀 뷰
-struct CustomWebView: UIViewRepresentable {
-    /// 반드시 @ObservedObject ― state 변경 시 updateUIView 호출
-    @ObservedObject var stateModel: WebViewStateModel       // (FIXED)
-    @Binding var playerURL: URL?
-    @Binding var showAVPlayer: Bool
+// ✅ 메인 브라우저 화면
+struct ContentView: View {
+    @StateObject private var state = WebViewStateModel()     // 🔄 상태 객체
+    @State private var inputURL = "https://www.google.com"   // 🌐 입력 주소 초기값
+    @FocusState private var isTextFieldFocused: Bool         // 🔍 포커스 상태
 
-    // MARK: - UIViewRepresentable
+    // 🎬 AVPlayer 재생용
+    @State private var playerURL: URL? = nil
+    @State private var showAVPlayer: Bool = false
 
-    func makeUIView(context: Context) -> WKWebView {
-        configureAudioSessionForMixing()
+    // 🔄 PIP 사용 여부 (향후 연동 가능)
+    @State private var enablePIP: Bool = true
 
-        // 🔧 WKWebView 설정
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
+    var body: some View {
+        VStack(spacing: 0) {
+            // 🔗 상단 주소창 + 이동 버튼
+            HStack {
+                TextField("URL 입력", text: $inputURL)
+                    .textFieldStyle(.roundedBorder)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .keyboardType(.URL)
+                    .focused($isTextFieldFocused)
+                    .onSubmit {
+                        if let url = fixedURL(from: inputURL) {
+                            state.currentURL = url
+                        }
+                        isTextFieldFocused = false
+                    }
+                    .overlay(
+                        HStack {
+                            Spacer()
+                            if !inputURL.isEmpty {
+                                Button(action: { inputURL = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.gray)
+                                }
+                                .padding(.trailing, 8)
+                            }
+                        }
+                    )
 
-        // 🔧 사용자 스크립트 & 메시지 핸들러
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
-
-        // 🔧 WebView 인스턴스
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
-
-        // 🔧 Pull-to-refresh
-        let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(context.coordinator,
-                                 action: #selector(Coordinator.handleRefresh(_:)),
-                                 for: .valueChanged)
-        webView.scrollView.refreshControl = refreshControl
-
-        // 🔧 초기 로드
-        if let url = stateModel.currentURL {
-            print("🌐 초기 로딩: \(url.absoluteString)")
-            webView.load(URLRequest(url: url))
-        }
-
-        // 🔧 알림 → WebView 조작
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goBack),
-                                               name: NSNotification.Name("WebViewGoBack"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.goForward),
-                                               name: NSNotification.Name("WebViewGoForward"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.reloadWebView),
-                                               name: NSNotification.Name("WebViewReload"),
-                                               object: nil)
-
-        return webView
-    }
-
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        // URL이 바뀌면 강제 로드
-        guard let target = stateModel.currentURL else { return }
-        if uiView.url?.scheme != target.scheme ||
-            uiView.url?.host  != target.host  ||
-            uiView.url?.path  != target.path {
-            print("🔄 updateUIView → \(target)")
-            uiView.load(URLRequest(url: target))
-        }
-    }
-
-    func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.stopLoading()
-        deactivateAudioSession()
-        NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    // MARK: - 사용자 스크립트
-    private func makeVideoScript() -> WKUserScript {
-        let source = """
-        function processVideos(doc) {
-            [...doc.querySelectorAll('video')].forEach(video => {
-                video.muted = true;
-                video.volume = 0;
-                video.setAttribute('muted','true');
-                if (!video.hasAttribute('nativeAVPlayerListener')) {
-                    video.addEventListener('click', () => {
-                        window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                    });
-                    video.setAttribute('nativeAVPlayerListener', 'true');
+                Button("이동") {
+                    if let url = fixedURL(from: inputURL) {
+                        state.currentURL = url
+                    }
+                    isTextFieldFocused = false
                 }
-                // 자동 PIP 진입
-                if (document.pictureInPictureEnabled &&
-                    !video.disablePictureInPicture &&
-                    !document.pictureInPictureElement) {
-                    try { video.requestPictureInPicture().catch(() => {}); } catch(e) {}
-                }
-            });
-        }
-        processVideos(document);
-        setInterval(() => {
-            processVideos(document);
-            [...document.querySelectorAll('iframe')].forEach(iframe => {
-                try {
-                    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                    if (doc) processVideos(doc);
-                } catch (e) {}
-            });
-        }, 1000);
-        """
-        return WKUserScript(source: source,
-                            injectionTime: .atDocumentEnd,
-                            forMainFrameOnly: false)
-    }
-
-    // MARK: - Audio Session
-    private func configureAudioSessionForMixing() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.mixWithOthers])
-        try? session.setActive(true, options: [])
-    }
-    private func deactivateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-    }
-
-    // MARK: - Coordinator
-    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
-        var parent: CustomWebView
-        weak var webView: WKWebView?
-
-        init(_ parent: CustomWebView) { self.parent = parent }
-
-        // 🔹 네비게이션 조작용 메서드
-        @objc func goBack()     { webView?.goBack()     }
-        @objc func goForward()  { webView?.goForward()  }
-        @objc func reloadWebView() { webView?.reload()  }
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            webView?.reload()
-            sender.endRefreshing()
-        }
-
-        // 🔹 페이지 로딩 성공 시
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            self.webView = webView
-            parent.stateModel.canGoBack    = webView.canGoBack
-            parent.stateModel.canGoForward = webView.canGoForward
-            parent.stateModel.currentURL   = webView.url
-            print("✅ 페이지 로딩 완료: \(webView.url?.absoluteString ?? "nil")")
-        }
-
-        // 🔹 새 창 요청 무시 → 현재 WebView 사용
-        func webView(_ webView: WKWebView,
-                     createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
-                     windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
+                .padding(.horizontal, 8)
             }
-            return nil
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+
+            // 🌐 WebView 삽입
+            CustomWebView(
+                stateModel: state,
+                playerURL: $playerURL,
+                showAVPlayer: $showAVPlayer
+            )
+            .edgesIgnoringSafeArea(.bottom)
+
+            // ⬅️➡️🔄 하단 탐색 버튼 + PIP 토글
+            HStack {
+                Button(action: { state.goBack() }) {
+                    Image(systemName: "chevron.left").font(.title2)
+                }
+                .disabled(!state.canGoBack)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+
+                Button(action: { state.goForward() }) {
+                    Image(systemName: "chevron.right").font(.title2)
+                }
+                .disabled(!state.canGoForward)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+
+                Button(action: { state.reload() }) {
+                    Image(systemName: "arrow.clockwise").font(.title2)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+
+                Spacer()
+
+                Toggle(isOn: $enablePIP) {
+                    Image(systemName: "pip.enter").font(.title3)
+                }
+                .labelsHidden()
+                .padding(.horizontal, 10)
+            }
+            .background(Color(UIColor.secondarySystemBackground))
         }
 
-        // 🔹 영상 클릭 → AVPlayerView 전환
-        func userContentController(_ userContentController: WKUserContentController,
-                                   didReceive message: WKScriptMessage) {
-            guard message.name == "playVideo",
-                  let urlString = message.body as? String,
-                  let videoURL  = URL(string: urlString) else { return }
-            DispatchQueue.main.async {
-                self.parent.playerURL    = videoURL
-                self.parent.showAVPlayer = true
+        // 🌐 앱 실행 시 초기 로딩
+        .onAppear {
+            if state.currentURL == nil {
+                let url = URL(string: "https://www.google.com")!
+                state.currentURL = url
+                inputURL = url.absoluteString
             }
         }
 
-        // --------------------------------------------------------------------
-        // 🔻[ADD] 로딩 실패 로그 ― 요청하신 부분
-        // --------------------------------------------------------------------
-        func webView(_ webView: WKWebView,
-                     didFailProvisionalNavigation navigation: WKNavigation!,
-                     withError error: Error) {
-            print("❌ Provisional fail: \(error.localizedDescription)")
+        // 🔁 WebView URL 바뀌면 입력창도 업데이트
+        .onReceive(state.$currentURL) { url in
+            if let url = url {
+                inputURL = url.absoluteString
+            }
         }
 
-        func webView(_ webView: WKWebView,
-                     didFail navigation: WKNavigation!,
-                     withError error: Error) {
-            print("❌ Navigation fail: \(error.localizedDescription)")
+        // 🎬 AVPlayer 전체화면 전환
+        .fullScreenCover(isPresented: $showAVPlayer) {
+            if let url = playerURL {
+                AVPlayerView(url: url)
+            }
         }
-        // --------------------------------------------------------------------
+    }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+    // ✅ 입력된 문자열 → URL 객체로 변환
+    private func fixedURL(from input: String) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1. 스킴 있는 정식 주소
+        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+
+        // 2. 도메인 형식
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        }
+
+        // 3. 검색어 처리 (Google)
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
 }
