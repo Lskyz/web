@@ -5,20 +5,18 @@ struct ContentView: View {
     @StateObject private var state = WebViewStateModel()
     @State private var inputURL = "https://www.google.com" // ✅ 초기 주소
     @State private var visitHistory: [String] = []
-
     @FocusState private var isTextFieldFocused: Bool
 
-    // ✅ AVPlayer 전환용 상태
+    // ✅ AVPlayer 관련 상태
     @State private var playerURL: URL? = nil
     @State private var showAVPlayer: Bool = false
 
-    // ✅ PIP 사용 여부 (토글용)
+    // ✅ PIP 사용 여부 토글 (WebView 전용)
     @State private var enablePIP: Bool = true
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                // ✅ 주소창 + X버튼 + 포커스 추적
                 TextField("URL 입력", text: $inputURL)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
@@ -26,7 +24,7 @@ struct ContentView: View {
                     .keyboardType(.URL)
                     .focused($isTextFieldFocused)
                     .onTapGesture {
-                        // ✅ 포커스되면 전체 선택
+                        // ✅ 포커스시 전체 선택
                         DispatchQueue.main.async {
                             UITextField.appearance().selectAll(nil)
                         }
@@ -63,7 +61,6 @@ struct ContentView: View {
             .padding(.horizontal, 8)
             .padding(.top, 8)
 
-            // ✅ 최근 방문 리스트 (포커스 상태일 때만)
             if isTextFieldFocused && !visitHistory.isEmpty {
                 List {
                     Section {
@@ -83,22 +80,18 @@ struct ContentView: View {
                     } header: {
                         Text("최근 방문")
                             .font(.caption)
-                            .padding(.bottom, 0)
                     }
                 }
                 .listStyle(.plain)
                 .frame(maxHeight: 140)
                 .padding(.horizontal, 8)
-                .padding(.bottom, 0)
             }
 
-            // ✅ WebView
             CustomWebView(stateModel: state,
                           playerURL: $playerURL,
                           showAVPlayer: $showAVPlayer)
                 .edgesIgnoringSafeArea(.bottom)
 
-            // ✅ 하단 탐색 + PIP 토글
             HStack {
                 Button(action: { state.goBack() }) {
                     Image(systemName: "chevron.left")
@@ -131,16 +124,14 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .padding(.horizontal, 10)
-                .onChange(of: enablePIP) { value in
-                    // 필요 시 PIP 사용 여부를 webview에 반영 가능
-                }
             }
             .background(Color(UIColor.secondarySystemBackground))
         }
         .onAppear {
             if state.currentURL == nil {
-                state.currentURL = URL(string: "https://www.google.com")
-                inputURL = "https://www.google.com"
+                let url = URL(string: "https://www.google.com")!
+                state.currentURL = url
+                inputURL = url.absoluteString
             }
         }
         .onReceive(state.$currentURL) { url in
@@ -149,10 +140,8 @@ struct ContentView: View {
             }
         }
         .fullScreenCover(isPresented: $showAVPlayer) {
-            // ✅ AVPlayerViewController를 통한 비디오 재생
             if let url = playerURL {
                 AVPlayerView(url: url)
-                    .edgesIgnoringSafeArea(.all)
             }
         }
     }
