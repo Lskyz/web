@@ -6,7 +6,7 @@ struct ContentView: View {
 
     // 🗂️ 탭 목록 상태 (각 탭은 WebView 상태를 포함)
     @State private var tabs: [WebTab] = [WebTab(url: URL(string: "https://www.google.com")!)]
-    
+
     // 🌐 현재 선택된 탭 ID
     @State private var selectedTabID: UUID = UUID()
 
@@ -163,41 +163,36 @@ struct ContentView: View {
                 .background(Color(UIColor.secondarySystemBackground))
             }
             .ignoresSafeArea(.keyboard)
-
-            // 👉 탭 변경 시 상태 초기화 및 동기화
             .onAppear {
+                // 👉 탭 변경 시 상태 초기화 및 주소창 동기화
                 selectedTabID = selected.id
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                 }
             }
-
-            // 👉 URL 상태 변경 시 주소창 동기화
             .onReceive(state.$currentURL) { url in
+                // 👉 URL 변경 시 주소창 동기화
                 if let url = url {
                     inputURL = url.absoluteString
                 }
             }
-
-            // 🎬 전체화면 AVPlayer 표시
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[index].showAVPlayer },
                 set: { tabs[index].showAVPlayer = $0 }
             )) {
+                // 🎬 전체화면 AVPlayer
                 if let url = tabs[index].playerURL {
                     AVPlayerView(url: url)
                 }
             }
-
-            // 📜 방문기록 화면
             .sheet(isPresented: $showHistorySheet) {
+                // 📜 방문기록 보기
                 NavigationView {
                     WebViewStateModel.HistoryPage(state: state)
                 }
             }
-
-            // 🗂️ 탭 전환/삭제/추가 관리자 화면
             .fullScreenCover(isPresented: $showTabManager) {
+                // 🗂️ 탭 관리자
                 NavigationView {
                     TabManager(
                         tabs: $tabs,
@@ -207,10 +202,9 @@ struct ContentView: View {
             }
 
         } else {
-            // ❗탭이 없을 경우
+            // ❗탭이 없을 경우 복구
             Text("탭 없음")
                 .onAppear {
-                    // 자동 복구
                     if let first = tabs.first {
                         selectedTabID = first.id
                     }
