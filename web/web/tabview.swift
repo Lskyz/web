@@ -1,19 +1,21 @@
 import SwiftUI
+import AVKit
 
-// MARK: - 탭 하나를 구성하는 데이터 구조
+// MARK: - 탭 데이터 구조
 struct WebTab: Identifiable, Equatable {
     let id: UUID
-    let stateModel: WebViewStateModel            // ✅ WebView 상태 모델
-    var playerURL: URL?                          // ✅ AVPlayer용 URL
-    var showAVPlayer: Bool                       // ✅ AVPlayer 표시 여부
+    let stateModel: WebViewStateModel
+    var playerURL: URL?
+    var showAVPlayer: Bool
 
     var currentURL: URL? {
         stateModel.currentURL
     }
 
-    init(stateModel: WebViewStateModel) {
+    init(url: URL) {
         self.id = UUID()
-        self.stateModel = stateModel
+        self.stateModel = WebViewStateModel()
+        self.stateModel.currentURL = url
         self.playerURL = nil
         self.showAVPlayer = false
     }
@@ -23,94 +25,115 @@ struct WebTab: Identifiable, Equatable {
     }
 }
 
-// MARK: - 탭 리스트 및 전환 로직 포함
+// MARK: - 탭 관리자 View (탭 리스트 + 전환 UI)
 struct TabManager: View {
-    @Environment(\.dismiss) private var dismiss
-
-    // ✅ ContentView에서 넘어온 최초 탭
+    // ✅ ContentView에서 넘겨받은 초기 상태
     let initialStateModel: WebViewStateModel
 
-    // ✅ 선택된 탭을 다시 넘겨주는 콜백
+    // ✅ 탭 선택 시 반영할 콜백
     let onTabSelected: (WebViewStateModel) -> Void
 
-    // 🧠 내부 탭 상태 목록 및 선택된 탭 ID
+    // ✅ 내부 탭 상태
+    @Environment(\.dismiss) private var dismiss
     @State private var tabs: [WebTab] = []
     @State private var selectedTabID: UUID?
 
     var body: some View {
-        VStack {
-            Text("탭 목록")
-                .font(.headline)
-                .padding(.top, 20)
+        VStack(spacing: 0) {
+            Text("탭 선택").font(.headline).padding(.top)
 
-            List {
-                ForEach(tabs) { tab in
-                    Button(action: {
-                        // ✅ 탭 선택 → 콜백 호출 → 화면 복귀
-                        onTabSelected(tab.stateModel)
-                        dismiss()
-                    }) {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(tabs) { tab in
                         HStack {
-                            Text(tab.currentURL?.absoluteString ?? "빈 탭")
-                                .lineLimit(1)
+                            // ✅ 도메인 표시 (간단한 썸네일 역할)
+                            VStack(alignment: .leading) {
+                                Text(tab.currentURL?.host ?? "새 탭")
+                                    .font(.headline)
+                                Text(tab.currentURL?.absoluteString ?? "")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+
                             Spacer()
-                            if tab.id == selectedTabID {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
+
+                            // ✅ 전환 버튼
+                            Button(action: {
+                                if let model = tab.stateModel {
+                                    onTabSelected(model)
+                                }
+                                dismiss()
+                            }) {
+                                Text("전환")
+                                    .font(.subheadline)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.blue)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(6)
+                            }
+
+                            // ❌ 탭 닫기 버튼
+                            Button(action: {
+                                closeTab(tab)
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                    .font(.title2)
                             }
                         }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
                     }
                 }
-                .onDelete(perform: deleteTab)
             }
 
-            HStack {
-                Spacer()
+            Divider()
 
-                // ➕ 새 탭 추가
-                Button(action: {
-                    let newState = WebViewStateModel()
-                    newState.currentURL = URL(string: "https://www.apple.com")
-                    let newTab = WebTab(stateModel: newState)
-                    tabs.append(newTab)
-                    selectedTabID = newTab.id
-                }) {
-                    Label("새 탭", systemImage: "plus")
+            // ➕ 새 탭 추가
+            Button(action: addNewTab) {
+                HStack {
+                    Image(systemName: "plus")
+                    Text("새 탭 열기")
                 }
-
-                Spacer()
-
-                // ✅ 닫기 (전환 안 하고 복귀)
-                Button("닫기") {
-                    dismiss()
-                }
-
-                Spacer()
+                .font(.headline)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.green)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+                .padding(.horizontal)
             }
-            .padding()
+            .padding(.bottom, 16)
         }
         .onAppear {
-            // ✅ 초기 탭 목록에 현재 탭 삽입 (중복 방지)
-            if tabs.isEmpty {
-                let firstTab = WebTab(stateModel: initialStateModel)
-                tabs.append(firstTab)
-                selectedTabID = firstTab.id
-            }
+            // ✅ 기존 상태를 포함한 기본 탭 구성
+            let first = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!)
+            first.stateModel.copy(from: initialStateModel)
+            tabs = [first]
+            selectedTabID = first.id
         }
     }
 
-    // MARK: - 탭 삭제
-    private func deleteTab(at offsets: IndexSet) {
-        tabs.remove(atOffsets: offsets)
-        if let first = tabs.first {
-            selectedTabID = first.id
-        } else {
-            // 탭이 다 사라졌을 때 하나는 자동 생성
-            let fallback = WebViewStateModel()
-            fallback.currentURL = URL(string: "https://www.google.com")
-            let fallbackTab = WebTab(stateModel: fallback)
-            tabs.append(fallbackTab)
-            selectedTabID = fallbackTab.id
+    // MARK: - 새 탭 추가
+    private func addNewTab() {
+        let newTab = WebTab(url: URL(string: "https://www.apple.com")!)
+        tabs.append(newTab)
+        selectedTabID = newTab.id
+    }
+
+    // MARK: - 탭 닫기
+    private func closeTab(_ tab: WebTab) {
+        if let index = tabs.firstIndex(of: tab) {
+            tabs.remove(at: index)
+            if tabs.isEmpty {
+                addNewTab()
+            } else if selectedTabID == tab.id {
+                selectedTabID = tabs.first?.id
+            }
         }
     }
 }
