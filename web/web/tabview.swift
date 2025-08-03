@@ -31,11 +31,11 @@ struct WebTab: Identifiable, Equatable {
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss // 시트를 닫기 위한 dismiss 액션
 
-    let initialStateModel: WebViewStateModel    // 외부에서 전달된 현재 사용 중인 탭의 상태 모델
-    let onTabSelected: (WebViewStateModel) -> Void // 탭 선택 시 호출할 콜백 함수
+    @Binding var tabs: [WebTab]                      // ★ ContentView로부터 탭 상태를 공유 받음
+    let initialStateModel: WebViewStateModel         // 외부에서 전달된 현재 사용 중인 탭의 상태 모델
+    let onTabSelected: (WebViewStateModel) -> Void   // 탭 선택 시 호출할 콜백 함수
 
-    @State private var tabs: [WebTab] = []      // 현재 존재하는 전체 탭 목록
-    @State private var selectedTabID: UUID?     // 현재 선택된 탭의 ID (선택 시각화용)
+    @State private var selectedTabID: UUID?          // 현재 선택된 탭의 ID (선택 시각화용)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -141,7 +141,7 @@ struct TabManager: View {
     // MARK: - 초기 탭 설정 (최소 1개 보장)
     private func setupInitialTabs() {
         if tabs.isEmpty {
-            let existing = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!) // 전달된 URL 기준
+            let existing = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!)
             tabs.append(existing)      // 첫 탭 생성
             selectedTabID = existing.id
         }
