@@ -56,7 +56,7 @@ struct CustomWebView: UIViewRepresentable {
         return webView
     }
 
-    // ✅ WebView 업데이트 처리
+    // ✅ WebView 업데이트 처리 (URL 변경 시 동기화)
     func updateUIView(_ uiView: WKWebView, context: Context) {
         guard let url = stateModel.currentURL else { return }
 
@@ -130,20 +130,38 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    // ✅ 🔄 세션 복원 기능 - 저장된 세션의 URL 리스트를 복원
+    // ✅ 🔄 세션 복원 기능 - 저장된 세션의 URL 리스트를 순서대로 복원
     private func restoreSession(_ session: WebViewSession, webView: WKWebView) {
-        guard !session.urls.isEmpty else { return }
-        loadURLsSequentially(session.urls, currentIndex: session.currentIndex, webView: webView)
-    }
+        let urls = session.urls
+        let currentIndex = session.currentIndex
 
-    // ✅ 🔁 URL들을 순서대로 로딩 (앞뒤 스택 시뮬레이션 가능)
-    private func loadURLsSequentially(_ urls: [URL], currentIndex: Int, webView: WKWebView) {
         guard urls.indices.contains(currentIndex) else { return }
-        let request = URLRequest(url: urls[currentIndex])
-        webView.load(request)
+
+        // 🔁 순차적으로 로딩 후, 현재 인덱스로 되돌아가기
+        loadURLsSequentially(urls, index: 0, webView: webView) {
+            let stepsToGoBack = urls.count - 1 - currentIndex
+            for _ in 0..<stepsToGoBack {
+                webView.goBack()
+            }
+        }
     }
 
-    // ✅ WebView 이벤트를 처리하는 Coordinator 클래스
+    // ✅ URL들을 하나씩 로딩해 backForwardList 구성
+    private func loadURLsSequentially(_ urls: [URL], index: Int, webView: WKWebView, completion: @escaping () -> Void) {
+        guard index < urls.count else {
+            completion()
+            return
+        }
+
+        webView.load(URLRequest(url: urls[index]))
+
+        // 🔁 다음 URL 로딩까지 지연 (WKWebView는 완전한 로딩 확인 콜백이 없음)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            loadURLsSequentially(urls, index: index + 1, webView: webView, completion: completion)
+        }
+    }
+
+    // ✅ WebView 이벤트 처리 Coordinator
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
@@ -152,18 +170,18 @@ struct CustomWebView: UIViewRepresentable {
             self.parent = parent
         }
 
-        // ✅ 알림 처리
+        // ✅ 외부 알림 처리 (뒤로, 앞으로, 새로고침)
         @objc func goBack() { webView?.goBack() }
         @objc func goForward() { webView?.goForward() }
         @objc func reloadWebView() { webView?.reload() }
 
-        // ✅ Pull to refresh 처리
+        // ✅ 새로고침 처리 (UIRefreshControl)
         @objc func handleRefresh(_ sender: UIRefreshControl) {
             webView?.reload()
             sender.endRefreshing()
         }
 
-        // ✅ 페이지 로딩 완료 시 상태 업데이트
+        // ✅ 로딩 완료 시 URL 및 상태 동기화
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
             parent.stateModel.canGoBack = webView.canGoBack
@@ -179,7 +197,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // ✅ 새 창 → 동일 WebView로 처리
+        // ✅ 새 창 열기 방지 → 현재 WebView에 로드
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
@@ -190,7 +208,7 @@ struct CustomWebView: UIViewRepresentable {
             return nil
         }
 
-        // ✅ JavaScript에서 playVideo 메시지 수신 처리
+        // ✅ JavaScript 메시지 처리 (비디오 클릭 시)
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             if message.name == "playVideo",
@@ -203,12 +221,11 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // ❌ 초기 로딩 실패
+        // ❌ 로딩 실패 로그 출력
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             print("❌ Provisional fail: \(error.localizedDescription)")
         }
 
-        // ❌ 로딩 중 실패
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             print("❌ Navigation fail: \(error.localizedDescription)")
         }
