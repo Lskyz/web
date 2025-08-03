@@ -240,26 +240,6 @@ struct ContentView: View {
     }
 }
 
-// ✅ 저장용 스냅샷 구조체 (탭의 상태 직렬화용)
-struct WebTabSnapshot: Codable {
-    let urlString: String
-    let history: [WebViewStateModel.HistoryEntry]
-}
-
-// ✅ WebTab <-> Snapshot 변환 확장
-extension WebTab {
-    func toSnapshot() -> WebTabSnapshot? {
-        guard let url = self.currentURL else { return nil }
-        return WebTabSnapshot(
-            urlString: url.absoluteString,
-            history: stateModel.history
-        )
-    }
-
-    static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
-        let url = URL(string: snapshot.urlString) ?? URL(string: "https://www.google.com")!
-        let tab = WebTab(url: url)
-        tab.stateModel.history = snapshot.history
-        return tab
-    }
-}
+// ⛔️ 삭제된 중복 정의 (다른 파일에 이미 선언되어 있어야 함)
+// struct WebTabSnapshot { ... }
+// extension WebTab { toSnapshot, fromSnapshot }
