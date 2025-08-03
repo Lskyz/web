@@ -1,68 +1,84 @@
 import SwiftUI
 import AVKit
 
-// MARK: 방문 기록 한 항목
+// MARK: - 방문 기록 항목 (탭의 내역을 저장할 때 사용)
 struct WebViewHistoryItem: Codable {
-    let url: String   // 실제 방문한 URL 스트링
-    let title: String // 페이지 제목 (미사용 가능)
+    let url: String   // 방문한 페이지의 URL 문자열
+    let title: String // 페이지 제목 (현재는 사용하지 않지만 구조상 포함)
 }
 
-// MARK: 탭 하나의 세션 정보 (historyStack + currentIndex)
+// MARK: - 하나의 탭에 대한 세션 정보
 struct WebTabSession: Codable {
-    let tabID: UUID
-    let currentIndex: Int
-    let items: [WebViewHistoryItem]
+    let tabID: UUID                // 탭 고유 식별자
+    let currentIndex: Int          // 현재 보고 있는 URL의 인덱스
+    let items: [WebViewHistoryItem] // 방문했던 페이지 목록
 }
 
-// MARK: 탭 모델 + 복원 관리
+// MARK: - WebTab 구조체 (실제 하나의 탭을 나타냄)
 struct WebTab: Identifiable, Equatable {
-    let id: UUID
-    let stateModel: WebViewStateModel
-    var playerURL: URL? = nil
-    var showAVPlayer = false
+    let id: UUID                       // 탭의 고유 ID
+    let stateModel: WebViewStateModel // 웹 뷰 상태 모델
+    var playerURL: URL? = nil         // AVPlayer용 URL (비디오 전용)
+    var showAVPlayer = false          // 전체화면 재생 여부
 
-    var currentURL: URL? { stateModel.currentURL }
+    var currentURL: URL? {
+        stateModel.currentURL         // 현재 표시 중인 URL
+    }
 
-    // 새 탭 생성 시
+    /// 새 탭 생성자
     init(url: URL? = nil) {
         id = UUID()
         stateModel = WebViewStateModel()
         stateModel.tabID = id
-        stateModel.currentURL = url
+        stateModel.currentURL = url   // 시작 URL이 있다면 설정
     }
 
-    // UserDefaults 에서 복원할 때
+    /// 저장된 세션(WebTabSession)에서 복원할 때 사용
     init(fromSession session: WebTabSession) {
         id = session.tabID
         stateModel = WebViewStateModel()
         stateModel.tabID = id
 
-        let urls = session.items.compactMap { URL(string: $0.url) }
+        let urls = session.items.compactMap { URL(string: $0.url) } // 문자열 → URL로 변환
         let idx  = session.currentIndex
 
+        // 복원 가능한 인덱스면 세션 복원
         if urls.indices.contains(idx) {
             stateModel.restoreSession(WebViewSession(urls: urls, currentIndex: idx))
-        } else if let u = urls.first {
+        }
+        // 아니면 첫 번째 URL만 로드
+        else if let u = urls.first {
             stateModel.currentURL = u
         }
     }
 
-    static func == (lhs: WebTab, rhs: WebTab) -> Bool { lhs.id == rhs.id }
+    /// 동등성 비교: ID 기준으로 비교
+    static func == (lhs: WebTab, rhs: WebTab) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
-// MARK: 저장용 snapshot 구조체
+// MARK: - 탭의 저장 스냅샷 구조체 (UserDefaults에 저장할 형태)
 struct WebTabSnapshot: Codable {
     let session: WebTabSession
 }
 
+// MARK: - WebTab → Snapshot 변환 및 복원
 extension WebTab {
     func toSnapshot() -> WebTabSnapshot {
-        // historyStack이 없어도 최소 현재 URL은 하나만 저장
+        // 내부 방문 기록(historyStack)을 가져오되, 비어 있다면 현재 URL 포함
         let seq = stateModel.historyStackIfAny()
+
+        // 기록을 WebViewHistoryItem 배열로 변환
         let items = seq.map { WebViewHistoryItem(url: $0.absoluteString, title: "") }
-        let session = WebTabSession(tabID: id,
-                                    currentIndex: stateModel.currentIndexIndexInSafeBounds(),
-                                    items: items)
+
+        // 현재 인덱스와 함께 세션 생성
+        let session = WebTabSession(
+            tabID: id,
+            currentIndex: stateModel.currentIndexInSafeBounds(),
+            items: items
+        )
+
         return WebTabSnapshot(session: session)
     }
 
@@ -71,32 +87,39 @@ extension WebTab {
     }
 }
 
-// MARK: UserDefaults 저장/복원 매니저
+// MARK: - 탭 저장/복원 매니저 (UserDefaults 기반)
 enum TabPersistenceManager {
     private static let key = "savedWebTabs"
+
+    /// 현재 탭 배열을 UserDefaults에 저장
     static func saveTabs(_ tabs: [WebTab]) {
-        let arr = tabs.map { $0.toSnapshot() }
+        let arr = tabs.map { $0.toSnapshot() } // 탭 → Snapshot으로 변환
         if let data = try? JSONEncoder().encode(arr) {
             UserDefaults.standard.set(data, forKey: key)
         }
     }
+
+    /// UserDefaults에서 저장된 탭 복원
     static func loadTabs() -> [WebTab] {
         guard let d = UserDefaults.standard.data(forKey: key),
               let arr = try? JSONDecoder().decode([WebTabSnapshot].self, from: d)
-        else { return [] }
+        else {
+            return []
+        }
         return arr.map(WebTab.fromSnapshot)
     }
 }
 
-// MARK: 통합 브라우저 뷰 담당
+// MARK: - 메인 브라우저 UI
 struct UnifiedBrowserView: View {
-    @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs()
-    @State private var selectedIndex = 0
-    @State private var showTabManager = false
+    @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs() // 저장된 탭 불러오기
+    @State private var selectedIndex = 0                                  // 현재 선택된 탭 인덱스
+    @State private var showTabManager = false                             // 탭 전환 화면 표시 여부
 
     var body: some View {
         ZStack {
             if let tab = tabs[safe: selectedIndex] {
+                // URL이 있으면 WebView로 보여주기
                 if let _ = tab.currentURL {
                     CustomWebView(
                         stateModel: tab.stateModel,
@@ -104,11 +127,14 @@ struct UnifiedBrowserView: View {
                         showAVPlayer: $tabs[selectedIndex].showAVPlayer
                     )
                 } else {
+                    // URL이 없으면 대시보드 보여주기
                     DashboardView { url in
                         tab.stateModel.currentURL = url
                     }
                 }
             }
+
+            // 하단 도구 버튼 (탭 관리, 새 탭 생성)
             VStack {
                 Spacer()
                 HStack {
@@ -123,6 +149,7 @@ struct UnifiedBrowserView: View {
                 .padding()
             }
         }
+        // 탭 관리자 시트
         .sheet(isPresented: $showTabManager) {
             TabManager(
                 tabs: $tabs,
@@ -133,11 +160,13 @@ struct UnifiedBrowserView: View {
                 }
             }
         }
+        // 앱 종료 직전 탭 저장
         .onDisappear {
             TabPersistenceManager.saveTabs(tabs)
         }
     }
 
+    // 새 탭 추가 함수
     private func addNewTab() {
         let new = WebTab()
         tabs.append(new)
@@ -145,7 +174,7 @@ struct UnifiedBrowserView: View {
     }
 }
 
-// MARK: 탭 관리자 화면
+// MARK: - 탭 선택 및 닫기 화면
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
@@ -155,9 +184,11 @@ struct TabManager: View {
     var body: some View {
         VStack(alignment: .leading) {
             Text("탭 목록").font(.title.bold()).padding(.top)
+
             ScrollView {
                 ForEach(tabs) { tab in
                     HStack {
+                        // 탭 선택 버튼
                         Button(action: {
                             onTabSelected(tab.stateModel)
                             dismiss()
@@ -166,20 +197,28 @@ struct TabManager: View {
                                 Text(tab.currentURL?.host ?? "대시보드")
                                     .font(.headline)
                                 Text(tab.currentURL?.absoluteString ?? "")
-                                    .font(.caption).foregroundColor(.gray)
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
                             }
                         }
+
                         Spacer()
+
+                        // 탭 닫기 버튼
                         Button(action: { close(tab) }) {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.red)
                         }
                     }
-                    .padding(.horizontal).padding(.vertical, 4)
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
                 }
             }
+
+            // 새 탭 추가 버튼
             Button(action: {
-                tabs.append(WebTab()); dismiss()
+                tabs.append(WebTab())
+                dismiss()
             }) {
                 Label("새 탭", systemImage: "plus")
                     .padding()
@@ -191,6 +230,7 @@ struct TabManager: View {
         }
     }
 
+    // 탭 제거
     private func close(_ tab: WebTab) {
         if let idx = tabs.firstIndex(of: tab) {
             tabs.remove(at: idx)
@@ -198,7 +238,7 @@ struct TabManager: View {
     }
 }
 
-// MARK: 안전한 인덱스 접근
+// MARK: - 안전한 배열 인덱스 접근 확장
 extension Collection {
     subscript(safe idx: Index) -> Element? {
         indices.contains(idx) ? self[idx] : nil
