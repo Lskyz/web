@@ -86,7 +86,7 @@ struct TabManager: View {
                 )
                 .background(
                     NavigationLink(
-                        destination: AVPView(url: tab.playerURL ?? URL(string: "about:blank")!),
+                        destination: AVPlayerView(url: tab.playerURL ?? URL(string: "about:blank")!), // ✅ 변경됨
                         isActive: Binding(
                             get: { tabs[index].showAVPlayer },
                             set: { tabs[index].showAVPlayer = $0 }
@@ -144,7 +144,7 @@ struct TabManager: View {
             tabs.remove(at: index)
 
             if tabs.isEmpty {
-                addNewTab()
+                dismiss() // ✅ 모든 탭 닫혔을 경우 ContentView로 복귀
             } else if selectedTabID == tab.id {
                 selectedTabID = tabs.first!.id
             }
