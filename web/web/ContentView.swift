@@ -60,6 +60,7 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: isTextFieldFocused) { focused in
+                            // 포커스 해제 시 전체 선택 상태 초기화
                             if !focused {
                                 textFieldSelectedAll = false
                             }
@@ -172,6 +173,12 @@ struct ContentView: View {
                 // ✅ 탭 진입 시 주소창 동기화
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
+                }
+
+                // ✅ (중요!) pendingSession이 있다면 복원 실행
+                if let session = state.pendingSession {
+                    state.restoreSession(session)
+                    tabs[selectedTabIndex].stateModel.pendingSession = nil
                 }
             }
             .onChange(of: tabs) { newTabs in
