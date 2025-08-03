@@ -1,109 +1,112 @@
-import Foundation
-import Combine
-import SwiftUI
+import Foundation                 // 기본적인 데이터 타입 및 시스템 기능 제공
+import Combine                   // @Published와 같은 퍼블리셔 사용을 위해 필요
+import SwiftUI                   // SwiftUI 뷰와 관련 기능 사용
 
 // ✅ WebView의 상태를 관리하는 ViewModel
 class WebViewStateModel: ObservableObject {
-    
-    // ✅ 현재 페이지의 URL을 나타냄
+
+    // ✅ 현재 페이지의 URL을 나타냄 (URL 이동 시 변경됨)
     @Published var currentURL: URL? = nil {
         didSet {
             if let url = currentURL {
-                // 마지막 방문 페이지 저장 (앱 재실행 시 복원용)
+                // 🔐 마지막 방문 페이지 저장 (앱 재시작 시 복원 가능)
                 UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
-                // ⚠️ 방문 기록은 title 수신 후 CustomWebView에서 처리됨
+                // ⚠️ 실제 방문기록 등록은 웹 타이틀 수신 후 처리됨 (CustomWebView 쪽에서)
             }
         }
     }
-    
-    // ✅ WebView의 '뒤로 가기' 가능 여부
+
+    // ✅ 뒤로 가기 가능 여부 (WebView에서 상태 업데이트 필요)
     @Published var canGoBack = false
-    
-    // ✅ WebView의 '앞으로 가기' 가능 여부
+
+    // ✅ 앞으로 가기 가능 여부 (WebView에서 상태 업데이트 필요)
     @Published var canGoForward = false
-    
-    // ✅ AVPlayer로 재생할 영상의 URL
+
+    // ✅ AVPlayer에서 재생할 비디오 URL (감지하여 AVPlayer 띄움)
     @Published var playerURL: URL? = nil
-    
-    // ✅ AVPlayer를 전체화면으로 표시할지 여부
+
+    // ✅ AVPlayer 전체화면 표시 여부 (true면 AVPlayerView가 나타남)
     @Published var showAVPlayer = false
 
-    // ✅ 방문기록 항목 정의 (title 포함)
+    // ✅ 방문 기록 항목 구조체 (URL, 제목, 시각 포함)
     struct HistoryEntry: Identifiable, Hashable {
-        let id = UUID()               // 고유 ID
-        let url: URL                  // 방문한 URL
+        let id = UUID()               // 고유 ID (List 구분용)
+        let url: URL                  // 방문한 페이지의 URL
         let title: String             // 페이지 제목
-        let date: Date               // 방문 시각
+        let date: Date                // 방문한 시간
     }
 
-    // ✅ 전체 방문기록 배열 (최신순)
+    // ✅ 전체 방문기록 (최신 항목이 마지막에 위치)
     @Published var history: [HistoryEntry] = []
 
-    // ✅ 검색 키워드 필터링용
+    // ✅ 방문기록 검색용 키워드 (검색창에서 입력됨)
     @Published var searchKeyword: String = ""
 
-    // ✅ 필터링된 방문기록 (검색어 기반)
+    // ✅ 필터링된 방문기록 (검색어로 필터링, 최신순 정렬)
     var filteredHistory: [HistoryEntry] {
         if searchKeyword.isEmpty {
-            return history.reversed()
+            return history.reversed()    // 검색어 없으면 전체 기록 역순 반환
         }
         return history.filter {
+            // 제목 또는 URL에 검색어가 포함되었는지 검사
             $0.title.localizedCaseInsensitiveContains(searchKeyword) ||
             $0.url.absoluteString.localizedCaseInsensitiveContains(searchKeyword)
         }.reversed()
     }
 
-    // ✅ 방문 기록에 항목 추가 (중복 URL 제거 후 재삽입)
+    // ✅ 방문기록에 새 항목 추가 (중복 제거 후 삽입)
     func addToHistory(url: URL, title: String) {
         let entry = HistoryEntry(url: url, title: title, date: Date())
 
-        // 기존에 동일 URL이 있으면 제거
+        // 기존에 같은 URL이 있으면 제거
         history.removeAll { $0.url == url }
 
+        // 새 기록 추가
         history.append(entry)
 
-        // 🔒 용량 제한 (예: 최대 1GB → 항목 수 기준으로 예시: 10000개)
+        // 🔒 용량 제한 (예: 1만개까지만 유지)
         if history.count > 10000 {
             history.removeFirst(history.count - 10000)
         }
     }
 
-    // ✅ WebView 뒤로가기 동작을 트리거
+    // ✅ WebView에게 "뒤로 가기" 요청 알림 전송
     func goBack() {
         NotificationCenter.default.post(name: Notification.Name("WebViewGoBack"), object: nil)
     }
 
-    // ✅ WebView 앞으로가기 동작을 트리거
+    // ✅ WebView에게 "앞으로 가기" 요청 알림 전송
     func goForward() {
         NotificationCenter.default.post(name: Notification.Name("WebViewGoForward"), object: nil)
     }
 
-    // ✅ WebView 새로고침 동작을 트리거
+    // ✅ WebView에게 "새로고침" 요청 알림 전송
     func reload() {
         NotificationCenter.default.post(name: Notification.Name("WebViewReload"), object: nil)
     }
 
-    // ✅ 전체 방문기록 삭제
+    // ✅ 방문기록 전체 삭제 (기록 배열 초기화)
     func clearAllHistory() {
         history.removeAll()
     }
 
-    // ✅ 방문기록을 보여주는 별도 페이지 (ContentView에서 NavigationLink로 호출)
+    // ✅ 방문기록을 보여주는 별도 화면 (List 기반)
     struct HistoryPage: View {
-        @ObservedObject var state: WebViewStateModel
+        @ObservedObject var state: WebViewStateModel  // 외부 상태를 관찰
 
         var body: some View {
             VStack {
-                // 🔍 검색창
+                // 🔍 검색창 (키워드 입력 시 필터링 동작)
                 TextField("방문기록 검색", text: $state.searchKeyword)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
 
-                // 📜 기록 리스트
+                // 📜 방문기록 리스트
                 List {
                     ForEach(state.filteredHistory) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             Button(action: {
+                                // 기록 선택 시 해당 URL로 이동
                                 state.currentURL = entry.url
                             }) {
                                 Text(entry.title.isEmpty ? "제목 없음" : entry.title)
@@ -120,7 +123,7 @@ class WebViewStateModel: ObservableObject {
                         }
                         .padding(.vertical, 4)
                     }
-                    .onDelete(perform: delete)
+                    .onDelete(perform: delete) // 스와이프 삭제 지원
                 }
 
                 // 🗑 전체 삭제 버튼
@@ -132,10 +135,10 @@ class WebViewStateModel: ObservableObject {
                 }
                 .padding()
             }
-            .navigationTitle("방문 기록")
+            .navigationTitle("방문 기록") // 상단 제목
         }
 
-        // ✅ 날짜 포맷터
+        // ✅ 날짜/시간 포맷 (YYYY.MM.DD HH:mm)
         static let dateFormatter: DateFormatter = {
             let df = DateFormatter()
             df.dateStyle = .medium
@@ -143,30 +146,11 @@ class WebViewStateModel: ObservableObject {
             return df
         }()
 
-        // ✅ 리스트에서 항목 삭제 기능
+        // ✅ 리스트 항목 삭제 함수
         func delete(at offsets: IndexSet) {
-            let items = state.filteredHistory
-            let targets = offsets.map { items[$0] }
-            state.history.removeAll { targets.contains($0) }
+            let items = state.filteredHistory           // 현재 필터링된 기록
+            let targets = offsets.map { items[$0] }     // 삭제 대상들
+            state.history.removeAll { targets.contains($0) } // 기록에서 제거
         }
     }
-}
-
-// ✅ WebViewStateModel의 값을 다른 모델로부터 복사
-class WebViewStateModel: ObservableObject {
-    @Published var currentURL: URL?
-    @Published var canGoBack: Bool = false
-    @Published var canGoForward: Bool = false
-    @Published var playerURL: URL?
-    @Published var showAVPlayer: Bool = false
-    @Published var history: [(url: URL, title: String)] = []
-
-    @Published var pageTitle: String = "로딩 중…" // ✅ 현재 페이지 제목 캐시
-
-    func addToHistory(url: URL, title: String) {
-        history.append((url, title))
-        pageTitle = title  // ✅ 캐시 업데이트
-    }
-
-    // ...기타 로직
 }
