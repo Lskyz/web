@@ -166,3 +166,45 @@ struct TabManager: View {
         }
     }
 }
+
+// MARK: - WebTab 저장용 구조체 (UserDefaults에 저장하기 위한 단순 구조)
+struct WebTabSnapshot: Codable {
+    let urlString: String // 저장할 것은 URL만
+}
+
+// MARK: - WebTab ↔ Snapshot 변환
+extension WebTab {
+    /// WebTab → Snapshot
+    func toSnapshot() -> WebTabSnapshot? {
+        guard let url = self.currentURL else { return nil }
+        return WebTabSnapshot(urlString: url.absoluteString)
+    }
+
+    /// Snapshot → WebTab
+    static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
+        let url = URL(string: snapshot.urlString) ?? URL(string: "https://www.google.com")!
+        return WebTab(url: url)
+    }
+}
+
+// MARK: - 탭 저장/복원 관리자
+enum TabPersistenceManager {
+    private static let key = "savedWebTabs"
+
+    /// 저장
+    static func saveTabs(_ tabs: [WebTab]) {
+        let snapshots = tabs.compactMap { $0.toSnapshot() }
+        if let data = try? JSONEncoder().encode(snapshots) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    /// 복원
+    static func loadTabs() -> [WebTab] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let snapshots = try? JSONDecoder().decode([WebTabSnapshot].self, from: data) else {
+            return []
+        }
+        return snapshots.map(WebTab.fromSnapshot)
+    }
+}
