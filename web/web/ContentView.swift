@@ -195,8 +195,12 @@ struct ContentView: View {
                 // 🗂️ 탭 관리자
                 NavigationView {
                     TabManager(
-                        tabs: $tabs,
-                        selectedTabID: $selectedTabID
+                        initialStateModel: state,
+                        onTabSelected: { selectedState in
+                            if let selectedTab = tabs.first(where: { $0.stateModel === selectedState }) {
+                                selectedTabID = selectedTab.id
+                            }
+                        }
                     )
                 }
             }
