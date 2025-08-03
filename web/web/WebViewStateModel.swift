@@ -29,7 +29,7 @@ class WebViewStateModel: ObservableObject {
     @Published var showAVPlayer = false
 
     // ✅ 방문 기록 항목 구조체 (URL, 제목, 시각 포함)
-    struct HistoryEntry: Identifiable, Hashable {
+    struct HistoryEntry: Identifiable, Hashable, Codable {
         let id = UUID()               // 고유 ID (List 구분용)
         let url: URL                  // 방문한 페이지의 URL
         let title: String             // 페이지 제목
@@ -54,19 +54,31 @@ class WebViewStateModel: ObservableObject {
         }.reversed()
     }
 
+    // ✅ 전역(모든 탭) 방문기록 저장소 (앱 전체 공유)
+    static var globalHistory: [HistoryEntry] = [] {
+        didSet {
+            saveGlobalHistory() // 변경될 때마다 자동 저장
+        }
+    }
+
     // ✅ 방문기록에 새 항목 추가 (중복 제거 후 삽입)
     func addToHistory(url: URL, title: String) {
         let entry = HistoryEntry(url: url, title: title, date: Date())
 
-        // 기존에 같은 URL이 있으면 제거
+        // 📌 개인 기록 추가 (중복 URL 제거)
         history.removeAll { $0.url == url }
-
-        // 새 기록 추가
         history.append(entry)
+
+        // 📌 전역 기록 추가 (중복 URL 제거)
+        WebViewStateModel.globalHistory.removeAll { $0.url == url }
+        WebViewStateModel.globalHistory.append(entry)
 
         // 🔒 용량 제한 (예: 1만개까지만 유지)
         if history.count > 10000 {
             history.removeFirst(history.count - 10000)
+        }
+        if WebViewStateModel.globalHistory.count > 10000 {
+            WebViewStateModel.globalHistory.removeFirst(WebViewStateModel.globalHistory.count - 10000)
         }
     }
 
@@ -88,6 +100,27 @@ class WebViewStateModel: ObservableObject {
     // ✅ 방문기록 전체 삭제 (기록 배열 초기화)
     func clearAllHistory() {
         history.removeAll()
+    }
+
+    // ✅ 전역 방문기록 전체 삭제 (정적 함수)
+    static func clearGlobalHistory() {
+        globalHistory.removeAll()
+        saveGlobalHistory()
+    }
+
+    // ✅ 전역 기록 저장 (UserDefaults에 JSON 인코딩)
+    private static func saveGlobalHistory() {
+        if let data = try? JSONEncoder().encode(globalHistory) {
+            UserDefaults.standard.set(data, forKey: "globalHistory")
+        }
+    }
+
+    // ✅ 앱 시작 시 전역 기록 복원
+    static func loadGlobalHistory() {
+        if let data = UserDefaults.standard.data(forKey: "globalHistory"),
+           let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+            globalHistory = loaded
+        }
     }
 
     // ✅ 방문기록을 보여주는 별도 화면 (List 기반)
