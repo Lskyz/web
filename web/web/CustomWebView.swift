@@ -150,13 +150,23 @@ struct CustomWebView: UIViewRepresentable {
         // ✅ 페이지 로딩 완료 시 호출
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
+
+            // 🔄 탐색 가능 여부 갱신
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
+
+            // 🌐 현재 URL 저장
             parent.stateModel.currentURL = webView.url
 
-            // ✅ [중요] 현재 URL + 타이틀을 기록 저장 (탭별 기록용)
-            let pageTitle = webView.title ?? "제목 없음"
-            parent.stateModel.addToHistory(url: webView.url!, title: pageTitle)
+            // 📄 페이지 제목 → title 또는 host로 fallback
+            let title = (webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                ? webView.title!
+                : (webView.url?.host ?? "제목 없음")
+
+            // 📝 방문 기록 추가 (탭별 기록 저장)
+            if let finalURL = webView.url {
+                parent.stateModel.addToHistory(url: finalURL, title: title)
+            }
         }
 
         // ✅ 새 창 열기 → 같은 WebView에서 처리 (팝업 방지)
