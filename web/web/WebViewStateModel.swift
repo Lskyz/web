@@ -33,7 +33,7 @@ class WebViewStateModel: ObservableObject {
 
     // ✅ 방문 기록 항목 구조체 (URL, 제목, 시각 포함)
     struct HistoryEntry: Identifiable, Hashable, Codable {
-        var id = UUID()               // 고유 ID (List 구분용) - 수정됨 (let → var)
+        var id = UUID()               // 고유 ID (List 구분용)
         let url: URL                  // 방문한 페이지의 URL
         let title: String             // 페이지 제목
         let date: Date                // 방문한 시간
@@ -131,22 +131,22 @@ class WebViewStateModel: ObservableObject {
         }
     }
 
-    // ✅ [추가] 탭별 기록 저장
+    // ✅ [추가] 현재 탭의 방문기록을 UserDefaults에 저장
     private func saveHistoryForCurrentTab() {
-        guard let id = tabID else { return }
-        let key = "history-\(id.uuidString)"
+        guard let id = tabID else { return } // tabID가 없으면 저장 불가
+        let key = "history-\(id.uuidString)" // 탭 고유 키 생성
         if let data = try? JSONEncoder().encode(history) {
-            UserDefaults.standard.set(data, forKey: key)
+            UserDefaults.standard.set(data, forKey: key) // UserDefaults에 기록 저장
         }
     }
 
-    // ✅ [추가] 탭별 기록 복원
+    // ✅ [추가] 현재 탭의 방문기록을 복원
     func loadHistoryForCurrentTab() {
-        guard let id = tabID else { return }
-        let key = "history-\(id.uuidString)"
+        guard let id = tabID else { return } // tabID가 없으면 로딩 불가
+        let key = "history-\(id.uuidString)" // 탭 고유 키 사용
         if let data = UserDefaults.standard.data(forKey: key),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
-            self.history = loaded
+            self.history = loaded // 복원된 기록을 적용
         }
     }
 
