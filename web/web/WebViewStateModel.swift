@@ -2,6 +2,12 @@ import Foundation
 import Combine
 import SwiftUI
 
+// ✅ WebView의 세션을 표현하는 구조체 (탭 앞/뒤 탐색용)
+struct WebViewSession: Codable {
+    let urls: [URL]         // 순서대로 방문한 URL 리스트
+    let currentIndex: Int   // 현재 위치 인덱스
+}
+
 // ✅ WebView의 상태를 관리하는 ViewModel
 class WebViewStateModel: ObservableObject {
 
@@ -28,6 +34,9 @@ class WebViewStateModel: ObservableObject {
     @Published var playerURL: URL? = nil
     @Published var showAVPlayer = false
 
+    // ✅ 세션 복원 대기 중인 경우
+    var pendingSession: WebViewSession? = nil
+
     // ✅ 방문 기록 항목 정의 (전역 기록에서 사용)
     struct HistoryEntry: Identifiable, Hashable, Codable {
         var id = UUID()               // 고유 ID
@@ -39,7 +48,7 @@ class WebViewStateModel: ObservableObject {
     // ✅ 전역 방문 기록 저장소 (모든 탭 공유)
     static var globalHistory: [HistoryEntry] = [] {
         didSet {
-            saveGlobalHistory() // 변경될 때마다 자동 저장
+            saveGlobalHistory()
         }
     }
 
@@ -58,14 +67,11 @@ class WebViewStateModel: ObservableObject {
         }.reversed()
     }
 
-    // ✅ 방문 기록에 새 항목 추가 (중복 제거 후 저장)
+    // ✅ 방문 기록에 새 항목 추가 (중복 허용)
     func addToHistory(url: URL, title: String) {
         let entry = HistoryEntry(url: url, title: title, date: Date())
 
-        // 기존 동일 URL 제거
-        WebViewStateModel.globalHistory.removeAll { $0.url == url }
-
-        // 새 항목 추가
+        // ⛔️ 중복 제거 안 함 → 같은 URL 여러 번 기록됨
         WebViewStateModel.globalHistory.append(entry)
 
         // 🔒 최대 저장 개수 제한
@@ -93,6 +99,18 @@ class WebViewStateModel: ObservableObject {
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             globalHistory = loaded
         }
+    }
+
+    // ✅ 현재 상태로부터 세션 저장
+    func saveSession() -> WebViewSession? {
+        guard let url = currentURL else { return nil }
+        return WebViewSession(urls: [url], currentIndex: 0)
+    }
+
+    // ✅ 이전 세션 복원용으로 설정
+    func restoreSession(_ session: WebViewSession) {
+        self.pendingSession = session
+        self.currentURL = session.urls[session.currentIndex]
     }
 
     // ✅ WebView 제어 함수들
