@@ -143,6 +143,21 @@ class WebViewStateModel: ObservableObject {
         }
     }
 
+    // ✅ ✅ ✅ 여기에 끼워 넣은 유틸리티 함수들 (스냅샷 저장용)
+    func historyStackIfAny() -> [URL] {
+        return historyStack
+    }
+
+    func currentIndexInSafeBounds() -> Int {
+        guard !historyStack.isEmpty,
+              currentIndexInStack >= 0,
+              currentIndexInStack < historyStack.count
+        else {
+            return 0
+        }
+        return currentIndexInStack
+    }
+
     // MARK: - WebView 제어용 외부 호출 함수 (Notification 기반)
     func goBack() {
         NotificationCenter.default.post(name: Notification.Name("WebViewGoBack"), object: nil)
