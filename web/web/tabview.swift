@@ -28,17 +28,83 @@ struct WebTab: Identifiable, Equatable {
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss     // ✅ 복귀용
 
-    @State private var tabs: [WebTab] = [WebTab(url: URL(string: "https://www.google.com")!)]
-    @State private var selectedTabID: UUID = UUID()
+    @State private var tabs: [WebTab]
+    @State private var selectedTabID: UUID
+
+    // ✅ CustomWebView에서 연동될 바인딩용 상태
+    @State private var inputURL: String = ""
+    @State private var isTextFieldFocused: Bool = false
+    @State private var textFieldSelectedAll: Bool = false
+
+    init() {
+        let firstTab = WebTab(url: URL(string: "https://www.google.com")!)
+        _tabs = State(initialValue: [firstTab])
+        _selectedTabID = State(initialValue: firstTab.id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            // 🔗 주소창 + 이동 버튼
+            HStack {
+                TextField("URL 또는 검색어", text: $inputURL)
+                    .textFieldStyle(.roundedBorder)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .keyboardType(.URL)
+                    .focused($isTextFieldFocused)
+                    .onTapGesture {
+                        if !textFieldSelectedAll {
+                            DispatchQueue.main.async {
+                                self.inputURL = self.inputURL
+                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                                textFieldSelectedAll = true
+                            }
+                        }
+                    }
+                    .onChange(of: isTextFieldFocused) { focused in
+                        if !focused {
+                            textFieldSelectedAll = false
+                        }
+                    }
+                    .onSubmit {
+                        if let url = fixedURL(from: inputURL),
+                           let index = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+                            tabs[index].stateModel.currentURL = url
+                        }
+                        isTextFieldFocused = false
+                    }
+                    .overlay(
+                        HStack {
+                            Spacer()
+                            if !inputURL.isEmpty {
+                                Button(action: { inputURL = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.gray)
+                                }
+                                .padding(.trailing, 8)
+                            }
+                        }
+                    )
+
+                Button("이동") {
+                    if let url = fixedURL(from: inputURL),
+                       let index = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+                        tabs[index].stateModel.currentURL = url
+                    }
+                    isTextFieldFocused = false
+                }
+                .padding(.horizontal, 8)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+
             // 상단 탭 목록
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack {
                     ForEach(tabs) { tab in
                         Button(action: {
                             selectedTabID = tab.id
+                            inputURL = tab.currentURL?.absoluteString ?? ""
                         }) {
                             Text(tab.currentURL?.host ?? "탭")
                                 .padding(8)
@@ -53,7 +119,6 @@ struct TabManager: View {
                         }
                     }
 
-                    // 새 탭 추가
                     Button(action: {
                         addNewTab()
                     }) {
@@ -63,7 +128,8 @@ struct TabManager: View {
                             .foregroundColor(.white)
                             .cornerRadius(8)
                     }
-                }.padding(.horizontal)
+                }
+                .padding(.horizontal)
             }
 
             Divider()
@@ -72,7 +138,6 @@ struct TabManager: View {
             if let index = tabs.firstIndex(where: { $0.id == selectedTabID }) {
                 let tab = tabs[index]
 
-                // ✅ 네가 만든 CustomWebView 구조 그대로 사용
                 CustomWebView(
                     stateModel: tab.stateModel,
                     playerURL: Binding(
@@ -84,9 +149,14 @@ struct TabManager: View {
                         set: { tabs[index].showAVPlayer = $0 }
                     )
                 )
+                .onReceive(tab.stateModel.$currentURL) { newURL in
+                    if tab.id == selectedTabID, let url = newURL {
+                        inputURL = url.absoluteString
+                    }
+                }
                 .background(
                     NavigationLink(
-                        destination: AVPlayerView(url: tab.playerURL ?? URL(string: "about:blank")!), // ✅ 변경됨
+                        destination: AVPlayerView(url: tab.playerURL ?? URL(string: "about:blank")!),
                         isActive: Binding(
                             get: { tabs[index].showAVPlayer },
                             set: { tabs[index].showAVPlayer = $0 }
@@ -104,7 +174,6 @@ struct TabManager: View {
 
             // ✅ 하단 제어 + 닫기 버튼 추가
             HStack {
-                // 📥 ContentView로 복귀
                 Button(action: {
                     dismiss()
                 }) {
@@ -114,39 +183,50 @@ struct TabManager: View {
 
                 Spacer()
 
-                // ❌ 현재 탭 닫기
-                Button("현재 탭 닫기") {
+                Button(action: {
                     if let tab = tabs.first(where: { $0.id == selectedTabID }) {
                         closeTab(tab)
                     }
+                }) {
+                    Text("현재 탭 닫기")
+                        .padding(8)
                 }
-                .padding()
             }
             .background(Color(UIColor.secondarySystemBackground))
         }
-        .onAppear {
-            if let first = tabs.first {
-                selectedTabID = first.id
-            }
-        }
     }
 
-    // MARK: - 새 탭 추가
+    private func fixedURL(from input: String) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
+            return url
+        }
+
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        }
+
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+
     private func addNewTab() {
         let newTab = WebTab(url: URL(string: "https://www.apple.com")!)
         tabs.append(newTab)
         selectedTabID = newTab.id
+        inputURL = newTab.currentURL?.absoluteString ?? ""
     }
 
-    // MARK: - 탭 닫기
     private func closeTab(_ tab: WebTab) {
         if let index = tabs.firstIndex(of: tab) {
             tabs.remove(at: index)
 
             if tabs.isEmpty {
-                dismiss() // ✅ 모든 탭 닫혔을 경우 ContentView로 복귀
+                addNewTab()
             } else if selectedTabID == tab.id {
                 selectedTabID = tabs.first!.id
+                inputURL = tabs.first!.currentURL?.absoluteString ?? ""
             }
         }
     }
