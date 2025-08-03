@@ -28,15 +28,17 @@ struct ContentView: View {
     // 🗂️ 탭 관리자 화면 표시 여부
     @State private var showTabManager = false
 
+    // ✅ UserDefaults 키 (탭 저장용)
+    let tabSnapshotKey = "savedTabSnapshots"
+
     var body: some View {
         // ✅ 현재 선택된 탭의 인덱스 찾기
         if let index = tabs.firstIndex(where: { $0.id == selectedTabID }) {
-            let selected = tabs[index]                   // 선택된 탭
-            let state = selected.stateModel              // 선택된 탭의 상태 모델
+            let selected = tabs[index]
+            let state = selected.stateModel
 
             VStack(spacing: 0) {
-
-                // 🔗 주소창 + 이동 버튼
+                // 🔗 주소창 및 이동 버튼
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -45,7 +47,6 @@ struct ContentView: View {
                         .keyboardType(.URL)
                         .focused($isTextFieldFocused)
                         .onTapGesture {
-                            // 전체 선택 처리
                             if !textFieldSelectedAll {
                                 DispatchQueue.main.async {
                                     self.inputURL = self.inputURL
@@ -55,20 +56,17 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: isTextFieldFocused) { focused in
-                            // 포커스 해제 시 전체선택 초기화
                             if !focused {
                                 textFieldSelectedAll = false
                             }
                         }
                         .onSubmit {
-                            // 주소창 제출 시 URL 이동
                             if let url = fixedURL(from: inputURL) {
                                 state.currentURL = url
                             }
                             isTextFieldFocused = false
                         }
                         .overlay(
-                            // ❌ 텍스트 지우기 버튼 (오른쪽)
                             HStack {
                                 Spacer()
                                 if !inputURL.isEmpty {
@@ -81,7 +79,6 @@ struct ContentView: View {
                             }
                         )
 
-                    // ▶️ 이동 버튼
                     Button("이동") {
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
@@ -93,7 +90,7 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
 
-                // 🌐 실제 웹 콘텐츠 뷰
+                // 🌐 웹 콘텐츠 뷰
                 CustomWebView(
                     stateModel: state,
                     playerURL: Binding(
@@ -108,7 +105,6 @@ struct ContentView: View {
 
                 // ⬅️➡️🔄 하단 툴바
                 HStack {
-                    // ◀️ 뒤로가기 버튼
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left").font(.title2)
                     }
@@ -116,7 +112,6 @@ struct ContentView: View {
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
 
-                    // ▶️ 앞으로가기 버튼
                     Button(action: { state.goForward() }) {
                         Image(systemName: "chevron.right").font(.title2)
                     }
@@ -124,14 +119,12 @@ struct ContentView: View {
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
 
-                    // 🔄 새로고침 버튼
                     Button(action: { state.reload() }) {
                         Image(systemName: "arrow.clockwise").font(.title2)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
 
-                    // 🕘 방문기록 버튼
                     Button(action: {
                         showHistorySheet = true
                     }) {
@@ -142,7 +135,6 @@ struct ContentView: View {
 
                     Spacer()
 
-                    // 🗂️ 탭 관리자 진입 버튼
                     Button(action: {
                         showTabManager = true
                     }) {
@@ -151,7 +143,6 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 8)
 
-                    // 📺 PIP 기능 토글 (UI 숨김)
                     Toggle(isOn: $enablePIP) {
                         Image(systemName: "pip.enter")
                     }
@@ -163,43 +154,62 @@ struct ContentView: View {
                 .background(Color(UIColor.secondarySystemBackground))
             }
             .ignoresSafeArea(.keyboard)
+
+            // ✅ 탭 복원 및 주소창 초기화
             .onAppear {
-                // 👉 탭 변경 시 상태 초기화 및 주소창 동기화
                 selectedTabID = selected.id
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                 }
+
+                // ✅ 앱 시작 시 저장된 탭 복원
+                if let data = UserDefaults.standard.data(forKey: tabSnapshotKey),
+                   let snapshots = try? JSONDecoder().decode([WebTabSnapshot].self, from: data) {
+                    let restoredTabs = snapshots.map { WebTab.fromSnapshot($0) }
+                    if !restoredTabs.isEmpty {
+                        tabs = restoredTabs
+                        selectedTabID = restoredTabs.first?.id ?? UUID()
+                    }
+                }
             }
+
+            // ✅ 탭 변경 감지 시 자동 저장
+            .onChange(of: tabs) { newTabs in
+                let snapshots = newTabs.compactMap { $0.toSnapshot() }
+                if let data = try? JSONEncoder().encode(snapshots) {
+                    UserDefaults.standard.set(data, forKey: tabSnapshotKey)
+                }
+            }
+
             .onReceive(state.$currentURL) { url in
-                // 👉 URL 변경 시 주소창 동기화
                 if let url = url {
                     inputURL = url.absoluteString
                 }
             }
+
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[index].showAVPlayer },
                 set: { tabs[index].showAVPlayer = $0 }
             )) {
-                // 🎬 전체화면 AVPlayer
                 if let url = tabs[index].playerURL {
                     AVPlayerView(url: url)
                 }
             }
+
             .sheet(isPresented: $showHistorySheet) {
-                // 📜 방문기록 보기
                 NavigationView {
                     WebViewStateModel.HistoryPage(state: state)
                 }
             }
+
             .fullScreenCover(isPresented: $showTabManager) {
-                // 🗂️ 탭 관리자
                 NavigationView {
                     TabManager(
-                        tabs: $tabs, // ✅ 탭 리스트를 바인딩으로 넘김 — 핵심!
+                        tabs: $tabs,
                         initialStateModel: state,
                         onTabSelected: { selectedState in
                             if let selectedTab = tabs.first(where: { $0.stateModel === selectedState }) {
-                                selectedTabID = selectedTab.id // ✅ 탭 선택 반영
+                                selectedTabID = selectedTab.id
                             }
                         }
                     )
@@ -207,7 +217,6 @@ struct ContentView: View {
             }
 
         } else {
-            // ❗탭이 없을 경우 복구
             Text("탭 없음")
                 .onAppear {
                     if let first = tabs.first {
@@ -217,22 +226,40 @@ struct ContentView: View {
         }
     }
 
-    // 🔧 문자열을 유효한 URL로 변환하거나 검색 쿼리로 전환
+    // 🔧 문자열을 URL로 변환 또는 검색으로 변경
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // http(s) 형식이면 그대로 사용
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             return url
         }
-
-        // 도메인 형식이면 자동 보정
         if trimmed.contains(".") && !trimmed.contains(" ") {
             return URL(string: "https://\(trimmed)")
         }
-
-        // 검색어일 경우 구글 검색
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+}
+
+// ✅ 저장용 스냅샷 구조체 (탭의 상태 직렬화용)
+struct WebTabSnapshot: Codable {
+    let urlString: String
+    let history: [WebViewStateModel.HistoryEntry]
+}
+
+// ✅ WebTab <-> Snapshot 변환 확장
+extension WebTab {
+    func toSnapshot() -> WebTabSnapshot? {
+        guard let url = self.currentURL else { return nil }
+        return WebTabSnapshot(
+            urlString: url.absoluteString,
+            history: stateModel.history
+        )
+    }
+
+    static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
+        let url = URL(string: snapshot.urlString) ?? URL(string: "https://www.google.com")!
+        let tab = WebTab(url: url)
+        tab.stateModel.history = snapshot.history
+        return tab
     }
 }
