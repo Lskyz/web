@@ -26,8 +26,8 @@ struct ContentView: View {
     // 📜 방문기록 sheet 열기 여부
     @State private var showHistorySheet = false
 
-    // 🧭 [추가] 탭 매니저 진입용
-    @State private var showTabs = false
+    // 🗂️ 탭 관리자 진입 여부
+    @State private var showTabManager = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,7 +92,7 @@ struct ContentView: View {
                 showAVPlayer: $showAVPlayer
             )
 
-            // ⬅️➡️🔄 하단 탐색 버튼 + 방문기록 + 탭 진입 버튼
+            // ⬅️➡️🔄 하단 탐색 버튼 + 방문기록 + 탭 버튼
             HStack {
                 // ◀️ 뒤로가기
                 Button(action: { state.goBack() }) {
@@ -126,16 +126,16 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 8)
 
-                // 🧭 [추가] 탭 매니저 진입 버튼
+                Spacer()
+
+                // 🗂️ 탭 관리
                 Button(action: {
-                    showTabs = true
+                    showTabManager = true
                 }) {
                     Image(systemName: "square.on.square")
                         .font(.title2)
                 }
                 .padding(.horizontal, 8)
-
-                Spacer()
 
                 // 🖼️ PIP 토글 (UI 숨김)
                 Toggle(isOn: $enablePIP) {
@@ -184,10 +184,16 @@ struct ContentView: View {
             }
         }
 
-        // 탭 매니저로 진입
-        .fullScreenCover(isPresented: $showTabs) {
+        // 탭 관리자 진입 시 현재 상태 전달
+        .fullScreenCover(isPresented: $showTabManager) {
             NavigationView {
-                TabManager()
+                TabManager(
+                    initialStateModel: state,
+                    onTabSelected: { newState in
+                        state.copy(from: newState)
+                        showTabManager = false
+                    }
+                )
             }
         }
     }
