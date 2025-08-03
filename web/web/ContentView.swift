@@ -26,6 +26,9 @@ struct ContentView: View {
     // 📜 방문기록 sheet 열기 여부
     @State private var showHistorySheet = false
 
+    // 🧭 [추가] 탭 매니저 진입용
+    @State private var showTabs = false
+
     var body: some View {
         VStack(spacing: 0) {
 
@@ -89,7 +92,7 @@ struct ContentView: View {
                 showAVPlayer: $showAVPlayer
             )
 
-            // ⬅️➡️🔄 하단 탐색 버튼 + 방문기록
+            // ⬅️➡️🔄 하단 탐색 버튼 + 방문기록 + 탭 진입 버튼
             HStack {
                 // ◀️ 뒤로가기
                 Button(action: { state.goBack() }) {
@@ -119,6 +122,15 @@ struct ContentView: View {
                     showHistorySheet = true
                 }) {
                     Image(systemName: "clock.arrow.circlepath")
+                        .font(.title2)
+                }
+                .padding(.horizontal, 8)
+
+                // 🧭 [추가] 탭 매니저 진입 버튼
+                Button(action: {
+                    showTabs = true
+                }) {
+                    Image(systemName: "square.on.square")
                         .font(.title2)
                 }
                 .padding(.horizontal, 8)
@@ -169,6 +181,13 @@ struct ContentView: View {
         .sheet(isPresented: $showHistorySheet) {
             NavigationView {
                 WebViewStateModel.HistoryPage(state: state)
+            }
+        }
+
+        // 탭 매니저로 진입
+        .fullScreenCover(isPresented: $showTabs) {
+            NavigationView {
+                TabManager()
             }
         }
     }
