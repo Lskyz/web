@@ -5,6 +5,9 @@ import SwiftUI                   // SwiftUI 뷰와 관련 기능 사용
 // ✅ WebView의 상태를 관리하는 ViewModel
 class WebViewStateModel: ObservableObject {
 
+    // ✅ 탭 고유 식별자 (탭별 방문기록 저장 키로 사용됨)
+    var tabID: UUID? = nil
+
     // ✅ 현재 페이지의 URL을 나타냄 (URL 이동 시 변경됨)
     @Published var currentURL: URL? = nil {
         didSet {
@@ -37,7 +40,12 @@ class WebViewStateModel: ObservableObject {
     }
 
     // ✅ 전체 방문기록 (최신 항목이 마지막에 위치)
-    @Published var history: [HistoryEntry] = []
+    @Published var history: [HistoryEntry] = [] {
+        didSet {
+            // ✅ 탭별 히스토리를 자동 저장
+            saveHistoryForCurrentTab()
+        }
+    }
 
     // ✅ 방문기록 검색용 키워드 (검색창에서 입력됨)
     @Published var searchKeyword: String = ""
@@ -120,6 +128,25 @@ class WebViewStateModel: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "globalHistory"),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             globalHistory = loaded
+        }
+    }
+
+    // ✅ [추가] 탭별 기록 저장
+    private func saveHistoryForCurrentTab() {
+        guard let id = tabID else { return }
+        let key = "history-\(id.uuidString)"
+        if let data = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    // ✅ [추가] 탭별 기록 복원
+    func loadHistoryForCurrentTab() {
+        guard let id = tabID else { return }
+        let key = "history-\(id.uuidString)"
+        if let data = UserDefaults.standard.data(forKey: key),
+           let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+            self.history = loaded
         }
     }
 
