@@ -195,10 +195,11 @@ struct ContentView: View {
                 // 🗂️ 탭 관리자
                 NavigationView {
                     TabManager(
+                        tabs: $tabs, // ✅ 탭 리스트를 바인딩으로 넘김 — 핵심!
                         initialStateModel: state,
                         onTabSelected: { selectedState in
                             if let selectedTab = tabs.first(where: { $0.stateModel === selectedState }) {
-                                selectedTabID = selectedTab.id
+                                selectedTabID = selectedTab.id // ✅ 탭 선택 반영
                             }
                         }
                     )
