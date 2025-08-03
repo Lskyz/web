@@ -7,7 +7,8 @@ struct WebViewHistoryItem: Codable {
     let title: String
 }
 
-struct WebViewSession: Codable {
+// ✅ 기존 WebViewSession 이름 충돌 방지 → WebTabSession 으로 변경
+struct WebTabSession: Codable {
     let tabID: UUID
     let currentIndex: Int
     let items: [WebViewHistoryItem]
@@ -167,7 +168,7 @@ struct TabManager: View {
 
 // MARK: - 탭 저장용 스냅샷 구조 (세션 전체 저장 포함)
 struct WebTabSnapshot: Codable {
-    let session: WebViewSession
+    let session: WebTabSession
 }
 
 // MARK: - WebTab <-> Snapshot 변환 확장
@@ -177,7 +178,7 @@ extension WebTab {
         guard let url = self.currentURL else { return nil }
 
         let item = WebViewHistoryItem(url: url.absoluteString, title: "")
-        let session = WebViewSession(tabID: id, currentIndex: 0, items: [item])
+        let session = WebTabSession(tabID: id, currentIndex: 0, items: [item])
         return WebTabSnapshot(session: session)
     }
 
@@ -190,7 +191,14 @@ extension WebTab {
         var tab = WebTab(url: url)
         tab.stateModel.tabID = snapshot.session.tabID
         tab.stateModel.currentURL = url
-        tab.stateModel.pendingSession = snapshot.session // ✅ 세션 복원 예약
+
+        // ✅ WebViewStateModel 내부 세션 형태로 변환
+        let session = WebViewStateModel.WebViewSession(
+            urls: urls.compactMap { URL(string: $0.url) },
+            currentIndex: snapshot.session.currentIndex
+        )
+        tab.stateModel.pendingSession = session
+
         return tab
     }
 }
