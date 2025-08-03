@@ -30,7 +30,7 @@ class WebViewStateModel: ObservableObject {
 
     // ✅ 방문 기록 항목 구조체 (URL, 제목, 시각 포함)
     struct HistoryEntry: Identifiable, Hashable, Codable {
-        let id = UUID()               // 고유 ID (List 구분용)
+        var id = UUID()               // 고유 ID (List 구분용) - 수정됨 (let → var)
         let url: URL                  // 방문한 페이지의 URL
         let title: String             // 페이지 제목
         let date: Date                // 방문한 시간
