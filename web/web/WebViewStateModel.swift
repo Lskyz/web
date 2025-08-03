@@ -153,14 +153,20 @@ class WebViewStateModel: ObservableObject {
 }
 
 // ✅ WebViewStateModel의 값을 다른 모델로부터 복사
-extension WebViewStateModel {
-    func copy(from other: WebViewStateModel) {
-        self.currentURL = other.currentURL
-        self.canGoBack = other.canGoBack
-        self.canGoForward = other.canGoForward
-        self.playerURL = other.playerURL
-        self.showAVPlayer = other.showAVPlayer
-        self.history = other.history
-        self.searchKeyword = other.searchKeyword
+class WebViewStateModel: ObservableObject {
+    @Published var currentURL: URL?
+    @Published var canGoBack: Bool = false
+    @Published var canGoForward: Bool = false
+    @Published var playerURL: URL?
+    @Published var showAVPlayer: Bool = false
+    @Published var history: [(url: URL, title: String)] = []
+
+    @Published var pageTitle: String = "로딩 중…" // ✅ 현재 페이지 제목 캐시
+
+    func addToHistory(url: URL, title: String) {
+        history.append((url, title))
+        pageTitle = title  // ✅ 캐시 업데이트
     }
+
+    // ...기타 로직
 }
