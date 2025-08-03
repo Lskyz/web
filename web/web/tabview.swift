@@ -93,7 +93,7 @@ extension WebTab {
     }
 }
 
-// MARK: - 대시보드 뷰
+// MARK: - 대시보드
 struct DashboardView: View {
     @State private var inputURL: String = ""
     let onSelectURL: (URL) -> Void
@@ -144,11 +144,12 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - 브라우저 통합 뷰
+// MARK: - 통합 브라우저
 struct UnifiedBrowserView: View {
     @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs()
     @State private var selectedIndex: Int = 0
     @State private var showingTabManager = false
+    @State private var showingDebugView = false  // ✅ 디버깅 뷰 표시 상태
 
     var body: some View {
         ZStack {
@@ -173,6 +174,10 @@ struct UnifiedBrowserView: View {
                         Image(systemName: "square.on.square")
                     }
                     Spacer()
+                    Button(action: { showingDebugView = true }) {
+                        Image(systemName: "ladybug")
+                    }
+                    Spacer()
                     Button(action: addNewTab) {
                         Image(systemName: "plus")
                     }
@@ -191,6 +196,9 @@ struct UnifiedBrowserView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingDebugView) {
+            TabDebugPage(tabs: tabs) // ✅ 디버깅 화면 표시
+        }
         .onDisappear {
             TabPersistenceManager.saveTabs(tabs)
         }
@@ -203,7 +211,7 @@ struct UnifiedBrowserView: View {
     }
 }
 
-// MARK: - 탭 전환 및 삭제
+// MARK: - Tab Manager
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
@@ -263,9 +271,53 @@ struct TabManager: View {
     }
 }
 
+// MARK: - 디버깅 전용 페이지
+struct TabDebugPage: View {
+    let tabs: [WebTab]
+
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(Array(tabs.enumerated()), id: \.element.id) { (index, tab) in
+                    Section(header: Text("🧩 탭 \(index)")) {
+                        Text("🆔 Tab ID: \(tab.id.uuidString)")
+                        Text("🌐 currentURL: \(tab.currentURL?.absoluteString ?? "없음")")
+                        Text("📌 currentIndexInStack: \(tab.stateModel.currentIndexInSafeBounds())")
+                        Text("🧠 pendingSession: \(tab.stateModel.pendingSession != nil ? "있음" : "없음")")
+
+                        if !tab.stateModel.historyStackIfAny().isEmpty {
+                            Text("📜 History Stack:")
+                            ForEach(Array(tab.stateModel.historyStackIfAny().enumerated()), id: \.offset) { i, url in
+                                Text("  \(i): \(url.absoluteString)")
+                                    .font(.caption)
+                                    .foregroundColor(i == tab.stateModel.currentIndexInSafeBounds() ? .blue : .secondary)
+                            }
+                        } else {
+                            Text("📭 History Stack 비어 있음")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("🛠 탭 디버그")
+        }
+    }
+}
+
 // MARK: - 인덱스 안전 접근
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - 내부 프라이빗 Stack 접근 헬퍼
+extension WebViewStateModel {
+    func historyStackIfAny() -> [URL] {
+        Mirror(reflecting: self).children.first { $0.label == "historyStack" }?.value as? [URL] ?? []
+    }
+
+    func currentIndexInSafeBounds() -> Int {
+        Mirror(reflecting: self).children.first { $0.label == "currentIndexInStack" }?.value as? Int ?? -1
     }
 }
