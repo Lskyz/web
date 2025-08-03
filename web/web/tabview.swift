@@ -26,6 +26,8 @@ struct WebTab: Identifiable, Equatable {
 
 // MARK: - 실제 탭 UI를 제어하는 뷰
 struct TabManager: View {
+    @Environment(\.dismiss) private var dismiss     // ✅ 복귀용
+
     @State private var tabs: [WebTab] = [WebTab(url: URL(string: "https://www.google.com")!)]
     @State private var selectedTabID: UUID = UUID()
 
@@ -100,9 +102,19 @@ struct TabManager: View {
 
             Divider()
 
-            // 하단 제어
+            // ✅ 하단 제어 + 닫기 버튼 추가
             HStack {
+                // 📥 ContentView로 복귀
+                Button(action: {
+                    dismiss()
+                }) {
+                    Label("닫기", systemImage: "chevron.down")
+                        .padding(8)
+                }
+
                 Spacer()
+
+                // ❌ 현재 탭 닫기
                 Button("현재 탭 닫기") {
                     if let tab = tabs.first(where: { $0.id == selectedTabID }) {
                         closeTab(tab)
@@ -110,6 +122,7 @@ struct TabManager: View {
                 }
                 .padding()
             }
+            .background(Color(UIColor.secondarySystemBackground))
         }
         .onAppear {
             if let first = tabs.first {
