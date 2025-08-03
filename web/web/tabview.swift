@@ -1,122 +1,107 @@
 import SwiftUI
 import AVKit
 
-// MARK: - 탭 하나의 데이터
+// MARK: - 탭 하나의 데이터 구조
 struct WebTab: Identifiable, Equatable {
-    let id: UUID
-    let stateModel: WebViewStateModel
-    var playerURL: URL?
-    var showAVPlayer: Bool
-
-    var currentURL: URL? {
-        stateModel.currentURL
-    }
-
-    init(url: URL) {
-        self.id = UUID()
-        self.stateModel = WebViewStateModel()
-        self.stateModel.currentURL = url
-        self.playerURL = nil
-        self.showAVPlayer = false
-    }
+    let id = UUID()
+    let stateModel = WebViewStateModel() // ✅ 각각 독립적인 상태 보존
+    var playerURL: URL? = nil
+    var showAVPlayer: Bool = false
 
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
     }
 }
 
-// MARK: - 탭 리스트 및 선택 뷰
+// MARK: - 탭 전체를 관리하는 뷰
 struct TabManager: View {
-    @Environment(\.dismiss) private var dismiss
-
-    // 🔗 현재 선택된 탭 상태 외부에 전달
-    let initialStateModel: WebViewStateModel
-    let onTabSelected: (WebViewStateModel) -> Void
-
-    // 🔄 탭 배열 및 상태
-    @State private var tabs: [WebTab] = []
-    @State private var selectedTabID: UUID?
+    @State private var tabs: [WebTab] = [WebTab()] // ✅ 최소 1개 탭
+    @State private var selectedTabID: UUID = UUID() // ✅ 현재 표시 중인 탭
+    @State private var showTabList = false          // ✅ 탭 리스트 보기
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text("탭 목록")
-                .font(.largeTitle.bold())
-                .padding(.top, 20)
-
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach(tabs) { tab in
-                        Button(action: {
-                            // ✅ 탭 선택
-                            onTabSelected(tab.stateModel)
-                            dismiss()
-                        }) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(tab.currentURL?.host ?? "새 탭")
-                                        .font(.headline)
-                                    Text(tab.currentURL?.absoluteString ?? "")
-                                        .font(.caption)
-                                        .foregroundColor(.gray)
-                                }
-                                Spacer()
-                                // ❌ 닫기
-                                Button(action: {
-                                    closeTab(tab)
-                                }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.red)
-                                        .font(.title2)
-                                }
+        ZStack {
+            // ✅ 현재 선택된 탭만 렌더링
+            if let selected = tabs.first(where: { $0.id == selectedTabID }) {
+                ContentView(
+                    state: selected.stateModel,
+                    playerURL: Binding(
+                        get: { selected.playerURL },
+                        set: { newValue in
+                            if let i = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+                                tabs[i].playerURL = newValue
                             }
-                            .padding()
-                            .background(Color(UIColor.secondarySystemBackground))
-                            .cornerRadius(10)
-                            .padding(.horizontal)
                         }
-                        .buttonStyle(PlainButtonStyle())
+                    ),
+                    showAVPlayer: Binding(
+                        get: { selected.showAVPlayer },
+                        set: { newValue in
+                            if let i = tabs.firstIndex(where: { $0.id == selectedTabID }) {
+                                tabs[i].showAVPlayer = newValue
+                            }
+                        }
+                    ),
+                    onTabListRequested: {
+                        showTabList = true
+                    }
+                )
+            }
+
+        }
+        // ✅ 탭 목록 Sheet
+        .sheet(isPresented: $showTabList) {
+            NavigationView {
+                List {
+                    ForEach(tabs) { tab in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(tab.stateModel.currentURL?.host ?? "새 탭")
+                                    .font(.headline)
+                                Text(tab.stateModel.currentURL?.absoluteString ?? "")
+                                    .font(.subheadline)
+                                    .lineLimit(1)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Button(action: {
+                                closeTab(tab)
+                            }) {
+                                Image(systemName: "xmark.circle")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedTabID = tab.id
+                            showTabList = false
+                        }
+                    }
+
+                    // ➕ 새 탭 추가
+                    Button(action: {
+                        let newTab = WebTab()
+                        tabs.append(newTab)
+                        selectedTabID = newTab.id
+                        showTabList = false
+                    }) {
+                        Label("새 탭 열기", systemImage: "plus")
+                            .font(.headline)
+                    }
+                    .padding(.vertical)
+                }
+                .navigationTitle("탭 목록")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("닫기") { showTabList = false }
                     }
                 }
-                .padding(.top)
             }
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button(action: {
-                    addNewTab()
-                }) {
-                    Label("새 탭 추가", systemImage: "plus")
-                        .padding()
-                        .background(Color.green)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                }
-                Spacer()
-            }
-            .padding(.bottom, 20)
         }
         .onAppear {
-            setupInitialTabs()
+            if let first = tabs.first {
+                selectedTabID = first.id
+            }
         }
-    }
-
-    // MARK: - 초기 탭 목록 구성
-    private func setupInitialTabs() {
-        // 기존 탭이 있다면 복사
-        if tabs.isEmpty {
-            let existing = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!)
-            tabs.append(existing)
-            selectedTabID = existing.id
-        }
-    }
-
-    // MARK: - 새 탭 추가
-    private func addNewTab() {
-        let new = WebTab(url: URL(string: "https://www.apple.com")!)
-        tabs.append(new)
-        selectedTabID = new.id
     }
 
     // MARK: - 탭 닫기
@@ -124,7 +109,9 @@ struct TabManager: View {
         if let index = tabs.firstIndex(of: tab) {
             tabs.remove(at: index)
             if tabs.isEmpty {
-                addNewTab()
+                let newTab = WebTab()
+                tabs.append(newTab)
+                selectedTabID = newTab.id
             } else if selectedTabID == tab.id {
                 selectedTabID = tabs.first!.id
             }
