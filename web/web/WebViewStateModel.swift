@@ -151,3 +151,16 @@ class WebViewStateModel: ObservableObject {
         }
     }
 }
+
+// ✅ WebViewStateModel의 값을 다른 모델로부터 복사
+extension WebViewStateModel {
+    func copy(from other: WebViewStateModel) {
+        self.currentURL = other.currentURL
+        self.canGoBack = other.canGoBack
+        self.canGoForward = other.canGoForward
+        self.playerURL = other.playerURL
+        self.showAVPlayer = other.showAVPlayer
+        self.history = other.history
+        self.searchKeyword = other.searchKeyword
+    }
+}
