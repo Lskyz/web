@@ -1,31 +1,32 @@
 import SwiftUI
 import AVKit
 
-// MARK: - 개별 방문기록 항목 및 세션 저장 구조 (탭 복원용)
+// MARK: - 방문 기록 항목 (탭 내 히스토리 저장용)
 struct WebViewHistoryItem: Codable {
     let url: String       // 방문한 URL
-    let title: String     // 해당 페이지 제목
+    let title: String     // 해당 페이지 제목 (지금은 생략)
 }
 
-// MARK: - 각 탭의 세션 상태를 저장하기 위한 구조체
+// MARK: - 각 탭의 히스토리 세션 저장 구조
 struct WebTabSession: Codable {
-    let tabID: UUID
-    let currentIndex: Int
-    let items: [WebViewHistoryItem]
+    let tabID: UUID                // 탭 고유 식별자
+    let currentIndex: Int         // 현재 보고 있는 페이지 인덱스
+    let items: [WebViewHistoryItem] // URL 히스토리 목록
 }
 
-// MARK: - 탭 데이터 모델 (웹뷰 상태 포함)
+// MARK: - 탭 데이터 모델 (각 탭에 대응되는 상태 정보 보유)
 struct WebTab: Identifiable, Equatable {
-    let id: UUID
-    let stateModel: WebViewStateModel
-    var playerURL: URL? = nil
-    var showAVPlayer: Bool = false
+    let id: UUID                            // 고유 ID
+    let stateModel: WebViewStateModel       // 웹뷰 상태 모델 (URL 등)
+    var playerURL: URL? = nil               // 비디오 재생용
+    var showAVPlayer: Bool = false          // 전체화면 재생 여부
 
+    // 현재 페이지의 URL (stateModel로부터 간접 참조)
     var currentURL: URL? {
         stateModel.currentURL
     }
 
-    // ✅ 새 탭 생성자 (즉시 로드)
+    // ✅ 일반 탭 생성자 (즉시 로딩)
     init(url: URL) {
         self.id = UUID()
         self.stateModel = WebViewStateModel()
@@ -33,7 +34,7 @@ struct WebTab: Identifiable, Equatable {
         self.stateModel.currentURL = url
     }
 
-    // ✅ 세션 복원용 생성자 (즉시 로딩 방지)
+    // ✅ 세션 복원용 생성자
     init(fromSession session: WebTabSession) {
         self.id = session.tabID
         self.stateModel = WebViewStateModel()
@@ -58,13 +59,13 @@ struct WebTab: Identifiable, Equatable {
     }
 }
 
-// MARK: - 탭 목록 관리 UI
+// MARK: - 탭 목록 UI 및 관리
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var tabs: [WebTab]
-    let initialStateModel: WebViewStateModel
-    let onTabSelected: (WebViewStateModel) -> Void
-    @State private var selectedTabID: UUID?
+    @Binding var tabs: [WebTab]                         // 탭 배열 바인딩
+    let initialStateModel: WebViewStateModel            // 현재 선택된 탭
+    let onTabSelected: (WebViewStateModel) -> Void      // 탭 선택 시 콜백
+    @State private var selectedTabID: UUID?             // 선택된 탭 추적
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,6 +75,7 @@ struct TabManager: View {
 
             ScrollView {
                 VStack(spacing: 12) {
+                    // 🔄 현재 탭으로 돌아가기 버튼
                     Button(action: {
                         onTabSelected(initialStateModel)
                         dismiss()
@@ -87,6 +89,7 @@ struct TabManager: View {
                     }
                     .padding(.horizontal)
 
+                    // 📑 각 탭 미리보기 및 선택
                     ForEach(tabs) { tab in
                         Button(action: {
                             onTabSelected(tab.stateModel)
@@ -157,6 +160,7 @@ struct TabManager: View {
         }
     }
 
+    // ✅ 최초 탭 하나도 없으면 기본 생성
     private func setupInitialTabs() {
         if tabs.isEmpty {
             let existing = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!)
@@ -165,12 +169,14 @@ struct TabManager: View {
         }
     }
 
+    // ✅ 새 탭 추가 시 애플 페이지로 시작
     private func addNewTab() {
         let new = WebTab(url: URL(string: "https://www.apple.com")!)
         tabs.append(new)
         selectedTabID = new.id
     }
 
+    // ✅ 탭 닫기
     private func closeTab(_ tab: WebTab) {
         if let index = tabs.firstIndex(of: tab) {
             tabs.remove(at: index)
@@ -189,14 +195,25 @@ struct WebTabSnapshot: Codable {
     let session: WebTabSession
 }
 
-// MARK: - 탭 ↔ 스냅샷 변환
+// MARK: - 탭 ↔ 저장 스냅샷 변환
 extension WebTab {
     func toSnapshot() -> WebTabSnapshot? {
-        guard let url = self.currentURL else { return nil }
+        // ✅ stateModel이 보관 중인 세션을 추출
+        guard let session = stateModel.saveSession() else { return nil }
 
-        let item = WebViewHistoryItem(url: url.absoluteString, title: "")
-        let session = WebTabSession(tabID: id, currentIndex: 0, items: [item])
-        return WebTabSnapshot(session: session)
+        // ✅ 세션에 담을 방문 기록 변환
+        let items = session.urls.map {
+            WebViewHistoryItem(url: $0.absoluteString, title: "")  // 제목은 비워둠
+        }
+
+        // ✅ 인덱스 포함한 세션 구성
+        let sessionToSave = WebTabSession(
+            tabID: id,
+            currentIndex: session.currentIndex,
+            items: items
+        )
+
+        return WebTabSnapshot(session: sessionToSave)
     }
 
     static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
@@ -204,7 +221,7 @@ extension WebTab {
     }
 }
 
-// MARK: - 탭 저장 관리자
+// MARK: - 탭 저장/복원 관리자
 enum TabPersistenceManager {
     private static let key = "savedWebTabs"
 
@@ -224,7 +241,7 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - 안전한 인덱싱
+// MARK: - 인덱스 안전 접근 확장
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
