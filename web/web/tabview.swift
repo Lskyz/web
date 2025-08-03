@@ -8,25 +8,24 @@ struct WebViewHistoryItem: Codable {
 }
 
 // MARK: - 각 탭의 세션 상태를 저장하기 위한 구조체
-// 기존 WebViewSession과 이름 충돌을 방지하기 위해 WebTabSession으로 선언
 struct WebTabSession: Codable {
-    let tabID: UUID             // 탭 고유 ID
-    let currentIndex: Int       // 세션 내 현재 위치
-    let items: [WebViewHistoryItem] // 방문했던 페이지 목록
+    let tabID: UUID
+    let currentIndex: Int
+    let items: [WebViewHistoryItem]
 }
 
 // MARK: - 탭 데이터 모델 (웹뷰 상태 포함)
 struct WebTab: Identifiable, Equatable {
-    let id: UUID                               // 탭 고유 ID
-    let stateModel: WebViewStateModel          // 웹뷰 상태를 관리하는 뷰모델
-    var playerURL: URL? = nil                  // AVPlayer에 사용할 비디오 URL
-    var showAVPlayer: Bool = false             // 전체화면 플레이어 표시 여부
+    let id: UUID
+    let stateModel: WebViewStateModel
+    var playerURL: URL? = nil
+    var showAVPlayer: Bool = false
 
     var currentURL: URL? {
-        stateModel.currentURL                  // 현재 웹뷰의 URL
+        stateModel.currentURL
     }
 
-    // ✅ 새 탭 생성자
+    // ✅ 새 탭 생성자 (즉시 로드)
     init(url: URL) {
         self.id = UUID()
         self.stateModel = WebViewStateModel()
@@ -34,19 +33,38 @@ struct WebTab: Identifiable, Equatable {
         self.stateModel.currentURL = url
     }
 
-    // ✅ 동일성 판단
+    // ✅ 세션 복원용 생성자 (즉시 로딩 방지)
+    init(fromSession session: WebTabSession) {
+        self.id = session.tabID
+        self.stateModel = WebViewStateModel()
+        self.stateModel.tabID = session.tabID
+        self.playerURL = nil
+        self.showAVPlayer = false
+
+        let urls = session.items.compactMap { URL(string: $0.url) }
+        let index = session.currentIndex
+
+        if urls.indices.contains(index) {
+            self.stateModel.currentURL = urls[index]
+            self.stateModel.pendingSession = WebViewSession(
+                urls: urls,
+                currentIndex: index
+            )
+        }
+    }
+
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
     }
 }
 
-// MARK: - 탭 목록 관리 UI (탭 추가, 선택, 제거)
+// MARK: - 탭 목록 관리 UI
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var tabs: [WebTab]                        // 전체 탭 목록
-    let initialStateModel: WebViewStateModel           // 현재 탭 상태
-    let onTabSelected: (WebViewStateModel) -> Void     // 탭 전환 콜백
-    @State private var selectedTabID: UUID? = nil       // 현재 선택된 탭
+    @Binding var tabs: [WebTab]
+    let initialStateModel: WebViewStateModel
+    let onTabSelected: (WebViewStateModel) -> Void
+    @State private var selectedTabID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,7 +74,6 @@ struct TabManager: View {
 
             ScrollView {
                 VStack(spacing: 12) {
-                    // ✅ 현재 탭 유지 버튼
                     Button(action: {
                         onTabSelected(initialStateModel)
                         dismiss()
@@ -70,7 +87,6 @@ struct TabManager: View {
                     }
                     .padding(.horizontal)
 
-                    // ✅ 기존 탭 리스트
                     ForEach(tabs) { tab in
                         Button(action: {
                             onTabSelected(tab.stateModel)
@@ -88,7 +104,6 @@ struct TabManager: View {
 
                                 Spacer()
 
-                                // 현재 탭 표시
                                 if tab.stateModel === initialStateModel {
                                     Text("현재 탭")
                                         .font(.caption2)
@@ -98,7 +113,6 @@ struct TabManager: View {
                                         .cornerRadius(6)
                                 }
 
-                                // 탭 닫기 버튼
                                 Button(action: {
                                     closeTab(tab)
                                 }) {
@@ -123,7 +137,6 @@ struct TabManager: View {
 
             Divider()
 
-            // 새 탭 추가 버튼
             HStack {
                 Spacer()
                 Button(action: {
@@ -144,7 +157,6 @@ struct TabManager: View {
         }
     }
 
-    // ✅ 최초 진입 시 탭이 없다면 하나 생성
     private func setupInitialTabs() {
         if tabs.isEmpty {
             let existing = WebTab(url: initialStateModel.currentURL ?? URL(string: "https://www.google.com")!)
@@ -153,14 +165,12 @@ struct TabManager: View {
         }
     }
 
-    // ✅ 새 탭 추가
     private func addNewTab() {
         let new = WebTab(url: URL(string: "https://www.apple.com")!)
         tabs.append(new)
         selectedTabID = new.id
     }
 
-    // ✅ 탭 제거
     private func closeTab(_ tab: WebTab) {
         if let index = tabs.firstIndex(of: tab) {
             tabs.remove(at: index)
@@ -176,12 +186,11 @@ struct TabManager: View {
 
 // MARK: - 탭 저장용 구조체
 struct WebTabSnapshot: Codable {
-    let session: WebTabSession   // 세션 상태 저장
+    let session: WebTabSession
 }
 
-// MARK: - 탭 ↔ 스냅샷 변환 로직
+// MARK: - 탭 ↔ 스냅샷 변환
 extension WebTab {
-    // ✅ 현재 탭을 저장용 스냅샷으로 변환
     func toSnapshot() -> WebTabSnapshot? {
         guard let url = self.currentURL else { return nil }
 
@@ -190,28 +199,12 @@ extension WebTab {
         return WebTabSnapshot(session: session)
     }
 
-    // ✅ 저장된 스냅샷으로부터 탭 복원
     static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
-        let urls = snapshot.session.items
-        let currentIndex = snapshot.session.currentIndex
-
-        let url = URL(string: urls[safe: currentIndex]?.url ?? "https://www.google.com")!
-        var tab = WebTab(url: url)
-        tab.stateModel.tabID = snapshot.session.tabID
-        tab.stateModel.currentURL = url
-
-        // 세션 복원 예약 (뒤로/앞으로 기록 포함)
-        let session = WebViewSession(
-            urls: urls.compactMap { URL(string: $0.url) },
-            currentIndex: snapshot.session.currentIndex
-        )
-        tab.stateModel.pendingSession = session
-
-        return tab
+        return WebTab(fromSession: snapshot.session)
     }
 }
 
-// MARK: - 탭 저장 관리자 (UserDefaults 사용)
+// MARK: - 탭 저장 관리자
 enum TabPersistenceManager {
     private static let key = "savedWebTabs"
 
@@ -231,7 +224,7 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - 배열 안전 접근용 확장
+// MARK: - 안전한 인덱싱
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
