@@ -2,19 +2,24 @@ import SwiftUI
 
 @main
 struct MyBrowserAppApp: App {
+    @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs()
+    @State private var selectedTabIndex: Int = 0
 
     init() {
-        // ✅ 오디오 세션 자동 활성화
+        // ✅ 무음 방지용 오디오 플레이어 초기화
         _ = SilentAudioPlayer.shared
 
-        // ✅ 앱 실행 시 전역 방문기록 복원
+        // ✅ 앱 실행 시 전역 방문 기록 불러오기
         WebViewStateModel.loadGlobalHistory()
     }
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {   // ✅ 필수: 화면 전환이 가능한 네비게이션 컨테이너
-                ContentView()
+            NavigationStack {
+                ContentView(
+                    tabs: $tabs,
+                    selectedTabIndex: $selectedTabIndex
+                )
             }
         }
     }
