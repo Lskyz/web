@@ -68,9 +68,9 @@ struct CustomWebView: UIViewRepresentable {
 
     // ✅ 뷰 해제 시 리소스 정리
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.stopLoading()
-        deactivateAudioSession()                               // 🎧 오디오 세션 비활성화
-        NotificationCenter.default.removeObserver(coordinator) // 🔕 알림 제거
+        uiView.stopLoading()                                    // 🛑 로딩 중지
+        deactivateAudioSession()                                // 🎧 오디오 세션 비활성화
+        NotificationCenter.default.removeObserver(coordinator)  // 🔕 알림 제거
     }
 
     // ✅ Coordinator 객체 생성
@@ -78,7 +78,7 @@ struct CustomWebView: UIViewRepresentable {
         Coordinator(self)
     }
 
-    // ✅ JavaScript 삽입용 스크립트 생성 (비디오 처리)
+    // ✅ JavaScript 삽입용 스크립트 생성 (비디오 처리 및 PIP 자동화)
     private func makeVideoScript() -> WKUserScript {
         let scriptSource = """
         // JavaScript for auto-PIP and tap-detection on <video> elements
@@ -188,6 +188,7 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
 
+            // 📋 제목 확보 및 전역 기록에 저장
             let title = (webView.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
                 ? webView.title!
                 : (webView.url?.host ?? "제목 없음")
