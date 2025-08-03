@@ -41,8 +41,8 @@ struct WebTab: Identifiable, Equatable {
         let index = session.currentIndex
 
         if urls.indices.contains(index) {
-            self.stateModel.currentURL = urls[index]
-            self.stateModel.pendingSession = WebViewSession(urls: urls, currentIndex: index)
+            let session = WebViewSession(urls: urls, currentIndex: index)
+            self.stateModel.restoreSession(session)  // ✅ 세션 복원 실행
         }
     }
 
