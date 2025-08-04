@@ -66,29 +66,39 @@ enum TabPersistenceManager {
     static func saveTabs(_ tabs: [WebTab]) {
         let snapshots = tabs.map { $0.toSnapshot() }
 
+        // ✅ Codable 방식 저장
         if let data = try? JSONEncoder().encode(snapshots) {
             UserDefaults.standard.set(data, forKey: key)
         }
+
+        // ✅ (선택) toSnapshot + JSONSerialization 방식도 함께 유지하고 싶을 경우 여기에 추가
+        // let dictionaries = snapshots.map { ["id": $0.id, "history": $0.history, "index": $0.index] }
+        // if let jsonData = try? JSONSerialization.data(withJSONObject: dictionaries, options: []) {
+        //     UserDefaults.standard.set(jsonData, forKey: key)
+        // }
     }
 
     /// 저장된 탭 복원
     static func loadTabs() -> [WebTab] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let snapshots = try? JSONDecoder().decode([WebTabSessionSnapshot].self, from: data) else {
-            return []
+        // ✅ Codable 방식 복원
+        if let data = UserDefaults.standard.data(forKey: key),
+           let snapshots = try? JSONDecoder().decode([WebTabSessionSnapshot].self, from: data) {
+
+            return snapshots.map { snapshot in
+                let id = UUID(uuidString: snapshot.id) ?? UUID()
+                let urls = snapshot.history
+                let index = snapshot.index
+
+                var tab = WebTab() // 기본 생성자로 초기화 후 수동 덮어쓰기
+                tab.stateModel.tabID = id
+                tab.stateModel.restoredHistoryURLs = urls
+                tab.stateModel.restoredHistoryIndex = index
+                return tab
+            }
         }
 
-        return snapshots.map { snapshot in
-            let id = UUID(uuidString: snapshot.id) ?? UUID()
-            let urls = snapshot.history
-            let index = snapshot.index
-
-            var tab = WebTab() // 기본 생성자로 초기화 후 수동 덮어쓰기
-            tab.stateModel.tabID = id
-            tab.stateModel.restoredHistoryURLs = urls
-            tab.stateModel.restoredHistoryIndex = index
-            return tab
-        }
+        // ❌ 실패 시 빈 배열 반환
+        return []
     }
 }
 
