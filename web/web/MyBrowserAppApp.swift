@@ -1,33 +1,39 @@
 import SwiftUI
 
-/// ✅ 앱의 진입점 (Main Application)
+// MARK: - 앱 진입점
 @main
 struct MyBrowserAppApp: App {
-
-    // 📌 현재 열려 있는 웹 탭 목록 (탭 배열)
+    // 앱 전체에서 관리되는 탭 목록
     @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs()
-
-    // ⭐ 현재 선택된 탭의 인덱스 (탭 전환에 사용됨)
+    // 현재 선택된 탭 인덱스
     @State private var selectedTabIndex: Int = 0
+    // ScenePhase 감지용
+    @Environment(\.scenePhase) private var scenePhase
 
-    /// ✅ 앱 초기화 시 실행되는 로직
+    // MARK: - 초기화
     init() {
-        // 🎧 무음 방지용 오디오 세션 설정 (앱 실행 시 1초짜리 무음 사운드 재생을 위한 초기화)
+        // 무음 방지용 오디오 플레이어 초기화
         _ = SilentAudioPlayer.shared
-
-        // 🕘 전역 방문 기록 로딩 (UserDefaults에서 불러오기)
+        // 전역 방문 기록 불러오기
         WebViewStateModel.loadGlobalHistory()
+        TabPersistenceManager.debugMessages.append("앱 초기화: 탭 \(tabs.count)개 로드")
     }
 
-    /// ✅ 앱 UI 구성
+    // MARK: - Scene 구성
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                // 🧭 메인 브라우저 컨테이너 뷰로 이동
                 ContentView(
-                    tabs: $tabs,                       // 바인딩된 탭 배열 전달
-                    selectedTabIndex: $selectedTabIndex // 현재 선택된 탭 인덱스 전달
+                    tabs: $tabs,
+                    selectedTabIndex: $selectedTabIndex
                 )
+            }
+        }
+        // ScenePhase 변경 감지
+        .onChange(of: scenePhase) { newPhase in
+            if newPhase == .background {
+                TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("앱 백그라운드 진입: 탭 저장")
             }
         }
     }
