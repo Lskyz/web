@@ -34,9 +34,18 @@ struct WebTab: Identifiable, Equatable {
         self.stateModel.currentURL = url
     }
 
-    /// Equatable 구현 (id 기준 비교)
+    /// Equatable 구현 (id 기준)
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
+    }
+
+    /// 현재 탭을 스냅샷 정보로 변환 (세션 저장용)
+    func toSnapshot() -> [String: Any] {
+        return [
+            "id": id.uuidString,
+            "history": historyURLs,
+            "index": currentHistoryIndex
+        ]
     }
 }
 
@@ -47,13 +56,7 @@ enum TabPersistenceManager {
 
     /// 탭 배열 저장
     static func saveTabs(_ tabs: [WebTab]) {
-        let info = tabs.map { tab -> [String: Any] in
-            return [
-                "id": tab.id.uuidString,          // 탭 고유 ID
-                "history": tab.historyURLs,       // 방문 히스토리 URL 리스트
-                "index": tab.currentHistoryIndex  // 현재 위치 인덱스
-            ]
-        }
+        let info = tabs.map { $0.toSnapshot() }
 
         if let data = try? JSONSerialization.data(withJSONObject: info, options: []) {
             UserDefaults.standard.set(data, forKey: key)
@@ -137,7 +140,7 @@ struct DashboardView: View {
 }
 
 // MARK: - 탭 관리자 뷰
-// 탭 목록 표시, 선택 및 닫기, 새 탭 추가 기능 제공
+// 탭 목록 표시, 선택 및 닫기, 새 탭 추가 기능
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
@@ -152,7 +155,6 @@ struct TabManager: View {
             ScrollView {
                 ForEach(tabs) { tab in
                     HStack {
-                        // 탭 전환 버튼
                         Button(action: {
                             onTabSelected(tab.stateModel)
                             dismiss()
@@ -166,7 +168,6 @@ struct TabManager: View {
                             }
                         }
                         Spacer()
-                        // 탭 닫기 버튼
                         Button(action: { closeTab(tab) }) {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundColor(.red)
@@ -176,7 +177,6 @@ struct TabManager: View {
                 }
             }
 
-            // 새 탭 추가 버튼
             Button(action: {
                 tabs.append(WebTab())
                 dismiss()
@@ -200,7 +200,6 @@ struct TabManager: View {
 }
 
 // MARK: - 안전한 컬렉션 인덱스 접근 확장
-// index 범위 초과로 인한 크래시 방지
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
