@@ -2,36 +2,30 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
-// MARK: - CustomWebView: WKWebView를 SwiftUI에서 사용하기 위한 래퍼
 struct CustomWebView: UIViewRepresentable {
-    @ObservedObject var stateModel: WebViewStateModel // WebView 상태 관리 모델
-    @Binding var playerURL: URL? // 비디오 재생 URL 바인딩
-    @Binding var showAVPlayer: Bool // AVPlayer 전체화면 표시 여부 바인딩
+    @ObservedObject var stateModel: WebViewStateModel
+    @Binding var playerURL: URL?
+    @Binding var showAVPlayer: Bool
 
-    // MARK: - WKWebView 생성 및 초기화
     func makeUIView(context: Context) -> WKWebView {
-        configureAudioSessionForMixing() // 오디오 세션 설정
+        configureAudioSessionForMixing()
         let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true // 인라인 비디오 재생 허용
-        config.allowsPictureInPictureMediaPlayback = true // PiP 재생 허용
-        config.mediaTypesRequiringUserActionForPlayback = [] // 사용자 동작 없이 재생
-
+        config.allowsInlineMediaPlayback = true
+        config.allowsPictureInPictureMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
         let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript()) // 비디오 자동 처리 스크립트 추가
-        controller.add(context.coordinator, name: "playVideo") // JS 메시지 핸들러 등록
+        controller.addUserScript(makeVideoScript())
+        controller.add(context.coordinator, name: "playVideo")
         config.userContentController = controller
-
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true // 뒤로/앞으로 제스처 허용
+        webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = stateModel // WebViewStateModel이 WKNavigationDelegate 처리
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
         stateModel.webView = webView
-
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
-
         if let session = stateModel.pendingSession {
             TabPersistenceManager.debugMessages.append("세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
             restoreSession(session, webView: webView)
@@ -42,15 +36,12 @@ struct CustomWebView: UIViewRepresentable {
         } else {
             stateModel.prepareRestoredHistoryIfNeeded()
         }
-
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: .init("WebViewGoBack"), object: nil)
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goForward), name: .init("WebViewGoForward"), object: nil)
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.reloadWebView), name: .init("WebViewReload"), object: nil)
-
         return webView
     }
 
-    // MARK: - WKWebView 상태 업데이트
     func updateUIView(_ uiView: WKWebView, context: Context) {
         guard let url = stateModel.currentURL else { return }
         if uiView.url?.absoluteString != url.absoluteString {
@@ -59,7 +50,6 @@ struct CustomWebView: UIViewRepresentable {
         }
     }
 
-    // MARK: - 뷰 소멸 시 리소스 정리
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
         deactivateAudioSession()
@@ -67,12 +57,10 @@ struct CustomWebView: UIViewRepresentable {
         TabPersistenceManager.debugMessages.append("WebView 소멸: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
     }
 
-    // MARK: - Coordinator 생성
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    // MARK: - 비디오 자동 처리 JavaScript 생성
     private func makeVideoScript() -> WKUserScript {
         let scriptSource = """
         function processVideos(doc) {
@@ -109,7 +97,6 @@ struct CustomWebView: UIViewRepresentable {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
-    // MARK: - 오디오 세션 설정
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
@@ -117,24 +104,21 @@ struct CustomWebView: UIViewRepresentable {
         TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
     }
 
-    // MARK: - 오디오 세션 비활성화
     private func deactivateAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
         TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
     }
 
-    // MARK: - 세션 복원
+    // MARK: - 세션 복원 개선
     private func restoreSession(_ session: WebViewSession, webView: WKWebView) {
         let urls = session.urls
-        let currentIndex = session.currentIndex
+        let currentIndex = max(0, min(session.currentIndex, urls.count - 1))
         TabPersistenceManager.debugMessages.append("세션 복원 시도: \(urls.count) URLs, 인덱스 \(currentIndex)")
-
         guard urls.indices.contains(currentIndex) else {
             TabPersistenceManager.debugMessages.append("세션 복원 실패: 인덱스 범위 초과")
             return
         }
-
         loadURLsSequentially(urls, index: 0, webView: webView) {
             let backList = webView.backForwardList.backList
             if backList.indices.contains(currentIndex) {
@@ -146,14 +130,12 @@ struct CustomWebView: UIViewRepresentable {
         }
     }
 
-    // MARK: - URL 순차 로드
     private func loadURLsSequentially(_ urls: [URL], index: Int, webView: WKWebView, completion: @escaping () -> Void) {
         guard index < urls.count else {
             completion()
             TabPersistenceManager.debugMessages.append("URL 순차 로드 완료")
             return
         }
-
         webView.load(URLRequest(url: urls[index]))
         (webView.navigationDelegate as? WebViewStateModel)?.onLoadCompletion = {
             TabPersistenceManager.debugMessages.append("URL 로드 완료: \(urls[index])")
@@ -161,7 +143,6 @@ struct CustomWebView: UIViewRepresentable {
         }
     }
 
-    // MARK: - Coordinator: WKWebView UI 및 JS 이벤트 관리
     class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
