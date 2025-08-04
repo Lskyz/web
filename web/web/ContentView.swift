@@ -1,25 +1,24 @@
 import SwiftUI
 import AVKit
 
-// MARK: - 메인 브라우저 인터페이스 뷰
+// MARK: - ContentView: 메인 브라우저 인터페이스 뷰
 struct ContentView: View {
-    @Binding var tabs: [WebTab] // 탭 목록
+    @Binding var tabs: [WebTab] // 탭 목록 바인딩
     @Binding var selectedTabIndex: Int // 현재 선택된 탭 인덱스
     @State private var inputURL: String = "" // 주소창 입력값
     @FocusState private var isTextFieldFocused: Bool // 주소창 포커스 상태
     @State private var textFieldSelectedAll = false // 텍스트 전체 선택 여부
     @State private var showHistorySheet = false // 방문 기록 시트 표시 여부
     @State private var showTabManager = false // 탭 관리자 시트 표시 여부
-    @State private var enablePIP: Bool = true // PiP 모드 (숨김)
-    let tabSnapshotKey = "savedTabSnapshots" // 탭 스냅샷 저장 키
+    @State private var enablePIP: Bool = true // PIP 모드 (숨김)
 
     var body: some View {
-        // 현재 선택된 탭이 유효한 경우
+        // MARK: - 현재 탭이 유효한 경우
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
 
             VStack(spacing: 0) {
-                // 주소 입력 필드와 이동 버튼
+                // MARK: - 주소 입력 필드와 이동 버튼
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -36,6 +35,7 @@ struct ContentView: View {
                                         to: nil, from: nil, for: nil
                                     )
                                     textFieldSelectedAll = true
+                                    TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
                                 }
                             }
                         }
@@ -43,6 +43,7 @@ struct ContentView: View {
                             // 포커스 해제 시 선택 상태 초기화
                             if !focused {
                                 textFieldSelectedAll = false
+                                TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                             }
                         }
                         .onSubmit {
@@ -80,8 +81,8 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
 
-                // 현재 URL이 있으면 WebView, 없으면 대시보드
-                if let url = state.currentURL {
+                // MARK: - URL이 있으면 WebView, 없으면 대시보드
+                if state.currentURL != nil {
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -100,7 +101,7 @@ struct ContentView: View {
                     }
                 }
 
-                // 하단 도구 버튼
+                // MARK: - 하단 도구 버튼
                 HStack {
                     // 뒤로가기
                     Button(action: { state.goBack() }) {
@@ -139,7 +140,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 8)
 
-                    // PiP 토글 (숨김)
+                    // PIP 토글 (숨김)
                     Toggle(isOn: $enablePIP) {
                         Image(systemName: "pip.enter")
                     }
@@ -155,6 +156,7 @@ struct ContentView: View {
                 // 탭 진입 시 주소창 동기화
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
+                    TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
                 }
                 // pendingSession 복원
                 if let session = state.pendingSession {
@@ -163,14 +165,16 @@ struct ContentView: View {
                     TabPersistenceManager.debugMessages.append("pendingSession 복원: 탭 \(state.tabID?.uuidString ?? "없음")")
                 }
             }
-            .onChange(of: tabs) { newTabs in
-                // 탭 배열 변경 시 스냅샷 저장
-                TabPersistenceManager.saveTabs(newTabs)
+            .onChange(of: tabs) { _ in
+                // 탭 배열 변경 시 저장
+                TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
             }
             .onReceive(state.$currentURL) { url in
                 // URL 변경 시 주소창 업데이트
                 if let url = url {
                     inputURL = url.absoluteString
+                    TabPersistenceManager.debugMessages.append("URL 변경, 주소창 업데이트: \(url)")
                 }
             }
             // 전체화면 AVPlayer
@@ -209,13 +213,13 @@ struct ContentView: View {
                 let newTab = WebTab(url: url)
                 tabs.append(newTab)
                 selectedTabIndex = tabs.count - 1
-                TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
                 TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
             }
         }
     }
 
-    // 입력값을 URL로 변환
+    // MARK: - 입력값을 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
