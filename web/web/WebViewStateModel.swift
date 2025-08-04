@@ -273,7 +273,7 @@ class WebViewStateModel: ObservableObject {
     var historyURLs: [String] {
         guard let webView = webView else { return [] }
         let back = webView.backForwardList.backList.map { $0.url.absoluteString }
-        let current = webView.backForwardList.currentItem?.url.absoluteString.map { [$0] } ?? []
+        let current = webView.backForwardList.currentItem.map { [$0.url.absoluteString] } ?? []
         let forward = webView.backForwardList.forwardList.map { $0.url.absoluteString }
         return back + current + forward
     }
