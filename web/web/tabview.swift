@@ -1,30 +1,19 @@
 import SwiftUI
 import AVKit
 
-// MARK: - 방문 기록 항목
-struct WebViewHistoryItem: Codable {
-    let url: String
-    let title: String
-}
-
-// MARK: - 탭 세션 구조
-struct WebTabSession: Codable {
-    let tabID: UUID
-    let currentIndex: Int
-    let items: [WebViewHistoryItem]
-}
-
 // MARK: - WebTab 모델
 struct WebTab: Identifiable, Equatable {
-    let id: UUID
-    let stateModel: WebViewStateModel
-    var playerURL: URL? = nil
-    var showAVPlayer: Bool = false
+    let id: UUID                                  // 탭 고유 ID
+    let stateModel: WebViewStateModel             // WebView 상태 관리 객체
+    var playerURL: URL? = nil                     // AVPlayer URL (선택적)
+    var showAVPlayer: Bool = false                // AVPlayer 표시 여부
 
+    // 현재 페이지 URL
     var currentURL: URL? {
         stateModel.currentURL
     }
 
+    // MARK: - 새 탭 생성
     init(url: URL? = nil) {
         self.id = UUID()
         self.stateModel = WebViewStateModel()
@@ -32,17 +21,13 @@ struct WebTab: Identifiable, Equatable {
         self.stateModel.currentURL = url
     }
 
-    init(fromSession session: WebTabSession) {
-        self.id = session.tabID
+    // MARK: - 저장된 정보로 복원 (UserDefaults에서 로드된 dict)
+    init(fromSaved dict: [String: String]) {
+        self.id = UUID(uuidString: dict["id"] ?? "") ?? UUID()
         self.stateModel = WebViewStateModel()
-        self.stateModel.tabID = session.tabID
-
-        let urls = session.items.compactMap { URL(string: $0.url) }
-        let index = session.currentIndex
-
-        if urls.indices.contains(index) {
-            let session = WebViewSession(urls: urls, currentIndex: index)
-            self.stateModel.restoreSession(session)  // ✅ 세션 복원 실행
+        self.stateModel.tabID = self.id
+        if let urlStr = dict["url"], let url = URL(string: urlStr) {
+            self.stateModel.currentURL = url
         }
     }
 
@@ -51,45 +36,33 @@ struct WebTab: Identifiable, Equatable {
     }
 }
 
-// MARK: - 탭 저장/복원 관리
+// MARK: - 탭 저장/복원 관리자
 enum TabPersistenceManager {
-    private static let key = "savedWebTabs"
+    private static let key = "savedTabs"
 
+    /// 탭 리스트의 ID와 현재 URL만 저장
     static func saveTabs(_ tabs: [WebTab]) {
-        let snapshots = tabs.compactMap { $0.toSnapshot() }
-        if let data = try? JSONEncoder().encode(snapshots) {
+        let info: [[String: String]] = tabs.map { tab in
+            [
+                "id": tab.id.uuidString,
+                "url": tab.currentURL?.absoluteString ?? ""
+            ]
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: info, options: []) {
             UserDefaults.standard.set(data, forKey: key)
         }
     }
 
+    /// 저장된 탭 리스트 복원
     static func loadTabs() -> [WebTab] {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let snapshots = try? JSONDecoder().decode([WebTabSnapshot].self, from: data) else {
+              let raw = try? JSONSerialization.jsonObject(with: data, options: []) as? [[String: String]] else {
             return []
         }
-        return snapshots.map(WebTab.fromSnapshot)
-    }
-}
 
-// MARK: - 탭 스냅샷
-struct WebTabSnapshot: Codable {
-    let session: WebTabSession
-}
-
-extension WebTab {
-    func toSnapshot() -> WebTabSnapshot? {
-        guard let session = stateModel.saveSession() else { return nil }
-
-        let items = session.urls.map {
-            WebViewHistoryItem(url: $0.absoluteString, title: "")
+        return raw.map { dict in
+            WebTab(fromSaved: dict)
         }
-
-        let sessionToSave = WebTabSession(tabID: id, currentIndex: session.currentIndex, items: items)
-        return WebTabSnapshot(session: sessionToSave)
-    }
-
-    static func fromSnapshot(_ snapshot: WebTabSnapshot) -> WebTab {
-        WebTab(fromSession: snapshot.session)
     }
 }
 
@@ -144,12 +117,11 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - 통합 브라우저
+// MARK: - 통합 브라우저 및 탭 관리 (디버깅 뷰 제거)
 struct UnifiedBrowserView: View {
     @State private var tabs: [WebTab] = TabPersistenceManager.loadTabs()
     @State private var selectedIndex: Int = 0
     @State private var showingTabManager = false
-    @State private var showingDebugView = false  // ✅ 디버깅 뷰 표시 상태
 
     var body: some View {
         ZStack {
@@ -174,10 +146,6 @@ struct UnifiedBrowserView: View {
                         Image(systemName: "square.on.square")
                     }
                     Spacer()
-                    Button(action: { showingDebugView = true }) {
-                        Image(systemName: "ladybug")
-                    }
-                    Spacer()
                     Button(action: addNewTab) {
                         Image(systemName: "plus")
                     }
@@ -196,24 +164,21 @@ struct UnifiedBrowserView: View {
                 }
             )
         }
-        .sheet(isPresented: $showingDebugView) {
-            TabDebugPage(tabs: tabs) // ✅ 디버깅 화면 표시
-        }
         .onDisappear {
             TabPersistenceManager.saveTabs(tabs)
         }
     }
 
     private func addNewTab() {
-        let new = WebTab()
-        tabs.append(new)
+        let newTab = WebTab()
+        tabs.append(newTab)
         selectedIndex = tabs.count - 1
     }
 }
 
 // MARK: - Tab Manager
 struct TabManager: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
     let initialStateModel: WebViewStateModel
     let onTabSelected: (WebViewStateModel) -> Void
@@ -267,39 +232,6 @@ struct TabManager: View {
     private func closeTab(_ tab: WebTab) {
         if let idx = tabs.firstIndex(of: tab) {
             tabs.remove(at: idx)
-        }
-    }
-}
-
-// MARK: - 디버깅 전용 페이지
-struct TabDebugPage: View {
-    let tabs: [WebTab]
-
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(Array(tabs.enumerated()), id: \.element.id) { (index, tab) in
-                    Section(header: Text("🧩 탭 \(index)")) {
-                        Text("🆔 Tab ID: \(tab.id.uuidString)")
-                        Text("🌐 currentURL: \(tab.currentURL?.absoluteString ?? "없음")")
-                        Text("📌 currentIndexInStack: \(tab.stateModel.currentIndexInSafeBounds())")
-                        Text("🧠 pendingSession: \(tab.stateModel.pendingSession != nil ? "있음" : "없음")")
-
-                        if !tab.stateModel.historyStackIfAny().isEmpty {
-                            Text("📜 History Stack:")
-                            ForEach(Array(tab.stateModel.historyStackIfAny().enumerated()), id: \.offset) { i, url in
-                                Text("  \(i): \(url.absoluteString)")
-                                    .font(.caption)
-                                    .foregroundColor(i == tab.stateModel.currentIndexInSafeBounds() ? .blue : .secondary)
-                            }
-                        } else {
-                            Text("📭 History Stack 비어 있음")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("🛠 탭 디버그")
         }
     }
 }
