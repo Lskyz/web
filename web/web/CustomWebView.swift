@@ -2,61 +2,59 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
-/// ✅ SwiftUI에서 WKWebView를 감싸는 UIViewRepresentable 구조체
+// MARK: - CustomWebView: WKWebView를 SwiftUI에서 사용하기 위한 래퍼
 struct CustomWebView: UIViewRepresentable {
-    // 🔗 외부 상태 모델을 감시 (탭별 웹뷰 상태 관리)
+    // 외부에서 주입된 WebView 상태 관리 모델
     @ObservedObject var stateModel: WebViewStateModel
-
-    // 🎬 AVPlayer를 위한 비디오 URL
+    // 비디오 재생을 위한 URL 바인딩
     @Binding var playerURL: URL?
-
-    // 🎬 AVPlayer 전체화면 재생 여부
+    // AVPlayer 전체화면 표시 여부 바인딩
     @Binding var showAVPlayer: Bool
 
-    // ✅ WebView 생성 및 초기화
+    // MARK: - WKWebView 생성 및 초기화
     func makeUIView(context: Context) -> WKWebView {
-        configureAudioSessionForMixing()  // 🎧 무음에서도 재생 가능한 오디오 세션 구성
+        // 오디오 세션 설정: 다른 앱과 혼합 재생 가능
+        configureAudioSessionForMixing()
 
-        // 🔧 웹 구성 초기화
+        // WKWebView 설정 구성
         let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
+        config.allowsInlineMediaPlayback = true // 인라인 비디오 재생 허용
+        config.allowsPictureInPictureMediaPlayback = true // PiP 재생 허용
+        config.mediaTypesRequiringUserActionForPlayback = [] // 사용자 동작 없이 재생
 
-        // 📜 자바스크립트 메시지 처리용 컨트롤러 구성
+        // JavaScript 메시지 처리용 컨트롤러 설정
         let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript()) // ▶️ 비디오 자동 처리 JS 삽입
-        controller.add(context.coordinator, name: "playVideo") // JS로부터 메시지 수신
-
+        controller.addUserScript(makeVideoScript()) // 비디오 자동 처리 스크립트 추가
+        controller.add(context.coordinator, name: "playVideo") // JS 메시지 핸들러 등록
         config.userContentController = controller
 
-        // 🌐 웹뷰 생성
+        // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = true // 뒤로/앞으로 제스처 허용
+        webView.navigationDelegate = context.coordinator // 내비게이션 델리게이트 설정
+        webView.uiDelegate = context.coordinator // UI 델리게이트 설정
+        context.coordinator.webView = webView // Coordinator에 웹뷰 참조 전달
+        stateModel.webView = webView // WebViewStateModel에 웹뷰 참조 전달
 
-        // 🔗 coordinator가 웹뷰 참조하게 함
-        context.coordinator.webView = webView
-
-        // 🔄 Pull to Refresh 구성
+        // Pull to Refresh 설정
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.handleRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
 
-        // 🧠 세션 복원 or 초기 URL 로딩
+        // 세션 복원 또는 초기 URL 로딩
         if let session = stateModel.pendingSession {
+            TabPersistenceManager.debugMessages.append("세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
             restoreSession(session, webView: webView)
             stateModel.pendingSession = nil
         } else if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
+            TabPersistenceManager.debugMessages.append("초기 URL 로드: \(url)")
+        } else {
+            // 저장된 히스토리 복원 시도
+            stateModel.prepareRestoredHistoryIfNeeded()
         }
 
-        // ✅ 모델에 WKWebView 연결 및 복원 준비 실행
-        stateModel.webView = webView
-        stateModel.prepareRestoredHistoryIfNeeded()
-
-        // 🔔 외부 명령 바인딩
+        // 외부 명령(뒤로가기, 앞으로가기, 새로고침) 처리용 Notification 등록
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: .init("WebViewGoBack"), object: nil)
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goForward), name: .init("WebViewGoForward"), object: nil)
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.reloadWebView), name: .init("WebViewReload"), object: nil)
@@ -64,29 +62,30 @@ struct CustomWebView: UIViewRepresentable {
         return webView
     }
 
-    // ✅ WebView의 상태 업데이트
+    // MARK: - WKWebView 상태 업데이트
     func updateUIView(_ uiView: WKWebView, context: Context) {
         guard let url = stateModel.currentURL else { return }
-
-        // 📍 같은 URL이면 다시 로드 안 함
+        // 동일한 URL은 중복 로드 방지
         if uiView.url?.absoluteString != url.absoluteString {
             uiView.load(URLRequest(url: url))
+            TabPersistenceManager.debugMessages.append("URL 업데이트 로드: \(url)")
         }
     }
 
-    // ✅ 뷰가 사라질 때 리소스 정리
+    // MARK: - 뷰 소멸 시 리소스 정리
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.stopLoading()
-        deactivateAudioSession()
-        NotificationCenter.default.removeObserver(coordinator)
+        uiView.stopLoading() // 로딩 중지
+        deactivateAudioSession() // 오디오 세션 비활성화
+        NotificationCenter.default.removeObserver(coordinator) // Notification 제거
+        TabPersistenceManager.debugMessages.append("WebView 소멸: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
     }
 
-    // ✅ Coordinator 생성
+    // MARK: - Coordinator 생성
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    // ✅ 비디오 자동 처리용 JavaScript 생성
+    // MARK: - 비디오 자동 처리 JavaScript 생성
     private func makeVideoScript() -> WKUserScript {
         let scriptSource = """
         function processVideos(doc) {
@@ -109,14 +108,13 @@ struct CustomWebView: UIViewRepresentable {
                 }
             });
         }
-
         processVideos(document);
         setInterval(() => {
             processVideos(document);
             [...document.querySelectorAll('iframe')].forEach(iframe => {
                 try {
                     const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                    if (doc) processVideos(doc);
+                    if doc { processVideos(doc); }
                 } catch (e) {}
             });
         }, 1000);
@@ -124,114 +122,126 @@ struct CustomWebView: UIViewRepresentable {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
-    // ✅ 오디오 세션 설정: 다른 앱과 혼합 재생 허용
+    // MARK: - 오디오 세션 설정: 다른 앱과 혼합 재생
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: [.mixWithOthers])
         try? session.setActive(true)
+        TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
     }
 
-    // ✅ 오디오 세션 비활성화
+    // MARK: - 오디오 세션 비활성화
     private func deactivateAudioSession() {
         let session = AVAudioSession.sharedInstance()
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
     }
 
-    // ✅ 세션 복원 - 방문 기록 복원용 (legacy)
+    // MARK: - 세션 복원: 방문 기록 복원
     private func restoreSession(_ session: WebViewSession, webView: WKWebView) {
         let urls = session.urls
         let currentIndex = session.currentIndex
+        TabPersistenceManager.debugMessages.append("세션 복원 시도: \(urls.count) URLs, 인덱스 \(currentIndex)")
 
-        guard urls.indices.contains(currentIndex) else { return }
+        guard urls.indices.contains(currentIndex) else {
+            TabPersistenceManager.debugMessages.append("세션 복원 실패: 인덱스 범위 초과")
+            return
+        }
 
         loadURLsSequentially(urls, index: 0, webView: webView) {
-            let stepsToGoBack = urls.count - 1 - currentIndex
-            for _ in 0..<stepsToGoBack {
-                webView.goBack()
+            let backList = webView.backForwardList.backList
+            if backList.indices.contains(currentIndex) {
+                webView.go(to: backList[currentIndex])
+                TabPersistenceManager.debugMessages.append("세션 복원 완료: \(webView.url?.absoluteString ?? "없음")")
+            } else {
+                TabPersistenceManager.debugMessages.append("세션 복원 실패: backList 인덱스 범위 초과")
             }
         }
     }
 
-    // ✅ 방문 기록을 하나씩 로드하여 세션 구성
+    // MARK: - URL을 순차적으로 로드하여 세션 구성
     private func loadURLsSequentially(_ urls: [URL], index: Int, webView: WKWebView, completion: @escaping () -> Void) {
         guard index < urls.count else {
             completion()
+            TabPersistenceManager.debugMessages.append("URL 순차 로드 완료")
             return
         }
 
         webView.load(URLRequest(url: urls[index]))
-
-        // 🚧 WKWebView는 로딩 완료 콜백이 없어서 delay로 대체
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            loadURLsSequentially(urls, index: index + 1, webView: webView, completion: completion)
+        // WKNavigationDelegate에서 로드 완료 확인
+        (webView.navigationDelegate as? Coordinator)?.onLoadCompletion = {
+            TabPersistenceManager.debugMessages.append("URL 로드 완료: \(urls[index])")
+            self.loadURLsSequentially(urls, index: index + 1, webView: webView, completion: completion)
         }
     }
 
-    // ✅ Coordinator 정의: WebView 이벤트 관리
+    // MARK: - Coordinator: WKWebView 이벤트 관리
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
+        var onLoadCompletion: (() -> Void)? // 로드 완료 콜백
 
         init(_ parent: CustomWebView) {
             self.parent = parent
         }
 
-        // 🔁 외부 알림 트리거
-        @objc func goBack() { webView?.goBack() }
-        @objc func goForward() { webView?.goForward() }
-        @objc func reloadWebView() { webView?.reload() }
+        // 외부 명령 처리
+        @objc func goBack() { webView?.goBack(); TabPersistenceManager.debugMessages.append("뒤로가기 실행") }
+        @objc func goForward() { webView?.goForward(); TabPersistenceManager.debugMessages.append("앞으로가기 실행") }
+        @objc func reloadWebView() { webView?.reload(); TabPersistenceManager.debugMessages.append("새로고침 실행") }
 
-        // ✅ Pull to refresh 처리
+        // Pull to Refresh 처리
         @objc func handleRefresh(_ sender: UIRefreshControl) {
             webView?.reload()
             sender.endRefreshing()
+            TabPersistenceManager.debugMessages.append("Pull to Refresh 실행")
         }
 
-        // ✅ 로딩 완료 처리
+        // 페이지 로드 완료 처리
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
             parent.stateModel.canGoBack = webView.canGoBack
             parent.stateModel.canGoForward = webView.canGoForward
             parent.stateModel.currentURL = webView.url
 
-            let title = (webView.title?.isEmpty == false)
-                ? webView.title!
-                : (webView.url?.host ?? "제목 없음")
-
+            let title = (webView.title?.isEmpty == false) ? webView.title! : (webView.url?.host ?? "제목 없음")
             if let finalURL = webView.url {
                 parent.stateModel.addToHistory(url: finalURL, title: title)
             }
+            TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "없음")")
+            onLoadCompletion?()
+            onLoadCompletion = nil
         }
 
-        // ✅ 새 창 요청을 현재 웹뷰로 대체
+        // 새 창 요청을 현재 웹뷰로 처리
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil {
                 webView.load(navigationAction.request)
+                TabPersistenceManager.debugMessages.append("새 창 요청을 현재 웹뷰로 로드: \(navigationAction.request.url?.absoluteString ?? "없음")")
             }
             return nil
         }
 
-        // ✅ JS에서 온 메시지 처리
+        // JavaScript 메시지 처리 (비디오 재생)
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "playVideo",
-               let urlString = message.body as? String,
-               let videoURL = URL(string: urlString) {
+            if message.name == "playVideo", let urlString = message.body as? String, let videoURL = URL(string: urlString) {
                 DispatchQueue.main.async {
                     self.parent.playerURL = videoURL
                     self.parent.showAVPlayer = true
+                    TabPersistenceManager.debugMessages.append("비디오 재생 요청: \(urlString)")
                 }
             }
         }
 
-        // ⚠️ 에러 로그
+        // 로드 실패 처리
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            print("❌ Provisional fail: \(error.localizedDescription)")
+            TabPersistenceManager.debugMessages.append("로드 실패 (Provisional): \(error.localizedDescription)")
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            print("❌ Navigation fail: \(error.localizedDescription)")
+            TabPersistenceManager.debugMessages.append("로드 실패 (Navigation): \(error.localizedDescription)")
         }
     }
 }
