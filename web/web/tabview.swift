@@ -2,13 +2,21 @@ import SwiftUI
 import AVKit
 import WebKit
 
+// MARK: - WebTabSessionSnapshot 구조체 (Codable 준수)
+// 탭의 히스토리 상태를 저장/복원하기 위한 Codable 구조체
+struct WebTabSessionSnapshot: Codable {
+    let id: String               // UUID 문자열 형태의 탭 식별자
+    let history: [String]        // 방문한 URL 문자열 배열
+    let index: Int               // 현재 인덱스
+}
+
 // MARK: - WebTab 모델
 // 각 브라우저 탭을 식별 및 상태 관리하기 위한 구조체
 struct WebTab: Identifiable, Equatable {
-    let id: UUID                      // 탭 고유 식별자
-    let stateModel: WebViewStateModel // WKWebView 상태 및 히스토리 관리 객체
-    var playerURL: URL? = nil         // AVPlayer로 재생할 비디오 URL
-    var showAVPlayer: Bool = false    // AVPlayer 전체화면 여부
+    let id: UUID                            // 탭 고유 식별자
+    let stateModel: WebViewStateModel      // WKWebView 상태 및 히스토리 관리 객체
+    var playerURL: URL? = nil              // AVPlayer로 재생할 비디오 URL
+    var showAVPlayer: Bool = false         // AVPlayer 전체화면 여부
 
     // 현재 페이지 URL (ViewModel에서 업데이트)
     var currentURL: URL? {
@@ -40,12 +48,12 @@ struct WebTab: Identifiable, Equatable {
     }
 
     /// 현재 탭을 스냅샷 정보로 변환 (세션 저장용)
-    func toSnapshot() -> [String: Any] {
-        return [
-            "id": id.uuidString,
-            "history": historyURLs,
-            "index": currentHistoryIndex
-        ]
+    func toSnapshot() -> WebTabSessionSnapshot {
+        return WebTabSessionSnapshot(
+            id: id.uuidString,
+            history: historyURLs,
+            index: currentHistoryIndex
+        )
     }
 }
 
@@ -56,9 +64,9 @@ enum TabPersistenceManager {
 
     /// 탭 배열 저장
     static func saveTabs(_ tabs: [WebTab]) {
-        let info = tabs.map { $0.toSnapshot() }
+        let snapshots = tabs.map { $0.toSnapshot() }
 
-        if let data = try? JSONSerialization.data(withJSONObject: info, options: []) {
+        if let data = try? JSONEncoder().encode(snapshots) {
             UserDefaults.standard.set(data, forKey: key)
         }
     }
@@ -66,14 +74,14 @@ enum TabPersistenceManager {
     /// 저장된 탭 복원
     static func loadTabs() -> [WebTab] {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+              let snapshots = try? JSONDecoder().decode([WebTabSessionSnapshot].self, from: data) else {
             return []
         }
 
-        return raw.map { dict in
-            let id = UUID(uuidString: dict["id"] as? String ?? "") ?? UUID()
-            let urls = dict["history"] as? [String] ?? []
-            let index = dict["index"] as? Int ?? 0
+        return snapshots.map { snapshot in
+            let id = UUID(uuidString: snapshot.id) ?? UUID()
+            let urls = snapshot.history
+            let index = snapshot.index
 
             var tab = WebTab() // 기본 생성자로 초기화 후 수동 덮어쓰기
             tab.stateModel.tabID = id
