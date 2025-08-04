@@ -1,3 +1,4 @@
+// CustomWebView.swift
 import SwiftUI
 import WebKit
 import AVFoundation
@@ -51,6 +52,10 @@ struct CustomWebView: UIViewRepresentable {
         } else if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         }
+
+        // ✅ 모델에 WKWebView 연결 및 복원 준비 실행
+        stateModel.webView = webView
+        stateModel.prepareRestoredHistoryIfNeeded()
 
         // 🔔 외부 명령 바인딩
         NotificationCenter.default.addObserver(context.coordinator, selector: #selector(Coordinator.goBack), name: .init("WebViewGoBack"), object: nil)
@@ -133,7 +138,7 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    // ✅ 세션 복원 - 방문 기록 복원용
+    // ✅ 세션 복원 - 방문 기록 복원용 (legacy)
     private func restoreSession(_ session: WebViewSession, webView: WKWebView) {
         let urls = session.urls
         let currentIndex = session.currentIndex
