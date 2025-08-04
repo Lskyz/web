@@ -2,25 +2,30 @@ import SwiftUI
 import AVKit
 import AVFoundation
 
-// ✅ 무음 오디오 싱글톤 → 항상 세션 유지
+// MARK: - SilentAudioPlayer: 무음 오디오 재생으로 오디오 세션 유지
 class SilentAudioPlayer {
     static let shared = SilentAudioPlayer()
     private var player: AVAudioPlayer?
 
+    // MARK: - 초기화: 오디오 세션 설정 및 무음 재생 시작
     private init() {
         configureAudioSession()
         playSilentAudio()
+        TabPersistenceManager.debugMessages.append("SilentAudioPlayer 초기화")
     }
 
+    // MARK: - 오디오 세션 설정 (다른 앱과 혼합 재생)
     private func configureAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
+            TabPersistenceManager.debugMessages.append("오디오 세션 설정 성공")
         } catch {
-            print("🔇 Audio Session 설정 실패: \(error)")
+            TabPersistenceManager.debugMessages.append("오디오 세션 설정 실패: \(error.localizedDescription)")
         }
     }
 
+    // MARK: - 무음 오디오 재생 (세션 유지용)
     private func playSilentAudio() {
         if let url = Bundle.main.url(forResource: "web", withExtension: "mp3") {
             do {
@@ -28,23 +33,54 @@ class SilentAudioPlayer {
                 player?.volume = 0
                 player?.numberOfLoops = -1
                 player?.play()
+                TabPersistenceManager.debugMessages.append("무음 오디오 재생 시작")
             } catch {
-                print("🔇 무음 오디오 재생 실패: \(error)")
+                TabPersistenceManager.debugMessages.append("무음 오디오 재생 실패: \(error.localizedDescription)")
             }
+        } else {
+            TabPersistenceManager.debugMessages.append("무음 오디오 파일(web.mp3) 없음")
         }
     }
 }
 
-// ✅ AVPlayer를 SwiftUI에서 사용 가능하게 Wrapping
+// MARK: - AVPlayerViewControllerManager: AVPlayerViewController 싱글톤 관리
+class AVPlayerViewControllerManager {
+    static let shared = AVPlayerViewControllerManager()
+    var playerViewController: AVPlayerViewController?
+}
+
+// MARK: - VideoPlayerContainer: UIKit의 AVPlayerViewController를 SwiftUI에서 사용
+struct VideoPlayerContainer: UIViewControllerRepresentable {
+    let url: URL // 재생할 비디오 URL
+
+    // MARK: - AVPlayerViewController 생성 및 초기화
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let playerVC = AVPlayerViewController()
+        let player = AVPlayer(url: url)
+        playerVC.player = player
+        playerVC.allowsPictureInPicturePlayback = true
+        playerVC.entersFullScreenWhenPlaybackBegins = true
+        playerVC.exitsFullScreenWhenPlaybackEnds = true
+        player.play()
+        AVPlayerViewControllerManager.shared.playerViewController = playerVC
+        TabPersistenceManager.debugMessages.append("AVPlayerViewController 생성: \(url)")
+        return playerVC
+    }
+
+    // MARK: - 업데이트 (필요 없음)
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+}
+
+// MARK: - AVPlayerView: 비디오 재생 UI
 struct AVPlayerView: View {
-    let url: URL
-    @State private var showPIPControls = true
+    let url: URL // 재생할 비디오 URL
+    @State private var showPIPControls = true // PIP 버튼 표시 여부
 
     var body: some View {
         ZStack {
-            VideoPlayerContainer(url: url)
+            VideoPlayerContainer(url: url) // 비디오 재생 컨테이너
 
-            // ✅ 수동 PIP 토글 버튼
+            // MARK: - PIP 토글 버튼
             VStack {
                 HStack {
                     Spacer()
@@ -62,53 +98,28 @@ struct AVPlayerView: View {
             }
         }
         .onAppear {
-            _ = SilentAudioPlayer.shared  // ✅ 오디오 세션 유지 (경고 제거용)
+            _ = SilentAudioPlayer.shared // 오디오 세션 유지
+            TabPersistenceManager.debugMessages.append("AVPlayerView 등장: \(url)")
         }
     }
 
-    // ✅ PIP 진입/종료 수동 토글
+    // MARK: - PIP 모드 토글
     private func togglePIP() {
         if let playerVC = AVPlayerViewControllerManager.shared.playerViewController,
            let player = playerVC.player {
-
-            // ✅ AVPlayerLayer를 따로 생성하여 넘김
             let playerLayer = AVPlayerLayer(player: player)
             let pipController = AVPictureInPictureController(playerLayer: playerLayer)
-
             if let pipController = pipController {
                 if pipController.isPictureInPictureActive {
                     pipController.stopPictureInPicture()
+                    TabPersistenceManager.debugMessages.append("PIP 종료")
                 } else if pipController.isPictureInPicturePossible {
                     pipController.startPictureInPicture()
+                    TabPersistenceManager.debugMessages.append("PIP 시작")
                 }
+            } else {
+                TabPersistenceManager.debugMessages.append("PIP 컨트롤러 생성 실패")
             }
         }
     }
-}
-
-// ✅ AVPlayerViewController 싱글톤 관리
-class AVPlayerViewControllerManager {
-    static let shared = AVPlayerViewControllerManager()
-    var playerViewController: AVPlayerViewController?
-}
-
-// ✅ UIKit의 AVPlayerViewController 래핑
-struct VideoPlayerContainer: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let playerVC = AVPlayerViewController()
-        let player = AVPlayer(url: url)
-        playerVC.player = player
-        playerVC.allowsPictureInPicturePlayback = true
-        playerVC.entersFullScreenWhenPlaybackBegins = true
-        playerVC.exitsFullScreenWhenPlaybackEnds = true
-        player.play()
-
-        // ✅ 싱글톤에 참조 저장
-        AVPlayerViewControllerManager.shared.playerViewController = playerVC
-        return playerVC
-    }
-
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
 }
