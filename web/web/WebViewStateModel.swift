@@ -10,7 +10,7 @@ struct WebViewSession: Codable {
 }
 
 // MARK: - WebViewStateModel: WebView 상태 관리
-class WebViewStateModel: ObservableObject, WKNavigationDelegate {
+class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
     // 탭 고유 ID
     var tabID: UUID? = nil
 
@@ -23,7 +23,6 @@ class WebViewStateModel: ObservableObject, WKNavigationDelegate {
                 if isRestoringSession {
                     isRestoringSession = false
                 } else {
-                    // 히스토리 스택 관리
                     if currentIndexInStack < historyStack.count - 1 {
                         historyStack = Array(historyStack.prefix(upTo: currentIndexInStack + 1))
                     }
@@ -50,6 +49,11 @@ class WebViewStateModel: ObservableObject, WKNavigationDelegate {
     private var historyStack: [URL] = []
     private var currentIndexInStack: Int = -1
     private var isRestoringSession: Bool = false
+
+    // 복원용 히스토리 데이터
+    var restoredHistoryURLs: [String] = []
+    var restoredHistoryIndex: Int = 0
+    weak var webView: WKWebView?
 
     // MARK: - 전역 방문 기록 항목
     struct HistoryEntry: Identifiable, Hashable, Codable {
@@ -142,104 +146,6 @@ class WebViewStateModel: ObservableObject, WKNavigationDelegate {
         }
     }
 
-    // MARK: - 히스토리 스택 반환
-    func historyStackIfAny() -> [URL] {
-        return historyStack
-    }
-
-    // MARK: - 안전한 인덱스 반환
-    func currentIndexInSafeBounds() -> Int {
-        guard !historyStack.isEmpty,
-              currentIndexInStack >= 0,
-              currentIndexInStack < historyStack.count else {
-            return 0
-        }
-        return currentIndexInStack
-    }
-
-    // MARK: - WebView 제어 (Notification 기반)
-    func goBack() {
-        NotificationCenter.default.post(name: Notification.Name("WebViewGoBack"), object: nil)
-    }
-
-    func goForward() {
-        NotificationCenter.default.post(name: Notification.Name("WebViewGoForward"), object: nil)
-    }
-
-    func reload() {
-        NotificationCenter.default.post(name: Notification.Name("WebViewReload"), object: nil)
-    }
-
-    // MARK: - 방문 기록 뷰
-    struct HistoryPage: View {
-        @ObservedObject var state: WebViewStateModel
-
-        var body: some View {
-            VStack {
-                // 검색 필드
-                TextField("방문기록 검색", text: $state.searchKeyword)
-                    .textFieldStyle(.roundedBorder)
-                    .padding(.horizontal)
-
-                // 방문 기록 리스트
-                List {
-                    ForEach(state.filteredHistory) { entry in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Button(action: {
-                                state.currentURL = entry.url
-                                TabPersistenceManager.debugMessages.append("방문 기록에서 URL 선택: \(entry.url)")
-                            }) {
-                                Text(entry.title.isEmpty ? "제목 없음" : entry.title)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Text(entry.url.absoluteString)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                Text(Self.dateFormatter.string(from: entry.date))
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .onDelete(perform: delete)
-                }
-
-                // 전체 기록 삭제 버튼
-                Button(action: {
-                    WebViewStateModel.clearGlobalHistory()
-                }) {
-                    Label("전체 기록 삭제", systemImage: "trash")
-                        .foregroundColor(.red)
-                }
-                .padding()
-            }
-            .navigationTitle("방문 기록")
-        }
-
-        // 날짜 포맷
-        static let dateFormatter: DateFormatter = {
-            let df = DateFormatter()
-            df.dateStyle = .medium
-            df.timeStyle = .short
-            return df
-        }()
-
-        // 기록 삭제
-        func delete(at offsets: IndexSet) {
-            let items = state.filteredHistory
-            let targets = offsets.map { items[$0] }
-            WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
-            TabPersistenceManager.debugMessages.append("방문 기록 삭제: \(targets.count)개")
-        }
-    }
-
-    // MARK: - 복원용 히스토리 데이터
-    var restoredHistoryURLs: [String] = []
-    var restoredHistoryIndex: Int = 0
-    weak var webView: WKWebView?
-
     // MARK: - 히스토리 복원
     func prepareRestoredHistoryIfNeeded() {
         guard !restoredHistoryURLs.isEmpty, let webView = webView else {
@@ -265,7 +171,6 @@ class WebViewStateModel: ObservableObject, WKNavigationDelegate {
         for url in urls {
             dispatchGroup.enter()
             webView.load(URLRequest(url: url))
-            // WKNavigationDelegate에서 로드 완료 확인
             (webView.navigationDelegate as? CustomWebView.Coordinator)?.onLoadCompletion = {
                 TabPersistenceManager.debugMessages.append("히스토리 URL 로드 완료: \(url)")
                 dispatchGroup.leave()
@@ -302,5 +207,114 @@ class WebViewStateModel: ObservableObject, WKNavigationDelegate {
             return 0
         }
         return webView.backForwardList.backList.count
+    }
+
+    // MARK: - 히스토리 스택 반환
+    func historyStackIfAny() -> [URL] {
+        return historyStack
+    }
+
+    // MARK: - 안전한 인덱스 반환
+    func currentIndexInSafeBounds() -> Int {
+        guard !historyStack.isEmpty,
+              currentIndexInStack >= 0,
+              currentIndexInStack < historyStack.count else {
+            return 0
+        }
+        return currentIndexInStack
+    }
+
+    // MARK: - WebView 제어 (Notification 기반)
+    func goBack() {
+        NotificationCenter.default.post(name: Notification.Name("WebViewGoBack"), object: nil)
+    }
+
+    func goForward() {
+        NotificationCenter.default.post(name: Notification.Name("WebViewGoForward"), object: nil)
+    }
+
+    func reload() {
+        NotificationCenter.default.post(name: Notification.Name("WebViewReload"), object: nil)
+    }
+
+    // MARK: - 방문 기록 뷰
+    struct HistoryPage: View {
+        @ObservedObject var state: WebViewStateModel
+
+        var body: some View {
+            VStack {
+                TextField("방문기록 검색", text: $state.searchKeyword)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal)
+
+                List {
+                    ForEach(state.filteredHistory) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Button(action: {
+                                state.currentURL = entry.url
+                                TabPersistenceManager.debugMessages.append("방문 기록에서 URL 선택: \(entry.url)")
+                            }) {
+                                Text(entry.title.isEmpty ? "제목 없음" : entry.title)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                Text(entry.url.absoluteString)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                Text(Self.dateFormatter.string(from: entry.date))
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .onDelete(perform: delete)
+                }
+
+                Button(action: {
+                    WebViewStateModel.clearGlobalHistory()
+                }) {
+                    Label("전체 기록 삭제", systemImage: "trash")
+                        .foregroundColor(.red)
+                }
+                .padding()
+            }
+            .navigationTitle("방문 기록")
+        }
+
+        static let dateFormatter: DateFormatter = {
+            let df = DateFormatter()
+            df.dateStyle = .medium
+            df.timeStyle = .short
+            return df
+        }()
+
+        func delete(at offsets: IndexSet) {
+            let items = state.filteredHistory
+            let targets = offsets.map { items[$0] }
+            WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
+            TabPersistenceManager.debugMessages.append("방문 기록 삭제: \(targets.count)개")
+        }
+    }
+
+    // MARK: - WKNavigationDelegate 메서드
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        self.webView = webView
+        canGoBack = webView.canGoBack
+        canGoForward = webView.canGoForward
+        currentURL = webView.url
+        let title = (webView.title?.isEmpty == false) ? webView.title! : (webView.url?.host ?? "제목 없음")
+        if let finalURL = webView.url {
+            addToHistory(url: finalURL, title: title)
+        }
+        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "없음")")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        TabPersistenceManager.debugMessages.append("로드 실패 (Provisional): \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        TabPersistenceManager.debugMessages.append("로드 실패 (Navigation): \(error.localizedDescription)")
     }
 }
