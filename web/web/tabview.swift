@@ -2,111 +2,114 @@ import SwiftUI
 import AVKit
 import WebKit
 
-// MARK: - WebTabSessionSnapshot 구조체 (Codable 준수)
-// 탭의 히스토리 상태를 저장/복원하기 위한 Codable 구조체
+// MARK: - WebTabSessionSnapshot: 탭 상태 저장/복원용 Codable 구조체
 struct WebTabSessionSnapshot: Codable {
-    let id: String               // UUID 문자열 형태의 탭 식별자
-    let history: [String]        // 방문한 URL 문자열 배열
-    let index: Int               // 현재 인덱스
+    let id: String       // 탭 UUID 문자열
+    let history: [String] // 방문한 URL 문자열 배열
+    let index: Int       // 현재 히스토리 인덱스
 }
 
-// MARK: - WebTab 모델
-// 각 브라우저 탭을 식별 및 상태 관리하기 위한 구조체
+// MARK: - WebTab: 브라우저 탭 모델
 struct WebTab: Identifiable, Equatable {
     let id: UUID                            // 탭 고유 식별자
-    let stateModel: WebViewStateModel      // WKWebView 상태 및 히스토리 관리 객체
-    var playerURL: URL? = nil              // AVPlayer로 재생할 비디오 URL
-    var showAVPlayer: Bool = false         // AVPlayer 전체화면 여부
+    let stateModel: WebViewStateModel       // WKWebView 상태 관리 객체
+    var playerURL: URL? = nil               // 비디오 재생 URL
+    var showAVPlayer: Bool = false          // AVPlayer 전체화면 여부
 
-    // 현재 페이지 URL (ViewModel에서 업데이트)
+    // 현재 페이지 URL
     var currentURL: URL? {
         stateModel.currentURL
     }
 
-    // 현재 탭의 전체 방문 히스토리 URL 목록
+    // 방문 히스토리 URL 목록
     var historyURLs: [String] {
         stateModel.historyURLs
     }
 
-    // 현재 히스토리 인덱스 위치
+    // 현재 히스토리 인덱스
     var currentHistoryIndex: Int {
         stateModel.currentHistoryIndex
     }
 
-    /// 새 탭 생성 시 호출
-    /// - Parameter url: 초기 로드할 URL (없으면 대시보드 사용)
+    // MARK: - 초기화
     init(url: URL? = nil) {
         self.id = UUID()
         self.stateModel = WebViewStateModel()
         self.stateModel.tabID = self.id
         self.stateModel.currentURL = url
+        TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(id.uuidString)")
     }
 
-    /// Equatable 구현 (id 기준)
+    // MARK: - Equatable 구현
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
     }
 
-    /// 현재 탭을 스냅샷 정보로 변환 (세션 저장용)
+    // MARK: - 스냅샷 변환 (세션 저장용)
     func toSnapshot() -> WebTabSessionSnapshot {
-        return WebTabSessionSnapshot(
+        let snapshot = WebTabSessionSnapshot(
             id: id.uuidString,
             history: historyURLs,
             index: currentHistoryIndex
         )
+        TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(historyURLs.count) URLs")
+        return snapshot
     }
 }
 
 // MARK: - 탭 저장/복원 관리자
-// UserDefaults를 이용해 탭의 ID, 방문 히스토리 URL 배열, 현재 인덱스를 저장/복원
 enum TabPersistenceManager {
     private static let key = "savedTabs"
+    // 디버깅 메시지 저장소
+    static var debugMessages: [String] = []
 
-    /// 탭 배열 저장
+    // MARK: - 탭 배열 저장
     static func saveTabs(_ tabs: [WebTab]) {
         let snapshots = tabs.map { $0.toSnapshot() }
+        TabPersistenceManager.debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷: \(snapshots.map { "\($0.id): \($0.history.count) URLs, 인덱스 \($0.index)" })")
 
-        // ✅ Codable 방식 저장
-        if let data = try? JSONEncoder().encode(snapshots) {
+        do {
+            let data = try JSONEncoder().encode(snapshots)
             UserDefaults.standard.set(data, forKey: key)
+            TabPersistenceManager.debugMessages.append("저장 성공: 데이터 크기 \(data.count) 바이트")
+        } catch {
+            TabPersistenceManager.debugMessages.append("저장 실패: 인코딩 오류 - \(error.localizedDescription)")
         }
-
-        // ✅ (선택) toSnapshot + JSONSerialization 방식도 함께 유지하고 싶을 경우 여기에 추가
-        // let dictionaries = snapshots.map { ["id": $0.id, "history": $0.history, "index": $0.index] }
-        // if let jsonData = try? JSONSerialization.data(withJSONObject: dictionaries, options: []) {
-        //     UserDefaults.standard.set(jsonData, forKey: key)
-        // }
     }
 
-    /// 저장된 탭 복원
+    // MARK: - 저장된 탭 복원
     static func loadTabs() -> [WebTab] {
-        // ✅ Codable 방식 복원
-        if let data = UserDefaults.standard.data(forKey: key),
-           let snapshots = try? JSONDecoder().decode([WebTabSessionSnapshot].self, from: data) {
-
-            return snapshots.map { snapshot in
-                let id = UUID(uuidString: snapshot.id) ?? UUID()
-                let urls = snapshot.history
-                let index = snapshot.index
-
-                var tab = WebTab() // 기본 생성자로 초기화 후 수동 덮어쓰기
-                tab.stateModel.tabID = id
-                tab.stateModel.restoredHistoryURLs = urls
-                tab.stateModel.restoredHistoryIndex = index
-                return tab
+        if let data = UserDefaults.standard.data(forKey: key) {
+            TabPersistenceManager.debugMessages.append("복원 시도: 데이터 크기 \(data.count) 바이트")
+            do {
+                let snapshots = try JSONDecoder().decode([WebTabSessionSnapshot].self, from: data)
+                TabPersistenceManager.debugMessages.append("복원 성공: \(snapshots.count)개 탭 복원")
+                return snapshots.map { snapshot in
+                    let id = UUID(uuidString: snapshot.id) ?? UUID()
+                    let urls = snapshot.history
+                    let index = snapshot.index
+                    TabPersistenceManager.debugMessages.append("탭 복원: ID \(id), URL \(urls), 인덱스 \(index)")
+                    let tab = WebTab()
+                    tab.stateModel.tabID = id
+                    tab.stateModel.restoredHistoryURLs = urls
+                    tab.stateModel.restoredHistoryIndex = index
+                    return tab
+                }
+            } catch {
+                TabPersistenceManager.debugMessages.append("복원 실패: 디코딩 오류 - \(error.localizedDescription)")
+                return []
             }
+        } else {
+            TabPersistenceManager.debugMessages.append("복원 실패: UserDefaults에 데이터 없음")
+            return []
         }
-
-        // ❌ 실패 시 빈 배열 반환
-        return []
     }
 }
 
-// MARK: - 대시보드 뷰
-// 탭에 URL이 없을 때 표시되는 홈 화면 뷰
+// MARK: - 대시보드 뷰: URL 없는 탭의 홈 화면
 struct DashboardView: View {
-    @State private var inputURL: String = ""
-    let onSelectURL: (URL) -> Void
+    @State private var inputURL: String = "" // URL 입력 필드
+    let onSelectURL: (URL) -> Void // URL 선택 콜백
 
     var body: some View {
         VStack(spacing: 20) {
@@ -119,13 +122,14 @@ struct DashboardView: View {
                 icon(title: "Naver", url: "https://www.naver.com")
             }
 
-            // URL 입력 및 이동
+            // URL 입력 및 이동 버튼
             HStack {
                 TextField("URL 입력", text: $inputURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                 Button("이동") {
                     if let url = URL(string: inputURL) {
                         onSelectURL(url)
+                        TabPersistenceManager.debugMessages.append("대시보드에서 URL 이동: \(url)")
                     }
                 }
             }
@@ -136,11 +140,12 @@ struct DashboardView: View {
         .padding()
     }
 
-    /// 북마크 아이콘 버튼 컴포넌트
+    // 북마크 아이콘 버튼 컴포넌트
     private func icon(title: String, url: String) -> some View {
         Button(action: {
             if let u = URL(string: url) {
                 onSelectURL(u)
+                TabPersistenceManager.debugMessages.append("북마크 이동: \(url)")
             }
         }) {
             VStack {
@@ -157,63 +162,133 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - 탭 관리자 뷰
-// 탭 목록 표시, 선택 및 닫기, 새 탭 추가 기능
+// MARK: - 탭 관리자 뷰: 탭 목록 관리
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
     let initialStateModel: WebViewStateModel
     let onTabSelected: (WebViewStateModel) -> Void
+    @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
+    @State private var showToast = false
+    @State private var toastMessage = ""
 
     var body: some View {
-        VStack {
-            Text("탭 목록")
-                .font(.title.bold())
+        ZStack {
+            VStack {
+                Text("탭 목록")
+                    .font(.title.bold())
 
-            ScrollView {
-                ForEach(tabs) { tab in
-                    HStack {
-                        Button(action: {
-                            onTabSelected(tab.stateModel)
-                            dismiss()
-                        }) {
-                            VStack(alignment: .leading) {
-                                Text(tab.currentURL?.host ?? "대시보드")
-                                    .font(.headline)
-                                Text(tab.currentURL?.absoluteString ?? "")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        Spacer()
-                        Button(action: { closeTab(tab) }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.red)
+                // 디버깅 로그 표시
+                VStack(alignment: .leading) {
+                    Text("디버깅 로그")
+                        .font(.headline)
+                        .padding(.top)
+                    ScrollView {
+                        ForEach(debugMessages, id: \.self) { message in
+                            Text(message)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .padding(.vertical, 2)
                         }
                     }
+                    .frame(maxHeight: 150)
                     .padding()
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(10)
                 }
+
+                // 탭 목록
+                ScrollView {
+                    ForEach(tabs) { tab in
+                        HStack {
+                            Button(action: {
+                                onTabSelected(tab.stateModel)
+                                dismiss()
+                                TabPersistenceManager.debugMessages.append("탭 선택: ID \(tab.id.uuidString)")
+                                debugMessages = TabPersistenceManager.debugMessages
+                            }) {
+                                VStack(alignment: .leading) {
+                                    Text(tab.currentURL?.host ?? "대시보드")
+                                        .font(.headline)
+                                    Text(tab.currentURL?.absoluteString ?? "")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                            Spacer()
+                            Button(action: { closeTab(tab) }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        .padding()
+                    }
+                }
+
+                // 새 탭 추가 버튼
+                Button(action: {
+                    tabs.append(WebTab())
+                    TabPersistenceManager.saveTabs(tabs)
+                    dismiss()
+                    TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(tabs.last?.id.uuidString ?? "없음")")
+                    debugMessages = TabPersistenceManager.debugMessages
+                }) {
+                    Label("새 탭", systemImage: "plus")
+                        .padding()
+                        .background(Color.green)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
+                .padding()
             }
 
-            Button(action: {
-                tabs.append(WebTab())
-                dismiss()
-            }) {
-                Label("새 탭", systemImage: "plus")
-                    .padding()
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
+            // 토스트 메시지
+            if showToast {
+                ToastView(message: toastMessage)
+                    .transition(.opacity)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation {
+                                showToast = false
+                            }
+                        }
+                    }
             }
-            .padding()
+        }
+        .onAppear {
+            debugMessages = TabPersistenceManager.debugMessages
+            if let lastMessage = debugMessages.last {
+                toastMessage = lastMessage
+                showToast = true
+            }
+        }
+        .onChange(of: tabs) { _ in
+            TabPersistenceManager.saveTabs(tabs)
+            debugMessages = TabPersistenceManager.debugMessages
         }
     }
 
-    /// 특정 탭을 배열에서 제거
+    // 탭 닫기
     private func closeTab(_ tab: WebTab) {
         if let idx = tabs.firstIndex(of: tab) {
             tabs.remove(at: idx)
+            TabPersistenceManager.saveTabs(tabs)
+            TabPersistenceManager.debugMessages.append("탭 닫힘: ID \(tab.id.uuidString)")
+            debugMessages = TabPersistenceManager.debugMessages
         }
+    }
+}
+
+// MARK: - 토스트 뷰: 디버깅 메시지 표시
+struct ToastView: View {
+    let message: String
+    var body: some View {
+        Text(message)
+            .padding()
+            .background(Color.black.opacity(0.7))
+            .foregroundColor(.white)
+            .cornerRadius(10)
+            .padding(.top, 50)
     }
 }
 
