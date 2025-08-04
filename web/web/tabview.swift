@@ -11,16 +11,15 @@ struct WebTabSessionSnapshot: Codable {
 
 // MARK: - WebTab: 브라우저 탭 모델
 struct WebTab: Identifiable, Equatable {
-    let id: UUID // 탭 고유 식별자
-    let stateModel: WebViewStateModel // WKWebView 상태 관리 객체
-    var playerURL: URL? = nil // 비디오 재생 URL
-    var showAVPlayer: Bool = false // AVPlayer 전체화면 여부
+    let id: UUID
+    let stateModel: WebViewStateModel
+    var playerURL: URL? = nil
+    var showAVPlayer: Bool = false
 
     var currentURL: URL? { stateModel.currentURL }
     var historyURLs: [String] { stateModel.historyURLs }
     var currentHistoryIndex: Int { stateModel.currentHistoryIndex }
 
-    // MARK: - 초기화
     init(url: URL? = nil) {
         self.id = UUID()
         self.stateModel = WebViewStateModel()
@@ -29,19 +28,16 @@ struct WebTab: Identifiable, Equatable {
         TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(id.uuidString)")
     }
 
-    // MARK: - Equatable 구현
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
     }
 
-    // MARK: - 스냅샷 변환
+    // MARK: - 스냅샷 변환 (히스토리와 인덱스 정확히 저장)
     func toSnapshot() -> WebTabSessionSnapshot {
-        let snapshot = WebTabSessionSnapshot(
-            id: id.uuidString,
-            history: historyURLs,
-            index: currentHistoryIndex
-        )
-        TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(historyURLs.count) URLs")
+        let history = stateModel.historyStackIfAny().map { $0.absoluteString } // 히스토리 스택 사용
+        let index = stateModel.currentIndexInSafeBounds() // 안전한 인덱스
+        let snapshot = WebTabSessionSnapshot(id: id.uuidString, history: history, index: index)
+        TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(history.count) URLs, 인덱스 \(index)")
         return snapshot
     }
 }
@@ -49,9 +45,9 @@ struct WebTab: Identifiable, Equatable {
 // MARK: - TabPersistenceManager: 탭 저장/복원 관리
 enum TabPersistenceManager {
     private static let key = "savedTabs"
-    static var debugMessages: [String] = [] // 디버깅 메시지 저장소
+    static var debugMessages: [String] = []
 
-    // MARK: - 탭 배열 저장
+    // MARK: - 탭 배열 저장 (히스토리와 인덱스 포함)
     static func saveTabs(_ tabs: [WebTab]) {
         let snapshots = tabs.map { $0.toSnapshot() }
         TabPersistenceManager.debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷: \(snapshots.map { "\($0.id): \($0.history.count) URLs, 인덱스 \($0.index)" })")
@@ -64,7 +60,7 @@ enum TabPersistenceManager {
         }
     }
 
-    // MARK: - 저장된 탭 복원
+    // MARK: - 저장된 탭 복원 (히스토리와 인덱스 복원)
     static func loadTabs() -> [WebTab] {
         if let data = UserDefaults.standard.data(forKey: key) {
             TabPersistenceManager.debugMessages.append("복원 시도: 데이터 크기 \(data.count) 바이트")
@@ -74,12 +70,17 @@ enum TabPersistenceManager {
                 return snapshots.map { snapshot in
                     let id = UUID(uuidString: snapshot.id) ?? UUID()
                     let urls = snapshot.history
-                    let index = snapshot.index
+                    let index = max(0, min(snapshot.index, urls.count - 1)) // 인덱스 범위 제한
                     TabPersistenceManager.debugMessages.append("탭 복원: ID \(id), URL \(urls), 인덱스 \(index)")
                     let tab = WebTab()
                     tab.stateModel.tabID = id
                     tab.stateModel.restoredHistoryURLs = urls
                     tab.stateModel.restoredHistoryIndex = index
+                    // 세션 복원 트리거
+                    if !urls.isEmpty, let url = URL(string: urls[index]) {
+                        tab.stateModel.currentURL = url
+                        tab.stateModel.restoreSession(WebViewSession(urls: urls.compactMap { URL(string: $0) }, currentIndex: index))
+                    }
                     return tab
                 }
             } catch {
@@ -95,19 +96,17 @@ enum TabPersistenceManager {
 
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 struct DashboardView: View {
-    @State private var inputURL: String = "" // URL 입력 필드
-    let onSelectURL: (URL) -> Void // URL 선택 콜백
+    @State private var inputURL: String = ""
+    let onSelectURL: (URL) -> Void
 
     var body: some View {
         VStack(spacing: 20) {
             Text("대시보드")
                 .font(.largeTitle.bold())
-
             HStack(spacing: 40) {
                 icon(title: "Google", url: "https://www.google.com")
                 icon(title: "Naver", url: "https://www.naver.com")
             }
-
             HStack {
                 TextField("URL 입력", text: $inputURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -124,7 +123,6 @@ struct DashboardView: View {
         .padding()
     }
 
-    // MARK: - 북마크 아이콘 버튼
     private func icon(title: String, url: String) -> some View {
         Button(action: {
             if let u = URL(string: url) {
@@ -161,8 +159,6 @@ struct TabManager: View {
             VStack {
                 Text("탭 목록")
                     .font(.title.bold())
-
-                // MARK: - 디버깅 로그 표시
                 VStack(alignment: .leading) {
                     Text("디버깅 로그")
                         .font(.headline)
@@ -180,7 +176,6 @@ struct TabManager: View {
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(10)
                 }
-
                 ScrollView {
                     ForEach(tabs) { tab in
                         HStack {
@@ -207,7 +202,6 @@ struct TabManager: View {
                         .padding()
                     }
                 }
-
                 Button(action: {
                     tabs.append(WebTab())
                     TabPersistenceManager.saveTabs(tabs)
@@ -223,8 +217,6 @@ struct TabManager: View {
                 }
                 .padding()
             }
-
-            // MARK: - 토스트 메시지
             if showToast {
                 ToastView(message: toastMessage)
                     .transition(.opacity)
@@ -250,7 +242,6 @@ struct TabManager: View {
         }
     }
 
-    // MARK: - 탭 닫기
     private func closeTab(_ tab: WebTab) {
         if let idx = tabs.firstIndex(of: tab) {
             tabs.remove(at: idx)
@@ -261,7 +252,6 @@ struct TabManager: View {
     }
 }
 
-// MARK: - ToastView: 디버깅 메시지 표시
 struct ToastView: View {
     let message: String
     var body: some View {
@@ -274,7 +264,6 @@ struct ToastView: View {
     }
 }
 
-// MARK: - Collection 확장: 안전한 인덱스 접근
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
