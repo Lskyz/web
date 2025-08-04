@@ -1,24 +1,20 @@
 import SwiftUI
 import AVKit
 
-// MARK: - ContentView: 메인 브라우저 인터페이스 뷰
 struct ContentView: View {
-    @Binding var tabs: [WebTab] // 탭 목록 바인딩
-    @Binding var selectedTabIndex: Int // 현재 선택된 탭 인덱스
-    @State private var inputURL: String = "" // 주소창 입력값
-    @FocusState private var isTextFieldFocused: Bool // 주소창 포커스 상태
-    @State private var textFieldSelectedAll = false // 텍스트 전체 선택 여부
-    @State private var showHistorySheet = false // 방문 기록 시트 표시 여부
-    @State private var showTabManager = false // 탭 관리자 시트 표시 여부
-    @State private var enablePIP: Bool = true // PIP 모드 (숨김)
+    @Binding var tabs: [WebTab]
+    @Binding var selectedTabIndex: Int
+    @State private var inputURL: String = ""
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var textFieldSelectedAll = false
+    @State private var showHistorySheet = false
+    @State private var showTabManager = false
+    @State private var enablePIP: Bool = true
 
     var body: some View {
-        // MARK: - 현재 탭이 유효한 경우
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
-
             VStack(spacing: 0) {
-                // MARK: - 주소 입력 필드와 이동 버튼
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -27,7 +23,6 @@ struct ContentView: View {
                         .keyboardType(.URL)
                         .focused($isTextFieldFocused)
                         .onTapGesture {
-                            // 최초 클릭 시 텍스트 전체 선택
                             if !textFieldSelectedAll {
                                 DispatchQueue.main.async {
                                     UIApplication.shared.sendAction(
@@ -40,14 +35,12 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: isTextFieldFocused) { focused in
-                            // 포커스 해제 시 선택 상태 초기화
                             if !focused {
                                 textFieldSelectedAll = false
                                 TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                             }
                         }
                         .onSubmit {
-                            // Enter 키 입력 시 URL 이동
                             if let url = fixedURL(from: inputURL) {
                                 state.currentURL = url
                                 TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
@@ -57,7 +50,6 @@ struct ContentView: View {
                         .overlay(
                             HStack {
                                 Spacer()
-                                // 입력 지우기 버튼
                                 if !inputURL.isEmpty {
                                     Button(action: { inputURL = "" }) {
                                         Image(systemName: "xmark.circle.fill")
@@ -67,8 +59,6 @@ struct ContentView: View {
                                 }
                             }
                         )
-
-                    // 이동 버튼
                     Button("이동") {
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
@@ -80,8 +70,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
-
-                // MARK: - URL이 있으면 WebView, 없으면 대시보드
+                // MARK: - 경고 해결: if let url 제거
                 if state.currentURL != nil {
                     CustomWebView(
                         stateModel: state,
@@ -100,47 +89,33 @@ struct ContentView: View {
                         TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
                     }
                 }
-
-                // MARK: - 하단 도구 버튼
                 HStack {
-                    // 뒤로가기
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left").font(.title2)
                     }
                     .disabled(!state.canGoBack)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-
-                    // 앞으로가기
                     Button(action: { state.goForward() }) {
                         Image(systemName: "chevron.right").font(.title2)
                     }
                     .disabled(!state.canGoForward)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-
-                    // 새로고침
                     Button(action: { state.reload() }) {
                         Image(systemName: "arrow.clockwise").font(.title2)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-
-                    // 방문 기록 보기
                     Button(action: { showHistorySheet = true }) {
                         Image(systemName: "clock.arrow.circlepath").font(.title2)
                     }
                     .padding(.horizontal, 8)
-
                     Spacer()
-
-                    // 탭 관리자
                     Button(action: { showTabManager = true }) {
                         Image(systemName: "square.on.square").font(.title2)
                     }
                     .padding(.horizontal, 8)
-
-                    // PIP 토글 (숨김)
                     Toggle(isOn: $enablePIP) {
                         Image(systemName: "pip.enter")
                     }
@@ -153,12 +128,10 @@ struct ContentView: View {
             }
             .ignoresSafeArea(.keyboard)
             .onAppear {
-                // 탭 진입 시 주소창 동기화
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                     TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
                 }
-                // pendingSession 복원
                 if let session = state.pendingSession {
                     state.restoreSession(session)
                     tabs[selectedTabIndex].stateModel.pendingSession = nil
@@ -166,18 +139,15 @@ struct ContentView: View {
                 }
             }
             .onChange(of: tabs) { _ in
-                // 탭 배열 변경 시 저장
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
             }
             .onReceive(state.$currentURL) { url in
-                // URL 변경 시 주소창 업데이트
                 if let url = url {
                     inputURL = url.absoluteString
                     TabPersistenceManager.debugMessages.append("URL 변경, 주소창 업데이트: \(url)")
                 }
             }
-            // 전체화면 AVPlayer
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
@@ -186,13 +156,11 @@ struct ContentView: View {
                     AVPlayerView(url: url)
                 }
             }
-            // 방문 기록 시트
             .sheet(isPresented: $showHistorySheet) {
                 NavigationView {
                     WebViewStateModel.HistoryPage(state: state)
                 }
             }
-            // 탭 관리자 시트
             .fullScreenCover(isPresented: $showTabManager) {
                 NavigationView {
                     TabManager(
@@ -208,7 +176,6 @@ struct ContentView: View {
                 }
             }
         } else {
-            // 탭이 없는 경우 대시보드 표시
             DashboardView { url in
                 let newTab = WebTab(url: url)
                 tabs.append(newTab)
@@ -219,7 +186,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 입력값을 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
