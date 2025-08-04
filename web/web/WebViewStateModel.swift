@@ -3,16 +3,14 @@ import Combine
 import SwiftUI
 import WebKit
 
-// MARK: - WebViewSession: 탭 단위 세션 저장용
 struct WebViewSession: Codable {
-    let urls: [URL] // 방문한 URL 목록
-    let currentIndex: Int // 현재 페이지 인덱스
+    let urls: [URL]
+    let currentIndex: Int
 }
 
-// MARK: - WebViewStateModel: WebView 상태 관리
 class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
-    var tabID: UUID? // 탭 고유 ID
-    @Published var currentURL: URL? { // 현재 로드된 URL
+    var tabID: UUID?
+    @Published var currentURL: URL? {
         didSet {
             if let url = currentURL {
                 UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
@@ -30,20 +28,19 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
     }
-    @Published var canGoBack = false // 뒤로가기 가능 여부
-    @Published var canGoForward = false // 앞으로가기 가능 여부
-    @Published var playerURL: URL? // 비디오 재생 URL
-    @Published var showAVPlayer = false // AVPlayer 전체화면 여부
-    var pendingSession: WebViewSession? // 세션 복원용 임시 데이터
-    private var historyStack: [URL] = [] // 내부 히스토리 스택
-    private var currentIndexInStack: Int = -1 // 현재 히스토리 인덱스
-    private var isRestoringSession: Bool = false // 세션 복원 플래그
-    var restoredHistoryURLs: [String] = [] // 복원용 히스토리 URL
-    var restoredHistoryIndex: Int = 0 // 복원용 히스토리 인덱스
-    weak var webView: WKWebView? // WKWebView 참조
-    var onLoadCompletion: (() -> Void)? // URL 로드 완료 콜백
+    @Published var canGoBack = false
+    @Published var canGoForward = false
+    @Published var playerURL: URL?
+    @Published var showAVPlayer = false
+    var pendingSession: WebViewSession?
+    private var historyStack: [URL] = []
+    private var currentIndexInStack: Int = -1
+    private var isRestoringSession: Bool = false
+    var restoredHistoryURLs: [String] = []
+    var restoredHistoryIndex: Int = 0
+    weak var webView: WKWebView?
+    var onLoadCompletion: (() -> Void)?
 
-    // MARK: - 전역 방문 기록 항목
     struct HistoryEntry: Identifiable, Hashable, Codable {
         var id = UUID()
         let url: URL
@@ -51,15 +48,13 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         let date: Date
     }
 
-    static var globalHistory: [HistoryEntry] = [] { // 전역 방문 기록
-        didSet {
-            saveGlobalHistory()
-        }
+    static var globalHistory: [HistoryEntry] = [] {
+        didSet { saveGlobalHistory() }
     }
 
-    @Published var searchKeyword: String = "" // 방문 기록 검색 키워드
+    @Published var searchKeyword: String = ""
 
-    var filteredHistory: [HistoryEntry] { // 필터링된 방문 기록
+    var filteredHistory: [HistoryEntry] {
         let base = WebViewStateModel.globalHistory
         if searchKeyword.isEmpty {
             return base.reversed()
@@ -71,7 +66,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
 
-    // MARK: - 전역 방문 기록 추가
     func addToHistory(url: URL, title: String) {
         let entry = HistoryEntry(url: url, title: title, date: Date())
         WebViewStateModel.globalHistory.append(entry)
@@ -81,14 +75,12 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         TabPersistenceManager.debugMessages.append("방문 기록 추가: \(url.absoluteString)")
     }
 
-    // MARK: - 전역 방문 기록 초기화
     static func clearGlobalHistory() {
         globalHistory.removeAll()
         saveGlobalHistory()
         TabPersistenceManager.debugMessages.append("전역 방문 기록 삭제")
     }
 
-    // MARK: - 전역 방문 기록 저장
     private static func saveGlobalHistory() {
         if let data = try? JSONEncoder().encode(globalHistory) {
             UserDefaults.standard.set(data, forKey: "globalHistory")
@@ -96,7 +88,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
 
-    // MARK: - 전역 방문 기록 로드
     static func loadGlobalHistory() {
         if let data = UserDefaults.standard.data(forKey: "globalHistory"),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -105,7 +96,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
 
-    // MARK: - 현재 탭 세션 저장
     func saveSession() -> WebViewSession? {
         guard !historyStack.isEmpty, currentIndexInStack >= 0 else {
             TabPersistenceManager.debugMessages.append("세션 저장 실패: 히스토리 또는 인덱스 없음")
@@ -116,22 +106,26 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         return session
     }
 
-    // MARK: - 세션 복원
+    // MARK: - 세션 복원 개선
     func restoreSession(_ session: WebViewSession) {
         isRestoringSession = true
         historyStack = session.urls
-        currentIndexInStack = session.currentIndex
+        currentIndexInStack = max(0, min(session.currentIndex, session.urls.count - 1)) // 인덱스 범위 제한
         pendingSession = session
-        if session.urls.indices.contains(session.currentIndex) {
-            currentURL = session.urls[session.currentIndex]
-            TabPersistenceManager.debugMessages.append("세션 복원: URL \(currentURL?.absoluteString ?? "없음")")
+        if session.urls.indices.contains(currentIndexInStack) {
+            currentURL = session.urls[currentIndexInStack]
+            TabPersistenceManager.debugMessages.append("세션 복원: URL \(currentURL?.absoluteString ?? "없음"), 인덱스 \(currentIndexInStack)")
         } else {
             currentURL = nil
-            TabPersistenceManager.debugMessages.append("세션 복원 실패: 인덱스 범위 초과")
+            TabPersistenceManager.debugMessages.append("세션 복원 실패: 유효한 인덱스 없음")
+        }
+        // 복원 후 즉시 히스토리 준비
+        if !restoredHistoryURLs.isEmpty {
+            prepareRestoredHistoryIfNeeded()
         }
     }
 
-    // MARK: - 히스토리 복원
+    // MARK: - 히스토리 복원 개선
     func prepareRestoredHistoryIfNeeded() {
         guard !restoredHistoryURLs.isEmpty, let webView = webView else {
             TabPersistenceManager.debugMessages.append("히스토리 복원 실패: URL 없음 또는 webView 없음")
@@ -153,28 +147,30 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
 
         let dispatchGroup = DispatchGroup()
-        for url in urls {
+        for (index, url) in urls.enumerated() {
             dispatchGroup.enter()
             webView.load(URLRequest(url: url))
-            (webView.navigationDelegate as? WebViewStateModel)?.onLoadCompletion = {
+            onLoadCompletion = {
                 TabPersistenceManager.debugMessages.append("히스토리 URL 로드 완료: \(url)")
                 dispatchGroup.leave()
+                // 마지막 URL 로드 후 인덱스로 이동
+                if index == urls.count - 1 {
+                    DispatchQueue.main.async {
+                        let backList = webView.backForwardList.backList
+                        if backList.indices.contains(self.restoredHistoryIndex) {
+                            webView.go(to: backList[self.restoredHistoryIndex])
+                            TabPersistenceManager.debugMessages.append("히스토리 복원 완료: \(webView.url?.absoluteString ?? "없음")")
+                        } else {
+                            TabPersistenceManager.debugMessages.append("히스토리 복원 실패: backList 인덱스 범위 초과")
+                        }
+                        self.restoredHistoryURLs = []
+                        self.restoredHistoryIndex = 0
+                    }
+                }
             }
-        }
-
-        dispatchGroup.notify(queue: .main) {
-            let backList = webView.backForwardList.backList
-            if backList.indices.contains(self.restoredHistoryIndex) {
-                webView.go(to: backList[self.restoredHistoryIndex])
-                TabPersistenceManager.debugMessages.append("히스토리 복원 완료: \(webView.url?.absoluteString ?? "없음")")
-            } else {
-                TabPersistenceManager.debugMessages.append("히스토리 복원 실패: backList 인덱스 범위 초과")
-            }
-            self.restoredHistoryURLs = []
         }
     }
 
-    // MARK: - 현재 웹뷰 히스토리 상태
     var historyURLs: [String] {
         guard let webView = webView else {
             TabPersistenceManager.debugMessages.append("히스토리 URL 반환 실패: webView 없음")
@@ -194,12 +190,10 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         return webView.backForwardList.backList.count
     }
 
-    // MARK: - 히스토리 스택 반환
     func historyStackIfAny() -> [URL] {
         return historyStack
     }
 
-    // MARK: - 안전한 인덱스 반환
     func currentIndexInSafeBounds() -> Int {
         guard !historyStack.isEmpty,
               currentIndexInStack >= 0,
@@ -209,7 +203,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         return currentIndexInStack
     }
 
-    // MARK: - WebView 제어 (Notification 기반)
     func goBack() {
         NotificationCenter.default.post(name: Notification.Name("WebViewGoBack"), object: nil)
     }
@@ -222,7 +215,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         NotificationCenter.default.post(name: Notification.Name("WebViewReload"), object: nil)
     }
 
-    // MARK: - WKNavigationDelegate 메서드
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         self.webView = webView
         canGoBack = webView.canGoBack
@@ -245,7 +237,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
         TabPersistenceManager.debugMessages.append("로드 실패 (Navigation): \(error.localizedDescription)")
     }
 
-    // MARK: - 방문 기록 뷰
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
 
@@ -254,7 +245,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
                 TextField("방문기록 검색", text: $state.searchKeyword)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
-
                 List {
                     ForEach(state.filteredHistory) { entry in
                         VStack(alignment: .leading, spacing: 4) {
@@ -278,7 +268,6 @@ class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                     .onDelete(perform: delete)
                 }
-
                 Button(action: {
                     WebViewStateModel.clearGlobalHistory()
                 }) {
