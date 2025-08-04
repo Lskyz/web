@@ -15,6 +15,16 @@ struct WebTab: Identifiable, Equatable {
         stateModel.currentURL
     }
 
+    // 현재 탭의 전체 방문 히스토리 URL 목록
+    var historyURLs: [String] {
+        stateModel.historyURLs
+    }
+
+    // 현재 히스토리 인덱스 위치
+    var currentHistoryIndex: Int {
+        stateModel.currentHistoryIndex
+    }
+
     /// 새 탭 생성 시 호출
     /// - Parameter url: 초기 로드할 URL (없으면 대시보드 사용)
     init(url: URL? = nil) {
@@ -31,18 +41,20 @@ struct WebTab: Identifiable, Equatable {
 }
 
 // MARK: - 탭 저장/복원 관리자
-// UserDefaults를 이용해 탭의 ID와 URL만 간단히 저장/복원
+// UserDefaults를 이용해 탭의 ID, 방문 히스토리 URL 배열, 현재 인덱스를 저장/복원
 enum TabPersistenceManager {
     private static let key = "savedTabs"
 
     /// 탭 배열 저장
     static func saveTabs(_ tabs: [WebTab]) {
-        let info = tabs.map { tab in
-            [
+        let info = tabs.map { tab -> [String: Any] in
+            return [
                 "id": tab.id.uuidString,
-                "url": tab.currentURL?.absoluteString ?? ""
+                "history": tab.historyURLs,
+                "index": tab.currentHistoryIndex
             ]
         }
+
         if let data = try? JSONSerialization.data(withJSONObject: info, options: []) {
             UserDefaults.standard.set(data, forKey: key)
         }
@@ -51,14 +63,19 @@ enum TabPersistenceManager {
     /// 저장된 탭 복원
     static func loadTabs() -> [WebTab] {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else {
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return []
         }
+
         return raw.map { dict in
-            let id = UUID(uuidString: dict["id"] ?? "") ?? UUID()
-            let url = URL(string: dict["url"] ?? "")
-            var tab = WebTab(url: url)
+            let id = UUID(uuidString: dict["id"] as? String ?? "") ?? UUID()
+            let urls = dict["history"] as? [String] ?? []
+            let index = dict["index"] as? Int ?? 0
+
+            var tab = WebTab()
             tab.stateModel.tabID = id
+            tab.stateModel.restoredHistoryURLs = urls
+            tab.stateModel.restoredHistoryIndex = index
             return tab
         }
     }
