@@ -3,20 +3,22 @@ import AVKit
 
 /// 웹 브라우저의 메인 콘텐츠 뷰
 struct ContentView: View {
-    @Binding var tabs: [WebTab] // 전체 탭 배열
-    @Binding var selectedTabIndex: Int // 현재 선택된 탭 인덱스
+    @Binding var tabs: [WebTab]                 // 전체 탭 배열
+    @Binding var selectedTabIndex: Int          // 현재 선택된 탭 인덱스
 
-    @State private var inputURL: String = "" // 주소창 입력 값
-    @FocusState private var isTextFieldFocused: Bool // 주소창 포커스 상태
-    @State private var textFieldSelectedAll = false // 텍스트 전체 선택 여부
-    @State private var showHistorySheet = false // 방문 기록 시트 표시 여부
-    @State private var showTabManager = false // 탭 관리자 표시 여부
-    @State private var enablePIP: Bool = true // PIP 기능 (화면 속 화면) 토글 상태
+    @State private var inputURL: String = ""    // 주소창 입력 값
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var textFieldSelectedAll = false
+    @State private var showHistorySheet = false
+    @State private var showTabManager = false
+    @State private var enablePIP: Bool = true
+
+    // 🔎 디버깅용: 마지막 선택 인덱스를 기록해 전환 로그 남김
+    @State private var lastSelectedTabIndex: Int? = nil
 
     var body: some View {
-        // 현재 인덱스가 유효한 경우
         if tabs.indices.contains(selectedTabIndex) {
-            let state = tabs[selectedTabIndex].stateModel // 현재 탭의 상태 모델
+            let state = tabs[selectedTabIndex].stateModel // 현재 탭 상태 모델
 
             VStack(spacing: 0) {
                 // 주소 입력창 UI
@@ -28,7 +30,6 @@ struct ContentView: View {
                         .keyboardType(.URL)
                         .focused($isTextFieldFocused)
                         .onTapGesture {
-                            // 텍스트 전체 선택
                             if !textFieldSelectedAll {
                                 DispatchQueue.main.async {
                                     UIApplication.shared.sendAction(
@@ -41,14 +42,12 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: isTextFieldFocused) { focused in
-                            // 포커스 해제 시 상태 초기화
                             if !focused {
                                 textFieldSelectedAll = false
                                 TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                             }
                         }
                         .onSubmit {
-                            // 주소창에서 엔터 입력 시 이동
                             if let url = fixedURL(from: inputURL) {
                                 state.currentURL = url
                                 TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
@@ -69,7 +68,6 @@ struct ContentView: View {
                         )
 
                     Button("이동") {
-                        // 이동 버튼 클릭 시 URL 이동
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
                             TabPersistenceManager.debugMessages.append("이동 버튼으로 URL 이동: \(url)")
@@ -83,7 +81,7 @@ struct ContentView: View {
 
                 // 웹 콘텐츠 영역
                 if state.currentURL != nil {
-                    // 웹 페이지를 보여주는 WebView
+                    // ✅ [수정 위치 #1] 탭별 WKWebView 분리를 위해 고유 id 부여
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -95,16 +93,22 @@ struct ContentView: View {
                             set: { tabs[selectedTabIndex].showAVPlayer = $0 }
                         )
                     )
+                    .id(tabs[selectedTabIndex].id) // ← 이 한 줄이 ‘다른 탭으로 URL 복제’ 현상 방지의 핵심
+                    .onAppear {
+                        TabPersistenceManager.debugMessages.append(
+                            "CustomWebView 나타남: tabIndex=\(selectedTabIndex), tabID=\(tabs[selectedTabIndex].id.uuidString), currentURL=\(state.currentURL?.absoluteString ?? "nil")"
+                        )
+                    }
                 } else {
                     // 첫 로딩 시 대시보드 뷰 표시
                     DashboardView(
                         onSelectURL: { selectedURL in
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-                            TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
+                            TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL) -> tabIndex=\(selectedTabIndex)")
                         },
                         triggerLoad: {
                             tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                            TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
+                            TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거: tabIndex=\(selectedTabIndex)")
                         }
                     )
                 }
@@ -138,7 +142,10 @@ struct ContentView: View {
 
                     Spacer()
 
-                    Button(action: { showTabManager = true }) {
+                    Button(action: {
+                        TabPersistenceManager.debugMessages.append("탭 관리자 오픈")
+                        showTabManager = true
+                    }) {
                         Image(systemName: "square.on.square").font(.title2)
                     }
                     .padding(.horizontal, 8)
@@ -167,23 +174,37 @@ struct ContentView: View {
                     tabs[selectedTabIndex].stateModel.pendingSession = nil
                     TabPersistenceManager.debugMessages.append("pendingSession 복원: 탭 \(state.tabID?.uuidString ?? "없음")")
                 }
+
+                // 선택 전환 초기화
+                if lastSelectedTabIndex == nil {
+                    lastSelectedTabIndex = selectedTabIndex
+                }
             }
+            // 🔎 탭 배열이 바뀔 때 저장 + 탭 목록 로그
             .onChange(of: tabs) { _ in
                 TabPersistenceManager.saveTabs(tabs)
-                TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
+                let ids = tabs.map { $0.id.uuidString }.joined(separator: ",")
+                TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨 | ids=[\(ids)] | selectedTabIndex=\(selectedTabIndex)")
             }
+            // 🔎 현재 탭의 URL이 바뀌면 주소창도 동기화
             .onReceive(state.$currentURL) { url in
-                // URL 변경 감지하여 주소창 업데이트
                 if let url = url {
                     inputURL = url.absoluteString
-                    TabPersistenceManager.debugMessages.append("URL 변경, 주소창 업데이트: \(url)")
+                    TabPersistenceManager.debugMessages.append("URL 변경, 주소창 업데이트: \(url.absoluteString) | tabIndex=\(selectedTabIndex)")
                 }
+            }
+            // 🔎 선택된 탭 인덱스 전환 로그
+            .onChange(of: selectedTabIndex) { newIndex in
+                let prev = lastSelectedTabIndex ?? -1
+                let prevID = tabs.indices.contains(prev) ? tabs[prev].id.uuidString : "n/a"
+                let newID = tabs.indices.contains(newIndex) ? tabs[newIndex].id.uuidString : "n/a"
+                TabPersistenceManager.debugMessages.append("선택 탭 변경: \(prev) (\(prevID)) -> \(newIndex) (\(newID))")
+                lastSelectedTabIndex = newIndex
             }
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
             )) {
-                // AVPlayer 전체 화면 재생
                 if let url = tabs[selectedTabIndex].playerURL {
                     AVPlayerView(url: url)
                 }
@@ -195,15 +216,19 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showTabManager) {
                 NavigationView {
-                    // MARK: - [수정됨] TabManager 콜백 시그니처: (Int) -> Void 로 변경
-                    // 기존: onTabSelected: { selectedState in ... }
+                    // ✅ [수정 위치 #2] TabManager 콜백 시그니처: (Int) -> Void 유지
+                    //   - 탭을 고를 때 stateModel 레퍼런스로 비교/공유하지 않고 ‘인덱스’만 넘겨서
+                    //     다른 탭 URL이 덮이는 부작용 가능성을 낮춤.
                     TabManager(
                         tabs: $tabs,
                         initialStateModel: state,
                         onTabSelected: { index in
-                            // 탭 선택 시 "인덱스"만 받기 때문에 stateModel 참조 공유 문제를 원천 차단
+                            guard tabs.indices.contains(index) else {
+                                TabPersistenceManager.debugMessages.append("탭 선택 실패: out-of-bounds \(index)")
+                                return
+                            }
                             selectedTabIndex = index
-                            TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index)")
+                            TabPersistenceManager.debugMessages.append("탭 선택 완료: index=\(index), tabID=\(tabs[index].id.uuidString)")
                         }
                     )
                 }
@@ -216,30 +241,31 @@ struct ContentView: View {
                     tabs.append(newTab)
                     selectedTabIndex = tabs.count - 1
                     TabPersistenceManager.saveTabs(tabs)
-                    TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
+                    TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url) -> index=\(selectedTabIndex), id=\(newTab.id.uuidString)")
                 },
                 triggerLoad: {
-                    // 주의: fallback 경로는 onSelectURL에서 탭 추가/선택 후에 호출되므로 인덱스 유효
-                    tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                    TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거")
+                    // 주의: onSelectURL에서 탭 추가/선택 후이므로 인덱스 유효
+                    if tabs.indices.contains(selectedTabIndex) {
+                        tabs[selectedTabIndex].stateModel.loadURLIfReady()
+                        TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거: index=\(selectedTabIndex)")
+                    } else {
+                        TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거 실패: invalid selectedTabIndex \(selectedTabIndex)")
+                    }
                 }
             )
         }
     }
 
-    /// 사용자가 입력한 텍스트를 URL로 변환하는 함수
+    /// 사용자가 입력한 텍스트를 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             return url
         }
-
         if trimmed.contains(".") && !trimmed.contains(" ") {
             return URL(string: "https://\(trimmed)")
         }
-
-        // 검색어인 경우 구글 검색 URL로 변환
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
