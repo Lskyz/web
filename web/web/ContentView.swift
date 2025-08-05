@@ -2,19 +2,20 @@ import SwiftUI
 import AVKit
 
 struct ContentView: View {
-    @Binding var tabs: [WebTab]
-    @Binding var selectedTabIndex: Int
-    @State private var inputURL: String = ""
-    @FocusState private var isTextFieldFocused: Bool
-    @State private var textFieldSelectedAll = false
-    @State private var showHistorySheet = false
-    @State private var showTabManager = false
-    @State private var enablePIP: Bool = true
+    @Binding var tabs: [WebTab] // 전체 탭 배열 (App 전역 관리)
+    @Binding var selectedTabIndex: Int // 현재 선택된 탭 인덱스
+    @State private var inputURL: String = "" // 주소창 입력값
+    @FocusState private var isTextFieldFocused: Bool // 주소창 포커스 여부
+    @State private var textFieldSelectedAll = false // 전체 선택 여부
+    @State private var showHistorySheet = false // 방문 기록 시트 표시 여부
+    @State private var showTabManager = false // 탭 관리자 표시 여부
+    @State private var enablePIP: Bool = true // PIP 토글 상태
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
             VStack(spacing: 0) {
+                // 주소창
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -70,7 +71,8 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
-                // MARK: - 경고 해결: if let url 제거
+
+                // 웹뷰 또는 대시보드
                 if state.currentURL != nil {
                     CustomWebView(
                         stateModel: state,
@@ -84,11 +86,20 @@ struct ContentView: View {
                         )
                     )
                 } else {
-                    DashboardView { selectedURL in
-                        tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-                        TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
-                    }
+                    // MARK: [수정됨] DashboardView 호출부에 triggerLoad 추가
+                    DashboardView(
+                        onSelectURL: { selectedURL in
+                            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
+                            TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
+                        },
+                        triggerLoad: {
+                            tabs[selectedTabIndex].stateModel.loadURLIfReady()
+                            TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
+                        }
+                    )
                 }
+
+                // 뒤로, 앞으로, 새로고침, 기록, 탭관리 버튼
                 HStack {
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left").font(.title2)
@@ -96,26 +107,32 @@ struct ContentView: View {
                     .disabled(!state.canGoBack)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
+
                     Button(action: { state.goForward() }) {
                         Image(systemName: "chevron.right").font(.title2)
                     }
                     .disabled(!state.canGoForward)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
+
                     Button(action: { state.reload() }) {
                         Image(systemName: "arrow.clockwise").font(.title2)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
+
                     Button(action: { showHistorySheet = true }) {
                         Image(systemName: "clock.arrow.circlepath").font(.title2)
                     }
                     .padding(.horizontal, 8)
+
                     Spacer()
+
                     Button(action: { showTabManager = true }) {
                         Image(systemName: "square.on.square").font(.title2)
                     }
                     .padding(.horizontal, 8)
+
                     Toggle(isOn: $enablePIP) {
                         Image(systemName: "pip.enter")
                     }
@@ -176,6 +193,7 @@ struct ContentView: View {
                 }
             }
         } else {
+            // MARK: [유지됨] fallback: 탭 index가 잘못된 경우 새 탭 열기
             DashboardView { url in
                 let newTab = WebTab(url: url)
                 tabs.append(newTab)
@@ -186,6 +204,7 @@ struct ContentView: View {
         }
     }
 
+    /// 입력값을 URL로 고정
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
