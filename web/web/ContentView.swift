@@ -176,11 +176,13 @@ struct ContentView: View {
                     inputURL = url.absoluteString
                 }
                 if let wv = state.webView {
-                    let backCount = wv.backForwardList.backList.count
+                    let backCount    = wv.backForwardList.backList.count
                     let forwardCount = wv.backForwardList.forwardList.count
-                    let current = wv.url?.absoluteString ?? "없음"
+                    let current      = wv.url?.absoluteString ?? "없음"
                     TabPersistenceManager.debugMessages.append("HIST ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
                 }
+                // 페이지가 바뀔 때마다 탭 스냅샷 즉시 저장
+                TabPersistenceManager.saveTabs(tabs)
             }
             .sheet(isPresented: $showHistorySheet) {
                 // 방문 기록 시트
@@ -189,7 +191,7 @@ struct ContentView: View {
                 }
             }
             .fullScreenCover(isPresented: $showTabManager) {
-                // MARK: [수정] onTabSelected 콜백 시그니처를 Int로 변경
+                // MARK: onTabSelected 콜백 시그니처를 Int로 변경
                 NavigationView {
                     TabManager(
                         tabs: $tabs,
@@ -199,9 +201,9 @@ struct ContentView: View {
                             selectedTabIndex = index
                             // 탭 전환 직후 히스토리 스냅샷 로그
                             if let wv = tabs[index].stateModel.webView {
-                                let backCount = wv.backForwardList.backList.count
+                                let backCount    = wv.backForwardList.backList.count
                                 let forwardCount = wv.backForwardList.forwardList.count
-                                let current = wv.url?.absoluteString ?? "없음"
+                                let current      = wv.url?.absoluteString ?? "없음"
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
