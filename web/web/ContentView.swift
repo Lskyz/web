@@ -2,20 +2,21 @@ import SwiftUI
 import AVKit
 
 struct ContentView: View {
-    @Binding var tabs: [WebTab] // 전체 탭 배열 (App 전역 관리)
-    @Binding var selectedTabIndex: Int // 현재 선택된 탭 인덱스
-    @State private var inputURL: String = "" // 주소창 입력값
-    @FocusState private var isTextFieldFocused: Bool // 주소창 포커스 여부
+    @Binding var tabs: [WebTab] // 전체 탭 배열
+    @Binding var selectedTabIndex: Int // 선택된 탭 인덱스
+    @State private var inputURL: String = "" // 주소창 텍스트 입력값
+    @FocusState private var isTextFieldFocused: Bool // 포커스 여부
     @State private var textFieldSelectedAll = false // 전체 선택 여부
-    @State private var showHistorySheet = false // 방문 기록 시트 표시 여부
+    @State private var showHistorySheet = false // 방문기록 시트 표시 여부
     @State private var showTabManager = false // 탭 관리자 표시 여부
-    @State private var enablePIP: Bool = true // PIP 토글 상태
+    @State private var enablePIP: Bool = true // PIP 토글 (숨김 상태)
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
+
             VStack(spacing: 0) {
-                // 주소창
+                // 주소창 입력 필드
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -72,7 +73,7 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
 
-                // 웹뷰 또는 대시보드
+                // 웹뷰 or 대시보드
                 if state.currentURL != nil {
                     CustomWebView(
                         stateModel: state,
@@ -86,7 +87,7 @@ struct ContentView: View {
                         )
                     )
                 } else {
-                    // MARK: [수정됨] DashboardView 호출부에 triggerLoad 추가
+                    // 🛠 수정됨: DashboardView에서 triggerLoad 추가
                     DashboardView(
                         onSelectURL: { selectedURL in
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
@@ -99,7 +100,7 @@ struct ContentView: View {
                     )
                 }
 
-                // 뒤로, 앞으로, 새로고침, 기록, 탭관리 버튼
+                // 컨트롤 바 (뒤로/앞으로/새로고침/기록/탭)
                 HStack {
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left").font(.title2)
@@ -193,18 +194,24 @@ struct ContentView: View {
                 }
             }
         } else {
-            // MARK: [유지됨] fallback: 탭 index가 잘못된 경우 새 탭 열기
-            DashboardView { url in
-                let newTab = WebTab(url: url)
-                tabs.append(newTab)
-                selectedTabIndex = tabs.count - 1
-                TabPersistenceManager.saveTabs(tabs)
-                TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
-            }
+            // 🛠 수정됨: fallback DashboardView에도 triggerLoad 추가
+            DashboardView(
+                onSelectURL: { url in
+                    let newTab = WebTab(url: url)
+                    tabs.append(newTab)
+                    selectedTabIndex = tabs.count - 1
+                    TabPersistenceManager.saveTabs(tabs)
+                    TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
+                },
+                triggerLoad: {
+                    tabs[selectedTabIndex].stateModel.loadURLIfReady()
+                    TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거")
+                }
+            )
         }
     }
 
-    /// 입력값을 URL로 고정
+    /// 입력값에서 유효한 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
