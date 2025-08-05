@@ -91,7 +91,7 @@ enum TabPersistenceManager {
     }
 }
 
-// ✅ 수정: WebViewStateModel 확장 추가
+// ✅ (이미 존재) WebViewStateModel 유틸: 현재 URL이 준비되면 로드
 extension WebViewStateModel {
     func loadURLIfReady() {
         if let url = currentURL, let webView = webView {
@@ -107,7 +107,7 @@ extension WebViewStateModel {
 struct DashboardView: View {
     @State private var inputURL: String = ""
     let onSelectURL: (URL) -> Void
-    let triggerLoad: () -> Void // ✅ 수정: WebView 로딩 트리거 콜백 추가
+    let triggerLoad: () -> Void // 대시보드에서 URL 선택 후 실제 로드 트리거
 
     var body: some View {
         VStack(spacing: 20) {
@@ -165,7 +165,11 @@ struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
     let initialStateModel: WebViewStateModel
-    let onTabSelected: (WebViewStateModel) -> Void
+
+    // MARK: 🔧 [수정됨] 참조 공유 방지: stateModel를 넘기지 말고 "인덱스"를 넘긴다.
+    // 기존: let onTabSelected: (WebViewStateModel) -> Void
+    let onTabSelected: (Int) -> Void  // ✅ 수정 포인트
+
     @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
     @State private var showToast = false
     @State private var toastMessage = ""
@@ -175,6 +179,8 @@ struct TabManager: View {
             VStack {
                 Text("탭 목록")
                     .font(.title.bold())
+
+                // 디버깅 로그 영역 (유지)
                 VStack(alignment: .leading) {
                     Text("디버깅 로그")
                         .font(.headline)
@@ -192,14 +198,19 @@ struct TabManager: View {
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(10)
                 }
+
+                // 탭 리스트
                 ScrollView {
                     ForEach(tabs) { tab in
                         HStack {
                             Button(action: {
-                                onTabSelected(tab.stateModel)
-                                dismiss()
-                                TabPersistenceManager.debugMessages.append("탭 선택: ID \(tab.id.uuidString)")
-                                debugMessages = TabPersistenceManager.debugMessages
+                                // MARK: 🔧 [수정됨] 인덱스를 계산하여 콜백으로 전달
+                                if let index = tabs.firstIndex(of: tab) {
+                                    onTabSelected(index)  // ✅ 인덱스 전달
+                                    dismiss()
+                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(tab.id.uuidString))")
+                                    debugMessages = TabPersistenceManager.debugMessages
+                                }
                             }) {
                                 VStack(alignment: .leading) {
                                     Text(tab.currentURL?.host ?? "대시보드")
@@ -218,10 +229,17 @@ struct TabManager: View {
                         .padding()
                     }
                 }
+
+                // 새 탭 버튼
                 Button(action: {
                     let newTab = WebTab(url: nil)
                     tabs.append(newTab)
-                    onTabSelected(newTab.stateModel) // ✅ 그대로 유지
+
+                    // MARK: 🔧 [수정됨] 새 탭 선택도 인덱스로 전달
+                    if let newIndex = tabs.firstIndex(of: newTab) {
+                        onTabSelected(newIndex)  // ✅ 인덱스 전달
+                    }
+
                     TabPersistenceManager.saveTabs(tabs)
                     dismiss()
                     TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(newTab.id.uuidString), 대시보드 표시")
@@ -235,6 +253,8 @@ struct TabManager: View {
                 }
                 .padding()
             }
+
+            // 토스트
             if showToast {
                 ToastView(message: toastMessage)
                     .transition(.opacity)
