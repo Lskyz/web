@@ -165,47 +165,50 @@ struct ContentView: View {
                 // 세션 복원은 CustomWebView.makeUIView()에서 처리됨 (pendingSession 유지)
                 TabPersistenceManager.debugMessages.append("히스토리 복원은 WebView 생성 시 처리 (pendingSession 유지)")
             }
-            .onChange(of: tabs) { _ in
-                // 탭 배열 변경 시 세이브
-                TabPersistenceManager.saveTabs(tabs)
-                TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
-            }
+
+            // ✅ 주소창 동기화 전용 (여기선 저장하지 않음)
             .onReceive(state.$currentURL) { url in
-                // URL 변경 시 주소창 업데이트 및 히스토리 스냅샷 로그
                 if let url = url {
                     inputURL = url.absoluteString
                 }
-                if let wv = state.webView {
-                    let backCount    = wv.backForwardList.backList.count
-                    let forwardCount = wv.backForwardList.forwardList.count
-                    let current      = wv.url?.absoluteString ?? "없음"
-                    TabPersistenceManager.debugMessages.append("HIST ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
-                }
-                // 🛠 [추가] 페이지가 바뀔 때마다 탭 스냅샷 즉시 저장
-                TabPersistenceManager.saveTabs(tabs)
-                TabPersistenceManager.debugMessages.append("페이지 변경—탭 스냅샷 저장")
             }
+
+            // ✅ 네비게이션 실제 완료 시점에만 스냅샷 저장 + 히스토리 로그
+            .onReceive(state.navigationDidFinish) { _ in
+                if let wv = state.webView {
+                    let back = wv.backForwardList.backList.count
+                    let fwd  = wv.backForwardList.forwardList.count
+                    let cur  = wv.url?.absoluteString ?? "없음"
+                    TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | \(cur)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("HIST 웹뷰 미연결")
+                }
+                // 통일된 저장 타이밍
+                TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
+            }
+
             .sheet(isPresented: $showHistorySheet) {
                 // 방문 기록 시트
                 NavigationView {
                     WebViewStateModel.HistoryPage(state: state)
                 }
             }
+
             .fullScreenCover(isPresented: $showTabManager) {
-                // MARK: onTabSelected 콜백 시그니처를 Int로 변경
+                // TabManager: onTabSelected는 인덱스를 직접 전달
                 NavigationView {
                     TabManager(
                         tabs: $tabs,
                         initialStateModel: state,
                         onTabSelected: { index in
-                            // 선택된 인덱스를 직접 받음
                             selectedTabIndex = index
-                            // 탭 전환 직후 히스토리 스냅샷 로그
+                            // 탭 전환 직후 히스토리 스냅샷 로그(저장은 navDidFinish에서 통일)
                             if let wv = tabs[index].stateModel.webView {
-                                let backCount    = wv.backForwardList.backList.count
-                                let forwardCount = wv.backForwardList.forwardList.count
-                                let current      = wv.url?.absoluteString ?? "없음"
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
+                                let back = wv.backForwardList.backList.count
+                                let fwd  = wv.backForwardList.forwardList.count
+                                let cur  = wv.url?.absoluteString ?? "없음"
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | \(cur)")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
                             }
@@ -213,6 +216,7 @@ struct ContentView: View {
                     )
                 }
             }
+
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
