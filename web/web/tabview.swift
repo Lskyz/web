@@ -34,8 +34,8 @@ struct WebTab: Identifiable, Equatable {
 
     // MARK: - 스냅샷 변환 (히스토리와 인덱스 정확히 저장)
     func toSnapshot() -> WebTabSessionSnapshot {
-        let history = stateModel.historyStackIfAny().map { $0.absoluteString } // 히스토리 스택 사용
-        let index = stateModel.currentIndexInSafeBounds() // 안전한 인덱스
+        let history = stateModel.historyStackIfAny().map { $0.absoluteString }
+        let index = stateModel.currentIndexInSafeBounds()
         let snapshot = WebTabSessionSnapshot(id: id.uuidString, history: history, index: index)
         TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(history.count) URLs, 인덱스 \(index)")
         return snapshot
@@ -47,7 +47,6 @@ enum TabPersistenceManager {
     private static let key = "savedTabs"
     static var debugMessages: [String] = []
 
-    // MARK: - 탭 배열 저장 (히스토리와 인덱스 포함)
     static func saveTabs(_ tabs: [WebTab]) {
         let snapshots = tabs.map { $0.toSnapshot() }
         TabPersistenceManager.debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷: \(snapshots.map { "\($0.id): \($0.history.count) URLs, 인덱스 \($0.index)" })")
@@ -60,7 +59,6 @@ enum TabPersistenceManager {
         }
     }
 
-    // MARK: - 저장된 탭 복원 (히스토리와 인덱스 복원)
     static func loadTabs() -> [WebTab] {
         if let data = UserDefaults.standard.data(forKey: key) {
             TabPersistenceManager.debugMessages.append("복원 시도: 데이터 크기 \(data.count) 바이트")
@@ -70,13 +68,12 @@ enum TabPersistenceManager {
                 return snapshots.map { snapshot in
                     let id = UUID(uuidString: snapshot.id) ?? UUID()
                     let urls = snapshot.history
-                    let index = max(0, min(snapshot.index, urls.count - 1)) // 인덱스 범위 제한
+                    let index = max(0, min(snapshot.index, urls.count - 1))
                     TabPersistenceManager.debugMessages.append("탭 복원: ID \(id), URL \(urls), 인덱스 \(index)")
                     let tab = WebTab()
                     tab.stateModel.tabID = id
                     tab.stateModel.restoredHistoryURLs = urls
                     tab.stateModel.restoredHistoryIndex = index
-                    // 세션 복원 트리거
                     if !urls.isEmpty, let url = URL(string: urls[index]) {
                         tab.stateModel.currentURL = url
                         tab.stateModel.restoreSession(WebViewSession(urls: urls.compactMap { URL(string: $0) }, currentIndex: index))
@@ -94,10 +91,23 @@ enum TabPersistenceManager {
     }
 }
 
+// ✅ 수정: WebViewStateModel 확장 추가
+extension WebViewStateModel {
+    func loadURLIfReady() {
+        if let url = currentURL, let webView = webView {
+            webView.load(URLRequest(url: url))
+            TabPersistenceManager.debugMessages.append("URL 로드 시도: \(url.absoluteString)")
+        } else {
+            TabPersistenceManager.debugMessages.append("URL 로드 실패: WebView 또는 URL 없음")
+        }
+    }
+}
+
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 struct DashboardView: View {
     @State private var inputURL: String = ""
     let onSelectURL: (URL) -> Void
+    let triggerLoad: () -> Void // ✅ 수정: WebView 로딩 트리거 콜백 추가
 
     var body: some View {
         VStack(spacing: 20) {
@@ -113,6 +123,9 @@ struct DashboardView: View {
                 Button("이동") {
                     if let url = URL(string: inputURL) {
                         onSelectURL(url)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            triggerLoad()
+                        }
                         TabPersistenceManager.debugMessages.append("대시보드에서 URL 이동: \(url)")
                     }
                 }
@@ -127,6 +140,9 @@ struct DashboardView: View {
         Button(action: {
             if let u = URL(string: url) {
                 onSelectURL(u)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    triggerLoad()
+                }
                 TabPersistenceManager.debugMessages.append("북마크 이동: \(url)")
             }
         }) {
@@ -203,9 +219,9 @@ struct TabManager: View {
                     }
                 }
                 Button(action: {
-                    let newTab = WebTab(url: nil) // URL을 nil로 설정하여 DashboardView 표시
+                    let newTab = WebTab(url: nil)
                     tabs.append(newTab)
-                    onTabSelected(newTab.stateModel) // 새 탭 즉시 선택
+                    onTabSelected(newTab.stateModel) // ✅ 그대로 유지
                     TabPersistenceManager.saveTabs(tabs)
                     dismiss()
                     TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(newTab.id.uuidString), 대시보드 표시")
