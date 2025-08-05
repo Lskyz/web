@@ -2,6 +2,9 @@ import SwiftUI
 import AVKit
 
 /// 웹 브라우저의 메인 콘텐츠 뷰
+/// - 주소창 입력/검색, 기본 내비게이션 버튼, 방문기록 시트, 탭 관리자, AVPlayer 호출까지
+/// - ⚠️ 스냅샷(세션 저장) 타이밍은 **navigationDidFinish** 시그널에만 통일
+/// - ⚠️ WKWebView 재사용 꼬임 방지용으로 CustomWebView에 **.id(state.tabID ?? UUID())** 부여
 struct ContentView: View {
     @Binding var tabs: [WebTab]                 // 전체 탭 배열
     @Binding var selectedTabIndex: Int          // 현재 선택된 탭 인덱스
@@ -28,7 +31,7 @@ struct ContentView: View {
                         .keyboardType(.URL)
                         .focused($isTextFieldFocused)
                         .onTapGesture {
-                            // 전체 텍스트 선택
+                            // 전체 텍스트 선택(1회만)
                             if !textFieldSelectedAll {
                                 DispatchQueue.main.async {
                                     UIApplication.shared.sendAction(
@@ -59,6 +62,7 @@ struct ContentView: View {
                             HStack {
                                 Spacer()
                                 if !inputURL.isEmpty {
+                                    // 입력값 지우기(X)
                                     Button(action: { inputURL = "" }) {
                                         Image(systemName: "xmark.circle.fill")
                                             .foregroundColor(.gray)
@@ -68,8 +72,8 @@ struct ContentView: View {
                             }
                         )
 
+                    // 이동 버튼
                     Button("이동") {
-                        // 이동 버튼 클릭 시 URL 이동
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
                             TabPersistenceManager.debugMessages.append("이동 버튼으로 URL 이동: \(url)")
@@ -95,6 +99,8 @@ struct ContentView: View {
                             set: { tabs[selectedTabIndex].showAVPlayer = $0 }
                         )
                     )
+                    // ⚠️ 탭별로 WKWebView 인스턴스 분리(재사용에 의한 delegate 엉킴 방지)
+                    .id(state.tabID ?? UUID())
                 } else {
                     // URL이 없으면 대시보드(홈) 화면 표시
                     DashboardView(
@@ -147,7 +153,7 @@ struct ContentView: View {
                         Image(systemName: "pip.enter")
                     }
                     .labelsHidden()
-                    .hidden() // 기본적으로 숨김
+                    .hidden() // 기본적으로 숨김(필요 시 보여주면 됨)
                 }
                 .padding(.horizontal, 4)
                 .padding(.bottom, 6)
@@ -155,9 +161,10 @@ struct ContentView: View {
             }
             .ignoresSafeArea(.keyboard)
 
-            // MARK: 뷰 생명주기 & 이벤트
+            // MARK: - 뷰 생명주기 & 이벤트
+
             .onAppear {
-                // 진입 시 현재 URL 주소창에 동기화
+                // 진입 시 현재 URL 주소창에 동기화(표시 전용)
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                     TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
@@ -166,14 +173,14 @@ struct ContentView: View {
                 TabPersistenceManager.debugMessages.append("히스토리 복원은 WebView 생성 시 처리 (pendingSession 유지)")
             }
 
-            // ✅ 주소창 동기화 전용 (여기선 저장하지 않음)
+            // ✅ 주소창 동기화 전용(여기선 저장하지 않음)
             .onReceive(state.$currentURL) { url in
                 if let url = url {
                     inputURL = url.absoluteString
                 }
             }
 
-            // ✅ 네비게이션 실제 완료 시점에만 스냅샷 저장 + 히스토리 로그
+            // ✅ 네비게이션 실제 완료 시점에만 스냅샷 저장 + 히스토리 로그 (단일 진실 소스)
             .onReceive(state.navigationDidFinish) { _ in
                 if let wv = state.webView {
                     let back = wv.backForwardList.backList.count
@@ -183,10 +190,18 @@ struct ContentView: View {
                 } else {
                     TabPersistenceManager.debugMessages.append("HIST 웹뷰 미연결")
                 }
-                // 통일된 저장 타이밍
+                // 통일된 저장 타이밍: 실제 페이지 로드 완료시에만 저장
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
             }
+
+            // (선택) 탭 배열 구조가 바뀔 때(추가/삭제/순서) 저장하고 싶다면 아래 주석 해제
+            /*
+            .onChange(of: tabs) { _ in
+                TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
+            }
+            */
 
             .sheet(isPresented: $showHistorySheet) {
                 // 방문 기록 시트
@@ -221,7 +236,7 @@ struct ContentView: View {
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
             )) {
-                // PIP 전체 화면
+                // AVPlayer 전체 화면 (PiP는 시스템이 처리)
                 if let url = tabs[selectedTabIndex].playerURL {
                     AVPlayerView(url: url)
                 }
@@ -245,15 +260,22 @@ struct ContentView: View {
         }
     }
 
-    /// 사용자가 입력한 텍스트를 올바른 URL로 변환
+    // MARK: - 입력 문자열 → URL 변환
+    /// 사용자가 입력한 텍스트를 올바른 URL로 변환(검색어면 구글 검색 URL로 변환)
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1) http/https 스킴이 이미 있는 경우
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
             return url
         }
+
+        // 2) 공백 없고 점(.)이 있으면 도메인으로 간주
         if trimmed.contains(".") && !trimmed.contains(" ") {
             return URL(string: "https://\(trimmed)")
         }
+
+        // 3) 그 외엔 검색어로 처리
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
