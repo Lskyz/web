@@ -52,6 +52,8 @@ struct CustomWebView: UIViewRepresentable {
         // ◾️ 세션 복원 또는 초기 로드
         if let session = stateModel.pendingSession {
             TabPersistenceManager.debugMessages.append("세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
+            // 🔸 복원 시작 플래그 ON (히스토리/방문기록 오염 방지)
+            stateModel.beginSessionRestore()
             restoreSession(session, webView: webView)
             stateModel.pendingSession = nil
         } else if let url = stateModel.currentURL {
@@ -198,6 +200,8 @@ struct CustomWebView: UIViewRepresentable {
 
         guard urls.indices.contains(currentIndex) else {
             TabPersistenceManager.debugMessages.append("세션 복원 실패: 인덱스 범위 초과")
+            // 🔸 실패 시에도 깃발 내리기
+            stateModel.finishSessionRestore()
             return
         }
 
@@ -210,6 +214,8 @@ struct CustomWebView: UIViewRepresentable {
             } else {
                 TabPersistenceManager.debugMessages.append("세션 복원 실패: backList 인덱스 범위 초과")
             }
+            // 🔸 복원 완료 플래그 OFF
+            stateModel.finishSessionRestore()
         }
     }
 
@@ -228,13 +234,14 @@ struct CustomWebView: UIViewRepresentable {
             return
         }
 
-        webView.load(URLRequest(url: urls[index]))
+        let i = index // 캡처 안전성 확보
+        webView.load(URLRequest(url: urls[i]))
 
         // WebViewStateModel(WKNavigationDelegate)에서 didFinish → onLoadCompletion 호출됨
         (webView.navigationDelegate as? WebViewStateModel)?.onLoadCompletion = { [weak webView] in
-            TabPersistenceManager.debugMessages.append("URL 로드 완료: \(urls[index])")
+            TabPersistenceManager.debugMessages.append("URL 로드 완료: \(urls[i])")
             guard let wv = webView else { return }
-            CustomWebView.loadURLsSequentially(urls, index: index + 1, webView: wv, completion: completion)
+            CustomWebView.loadURLsSequentially(urls, index: i + 1, webView: wv, completion: completion)
         }
     }
 
