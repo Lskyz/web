@@ -195,15 +195,15 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showTabManager) {
                 NavigationView {
+                    // MARK: - [수정됨] TabManager 콜백 시그니처: (Int) -> Void 로 변경
+                    // 기존: onTabSelected: { selectedState in ... }
                     TabManager(
                         tabs: $tabs,
                         initialStateModel: state,
-                        onTabSelected: { selectedState in
-                            // 탭 선택 시 해당 인덱스로 이동
-                            if let index = tabs.firstIndex(where: { $0.stateModel === selectedState }) {
-                                selectedTabIndex = index
-                                TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index)")
-                            }
+                        onTabSelected: { index in
+                            // 탭 선택 시 "인덱스"만 받기 때문에 stateModel 참조 공유 문제를 원천 차단
+                            selectedTabIndex = index
+                            TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index)")
                         }
                     )
                 }
@@ -219,6 +219,7 @@ struct ContentView: View {
                     TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
                 },
                 triggerLoad: {
+                    // 주의: fallback 경로는 onSelectURL에서 탭 추가/선택 후에 호출되므로 인덱스 유효
                     tabs[selectedTabIndex].stateModel.loadURLIfReady()
                     TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거")
                 }
