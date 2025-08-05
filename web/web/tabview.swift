@@ -203,10 +203,12 @@ struct TabManager: View {
                     }
                 }
                 Button(action: {
-                    tabs.append(WebTab())
+                    let newTab = WebTab(url: nil) // URL을 nil로 설정하여 DashboardView 표시
+                    tabs.append(newTab)
+                    onTabSelected(newTab.stateModel) // 새 탭 즉시 선택
                     TabPersistenceManager.saveTabs(tabs)
                     dismiss()
-                    TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(tabs.last?.id.uuidString ?? "없음")")
+                    TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(newTab.id.uuidString), 대시보드 표시")
                     debugMessages = TabPersistenceManager.debugMessages
                 }) {
                     Label("새 탭", systemImage: "plus")
