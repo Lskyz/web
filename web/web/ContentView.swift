@@ -18,8 +18,6 @@ struct ContentView: View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel // 현재 탭의 상태 모델
 
-            // ⚠️ 매우 중요: 탭(=state)이 바뀌면 이 서브트리를 리빌드해서
-            // onReceive 구독 대상을 새로운 state로 다시 묶어준다.
             VStack(spacing: 0) {
                 // MARK: 주소 입력창
                 HStack {
@@ -85,7 +83,7 @@ struct ContentView: View {
 
                 // MARK: 웹 콘텐츠 영역
                 if state.currentURL != nil {
-                    // 실제 웹 페이지를 렌더링하는 WebView
+                    // ✅ 탭별로 WKWebView 인스턴스 분리 보장 (재사용 방지 핵심)
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -97,10 +95,7 @@ struct ContentView: View {
                             set: { tabs[selectedTabIndex].showAVPlayer = $0 }
                         )
                     )
-                    // 각 탭의 WKWebView 인스턴스를 분리하기 위해서도 .id가 유용하지만,
-                    // 우리는 상단 VStack에 .id(state.tabID)로 통째로 리빌드시키므로
-                    // 여기선 필수는 아님. 필요하면 아래 줄 주석 해제하세요.
-                    // .id(state.tabID ?? UUID())
+                    .id(state.tabID) // ←← 반드시 추가
                 } else {
                     // URL이 없으면 대시보드(홈) 화면 표시
                     DashboardView(
@@ -159,9 +154,6 @@ struct ContentView: View {
                 .padding(.bottom, 6)
                 .background(Color(UIColor.secondarySystemBackground))
             }
-            // 🔑 탭 전환 시 전체 서브트리 리빌드 → onReceive 재구독 보장
-            .id(state.tabID ?? UUID())
-
             .ignoresSafeArea(.keyboard)
 
             // MARK: 뷰 생명주기 & 이벤트
@@ -175,14 +167,14 @@ struct ContentView: View {
                 TabPersistenceManager.debugMessages.append("히스토리 복원은 WebView 생성 시 처리 (pendingSession 유지)")
             }
 
-            // ✅ 주소창 동기화 전용 (여기선 저장하지 않음)
+            // ✅ 주소창 동기화 전용(여기선 저장하지 않음)
             .onReceive(state.$currentURL) { url in
                 if let url = url {
                     inputURL = url.absoluteString
                 }
             }
 
-            // ✅ 네비게이션 실제 완료 시점에만 스냅샷 저장 + 히스토리 로그(통일된 타이밍)
+            // ✅ 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
             .onReceive(state.navigationDidFinish) { _ in
                 if let wv = state.webView {
                     let back = wv.backForwardList.backList.count
@@ -192,15 +184,9 @@ struct ContentView: View {
                 } else {
                     TabPersistenceManager.debugMessages.append("HIST 웹뷰 미연결")
                 }
+                // 통일된 저장 타이밍
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
-            }
-
-            // (선택) 탭 전환 직후 주소창 즉시 동기화
-            .onChange(of: selectedTabIndex) { _ in
-                let newState = tabs[selectedTabIndex].stateModel
-                inputURL = newState.currentURL?.absoluteString ?? ""
-                TabPersistenceManager.debugMessages.append("탭 전환: 주소창 즉시 동기화")
             }
 
             .sheet(isPresented: $showHistorySheet) {
