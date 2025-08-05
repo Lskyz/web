@@ -181,8 +181,9 @@ struct ContentView: View {
                     let current      = wv.url?.absoluteString ?? "없음"
                     TabPersistenceManager.debugMessages.append("HIST ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
                 }
-                // 페이지가 바뀔 때마다 탭 스냅샷 즉시 저장
+                // 🛠 [추가] 페이지가 바뀔 때마다 탭 스냅샷 즉시 저장
                 TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("페이지 변경—탭 스냅샷 저장")
             }
             .sheet(isPresented: $showHistorySheet) {
                 // 방문 기록 시트
