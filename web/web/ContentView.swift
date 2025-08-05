@@ -8,17 +8,18 @@ struct ContentView: View {
 
     @State private var inputURL: String = ""    // 주소창 입력 값
     @FocusState private var isTextFieldFocused: Bool
-    @State private var textFieldSelectedAll = false
-    @State private var showHistorySheet = false
-    @State private var showTabManager = false
-    @State private var enablePIP: Bool = true
+    @State private var textFieldSelectedAll = false   // 텍스트 전체 선택 여부
+    @State private var showHistorySheet = false       // 방문 기록 시트 표시 여부
+    @State private var showTabManager = false         // 탭 관리자 표시 여부
+    @State private var enablePIP: Bool = true         // PIP 기능 토글 상태
 
     var body: some View {
+        // 현재 선택된 탭이 유효한지 확인
         if tabs.indices.contains(selectedTabIndex) {
-            let state = tabs[selectedTabIndex].stateModel // 현재 탭 상태 모델
+            let state = tabs[selectedTabIndex].stateModel // 현재 탭의 상태 모델
 
             VStack(spacing: 0) {
-                // 주소 입력창 UI
+                // MARK: 주소 입력창
                 HStack {
                     TextField("URL 또는 검색어", text: $inputURL)
                         .textFieldStyle(.roundedBorder)
@@ -27,6 +28,7 @@ struct ContentView: View {
                         .keyboardType(.URL)
                         .focused($isTextFieldFocused)
                         .onTapGesture {
+                            // 전체 텍스트 선택
                             if !textFieldSelectedAll {
                                 DispatchQueue.main.async {
                                     UIApplication.shared.sendAction(
@@ -39,12 +41,14 @@ struct ContentView: View {
                             }
                         }
                         .onChange(of: isTextFieldFocused) { focused in
+                            // 포커스 해제 시 플래그 리셋
                             if !focused {
                                 textFieldSelectedAll = false
                                 TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                             }
                         }
                         .onSubmit {
+                            // 엔터 입력 시 URL 이동
                             if let url = fixedURL(from: inputURL) {
                                 state.currentURL = url
                                 TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
@@ -65,6 +69,7 @@ struct ContentView: View {
                         )
 
                     Button("이동") {
+                        // 이동 버튼 클릭 시 URL 이동
                         if let url = fixedURL(from: inputURL) {
                             state.currentURL = url
                             TabPersistenceManager.debugMessages.append("이동 버튼으로 URL 이동: \(url)")
@@ -76,9 +81,9 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
 
-                // 웹 콘텐츠 영역
+                // MARK: 웹 콘텐츠 영역
                 if state.currentURL != nil {
-                    // 웹 페이지
+                    // 실제 웹 페이지를 렌더링하는 WebView
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -91,7 +96,7 @@ struct ContentView: View {
                         )
                     )
                 } else {
-                    // 대시보드
+                    // URL이 없으면 대시보드(홈) 화면 표시
                     DashboardView(
                         onSelectURL: { selectedURL in
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
@@ -104,7 +109,7 @@ struct ContentView: View {
                     )
                 }
 
-                // 컨트롤 바
+                // MARK: 브라우저 컨트롤 바
                 HStack {
                     Button(action: { state.goBack() }) {
                         Image(systemName: "chevron.left").font(.title2)
@@ -142,62 +147,64 @@ struct ContentView: View {
                         Image(systemName: "pip.enter")
                     }
                     .labelsHidden()
-                    .hidden()
+                    .hidden() // 기본적으로 숨김
                 }
                 .padding(.horizontal, 4)
                 .padding(.bottom, 6)
                 .background(Color(UIColor.secondarySystemBackground))
             }
             .ignoresSafeArea(.keyboard)
+
+            // MARK: 뷰 생명주기 & 이벤트
             .onAppear {
-                // 현재 URL을 주소창에 반영
+                // 진입 시 현재 URL 주소창에 동기화
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                     TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
                 }
-                // 세션 복원은 WebView 생성 시 처리 (pendingSession 유지)
+                // 세션 복원은 CustomWebView.makeUIView()에서 처리됨 (pendingSession 유지)
                 TabPersistenceManager.debugMessages.append("히스토리 복원은 WebView 생성 시 처리 (pendingSession 유지)")
             }
-            // 히스토리 저장 로직 유지
             .onChange(of: tabs) { _ in
+                // 탭 배열 변경 시 세이브
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 배열 변경, 저장됨")
             }
-            // 🛠 [수정] URL 변경 시, '인덱스 로그' 대신 '앞/뒤 히스토리 스냅샷'만 남김
             .onReceive(state.$currentURL) { url in
+                // URL 변경 시 주소창 업데이트 및 히스토리 스냅샷 로그
                 if let url = url {
                     inputURL = url.absoluteString
                 }
-                // 히스토리 스냅샷 로그 (가벼운 1줄)
                 if let wv = state.webView {
-                    let back = wv.backForwardList.backList.count
-                    let forward = wv.backForwardList.forwardList.count
-                    let cur = wv.url?.absoluteString ?? "없음"
-                    TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(forward) | \(cur)") // 🛠 [수정]
+                    let backCount = wv.backForwardList.backList.count
+                    let forwardCount = wv.backForwardList.forwardList.count
+                    let current = wv.url?.absoluteString ?? "없음"
+                    TabPersistenceManager.debugMessages.append("HIST ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
                 }
             }
             .sheet(isPresented: $showHistorySheet) {
+                // 방문 기록 시트
                 NavigationView {
                     WebViewStateModel.HistoryPage(state: state)
                 }
             }
             .fullScreenCover(isPresented: $showTabManager) {
+                // MARK: [수정] onTabSelected 콜백 시그니처를 Int로 변경
                 NavigationView {
                     TabManager(
                         tabs: $tabs,
                         initialStateModel: state,
-                        onTabSelected: { selectedState in
-                            if let index = tabs.firstIndex(where: { $0.stateModel === selectedState }) {
-                                selectedTabIndex = index
-                                // 🛠 [수정] 인덱스 로그 제거, 선택 직후 히스토리 스냅샷만 남김
-                                if let wv = tabs[index].stateModel.webView {
-                                    let back = wv.backForwardList.backList.count
-                                    let fwd = wv.backForwardList.forwardList.count
-                                    let cur = wv.url?.absoluteString ?? "없음"
-                                    TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | \(cur)") // 🛠 [수정]
-                                } else {
-                                    TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중") // 🛠 [수정]
-                                }
+                        onTabSelected: { index in
+                            // 선택된 인덱스를 직접 받음
+                            selectedTabIndex = index
+                            // 탭 전환 직후 히스토리 스냅샷 로그
+                            if let wv = tabs[index].stateModel.webView {
+                                let backCount = wv.backForwardList.backList.count
+                                let forwardCount = wv.backForwardList.forwardList.count
+                                let current = wv.url?.absoluteString ?? "없음"
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(backCount) ▶︎\(forwardCount) | \(current)")
+                            } else {
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
                             }
                         }
                     )
@@ -207,12 +214,14 @@ struct ContentView: View {
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
             )) {
+                // PIP 전체 화면
                 if let url = tabs[selectedTabIndex].playerURL {
                     AVPlayerView(url: url)
                 }
             }
+
         } else {
-            // 탭이 비어있을 때 fallback 대시보드
+            // 탭이 비어있을 때 대시보드로 시작
             DashboardView(
                 onSelectURL: { url in
                     let newTab = WebTab(url: url)
@@ -229,7 +238,7 @@ struct ContentView: View {
         }
     }
 
-    /// 사용자가 입력한 텍스트를 URL로 변환
+    /// 사용자가 입력한 텍스트를 올바른 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
