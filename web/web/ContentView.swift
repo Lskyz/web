@@ -20,12 +20,14 @@ struct ContentView: View {
     @State private var showHistorySheet = false
     /// 탭 관리자 표시 여부
     @State private var showTabManager = false
-    /// PIP 기능 토글 상태
+    /// PIP 기능 토글 상태 (숨김 처리)
     @State private var enablePIP: Bool = true
     /// 주소창 표시 여부 (터치 또는 스크롤에 따라 동작)
     @State private var showAddressBar = false
     /// 웹 콘텐츠의 스크롤 이벤트 추적
     @State private var scrollOffset: CGFloat = 0
+    /// 이전 스크롤 오프셋 (스크롤 방향 감지용)
+    @State private var previousOffset: CGFloat = 0
 
     var body: some View {
         // MARK: - 본문 뷰
@@ -55,13 +57,13 @@ struct ContentView: View {
                         }
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-                        // 스크롤 시 주소창 숨김
-                        if offset < scrollOffset && showAddressBar {
+                        // 스크롤 방향 감지 및 주소창 숨김
+                        if offset < previousOffset && showAddressBar {
                             withAnimation {
                                 showAddressBar = false
                             }
                         }
-                        scrollOffset = offset
+                        previousOffset = offset
                     }
                 } else {
                     DashboardView(
@@ -76,13 +78,11 @@ struct ContentView: View {
                     )
                 }
 
-                // MARK: 하단 통합 툴바
-                VStack {
-                    Spacer()
-                    HStack(spacing: 8) {
-                        // 주소창 표시 여부에 따라 동적 콘텐츠
-                        if showAddressBar {
-                            // 주소 입력창
+                // MARK: 주소창 (하단 버튼 바 위에 표시)
+                if showAddressBar {
+                    VStack {
+                        Spacer() // 콘텐츠 아래로 밀어냄
+                        HStack {
                             TextField("URL 또는 검색어", text: $inputURL)
                                 .textFieldStyle(.roundedBorder)
                                 .autocapitalization(.none)
@@ -132,55 +132,43 @@ struct ContentView: View {
                                 )
                                 .frame(maxWidth: 300)
                                 .transition(.opacity)
-
-                            // 네비게이션 버튼
-                            Button(action: { state.goBack() }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(state.canGoBack ? .black : .gray)
-                            }
-                            .disabled(!state.canGoBack)
-                            .padding(.horizontal, 4)
-
-                            Button(action: { state.goForward() }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(state.canGoForward ? .black : .gray)
-                            }
-                            .disabled(!state.canGoForward)
-                            .padding(.horizontal, 4)
-
-                            Button(action: { state.reload() }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 18))
-                            }
-                            .padding(.horizontal, 4)
-                        } else {
-                            // 주소창 숨김 시 버튼만 표시
-                            Button(action: { state.goBack() }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(state.canGoBack ? .black : .gray)
-                            }
-                            .disabled(!state.canGoBack)
-                            .padding(.horizontal, 4)
-
-                            Button(action: { state.goForward() }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(state.canGoForward ? .black : .gray)
-                            }
-                            .disabled(!state.canGoForward)
-                            .padding(.horizontal, 4)
-
-                            Button(action: { state.reload() }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 18))
-                            }
-                            .padding(.horizontal, 4)
                         }
+                        .padding()
+                        .background(Color(.systemGray5)) // 약간 연한 회색 배경
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                        // 버튼 바와의 간격
+                        Spacer().frame(height: 10)
+                    }
+                    .zIndex(1) // 주소창을 최상단에 표시
+                }
 
-                        // 추가 컨트롤 (항상 표시)
+                // MARK: 하단 통합 툴바 (버튼만)
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Button(action: { state.goBack() }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18))
+                                .foregroundColor(state.canGoBack ? .black : .gray)
+                        }
+                        .disabled(!state.canGoBack)
+                        .padding(.horizontal, 4)
+
+                        Button(action: { state.goForward() }) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 18))
+                                .foregroundColor(state.canGoForward ? .black : .gray)
+                        }
+                        .disabled(!state.canGoForward)
+                        .padding(.horizontal, 4)
+
+                        Button(action: { state.reload() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+
                         Button(action: { showTabManager = true }) {
                             Image(systemName: "square.on.square")
                                 .font(.system(size: 18))
@@ -192,27 +180,20 @@ struct ContentView: View {
                                 .font(.system(size: 18))
                         }
                         .padding(.horizontal, 4)
-
-                        Toggle(isOn: $enablePIP) {
-                            Image(systemName: "pip.enter")
-                        }
-                        .labelsHidden()
-                        .toggleStyle(SwitchToggleStyle(tint: .blue))
-                        .padding(.horizontal, 4)
                     }
                     .padding()
-                    .background(Color(.systemGray6)) // 사파리 툴바 배경 색상
+                    .background(Color(.systemGray5)) // 약간 연한 회색 배경
                     .cornerRadius(10)
                     .padding(.horizontal)
-                    .onTapGesture {
-                        // 터치 시 주소창 표시/숨김 토글
-                        withAnimation {
-                            showAddressBar.toggle()
-                        }
-                    }
                 }
             }
             .ignoresSafeArea(.keyboard)
+            .onTapGesture {
+                // 화면 아무 곳이나 터치 시 주소창 표시
+                withAnimation {
+                    showAddressBar = true
+                }
+            }
 
             // MARK: - 뷰 생명주기 및 이벤트
             .onAppear {
