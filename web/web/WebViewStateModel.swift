@@ -19,7 +19,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: — 네비게이션 완료 퍼블리셔
     /// 페이지 로드가 "완료"됐을 때 emit. ContentView는 이 신호만 받아 탭 스냅샷을 저장한다.
     /// ⚠️ 복원 중엔 didFinish에서 이 신호를 보내지 않고, 복원 마지막 점프(go(to:))가 끝난 뒤 한 번만 보냄.
-    let navigationDidFinish = PassthroughSubject<Void, Never>()   // 🛠 추가
+    let navigationDidFinish = PassthroughSubject<Void, Never>()
 
     // MARK: 상태 바인딩
     @Published var currentURL: URL? {
@@ -59,15 +59,35 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // 🛠 복원 상태 플래그와 제어 메서드 (복원 중엔 저장/히스토리 오염 금지)
     private(set) var isRestoringSession: Bool = false
-    func beginSessionRestore() { isRestoringSession = true }
-    func finishSessionRestore() { isRestoringSession = false }
+    func beginSessionRestore() { 
+        isRestoringSession = true 
+        TabPersistenceManager.debugMessages.append("세션 복원 시작 플래그 ON")
+    }
+    func finishSessionRestore() { 
+        isRestoringSession = false 
+        TabPersistenceManager.debugMessages.append("세션 복원 완료 플래그 OFF")
+    }
 
-    // 히스토리 복원용 임시 버퍼 (TabPersistenceManager.loadTabs에서 채움)
-    var restoredHistoryURLs: [String] = []
-    var restoredHistoryIndex: Int = 0
+    // 🔧 히스토리 복원 관련 개선된 상태 관리
+    private var pendingHistoryRestore: HistoryRestoreTask?
+    
+    private struct HistoryRestoreTask {
+        let urls: [URL]
+        let targetIndex: Int
+        var currentLoadIndex: Int = 0
+    }
 
     // 현재 연결된 웹뷰
-    weak var webView: WKWebView?
+    weak var webView: WKWebView? {
+        didSet {
+            // webView가 설정되면 대기 중인 히스토리 복원 실행
+            if let _ = webView, pendingHistoryRestore != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.executeHistoryRestore()
+                }
+            }
+        }
+    }
 
     // 순차 로드 동기화를 위한 콜백 훅 (didFinish에서 호출됨)
     var onLoadCompletion: (() -> Void)?
@@ -154,86 +174,116 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: 세션 복원(스냅샷 → pendingSession, 실제 로드는 CustomWebView)
     func restoreSession(_ session: WebViewSession) {
         beginSessionRestore()
-        historyStack = session.urls
-        currentIndexInStack = max(0, min(session.currentIndex, session.urls.count - 1))
-        pendingSession = session
-
-        if session.urls.indices.contains(currentIndexInStack) {
-            // 현재 URL만 세팅(실제 로드는 CustomWebView에서)
-            currentURL = session.urls[currentIndexInStack]
-            TabPersistenceManager.debugMessages.append("세션 복원 준비: URL \(currentURL?.absoluteString ?? "없음"), 인덱스 \(currentIndexInStack)")
+        
+        // 히스토리 복원 태스크 준비
+        let urls = session.urls
+        let targetIndex = max(0, min(session.currentIndex, session.urls.count - 1))
+        
+        if !urls.isEmpty && urls.indices.contains(targetIndex) {
+            pendingHistoryRestore = HistoryRestoreTask(urls: urls, targetIndex: targetIndex)
+            
+            // 커스텀 스택도 업데이트 (fallback용)
+            historyStack = urls
+            currentIndexInStack = targetIndex
+            
+            // pendingSession 설정 (기존 로직과 호환)
+            pendingSession = session
+            
+            // 현재 URL만 세팅 (실제 히스토리 로드는 webView 연결 후)
+            currentURL = urls[targetIndex]
+            TabPersistenceManager.debugMessages.append("세션 복원 준비: \(urls.count) URLs, 목표 인덱스 \(targetIndex)")
         } else {
             currentURL = nil
-            TabPersistenceManager.debugMessages.append("세션 복원 실패: 유효한 인덱스 없음")
-        }
-
-        // 앱 전역 복원 버퍼 사용 시 — 여기서 순차 복원 수행
-        if !restoredHistoryURLs.isEmpty {
-            prepareRestoredHistoryIfNeeded()
+            finishSessionRestore()
+            TabPersistenceManager.debugMessages.append("세션 복원 실패: 유효한 URL/인덱스 없음")
         }
     }
 
-    // MARK: 히스토리 복원(★순차 로드 체인★ → 마지막에 목표 인덱스로 go(to:))
-    func prepareRestoredHistoryIfNeeded() {
-        guard !restoredHistoryURLs.isEmpty, let webView = webView else {
-            TabPersistenceManager.debugMessages.append("히스토리 복원 실패: URL 없음 또는 webView 없음")
+    // MARK: 🔧 개선된 히스토리 복원 실행
+    private func executeHistoryRestore() {
+        guard let webView = webView,
+              let task = pendingHistoryRestore else {
+            TabPersistenceManager.debugMessages.append("히스토리 복원 실행 실패: webView 또는 복원 태스크 없음")
             return
         }
-
-        let urls = restoredHistoryURLs.compactMap { URL(string: $0) }
-        TabPersistenceManager.debugMessages.append("히스토리 복원(순차) 시작: \(urls.count) URLs, 인덱스 \(restoredHistoryIndex)")
-
-        guard urls.indices.contains(restoredHistoryIndex) else {
-            TabPersistenceManager.debugMessages.append("히스토리 복원 실패: 인덱스 범위 초과")
-            return
+        
+        let urls = task.urls
+        let targetIndex = task.targetIndex
+        
+        TabPersistenceManager.debugMessages.append("히스토리 복원 실행 시작: \(urls.count) URLs, 목표 인덱스 \(targetIndex)")
+        
+        // 🔧 비동기로 순차 로드 시작 (안정성을 위해 약간의 딜레이)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.startSequentialLoad(urls: urls, targetIndex: targetIndex, webView: webView)
         }
+    }
 
-        // 복원 플래그 켠 상태에서 순차 로드 시작
-        beginSessionRestore()
-
-        // 내부 재귀 함수로 순차 로드
-        func loadSequentially(_ i: Int) {
-            // 모두 로드 끝 → backList 기준 목표 인덱스로 점프
-            if i >= urls.count {
-                DispatchQueue.main.async {
-                    let backList = webView.backForwardList.backList
-                    if backList.indices.contains(self.restoredHistoryIndex) {
-                        // 💡 마지막 점프가 끝난 "그 didFinish"에서 복원 종료 + 저장 신호를 보내도록 onLoadCompletion 등록
-                        self.onLoadCompletion = { [weak self] in
-                            guard let self = self else { return }
-                            // 복원 종료 → 이제부터 didFinish는 일반 저장 트리거로 동작
-                            self.finishSessionRestore()
-                            // 복원 완료 시점에 딱 한 번 저장 트리거 발행
-                            self.navigationDidFinish.send(())
-                            TabPersistenceManager.debugMessages.append("히스토리 복원 최종 완료(신호 발행)")
-                        }
-                        webView.go(to: backList[self.restoredHistoryIndex])
-                        TabPersistenceManager.debugMessages.append("히스토리 복원 go(to:) 실행")
-                    } else {
-                        // 실패 시에도 복원 종료 플래그 내리고 종료
-                        self.finishSessionRestore()
-                        TabPersistenceManager.debugMessages.append("히스토리 복원 실패: backList 인덱스 범위 초과")
-                    }
-
-                    // 버퍼 정리
-                    self.restoredHistoryURLs = []
-                    self.restoredHistoryIndex = 0
-                }
-                return
+    // MARK: 🔧 개선된 순차 로드
+    private func startSequentialLoad(urls: [URL], targetIndex: Int, webView: WKWebView) {
+        guard !urls.isEmpty else { 
+            finishSessionRestore()
+            return 
+        }
+        
+        TabPersistenceManager.debugMessages.append("순차 로드 시작: 첫 번째 URL \(urls[0].absoluteString)")
+        
+        // 첫 번째 URL 로드
+        loadURLSequentially(urls: urls, currentIndex: 0, targetIndex: targetIndex, webView: webView)
+    }
+    
+    private func loadURLSequentially(urls: [URL], currentIndex: Int, targetIndex: Int, webView: WKWebView) {
+        // 모든 URL 로드 완료 → 목표 인덱스로 이동
+        if currentIndex >= urls.count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.navigateToTargetIndex(targetIndex: targetIndex, webView: webView)
             }
-
-            // i번째 URL 로드 → 로드 완료되면 다음으로
-            let url = urls[i]
-            webView.load(URLRequest(url: url))
-            self.onLoadCompletion = { [weak self] in
+            return
+        }
+        
+        let url = urls[currentIndex]
+        TabPersistenceManager.debugMessages.append("순차 로드 중: [\(currentIndex)/\(urls.count-1)] \(url.absoluteString)")
+        
+        // 로드 완료 콜백 설정
+        onLoadCompletion = { [weak self] in
+            TabPersistenceManager.debugMessages.append("순차 로드 완료: [\(currentIndex)] \(url.absoluteString)")
+            // 다음 URL로 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self?.loadURLSequentially(urls: urls, currentIndex: currentIndex + 1, targetIndex: targetIndex, webView: webView)
+            }
+        }
+        
+        // URL 로드
+        webView.load(URLRequest(url: url))
+    }
+    
+    private func navigateToTargetIndex(targetIndex: Int, webView: WKWebView) {
+        let backList = webView.backForwardList.backList
+        
+        if backList.indices.contains(targetIndex) {
+            TabPersistenceManager.debugMessages.append("목표 인덱스로 이동: \(targetIndex)")
+            
+            // 최종 네비게이션 완료 콜백 설정
+            onLoadCompletion = { [weak self] in
                 guard let self = self else { return }
-                TabPersistenceManager.debugMessages.append("히스토리 URL 로드 완료(순차): \(url)")
-                self.onLoadCompletion = nil
-                loadSequentially(i + 1)
+                TabPersistenceManager.debugMessages.append("히스토리 복원 최종 완료")
+                
+                // 복원 완료 처리
+                self.pendingHistoryRestore = nil
+                self.finishSessionRestore()
+                
+                // 저장 신호 발송
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.navigationDidFinish.send(())
+                }
             }
+            
+            // 목표 위치로 이동
+            webView.go(to: backList[targetIndex])
+        } else {
+            TabPersistenceManager.debugMessages.append("목표 인덱스 이동 실패: 범위 초과 \(targetIndex)")
+            pendingHistoryRestore = nil
+            finishSessionRestore()
         }
-
-        loadSequentially(0)
     }
 
     // MARK: 히스토리 조회 API (webView 우선)
@@ -283,8 +333,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
 
-        // currentURL 업데이트 (복원 중이면 didSet에서 히스토리 추가 안 함)
-        currentURL = webView.url
+        // 🔧 복원 중이 아닐 때만 currentURL 업데이트 (복원 중에는 오염 방지)
+        if !isRestoringSession {
+            currentURL = webView.url
+        }
 
         // 페이지 타이틀
         let title = (webView.title?.isEmpty == false) ? webView.title! : (webView.url?.host ?? "제목 없음")
@@ -294,27 +346,36 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             addToHistory(url: finalURL, title: title)
         }
 
-        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "없음")")
+        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "없음"), 복원중: \(isRestoringSession)")
 
-        // ⚠️ 저장 트리거는 복원 중이 아닌 경우에만 여기서 보냄.
-        //     복원 마지막 점프는 onLoadCompletion에서 finish 후 수동 발행(중복 방지)
-        let shouldEmit = !isRestoringSession
-
-        // 순차 로드 체인 진행
+        // 순차 로드 체인 진행 (복원 중이든 아니든 항상 호출)
         onLoadCompletion?()
         onLoadCompletion = nil
 
-        if shouldEmit {
+        // ⚠️ 저장 트리거는 복원 중이 아닌 경우에만 여기서 보냄
+        if !isRestoringSession {
             navigationDidFinish.send(())
         }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         TabPersistenceManager.debugMessages.append("로드 실패 (Provisional): \(error.localizedDescription)")
+        
+        // 복원 중 실패 시 복원 중단
+        if isRestoringSession {
+            pendingHistoryRestore = nil
+            finishSessionRestore()
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         TabPersistenceManager.debugMessages.append("로드 실패 (Navigation): \(error.localizedDescription)")
+        
+        // 복원 중 실패 시 복원 중단
+        if isRestoringSession {
+            pendingHistoryRestore = nil
+            finishSessionRestore()
+        }
     }
 
     // MARK: 방문기록 화면
