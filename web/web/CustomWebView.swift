@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import AVFoundation
+import UIKit // ✅ UIScrollViewDelegate 사용을 위해 추가
 
 // MARK: - CustomWebView
 // 1) ContentView 쪽에서 .id(tabID)를 부여해 탭별로 WKWebView 인스턴스가 분리되도록 강제
@@ -8,11 +9,16 @@ import AVFoundation
 //    SwiftUI 뷰 재사용 시 연결이 엉키지 않도록 방어
 // 3) 세션 복원 중(stateModel.isRestoringSession == true)엔 불필요한 재로드를 막아
 //    back/forward 리스트 구축이 끝나기 전 상태 오염을 방지
+// 4) ✅ 추가: webView.scrollView의 스크롤을 UIScrollViewDelegate로 직접 수신해
+//    ContentView로 y 오프셋을 콜백(onScroll)으로 전달 (스크롤시 주소창 숨김/표시 판단용)
 
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
     @Binding var playerURL: URL?
     @Binding var showAVPlayer: Bool
+
+    // ✅ 추가: 실제 스크롤 y오프셋을 외부(ContentView)로 전달하는 콜백. 미지정(nil) 시 무시됨.
+    var onScroll: ((CGFloat) -> Void)? = nil
 
     // MARK: - makeUIView
     // 최초 한 번 WKWebView를 생성·구성하고 델리게이트, 스크립트, 옵저버 등을 붙인다.
@@ -49,6 +55,9 @@ struct CustomWebView: UIViewRepresentable {
         )
         webView.scrollView.refreshControl = refreshControl
 
+        // ✅ 스크롤 델리게이트 연결 (실제 콘텐츠 스크롤 y오프셋을 수신하기 위함)
+        webView.scrollView.delegate = context.coordinator
+
         // ◾️ 세션 복원 또는 초기 로드
         if let session = stateModel.pendingSession {
             TabPersistenceManager.debugMessages.append("세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
@@ -61,7 +70,7 @@ struct CustomWebView: UIViewRepresentable {
             TabPersistenceManager.debugMessages.append("초기 URL 로드: \(url)")
         }
 
-        // 전역 네비게이션 액션(Notification 기반) 수신
+        // 전역 네비게이션 액션(Notification) 수신
         NotificationCenter.default.addObserver(
             context.coordinator,
             selector: #selector(Coordinator.goBack),
@@ -102,6 +111,10 @@ struct CustomWebView: UIViewRepresentable {
         }
         if context.coordinator.webView !== uiView {
             context.coordinator.webView = uiView
+        }
+        // ✅ 스크롤 델리게이트도 재확인 (재사용 시 다른 객체로 바뀌는 것을 방지)
+        if uiView.scrollView.delegate !== context.coordinator {
+            uiView.scrollView.delegate = context.coordinator
         }
 
         // 🛠 세션 복원 중엔 불필요한 재로드 금지
@@ -259,8 +272,8 @@ struct CustomWebView: UIViewRepresentable {
         webView.load(URLRequest(url: currentURL))
     }
 
-    // MARK: - Coordinator (WKUIDelegate & Script Message Handler)
-    class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandler {
+    // MARK: - Coordinator (WKUIDelegate & Script Message Handler & ✅ UIScrollViewDelegate)
+    class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
         var parent: CustomWebView
         weak var webView: WKWebView?
 
@@ -310,6 +323,12 @@ struct CustomWebView: UIViewRepresentable {
                     TabPersistenceManager.debugMessages.append("비디오 재생 요청: \(urlString)")
                 }
             }
+        }
+
+        // ✅ UIScrollViewDelegate: 실제 웹 콘텐츠 스크롤 전달
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            // y 오프셋(위로 스크롤: 감소, 아래로 스크롤: 증가)
+            parent.onScroll?(scrollView.contentOffset.y)
         }
     }
 }
