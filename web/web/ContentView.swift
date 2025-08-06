@@ -65,9 +65,13 @@ struct ContentView: View {
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
-                                .preference(key: ScrollOffsetPreferenceKey.self,
-                                            value: geometry.frame(in: .global).origin.y)
+                                .preference(
+                                    key: ScrollOffsetPreferenceKey.self,
+                                    value: geometry.frame(in: .global).origin.y
+                                )
                         }
+                        // ⛔️ 중요: 오버레이가 터치 이벤트 가로채지 않게 함
+                        .allowsHitTesting(false) // ← 이것 때문에 웹뷰 탭/포커스 막히던 문제 해결
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                         // 포커스 직후 딜레이 동안은 자동숨김 차단
@@ -86,8 +90,7 @@ struct ContentView: View {
                         previousOffset = offset
                     }
 
-                    // ⛔️ 중요: 여기(웹 콘텐츠 위)에 탭 제스처를 붙이지 않는다!
-                    //    붙이면 WKWebView의 탭/링크/포커스가 먹힘 → “페이지가 안 열리는” 체감 문제 발생
+                    // ⛔️ 웹 콘텐츠 위에는 탭 제스처 붙이지 않음(인터랙션 차단 방지)
 
                 } else {
                     DashboardView(
@@ -100,11 +103,10 @@ struct ContentView: View {
                             TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
                         }
                     )
-                    // ⛔️ 여기에도 탭 제스처를 붙이지 않음(대시보드 자체 인터랙션 보호)
+                    // ⛔️ 대시보드 위에도 탭 제스처 붙이지 않음
                 }
             }
-            // ⛔️ 키보드 세이프에어리어 무시하지 않음(키보드 위로 자동 올라오게)
-            // .ignoresSafeArea(.keyboard) 사용하지 않음
+            // .ignoresSafeArea(.keyboard) 사용하지 않음 → 키보드 위로 자동 올라오게 유지
 
             // MARK: - 페이지 진입/이동 이벤트
             .onAppear {
@@ -123,7 +125,6 @@ struct ContentView: View {
                     inputURL = url.absoluteString
                 }
                 withAnimation { showAddressBar = true } // ✅ 이동 시작 시 보여줌
-                // 처음엔 포커스는 주지 않음(사파리 동작)
                 isTextFieldFocused = false
             }
 
@@ -184,7 +185,6 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom) {
                 ZStack {
                     // ✅ 툴바 "바깥" 투명 영역 탭 감지(인셋 전체)
-                    //    → 웹 콘텐츠와 겹치지 않으면서 토글 가능
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { toggleAddressBarFromTap() }
@@ -228,8 +228,8 @@ struct ContentView: View {
                                                 // ✅ 지우기 버튼: 더 크게 + 히트영역 확보
                                                 Button(action: { inputURL = "" }) {
                                                     Image(systemName: "xmark.circle.fill")
-                                                        .font(.system(size: 22)) // 아이콘 크게
-                                                        .frame(width: 36, height: 36) // 히트영역 확장
+                                                        .font(.system(size: 22))
+                                                        .frame(width: 36, height: 36)
                                                         .contentShape(Rectangle())
                                                 }
                                                 .buttonStyle(.plain)
