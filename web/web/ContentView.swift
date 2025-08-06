@@ -1,89 +1,41 @@
 import SwiftUI
 import AVKit
+import WebKit
 
 /// 웹 브라우저의 메인 콘텐츠 뷰
 struct ContentView: View {
-    @Binding var tabs: [WebTab]                 // 전체 탭 배열
-    @Binding var selectedTabIndex: Int          // 현재 선택된 탭 인덱스
+    // MARK: - 속성 정의
+    /// 전체 탭 배열
+    @Binding var tabs: [WebTab]
+    /// 현재 선택된 탭 인덱스
+    @Binding var selectedTabIndex: Int
 
-    @State private var inputURL: String = ""    // 주소창 입력 값
+    /// 주소창 입력 값
+    @State private var inputURL: String = ""
+    /// 주소창 포커스 상태
     @FocusState private var isTextFieldFocused: Bool
-    @State private var textFieldSelectedAll = false   // 텍스트 전체 선택 여부
-    @State private var showHistorySheet = false       // 방문 기록 시트 표시 여부
-    @State private var showTabManager = false         // 탭 관리자 표시 여부
-    @State private var enablePIP: Bool = true         // PIP 기능 토글 상태
+    /// 텍스트 전체 선택 여부
+    @State private var textFieldSelectedAll = false
+    /// 방문 기록 시트 표시 여부
+    @State private var showHistorySheet = false
+    /// 탭 관리자 표시 여부
+    @State private var showTabManager = false
+    /// PIP 기능 토글 상태
+    @State private var enablePIP: Bool = true
+    /// 주소창 표시 여부 (터치 또는 스크롤에 따라 동작)
+    @State private var showAddressBar = false
+    /// 웹 콘텐츠의 스크롤 이벤트 추적
+    @State private var scrollOffset: CGFloat = 0
 
     var body: some View {
+        // MARK: - 본문 뷰
         // 현재 선택된 탭이 유효한지 확인
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel // 현재 탭의 상태 모델
 
-            VStack(spacing: 0) {
-                // MARK: 주소 입력창
-                HStack {
-                    TextField("URL 또는 검색어", text: $inputURL)
-                        .textFieldStyle(.roundedBorder)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .keyboardType(.URL)
-                        .focused($isTextFieldFocused)
-                        .onTapGesture {
-                            // 전체 텍스트 선택
-                            if !textFieldSelectedAll {
-                                DispatchQueue.main.async {
-                                    UIApplication.shared.sendAction(
-                                        #selector(UIResponder.selectAll(_:)),
-                                        to: nil, from: nil, for: nil
-                                    )
-                                    textFieldSelectedAll = true
-                                    TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
-                                }
-                            }
-                        }
-                        .onChange(of: isTextFieldFocused) { focused in
-                            // 포커스 해제 시 플래그 리셋
-                            if !focused {
-                                textFieldSelectedAll = false
-                                TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
-                            }
-                        }
-                        .onSubmit {
-                            // 엔터 입력 시 URL 이동
-                            if let url = fixedURL(from: inputURL) {
-                                state.currentURL = url
-                                TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
-                            }
-                            isTextFieldFocused = false
-                        }
-                        .overlay(
-                            HStack {
-                                Spacer()
-                                if !inputURL.isEmpty {
-                                    Button(action: { inputURL = "" }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.gray)
-                                    }
-                                    .padding(.trailing, 8)
-                                }
-                            }
-                        )
-
-                    Button("이동") {
-                        // 이동 버튼 클릭 시 URL 이동
-                        if let url = fixedURL(from: inputURL) {
-                            state.currentURL = url
-                            TabPersistenceManager.debugMessages.append("이동 버튼으로 URL 이동: \(url)")
-                        }
-                        isTextFieldFocused = false
-                    }
-                    .padding(.horizontal, 8)
-                }
-                .padding(.horizontal, 8)
-                .padding(.top, 4)
-
+            ZStack {
                 // MARK: 웹 콘텐츠 영역
                 if state.currentURL != nil {
-                    // ✅ 탭별로 WKWebView 인스턴스 분리 보장 (재사용 방지 핵심)
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -95,9 +47,23 @@ struct ContentView: View {
                             set: { tabs[selectedTabIndex].showAVPlayer = $0 }
                         )
                     )
-                    .id(state.tabID) // ←← 반드시 추가
+                    .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
+                    .overlay(
+                        GeometryReader { geometry in
+                            Color.clear
+                                .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .global).origin.y)
+                        }
+                    )
+                    .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+                        // 스크롤 시 주소창 숨김
+                        if offset < scrollOffset && showAddressBar {
+                            withAnimation {
+                                showAddressBar = false
+                            }
+                        }
+                        scrollOffset = offset
+                    }
                 } else {
-                    // URL이 없으면 대시보드(홈) 화면 표시
                     DashboardView(
                         onSelectURL: { selectedURL in
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
@@ -110,53 +76,145 @@ struct ContentView: View {
                     )
                 }
 
-                // MARK: 브라우저 컨트롤 바
-                HStack {
-                    Button(action: { state.goBack() }) {
-                        Image(systemName: "chevron.left").font(.title2)
-                    }
-                    .disabled(!state.canGoBack)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-
-                    Button(action: { state.goForward() }) {
-                        Image(systemName: "chevron.right").font(.title2)
-                    }
-                    .disabled(!state.canGoForward)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-
-                    Button(action: { state.reload() }) {
-                        Image(systemName: "arrow.clockwise").font(.title2)
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-
-                    Button(action: { showHistorySheet = true }) {
-                        Image(systemName: "clock.arrow.circlepath").font(.title2)
-                    }
-                    .padding(.horizontal, 8)
-
+                // MARK: 하단 통합 툴바
+                VStack {
                     Spacer()
+                    HStack(spacing: 8) {
+                        // 주소창 표시 여부에 따라 동적 콘텐츠
+                        if showAddressBar {
+                            // 주소 입력창
+                            TextField("URL 또는 검색어", text: $inputURL)
+                                .textFieldStyle(.roundedBorder)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                .keyboardType(.URL)
+                                .focused($isTextFieldFocused)
+                                .onTapGesture {
+                                    // 전체 텍스트 선택
+                                    if !textFieldSelectedAll {
+                                        DispatchQueue.main.async {
+                                            UIApplication.shared.sendAction(
+                                                #selector(UIResponder.selectAll(_:)),
+                                                to: nil, from: nil, for: nil
+                                            )
+                                            textFieldSelectedAll = true
+                                            TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
+                                        }
+                                    }
+                                }
+                                .onChange(of: isTextFieldFocused) { focused in
+                                    // 포커스 해제 시 플래그 리셋
+                                    if !focused {
+                                        textFieldSelectedAll = false
+                                        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+                                    }
+                                }
+                                .onSubmit {
+                                    // 엔터 입력 시 URL 이동
+                                    if let url = fixedURL(from: inputURL) {
+                                        state.currentURL = url
+                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+                                    }
+                                    isTextFieldFocused = false
+                                }
+                                .overlay(
+                                    HStack {
+                                        Spacer()
+                                        if !inputURL.isEmpty {
+                                            Button(action: { inputURL = "" }) {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .foregroundColor(.gray)
+                                                    .font(.system(size: 14))
+                                            }
+                                            .padding(.trailing, 8)
+                                        }
+                                    }
+                                )
+                                .frame(maxWidth: 300)
+                                .transition(.opacity)
 
-                    Button(action: { showTabManager = true }) {
-                        Image(systemName: "square.on.square").font(.title2)
-                    }
-                    .padding(.horizontal, 8)
+                            // 네비게이션 버튼
+                            Button(action: { state.goBack() }) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(state.canGoBack ? .black : .gray)
+                            }
+                            .disabled(!state.canGoBack)
+                            .padding(.horizontal, 4)
 
-                    Toggle(isOn: $enablePIP) {
-                        Image(systemName: "pip.enter")
+                            Button(action: { state.goForward() }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(state.canGoForward ? .black : .gray)
+                            }
+                            .disabled(!state.canGoForward)
+                            .padding(.horizontal, 4)
+
+                            Button(action: { state.reload() }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 18))
+                            }
+                            .padding(.horizontal, 4)
+                        } else {
+                            // 주소창 숨김 시 버튼만 표시
+                            Button(action: { state.goBack() }) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(state.canGoBack ? .black : .gray)
+                            }
+                            .disabled(!state.canGoBack)
+                            .padding(.horizontal, 4)
+
+                            Button(action: { state.goForward() }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(state.canGoForward ? .black : .gray)
+                            }
+                            .disabled(!state.canGoForward)
+                            .padding(.horizontal, 4)
+
+                            Button(action: { state.reload() }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 18))
+                            }
+                            .padding(.horizontal, 4)
+                        }
+
+                        // 추가 컨트롤 (항상 표시)
+                        Button(action: { showTabManager = true }) {
+                            Image(systemName: "square.on.square")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+
+                        Button(action: { showHistorySheet = true }) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+
+                        Toggle(isOn: $enablePIP) {
+                            Image(systemName: "pip.enter")
+                        }
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: .blue))
+                        .padding(.horizontal, 4)
                     }
-                    .labelsHidden()
-                    .hidden() // 기본적으로 숨김
+                    .padding()
+                    .background(Color(.systemGray6)) // 사파리 툴바 배경 색상
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                    .onTapGesture {
+                        // 터치 시 주소창 표시/숨김 토글
+                        withAnimation {
+                            showAddressBar.toggle()
+                        }
+                    }
                 }
-                .padding(.horizontal, 4)
-                .padding(.bottom, 6)
-                .background(Color(UIColor.secondarySystemBackground))
             }
             .ignoresSafeArea(.keyboard)
 
-            // MARK: 뷰 생명주기 & 이벤트
+            // MARK: - 뷰 생명주기 및 이벤트
             .onAppear {
                 // 진입 시 현재 URL 주소창에 동기화
                 if let url = state.currentURL {
@@ -167,19 +225,19 @@ struct ContentView: View {
                 TabPersistenceManager.debugMessages.append("히스토리 복원은 WebView 생성 시 처리 (pendingSession 유지)")
             }
 
-            // ✅ 주소창 동기화 전용(여기선 저장하지 않음)
+            // 주소창 동기화 전용 (저장하지 않음)
             .onReceive(state.$currentURL) { url in
                 if let url = url {
                     inputURL = url.absoluteString
                 }
             }
 
-            // ✅ 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
+            // 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
             .onReceive(state.navigationDidFinish) { _ in
                 if let wv = state.webView {
                     let back = wv.backForwardList.backList.count
-                    let fwd  = wv.backForwardList.forwardList.count
-                    let cur  = wv.url?.absoluteString ?? "없음"
+                    let fwd = wv.backForwardList.forwardList.count
+                    let cur = wv.url?.absoluteString ?? "없음"
                     TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | \(cur)")
                 } else {
                     TabPersistenceManager.debugMessages.append("HIST 웹뷰 미연결")
@@ -204,11 +262,11 @@ struct ContentView: View {
                         initialStateModel: state,
                         onTabSelected: { index in
                             selectedTabIndex = index
-                            // 탭 전환 직후 히스토리 스냅샷 로그(저장은 navDidFinish에서 통일)
+                            // 탭 전환 직후 히스토리 스냅샷 로그 (저장은 navDidFinish에서 통일)
                             if let wv = tabs[index].stateModel.webView {
                                 let back = wv.backForwardList.backList.count
-                                let fwd  = wv.backForwardList.forwardList.count
-                                let cur  = wv.url?.absoluteString ?? "없음"
+                                let fwd = wv.backForwardList.forwardList.count
+                                let cur = wv.url?.absoluteString ?? "없음"
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | \(cur)")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
@@ -227,7 +285,6 @@ struct ContentView: View {
                     AVPlayerView(url: url)
                 }
             }
-
         } else {
             // 탭이 비어있을 때 대시보드로 시작
             DashboardView(
@@ -257,5 +314,13 @@ struct ContentView: View {
         }
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+}
+
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
