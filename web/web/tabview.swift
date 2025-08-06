@@ -227,7 +227,7 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("대시보드")
+            Text("")
                 .font(.largeTitle.bold())
 
             // 북마크 리스트 표시 (가로 스크롤)
