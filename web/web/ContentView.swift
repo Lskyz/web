@@ -53,15 +53,14 @@ struct ContentView: View {
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
-                                .preference(key: ScrollOffsetPreferenceKey.self, value: geometry.frame(in: .global).origin.y)
+                                .preference(key: ScrollOffsetPreferenceKey.self,
+                                            value: geometry.frame(in: .global).origin.y)
                         }
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                         // 스크롤 방향 감지 및 주소창 숨김
                         if offset < previousOffset && showAddressBar {
-                            withAnimation {
-                                showAddressBar = false
-                            }
+                            withAnimation { showAddressBar = false }
                         }
                         previousOffset = offset
                     }
@@ -77,122 +76,13 @@ struct ContentView: View {
                         }
                     )
                 }
-
-                // MARK: 주소창 (하단 버튼 바 위에 표시)
-                if showAddressBar {
-                    VStack {
-                        Spacer() // 콘텐츠 아래로 밀어냄
-                        HStack {
-                            TextField("URL 또는 검색어", text: $inputURL)
-                                .textFieldStyle(.roundedBorder)
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                                .keyboardType(.URL)
-                                .focused($isTextFieldFocused)
-                                .onTapGesture {
-                                    // 전체 텍스트 선택
-                                    if !textFieldSelectedAll {
-                                        DispatchQueue.main.async {
-                                            UIApplication.shared.sendAction(
-                                                #selector(UIResponder.selectAll(_:)),
-                                                to: nil, from: nil, for: nil
-                                            )
-                                            textFieldSelectedAll = true
-                                            TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
-                                        }
-                                    }
-                                }
-                                .onChange(of: isTextFieldFocused) { focused in
-                                    // 포커스 해제 시 플래그 리셋
-                                    if !focused {
-                                        textFieldSelectedAll = false
-                                        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
-                                    }
-                                }
-                                .onSubmit {
-                                    // 엔터 입력 시 URL 이동
-                                    if let url = fixedURL(from: inputURL) {
-                                        state.currentURL = url
-                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
-                                    }
-                                    isTextFieldFocused = false
-                                }
-                                .overlay(
-                                    HStack {
-                                        Spacer()
-                                        if !inputURL.isEmpty {
-                                            Button(action: { inputURL = "" }) {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .foregroundColor(.gray)
-                                                    .font(.system(size: 14))
-                                            }
-                                            .padding(.trailing, 8)
-                                        }
-                                    }
-                                )
-                                .frame(maxWidth: 300)
-                                .transition(.opacity)
-                        }
-                        .padding()
-                        .background(Color(.systemGray4)) // 약간 연한 회색 배경
-                        .cornerRadius(10)
-                        .padding(.horizontal)
-                        // 버튼 바와의 간격
-                        Spacer().frame(height: 10)
-                    }
-                    .zIndex(1) // 주소창을 최상단에 표시
-                }
-
-                // MARK: 하단 통합 툴바 (버튼만)
-                VStack {
-                    Spacer()
-                    HStack(spacing: 8) {
-                        Button(action: { state.goBack() }) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 18))
-                                .foregroundColor(state.canGoBack ? .black : .gray)
-                        }
-                        .disabled(!state.canGoBack)
-                        .padding(.horizontal, 4)
-
-                        Button(action: { state.goForward() }) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 18))
-                                .foregroundColor(state.canGoForward ? .black : .gray)
-                        }
-                        .disabled(!state.canGoForward)
-                        .padding(.horizontal, 4)
-
-                        Button(action: { state.reload() }) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 18))
-                        }
-                        .padding(.horizontal, 4)
-
-                        Button(action: { showTabManager = true }) {
-                            Image(systemName: "square.on.square")
-                                .font(.system(size: 18))
-                        }
-                        .padding(.horizontal, 4)
-
-                        Button(action: { showHistorySheet = true }) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 18))
-                        }
-                        .padding(.horizontal, 4)
-                    }
-                    .padding()
-                    .background(Color(.systemGray4)) // 약간 연한 회색 배경
-                    .cornerRadius(10)
-                    .padding(.horizontal)
-                }
             }
-            .ignoresSafeArea(.keyboard)
+            // ⛔️ 키보드 세이프에어리어 무시 금지: 아래 safeAreaInset 콘텐츠가 키보드 위로 자동 이동하도록 유지
+            // (기존의 .ignoresSafeArea(.keyboard) 사용하지 않음)
+
+            // 화면 아무 곳이나 터치 시 주소창 표시 (기존 동작 유지)
             .onTapGesture {
-                // 화면 아무 곳이나 터치 시 주소창 표시
-                withAnimation {
-                    showAddressBar = true
-                }
+                withAnimation { showAddressBar = true }
             }
 
             // MARK: - 뷰 생명주기 및 이벤트
@@ -208,9 +98,7 @@ struct ContentView: View {
 
             // 주소창 동기화 전용 (저장하지 않음)
             .onReceive(state.$currentURL) { url in
-                if let url = url {
-                    inputURL = url.absoluteString
-                }
+                if let url = url { inputURL = url.absoluteString }
             }
 
             // 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
@@ -266,6 +154,118 @@ struct ContentView: View {
                     AVPlayerView(url: url)
                 }
             }
+
+            // 💡 하단 UI를 safeAreaInset으로 한 번에 구성
+            // - 툴바가 가장 아래(버튼 바), 주소창은 "바로 위"
+            // - 키보드가 나타나면 자동으로 두 바 모두 키보드 위로 이동
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 8) {
+                    // 주소창 (조건부 표시) — 툴바 "바로 위"
+                    if showAddressBar {
+                        HStack {
+                            TextField("URL 또는 검색어", text: $inputURL)
+                                .textFieldStyle(.roundedBorder)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                .keyboardType(.URL)
+                                .focused($isTextFieldFocused)
+                                .onTapGesture {
+                                    // 전체 텍스트 선택
+                                    if !textFieldSelectedAll {
+                                        DispatchQueue.main.async {
+                                            UIApplication.shared.sendAction(
+                                                #selector(UIResponder.selectAll(_:)),
+                                                to: nil, from: nil, for: nil
+                                            )
+                                            textFieldSelectedAll = true
+                                            TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
+                                        }
+                                    }
+                                }
+                                .onChange(of: isTextFieldFocused) { focused in
+                                    // 포커스 해제 시 플래그 리셋
+                                    if !focused {
+                                        textFieldSelectedAll = false
+                                        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+                                    }
+                                }
+                                .onSubmit {
+                                    // 엔터 입력 시 URL 이동
+                                    if let url = fixedURL(from: inputURL) {
+                                        state.currentURL = url
+                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+                                    }
+                                    isTextFieldFocused = false
+                                }
+                                .overlay(
+                                    HStack {
+                                        Spacer()
+                                        if !inputURL.isEmpty {
+                                            Button(action: { inputURL = "" }) {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .foregroundColor(.gray)
+                                                    .font(.system(size: 14))
+                                            }
+                                            .padding(.trailing, 8)
+                                        }
+                                    }
+                                )
+                                .frame(maxWidth: 300)
+                        }
+                        .padding()
+                        // 🎨 배경: #F8F9FA (흰색보다 약간 진한 회색 톤)
+                        .background(Color(red: 248/255, green: 249/255, blue: 250/255))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                        .transition(.opacity)
+                    }
+
+                    // 하단 통합 툴바 (버튼만) — 항상 표시
+                    HStack(spacing: 8) {
+                        Button(action: { state.goBack() }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18))
+                                .foregroundColor(state.canGoBack ? .black : .gray)
+                        }
+                        .disabled(!state.canGoBack)
+                        .padding(.horizontal, 4)
+
+                        Button(action: { state.goForward() }) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 18))
+                                .foregroundColor(state.canGoForward ? .black : .gray)
+                        }
+                        .disabled(!state.canGoForward)
+                        .padding(.horizontal, 4)
+
+                        Button(action: { state.reload() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+
+                        Button(action: { showTabManager = true }) {
+                            Image(systemName: "square.on.square")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+
+                        Button(action: { showHistorySheet = true }) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 18))
+                        }
+                        .padding(.horizontal, 4)
+                    }
+                    .padding()
+                    // 🎨 배경: #F8F9FA
+                    .background(Color(red: 248/255, green: 249/255, blue: 250/255))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+                // safeAreaInset 내부는 자동으로 화면 하단에 붙고,
+                // 키보드 등장 시 시스템이 안전 영역을 조정해 위로 밀어줌.
+            }
+
         } else {
             // 탭이 비어있을 때 대시보드로 시작
             DashboardView(
