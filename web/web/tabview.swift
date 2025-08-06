@@ -213,9 +213,10 @@ extension WebViewStateModel {
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 /// URL이 없는 탭에서 표시되는 대시보드 뷰.
 /// 변경 사항:
-/// 1) 북마크 셀에 고우선(LongPress) 제스처 적용 → 버튼 탭보다 먼저 인식되어 롱프레스 삭제 동작 보장
-/// 2) URL 입력 시 스킴(https://) 자동 보정 + 절대 URL 보장
-/// 3) 파비콘 URL 생성 시 host 기준으로 정확히 구성
+/// - (중요) 롱프레스 제스처를 `simultaneousGesture`로 적용하여 탭과 충돌 제거
+/// - 롱프레스가 감지된 셀은 바로 이어지는 탭 액션을 무시하도록 플래그 처리
+/// - 셀 전체가 제스처 히트 영역이 되도록 `.contentShape(Rectangle())` 적용
+/// - URL 입력 시 스킴(https://) 자동 보정 + 파비콘 URL 생성 개선
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks() // 북마크 리스트
     @State private var showAddBookmarkAlert: Bool = false // 북마크 추가 알림 상태
@@ -223,6 +224,8 @@ struct DashboardView: View {
     @State private var bookmarkToDelete: Bookmark? // 삭제할 북마크
     @State private var newBookmarkTitle: String = "" // 새 북마크 제목 입력
     @State private var inputURL: String = "" // 새 북마크 URL 입력
+    @State private var longPressedBookmarkID: UUID? = nil // (추가) 방금 롱프레스된 북마크 ID → 탭 액션 무시용 플래그
+
     let onSelectURL: (URL) -> Void // URL 선택 시 호출되는 콜백
     let triggerLoad: () -> Void // URL 로드 트리거
 
@@ -235,21 +238,23 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("대시보드")
+            Text("")
                 .font(.largeTitle.bold())
 
             // 북마크 그리드 표시
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(bookmarks) { bookmark in
-                        // 버튼(탭) 안에서 롱프레스가 먹히지 않던 문제 해결:
-                        // .highPriorityGesture로 LongPress를 버튼 탭보다 먼저 인식시킨다.
+                        // (변경) 롱프레스는 탭과 동시 인식시키되, 롱프레스가 인식되면 탭을 무시하는 플래그로 처리
                         bookmarkIcon(bookmark: bookmark)
-                            .highPriorityGesture(
-                                LongPressGesture(minimumDuration: 0.5)
+                            .contentShape(Rectangle()) // 셀 전체를 터치 영역으로
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
                                     .onEnded { _ in
+                                        // 롱프레스 인식 → 삭제 알림 표시, 그리고 플래그 세팅
+                                        longPressedBookmarkID = bookmark.id
                                         bookmarkToDelete = bookmark
-                                        showDeleteBookmarkAlert = true // 삭제 알림 표시
+                                        showDeleteBookmarkAlert = true
                                     }
                             )
                     }
@@ -263,7 +268,6 @@ struct DashboardView: View {
                             Image(systemName: "plus.circle.fill")
                                 .resizable()
                                 .frame(width: 40, height: 40)
-                                .foregroundColor(.blue)
                             Text("추가")
                                 .font(.subheadline)
                                 .foregroundColor(.black)
@@ -281,13 +285,13 @@ struct DashboardView: View {
             TextField("제목", text: $newBookmarkTitle)
             TextField("URL", text: $inputURL)
             Button("저장") {
-                // [변경] 입력된 URL에 스킴 자동 적용 및 절대 URL 보장
+                // 입력된 URL에 스킴 자동 적용 및 절대 URL 보장
                 guard
                     let normalized = normalizedURLString(from: inputURL),
                     let url = URL(string: normalized)
                 else { return }
 
-                // [변경] 파비콘 URL을 host 기준으로 정확하게 생성
+                // 파비콘 URL을 host 기준으로 정확하게 생성
                 let faviconURL = faviconURLString(for: url)
 
                 let newBookmark = Bookmark(
@@ -311,8 +315,13 @@ struct DashboardView: View {
                     TabPersistenceManager.saveBookmarks(bookmarks)
                 }
                 bookmarkToDelete = nil
+                // (중요) 삭제 후에는 롱프레스 플래그도 초기화
+                longPressedBookmarkID = nil
             }
-            Button("취소", role: .cancel) { bookmarkToDelete = nil }
+            Button("취소", role: .cancel) {
+                bookmarkToDelete = nil
+                longPressedBookmarkID = nil
+            }
         } message: {
             Text("'\(bookmarkToDelete?.title ?? "")' 북마크를 삭제하시겠습니까?")
         }
@@ -324,9 +333,15 @@ struct DashboardView: View {
     /// 북마크 아이콘 뷰: 파비콘 이미지를 표시하거나 기본 아이콘 사용.
     private func bookmarkIcon(bookmark: Bookmark) -> some View {
         Button(action: {
+            // (중요) 직전에 롱프레스가 인식된 셀이라면 탭 액션 차단
+            if longPressedBookmarkID == bookmark.id {
+                longPressedBookmarkID = nil // 한 번만 막고 바로 초기화
+                return
+            }
+
             guard let url = URL(string: bookmark.url) else { return }
             onSelectURL(url) // URL 선택 콜백 호출
-            triggerLoad() // 즉시 로드 트리거
+            triggerLoad()    // 즉시 로드 트리거
         }) {
             VStack {
                 if let faviconURL = bookmark.faviconURL, let url = URL(string: faviconURL) {
@@ -351,9 +366,10 @@ struct DashboardView: View {
                     .foregroundColor(.black) // 글자 색상 검정
             }
         }
+        // 기본 버튼 스타일(탭 하이라이트만). 필요 시 .buttonStyle(.plain)로 바꿔도 무방.
     }
 
-    // MARK: - URL 보정/생성 유틸 (추가됨)
+    // MARK: - URL 보정/생성 유틸
     /// 사용자가 입력한 문자열에서 스킴(https://)을 자동으로 붙이고,
     /// 절대 URL(스킴 + 호스트)을 만족하는지 검사하여 문자열로 반환.
     private func normalizedURLString(from raw: String) -> String? {
