@@ -134,7 +134,7 @@ struct ContentView: View {
                                 .transition(.opacity)
                         }
                         .padding()
-                        .background(Color(.systemGray5)) // 약간 연한 회색 배경
+                        .background(Color(.systemGray4)) // 약간 연한 회색 배경
                         .cornerRadius(10)
                         .padding(.horizontal)
                         // 버튼 바와의 간격
@@ -182,7 +182,7 @@ struct ContentView: View {
                         .padding(.horizontal, 4)
                     }
                     .padding()
-                    .background(Color(.systemGray5)) // 약간 연한 회색 배경
+                    .background(Color(.systemGray4)) // 약간 연한 회색 배경
                     .cornerRadius(10)
                     .padding(.horizontal)
                 }
