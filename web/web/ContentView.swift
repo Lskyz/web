@@ -86,9 +86,8 @@ struct ContentView: View {
                         previousOffset = offset
                     }
 
-                    // 👉 콘텐츠 영역 탭 제스처: 보임/숨김 토글
-                    .contentShape(Rectangle())
-                    .onTapGesture { toggleAddressBarFromTap() }
+                    // ⛔️ 중요: 여기(웹 콘텐츠 위)에 탭 제스처를 붙이지 않는다!
+                    //    붙이면 WKWebView의 탭/링크/포커스가 먹힘 → “페이지가 안 열리는” 체감 문제 발생
 
                 } else {
                     DashboardView(
@@ -101,8 +100,7 @@ struct ContentView: View {
                             TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
                         }
                     )
-                    .contentShape(Rectangle())
-                    .onTapGesture { toggleAddressBarFromTap() }
+                    // ⛔️ 여기에도 탭 제스처를 붙이지 않음(대시보드 자체 인터랙션 보호)
                 }
             }
             // ⛔️ 키보드 세이프에어리어 무시하지 않음(키보드 위로 자동 올라오게)
@@ -185,7 +183,8 @@ struct ContentView: View {
             // MARK: - 하단 인셋 (투명 배경 + 바 표면만 색)
             .safeAreaInset(edge: .bottom) {
                 ZStack {
-                    // ✅ 툴바 "바깥" 투명 영역 탭 감지(인셋 전체). 바가 탭을 가로채는 영역은 자동 무시됨.
+                    // ✅ 툴바 "바깥" 투명 영역 탭 감지(인셋 전체)
+                    //    → 웹 콘텐츠와 겹치지 않으면서 토글 가능
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { toggleAddressBarFromTap() }
@@ -204,9 +203,11 @@ struct ContentView: View {
                                         if focused {
                                             // 포커스 직후 자동숨김 무시 딜레이
                                             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                            // ✅ 전체 선택 안정화: 딜레이 후 2회 시도
+                                            // ✅ 전체 선택 안정화: 성공 시 플래그 셋
                                             if !textFieldSelectedAll {
-                                                selectAllInFirstResponderTextField()
+                                                selectAllInFirstResponderTextField {
+                                                    textFieldSelectedAll = true
+                                                }
                                             }
                                         } else {
                                             textFieldSelectedAll = false
@@ -246,7 +247,7 @@ struct ContentView: View {
                             .cornerRadius(10)
                             .padding(.horizontal, 8)
                             .transition(.opacity)
-                            // 바 자체 스와이프 제스처(선택): 아래로 숨김 / 위로 표시
+                            // (선택) 바 자체 스와이프 제스처
                             .gesture(
                                 DragGesture(minimumDistance: 10).onEnded { v in
                                     if v.translation.height > 20 {
@@ -311,6 +312,7 @@ struct ContentView: View {
                         .background(Color(red: 248/255, green: 249/255, blue: 250/255)) // #F8F9FA
                         .cornerRadius(10)
                         .padding(.horizontal, 8)
+                        // (선택) 툴바 스와이프 제스처
                         .gesture(
                             DragGesture(minimumDistance: 10).onEnded { v in
                                 if v.translation.height > 20 {
@@ -369,7 +371,7 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 탭 제스처 토글
+    // MARK: - 탭 제스처 토글 (인셋 투명 영역에서만)
     private func toggleAddressBarFromTap() {
         withAnimation {
             if showAddressBar {
@@ -410,23 +412,19 @@ private extension UIResponder {
 }
 
 /// 포커스 직후 약간의 딜레이를 두고 현재 퍼스트 리스폰더가 UITextField면 전체 선택 시도.
-/// 딜레이 2회 재시도로 서드파티 키보드/애니메이션 타이밍 편차를 흡수.
-private func selectAllInFirstResponderTextField() {
-    func attempt(_ after: TimeInterval, markSelected: @escaping () -> Void) {
+/// 성공 시 onSelected 호출(상태 플래그 갱신용). 딜레이 2회 재시도로 타이밍 편차 흡수.
+private func selectAllInFirstResponderTextField(onSelected: (() -> Void)? = nil) {
+    func attempt(_ after: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + after) {
             FirstResponderHolder.current = nil
             UIApplication.shared.sendAction(#selector(UIResponder.captureFirstResponder(_:)),
                                             to: nil, from: nil, for: nil)
             if let tf = FirstResponderHolder.current as? UITextField {
                 tf.selectAll(nil)
-                markSelected()
+                onSelected?()
             }
         }
     }
-    attempt(0.06) {
-        // 첫 시도 성공
-    }
-    attempt(0.18) {
-        // 두 번째 시도 성공 시 플래그 셋
-    }
+    attempt(0.06)
+    attempt(0.18)
 }
