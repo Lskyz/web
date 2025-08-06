@@ -8,7 +8,7 @@ import WebKit
 struct Bookmark: Codable, Identifiable, Equatable {
     let id: UUID           // 북마크 고유 식별자
     let title: String      // 북마크 표시 이름 (예: "Google")
-    let url: String        // 북마크 URL
+    let url: String        // 북마크 URL (항상 절대 URL + 스킴 보장됨)
     let faviconURL: String? // 파비콘 URL (옵셔널, 없을 경우 기본 아이콘 사용)
 
     // Identifiable 준수를 위한 id 프로퍼티
@@ -213,11 +213,9 @@ extension WebViewStateModel {
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 /// URL이 없는 탭에서 표시되는 대시보드 뷰.
 /// 변경 사항:
-/// - 북마크를 3~4개씩 세로로 정렬 (LazyVGrid 사용).
-/// - 북마크를 길게 누르면 삭제 알림 표시.
-/// - 회색 배경 제거, 글자 폰트를 검정색으로 변경하고 크기 축소 (.subheadline).
-/// - "+" 버튼으로 새 북마크 추가.
-/// - 주소창 제거.
+/// 1) 북마크 셀에 고우선(LongPress) 제스처 적용 → 버튼 탭보다 먼저 인식되어 롱프레스 삭제 동작 보장
+/// 2) URL 입력 시 스킴(https://) 자동 보정 + 절대 URL 보장
+/// 3) 파비콘 URL 생성 시 host 기준으로 정확히 구성
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks() // 북마크 리스트
     @State private var showAddBookmarkAlert: Bool = false // 북마크 추가 알림 상태
@@ -244,11 +242,16 @@ struct DashboardView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(bookmarks) { bookmark in
+                        // 버튼(탭) 안에서 롱프레스가 먹히지 않던 문제 해결:
+                        // .highPriorityGesture로 LongPress를 버튼 탭보다 먼저 인식시킨다.
                         bookmarkIcon(bookmark: bookmark)
-                            .onLongPressGesture {
-                                bookmarkToDelete = bookmark
-                                showDeleteBookmarkAlert = true // 삭제 알림 표시
-                            }
+                            .highPriorityGesture(
+                                LongPressGesture(minimumDuration: 0.5)
+                                    .onEnded { _ in
+                                        bookmarkToDelete = bookmark
+                                        showDeleteBookmarkAlert = true // 삭제 알림 표시
+                                    }
+                            )
                     }
                     // 북마크 추가 버튼
                     Button(action: {
@@ -278,15 +281,27 @@ struct DashboardView: View {
             TextField("제목", text: $newBookmarkTitle)
             TextField("URL", text: $inputURL)
             Button("저장") {
-                guard let url = URL(string: inputURL), !inputURL.isEmpty else { return }
-                let faviconURL = url.deletingLastPathComponent().appendingPathComponent("favicon.ico").absoluteString
-                let newBookmark = Bookmark(id: UUID(), title: newBookmarkTitle.isEmpty ? url.host ?? "북마크" : newBookmarkTitle, url: inputURL, faviconURL: faviconURL)
+                // [변경] 입력된 URL에 스킴 자동 적용 및 절대 URL 보장
+                guard
+                    let normalized = normalizedURLString(from: inputURL),
+                    let url = URL(string: normalized)
+                else { return }
+
+                // [변경] 파비콘 URL을 host 기준으로 정확하게 생성
+                let faviconURL = faviconURLString(for: url)
+
+                let newBookmark = Bookmark(
+                    id: UUID(),
+                    title: newBookmarkTitle.isEmpty ? (url.host ?? "북마크") : newBookmarkTitle,
+                    url: normalized,
+                    faviconURL: faviconURL
+                )
                 bookmarks.append(newBookmark)
                 TabPersistenceManager.saveBookmarks(bookmarks)
             }
             Button("취소", role: .cancel) { }
         } message: {
-            Text("새로운 북마크의 제목과 URL을 입력하세요.")
+            Text("새로운 북마크의 제목과 URL을 입력하세요.\n예) naver.com → https://naver.com 자동 적용")
         }
         // 북마크 삭제 알림
         .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert) {
@@ -336,6 +351,37 @@ struct DashboardView: View {
                     .foregroundColor(.black) // 글자 색상 검정
             }
         }
+    }
+
+    // MARK: - URL 보정/생성 유틸 (추가됨)
+    /// 사용자가 입력한 문자열에서 스킴(https://)을 자동으로 붙이고,
+    /// 절대 URL(스킴 + 호스트)을 만족하는지 검사하여 문자열로 반환.
+    private func normalizedURLString(from raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // 이미 절대 URL이면 그대로 사용
+        if let u = URL(string: trimmed), u.scheme != nil, u.host != nil {
+            return trimmed
+        }
+
+        // 스킴이 없으면 https:// 붙이기
+        var candidate = trimmed
+        if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
+            candidate = "https://" + trimmed
+        }
+
+        // 보정된 URL이 유효한 절대 URL인지 최종 확인
+        if let u2 = URL(string: candidate), u2.scheme != nil, u2.host != nil {
+            return candidate
+        }
+        return nil
+    }
+
+    /// 파비콘 URL을 host 기준으로 생성한다. (예: https://example.com/favicon.ico)
+    private func faviconURLString(for url: URL) -> String? {
+        guard let scheme = url.scheme, let host = url.host else { return nil }
+        return "\(scheme)://\(host)/favicon.ico"
     }
 }
 
