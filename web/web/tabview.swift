@@ -213,28 +213,42 @@ extension WebViewStateModel {
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 /// URL이 없는 탭에서 표시되는 대시보드 뷰.
 /// 변경 사항:
-/// - 기존 고정 북마크(Google, Naver)를 동적 북마크 리스트로 대체.
-/// - 북마크 아이콘을 파비콘으로 표시.
-/// - "+" 버튼을 추가하여 새로운 북마크를 저장 가능.
-/// - 북마크 디버깅 로그는 제외.
+/// - 북마크를 3~4개씩 세로로 정렬 (LazyVGrid 사용).
+/// - 북마크를 길게 누르면 삭제 알림 표시.
+/// - 회색 배경 제거, 글자 폰트를 검정색으로 변경하고 크기 축소 (.subheadline).
+/// - "+" 버튼으로 새 북마크 추가.
+/// - 북마크 디버깅 로그 제외.
 struct DashboardView: View {
     @State private var inputURL: String = "" // URL 입력 필드 상태
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks() // 북마크 리스트
     @State private var showAddBookmarkAlert: Bool = false // 북마크 추가 알림 상태
+    @State private var showDeleteBookmarkAlert: Bool = false // 북마크 삭제 알림 상태
+    @State private var bookmarkToDelete: Bookmark? // 삭제할 북마크
     @State private var newBookmarkTitle: String = "" // 새 북마크 제목 입력
     let onSelectURL: (URL) -> Void // URL 선택 시 호출되는 콜백
     let triggerLoad: () -> Void // URL 로드 트리거
 
+    // 그리드 레이아웃 설정: 3~4개씩 표시
+    private let columns = [
+        GridItem(.flexible(), spacing: 20),
+        GridItem(.flexible(), spacing: 20),
+        GridItem(.flexible(), spacing: 20)
+    ]
+
     var body: some View {
         VStack(spacing: 20) {
-            Text("")
+            Text("대시보드")
                 .font(.largeTitle.bold())
 
-            // 북마크 리스트 표시 (가로 스크롤)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 40) {
+            // 북마크 그리드 표시
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(bookmarks) { bookmark in
                         bookmarkIcon(bookmark: bookmark)
+                            .onLongPressGesture {
+                                bookmarkToDelete = bookmark
+                                showDeleteBookmarkAlert = true
+                            }
                     }
                     // 북마크 추가 버튼
                     Button(action: {
@@ -248,13 +262,12 @@ struct DashboardView: View {
                                 .frame(width: 40, height: 40)
                                 .foregroundColor(.blue)
                             Text("추가")
-                                .font(.headline)
+                                .font(.subheadline)
+                                .foregroundColor(.black)
                         }
-                        .padding()
-                        .background(Color(UIColor.secondarySystemBackground))
-                        .cornerRadius(12)
                     }
                 }
+                .padding(.horizontal)
             }
 
             // URL 입력 필드
@@ -273,6 +286,7 @@ struct DashboardView: View {
             Spacer()
         }
         .padding()
+        // 북마크 추가 알림
         .alert("북마크 추가", isPresented: $showAddBookmarkAlert) {
             TextField("제목", text: $newBookmarkTitle)
             TextField("URL", text: $inputURL)
@@ -286,6 +300,19 @@ struct DashboardView: View {
             Button("취소", role: .cancel) { }
         } message: {
             Text("새로운 북마크의 제목과 URL을 입력하세요.")
+        }
+        // 북마크 삭제 알림
+        .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert) {
+            Button("삭제", role: .destructive) {
+                if let bookmark = bookmarkToDelete, let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }) {
+                    bookmarks.remove(at: index)
+                    TabPersistenceManager.saveBookmarks(bookmarks)
+                }
+                bookmarkToDelete = nil
+            }
+            Button("취소", role: .cancel) { bookmarkToDelete = nil }
+        } message: {
+            Text("'\(bookmarkToDelete?.title ?? "")' 북마크를 삭제하시겠습니까?")
         }
         .onChange(of: bookmarks) { _ in
             TabPersistenceManager.saveBookmarks(bookmarks) // 북마크 변경 시 저장
@@ -320,11 +347,9 @@ struct DashboardView: View {
                         .frame(width: 40, height: 40)
                 }
                 Text(bookmark.title)
-                    .font(.headline)
+                    .font(.subheadline) // 폰트 크기 축소
+                    .foregroundColor(.black) // 글자 색상 검정
             }
-            .padding()
-            .background(Color(UIColor.secondarySystemBackground))
-            .cornerRadius(12)
         }
     }
 }
