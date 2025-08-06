@@ -24,12 +24,18 @@ struct ContentView: View {
     @State private var enablePIP: Bool = true
     /// 주소창 표시 여부 (터치 또는 스크롤에 따라 동작)
     @State private var showAddressBar = false
-    /// 웹 콘텐츠의 스크롤 이벤트 추적
+    /// 웹 콘텐츠의 스크롤 이벤트 추적 (GeometryReader 용 — 유지하되 우선순위는 낮춤)
     @State private var scrollOffset: CGFloat = 0
-    /// 이전 스크롤 오프셋 (스크롤 방향 감지용)
+    /// 이전 스크롤 오프셋 (스크롤 방향 감지용; GeometryReader 용)
     @State private var previousOffset: CGFloat = 0
-    /// 키보드 표시 여부(레이아웃 변화를 스크롤로 오인하지 않기 위함)
-    @State private var isKeyboardVisible: Bool = false
+
+    /// ✅ 서드파티 키보드 대응: 포커스 직후 일정 시간 동안 자동숨김 무시
+    @State private var ignoreAutoHideUntil: Date = .distantPast
+    /// 무시 시간(초). 서드파티 키보드 애니메이션이 느리면 0.6~0.8로 올려도 됨.
+    private let focusDebounceSeconds: TimeInterval = 0.5
+
+    /// ✅ WKWebView 실제 스크롤 추적을 위한 상태
+    @State private var lastWebContentOffsetY: CGFloat = 0
 
     var body: some View {
         // MARK: - 본문 뷰
@@ -49,11 +55,17 @@ struct ContentView: View {
                         showAVPlayer: Binding(
                             get: { tabs[selectedTabIndex].showAVPlayer },
                             set: { tabs[selectedTabIndex].showAVPlayer = $0 }
-                        )
+                        ),
+                        // ✅ 추가: WKWebView의 스크롤 오프셋 콜백
+                        onScroll: { y in
+                            handleWebViewScroll(yOffset: y)
+                        }
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
+
+                    // ⬇️ GeometryReader 기반 감지는 레이아웃 변화만 잡음(실제 콘텐츠 스크롤에는 반응X)
+                    // 기존 코드 유지하되, 우리가 우선 사용하는 건 onScroll 콜백.
                     .overlay(
-                        // 글로벌 프레임 변화를 통한 간접 스크롤 감지 (기존 로직 유지)
                         GeometryReader { geometry in
                             Color.clear
                                 .preference(
@@ -63,33 +75,34 @@ struct ContentView: View {
                         }
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-                        // ⛳️ 키보드 보임/텍스트필드 포커스 중에는 자동 숨김 막기
-                        if isKeyboardVisible || isTextFieldFocused {
+                        // 포커스 중이거나 포커스 직후 딜레이구간이면 자동숨김 차단
+                        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
                             previousOffset = offset
                             return
                         }
-                        // 스크롤 방향 감지 및 주소창 자동 숨김
-                        if offset < previousOffset && showAddressBar {
+                        // (보조 로직) 레이아웃 이동으로 스크롤 오인 방지 위해 임계치 크게
+                        let delta = offset - previousOffset
+                        if delta < -30 && showAddressBar {
                             withAnimation {
                                 showAddressBar = false
-                                isTextFieldFocused = false // 숨김 시 키보드도 내림
+                                isTextFieldFocused = false
                             }
                         }
                         previousOffset = offset
                     }
+
                     // 👉 콘텐츠 영역 탭 제스처: 주소창 토글(보이기/숨기기)
-                    .contentShape(Rectangle()) // 빈 영역도 탭 인식
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         withAnimation {
                             if showAddressBar {
-                                // 이미 보이는 상태에서 다시 터치 → 숨김
                                 showAddressBar = false
                                 isTextFieldFocused = false
                             } else {
-                                // 숨김 상태에서 터치 → 표시 + 포커스
                                 showAddressBar = true
                                 DispatchQueue.main.async {
                                     isTextFieldFocused = true
+                                    ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
                                 }
                             }
                         }
@@ -106,7 +119,7 @@ struct ContentView: View {
                             TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
                         }
                     )
-                    // 📌 대시보드 화면에서도 동일한 탭 동작 제공
+                    // 대시보드 화면에서도 동일한 탭 동작 제공
                     .contentShape(Rectangle())
                     .onTapGesture {
                         withAnimation {
@@ -117,6 +130,7 @@ struct ContentView: View {
                                 showAddressBar = true
                                 DispatchQueue.main.async {
                                     isTextFieldFocused = true
+                                    ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
                                 }
                             }
                         }
@@ -125,14 +139,6 @@ struct ContentView: View {
             }
             // ⛔️ 키보드 세이프에어리어를 무시하지 않음: 아래 safeAreaInset 콘텐츠가 키보드 위로 자동 이동
             // (즉, .ignoresSafeArea(.keyboard) 사용하지 않음)
-
-            // MARK: - 키보드 노티 구독 (보임/숨김)
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                isKeyboardVisible = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                isKeyboardVisible = false
-            }
 
             // MARK: - 뷰 생명주기 및 이벤트
             .onAppear {
@@ -234,8 +240,10 @@ struct ContentView: View {
                                     }
                                 }
                                 .onChange(of: isTextFieldFocused) { focused in
-                                    // 포커스 해제 시 플래그 리셋
-                                    if !focused {
+                                    // 포커스 상태 변화 시: 포커스 ON이면 딜레이 가드 갱신
+                                    if focused {
+                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                    } else {
                                         textFieldSelectedAll = false
                                         TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                                     }
@@ -272,6 +280,23 @@ struct ContentView: View {
                         // 바깥쪽 여백 최소화 (수평만 소폭)
                         .padding(.horizontal, 8)
                         .transition(.opacity)
+                        // 👉 스와이프 제스처로도 숨김/표시
+                        .gesture(
+                            DragGesture(minimumDistance: 10).onEnded { value in
+                                if value.translation.height > 20 {
+                                    withAnimation {
+                                        showAddressBar = false
+                                        isTextFieldFocused = false
+                                    }
+                                } else if value.translation.height < -20 {
+                                    withAnimation { showAddressBar = true }
+                                    DispatchQueue.main.async {
+                                        isTextFieldFocused = true
+                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                    }
+                                }
+                            }
+                        )
                     }
 
                     // 하단 통합 툴바 (버튼만) — 항상 표시
@@ -318,8 +343,21 @@ struct ContentView: View {
                     .cornerRadius(10)
                     // 바깥쪽 여백 최소화
                     .padding(.horizontal, 8)
+                    // 👉 툴바에도 스와이프 제스처(선택사항)
+                    .gesture(
+                        DragGesture(minimumDistance: 10).onEnded { value in
+                            if value.translation.height > 20 {
+                                withAnimation {
+                                    showAddressBar = false
+                                    isTextFieldFocused = false
+                                }
+                            } else if value.translation.height < -20 {
+                                withAnimation { showAddressBar = true }
+                            }
+                        }
+                    )
                 }
-                // 🔍 인셋 컨테이너 자체는 완전 투명 + 불필요한 추가 여백 없음
+                // 인셋 컨테이너 자체는 완전 투명
                 .background(Color.clear)
             }
 
@@ -341,6 +379,36 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - WKWebView 스크롤 콜백 처리
+    /// 실제 웹 콘텐츠 스크롤 y오프셋을 받아 방향에 따라 주소창을 토글
+    private func handleWebViewScroll(yOffset: CGFloat) {
+        // 포커스 중이거나 포커스 직후 딜레이구간이면 자동숨김 차단
+        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
+            lastWebContentOffsetY = yOffset
+            return
+        }
+
+        let delta = yOffset - lastWebContentOffsetY
+        // 작은 떨림 무시
+        if abs(delta) < 2 {
+            lastWebContentOffsetY = yOffset
+            return
+        }
+
+        if delta > 4 && showAddressBar {
+            // 아래로 스크롤 → 숨김
+            withAnimation {
+                showAddressBar = false
+                isTextFieldFocused = false
+            }
+        } else if delta < -12 && !showAddressBar {
+            // 위로 스크롤(상당히 올렸을 때만) → 표시
+            withAnimation { showAddressBar = true }
+        }
+
+        lastWebContentOffsetY = yOffset
+    }
+
     /// 사용자가 입력한 텍스트를 올바른 URL로 변환
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -355,7 +423,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (보조용)
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
