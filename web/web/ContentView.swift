@@ -28,6 +28,8 @@ struct ContentView: View {
     @State private var scrollOffset: CGFloat = 0
     /// 이전 스크롤 오프셋 (스크롤 방향 감지용)
     @State private var previousOffset: CGFloat = 0
+    /// 키보드 표시 여부(레이아웃 변화를 스크롤로 오인하지 않기 위함)
+    @State private var isKeyboardVisible: Bool = false
 
     var body: some View {
         // MARK: - 본문 뷰
@@ -51,19 +53,48 @@ struct ContentView: View {
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
                     .overlay(
+                        // 글로벌 프레임 변화를 통한 간접 스크롤 감지 (기존 로직 유지)
                         GeometryReader { geometry in
                             Color.clear
-                                .preference(key: ScrollOffsetPreferenceKey.self,
-                                            value: geometry.frame(in: .global).origin.y)
+                                .preference(
+                                    key: ScrollOffsetPreferenceKey.self,
+                                    value: geometry.frame(in: .global).origin.y
+                                )
                         }
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-                        // 스크롤 방향 감지 및 주소창 숨김
+                        // ⛳️ 키보드 보임/텍스트필드 포커스 중에는 자동 숨김 막기
+                        if isKeyboardVisible || isTextFieldFocused {
+                            previousOffset = offset
+                            return
+                        }
+                        // 스크롤 방향 감지 및 주소창 자동 숨김
                         if offset < previousOffset && showAddressBar {
-                            withAnimation { showAddressBar = false }
+                            withAnimation {
+                                showAddressBar = false
+                                isTextFieldFocused = false // 숨김 시 키보드도 내림
+                            }
                         }
                         previousOffset = offset
                     }
+                    // 👉 콘텐츠 영역 탭 제스처: 주소창 토글(보이기/숨기기)
+                    .contentShape(Rectangle()) // 빈 영역도 탭 인식
+                    .onTapGesture {
+                        withAnimation {
+                            if showAddressBar {
+                                // 이미 보이는 상태에서 다시 터치 → 숨김
+                                showAddressBar = false
+                                isTextFieldFocused = false
+                            } else {
+                                // 숨김 상태에서 터치 → 표시 + 포커스
+                                showAddressBar = true
+                                DispatchQueue.main.async {
+                                    isTextFieldFocused = true
+                                }
+                            }
+                        }
+                    }
+
                 } else {
                     DashboardView(
                         onSelectURL: { selectedURL in
@@ -75,14 +106,32 @@ struct ContentView: View {
                             TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
                         }
                     )
+                    // 📌 대시보드 화면에서도 동일한 탭 동작 제공
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation {
+                            if showAddressBar {
+                                showAddressBar = false
+                                isTextFieldFocused = false
+                            } else {
+                                showAddressBar = true
+                                DispatchQueue.main.async {
+                                    isTextFieldFocused = true
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            // ⛔️ 키보드 세이프에어리어 무시 금지: 아래 safeAreaInset 콘텐츠가 키보드 위로 자동 이동하도록 유지
-            // (기존의 .ignoresSafeArea(.keyboard) 사용하지 않음)
+            // ⛔️ 키보드 세이프에어리어를 무시하지 않음: 아래 safeAreaInset 콘텐츠가 키보드 위로 자동 이동
+            // (즉, .ignoresSafeArea(.keyboard) 사용하지 않음)
 
-            // 화면 아무 곳이나 터치 시 주소창 표시 (기존 동작 유지)
-            .onTapGesture {
-                withAnimation { showAddressBar = true }
+            // MARK: - 키보드 노티 구독 (보임/숨김)
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                isKeyboardVisible = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                isKeyboardVisible = false
             }
 
             // MARK: - 뷰 생명주기 및 이벤트
@@ -98,7 +147,9 @@ struct ContentView: View {
 
             // 주소창 동기화 전용 (저장하지 않음)
             .onReceive(state.$currentURL) { url in
-                if let url = url { inputURL = url.absoluteString }
+                if let url = url {
+                    inputURL = url.absoluteString
+                }
             }
 
             // 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
@@ -155,9 +206,9 @@ struct ContentView: View {
                 }
             }
 
-            // 💡 하단 UI를 safeAreaInset으로 한 번에 구성
+            // 💡 하단 UI를 safeAreaInset으로 구성 (배경 투명)
             // - 툴바가 가장 아래(버튼 바), 주소창은 "바로 위"
-            // - 키보드가 나타나면 자동으로 두 바 모두 키보드 위로 이동
+            // - 키보드가 나타나면 자동으로 키보드 위로 이동
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     // 주소창 (조건부 표시) — 툴바 "바로 위"
@@ -212,11 +263,14 @@ struct ContentView: View {
                                 )
                                 .frame(maxWidth: 300)
                         }
-                        .padding()
-                        // 🎨 배경: #F8F9FA (흰색보다 약간 진한 회색 톤)
+                        // 내부 패딩을 작게 조정해 차지 면적 최소화
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        // 🎨 바 표면만 색상 적용 (#F8F9FA), 바깥은 완전 투명
                         .background(Color(red: 248/255, green: 249/255, blue: 250/255))
                         .cornerRadius(10)
-                        .padding(.horizontal)
+                        // 바깥쪽 여백 최소화 (수평만 소폭)
+                        .padding(.horizontal, 8)
                         .transition(.opacity)
                     }
 
@@ -256,14 +310,17 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 4)
                     }
-                    .padding()
-                    // 🎨 배경: #F8F9FA
+                    // 내부 패딩 최소화
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    // 🎨 바 표면만 색상 적용 (#F8F9FA)
                     .background(Color(red: 248/255, green: 249/255, blue: 250/255))
                     .cornerRadius(10)
-                    .padding(.horizontal)
+                    // 바깥쪽 여백 최소화
+                    .padding(.horizontal, 8)
                 }
-                // safeAreaInset 내부는 자동으로 화면 하단에 붙고,
-                // 키보드 등장 시 시스템이 안전 영역을 조정해 위로 밀어줌.
+                // 🔍 인셋 컨테이너 자체는 완전 투명 + 불필요한 추가 여백 없음
+                .background(Color.clear)
             }
 
         } else {
