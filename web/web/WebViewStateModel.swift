@@ -1,3 +1,8 @@
+//
+//  WebViewStateModel.swift
+//  설명: WKWebView 상태/히스토리/세션 저장·복원(지연로드) 관리
+//
+
 import Foundation
 import Combine
 import SwiftUI
@@ -92,8 +97,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             historyStack.append(url)
             currentIndexInStack = historyStack.count - 1
 
-            // 전역 방문 기록 업데이트
-            addToHistory(url: url, title: url.host ?? "제목 없음")
+            // 전역 방문 기록 업데이트 (⚠️ 타입 명시로 정정)
+            WebViewStateModel.globalHistory.append(.init(url: url, title: url.host ?? "제목 없음", date: Date()))
+            WebViewStateModel.saveGlobalHistory()
         }
     }
 
@@ -153,14 +159,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         didSet { saveGlobalHistory() }
     }
 
+    // ⚠️ addToHistory는 더 이상 사용하지 않지만, 남겨두는 경우를 대비해 타입 명시로 안전하게 유지
     private func addToHistory(url: URL, title: String) {
-        globalHistory.append(.init(url: url, title: title, date: Date()))
-        saveGlobalHistory()
+        WebViewStateModel.globalHistory.append(.init(url: url, title: title, date: Date()))
+        WebViewStateModel.saveGlobalHistory()
     }
 
     func clearHistory() {
-        Self.globalHistory = []
-        saveGlobalHistory()
+        WebViewStateModel.globalHistory = []
+        WebViewStateModel.saveGlobalHistory()
         HistoryCacheManager.shared.clearCache()
         TabPersistenceManager.debugMessages.append("전역 방문 기록 삭제")
     }
@@ -421,7 +428,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
         // 복원 중에는 전역 방문 기록 추가 금지(중간 오염 방지)
         if let finalURL = webView.url, !isRestoringSession {
-            addToHistory(url: finalURL, title: title)
+            WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+            WebViewStateModel.saveGlobalHistory()
             // 히스토리 캐시에 타이틀 업데이트
             HistoryCacheManager.shared.cacheEntry(for: finalURL, title: title)
         }
@@ -456,12 +464,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // MARK: 방문기록 화면
+    // MARK: 방문기록 화면 (내부 View)
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
         @State private var searchQuery: String = ""
         @Environment(\.dismiss) private var dismiss
         
+        // 기본 날짜 포맷터 (private이어서 멤버와이즈 init이 private로 떨어질 수 있음)
+        // → 이슈 방지를 위해 아래에 명시 init(state:) 추가
         private var dateFormatter: DateFormatter = {
             let df = DateFormatter()
             df.dateStyle = .medium
@@ -469,12 +479,18 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return df
         }()
 
+        // 검색 필터링 결과 (전역 방문기록 기반)
         private var filteredHistory: [HistoryEntry] {
             let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if q.isEmpty { return WebViewStateModel.globalHistory.sorted { $0.date > $1.date } }
             return WebViewStateModel.globalHistory
                 .filter { $0.url.absoluteString.lowercased().contains(q) || $0.title.lowercased().contains(q) }
                 .sorted { $0.date > $1.date }
+        }
+
+        // ✅ 명시 이니셜라이저: 외부에서 접근 가능하게 보장
+        init(state: WebViewStateModel) {
+            self._state = ObservedObject(wrappedValue: state)
         }
 
         var body: some View {
@@ -499,15 +515,18 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("모두 지우기") {
                         WebViewStateModel.globalHistory.removeAll()
+                        WebViewStateModel.saveGlobalHistory()
                     }
                 }
             }
         }
 
+        // ✅ 여기서는 state.filteredHistory가 아니라 로컬 filteredHistory 사용
         func delete(at offsets: IndexSet) {
-            let items = state.filteredHistory
+            let items = filteredHistory
             let targets = offsets.map { items[$0] }
             WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
+            WebViewStateModel.saveGlobalHistory()
             TabPersistenceManager.debugMessages.append("방문 기록 삭제: \(targets.count)개")
         }
     }
