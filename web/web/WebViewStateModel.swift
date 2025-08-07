@@ -103,6 +103,21 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             historyStack.append(url)
             currentIndexInStack = historyStack.count - 1
 
+            // ✅ 가상 히스토리 사용 중일 때도 스택에 반영하여 동기화
+            //  - 복원 이후 새 페이지를 방문하면 기존 가상 스택의 앞뒤 부분이 올바르게 잘려야 함
+            //  - 새 URL을 스택에 추가하고 현재 인덱스를 갱신하여 앞으로/뒤로가기 상태를 정확히 유지
+            if isUsingVirtualHistory {
+                // 가상 스택에서 현재 인덱스 이후의 요소는 제거 (새 경로 탐색에 대비)
+                if virtualCurrentIndex < virtualHistoryStack.count - 1 {
+                    virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
+                }
+                virtualHistoryStack.append(url)
+                virtualCurrentIndex = virtualHistoryStack.count - 1
+                // 가상 히스토리 기반으로 뒤로/앞으로 가능 여부 업데이트
+                canGoBack = virtualCurrentIndex > 0
+                canGoForward = virtualCurrentIndex < virtualHistoryStack.count - 1
+            }
+
             // 전역 방문 기록 업데이트 (⚠️ 타입 명시로 정정)
             WebViewStateModel.globalHistory.append(.init(url: url, title: url.host ?? "제목 없음", date: Date()))
             WebViewStateModel.saveGlobalHistory()
