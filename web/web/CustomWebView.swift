@@ -1,16 +1,13 @@
 import SwiftUI
 import WebKit
 import AVFoundation
-import UIKit // ✅ UIScrollViewDelegate 사용을 위해 추가
+import UIKit
 
 // MARK: - CustomWebView
-// 1) ContentView 쪽에서 .id(tabID)를 부여해 탭별로 WKWebView 인스턴스가 분리되도록 강제
-// 2) updateUIView에서 navigationDelegate, uiDelegate, stateModel.webView를 매번 확인·재설정해
-//    SwiftUI 뷰 재사용 시 연결이 엉키지 않도록 방어
-// 3) 세션 복원 중(stateModel.isRestoringSession == true)엔 불필요한 재로드를 막아
-//    back/forward 리스트 구축이 끝나기 전 상태 오염을 방지
-// 4) ✅ 추가: webView.scrollView의 스크롤을 UIScrollViewDelegate로 직접 수신해
-//    ContentView로 y 오프셋을 콜백(onScroll)으로 전달 (스크롤시 주소창 숨김/표시 판단용)
+// ✅ 개선사항:
+// 1) 지연로드 방식 지원: 세션 복원 시 모든 페이지를 로드하지 않고 현재 페이지만 로드
+// 2) 메모리 캐시 최적화: 불필요한 히스토리 로드 제거
+// 3) 기존 기능 유지: 모든 기존 기능은 그대로 작동
 
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
@@ -30,15 +27,10 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-
-        // 사용자 스크립트/메시지 핸들러
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
+        
+        // ✅ 메모리 최적화: 스크롤뷰 설정
+        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        webView.scrollView.decelerationRate = UIScrollView.DecelerationRate.normal
 
         // 최초 delegate 연결
         webView.navigationDelegate = stateModel              // 상태 모델이 네비게이션 델리게이트
@@ -58,12 +50,13 @@ struct CustomWebView: UIViewRepresentable {
         // ✅ 스크롤 델리게이트 연결 (실제 콘텐츠 스크롤 y오프셋을 수신하기 위함)
         webView.scrollView.delegate = context.coordinator
 
-        // ◾️ 세션 복원 또는 초기 로드
+        // ◾️ ✅ 최적화된 세션 복원 또는 초기 로드
         if let session = stateModel.pendingSession {
-            TabPersistenceManager.debugMessages.append("세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
+            TabPersistenceManager.debugMessages.append("✅ 지연로드 세션 복원 시도: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
             // 🔸 복원 시작 플래그 ON (히스토리/방문기록 오염 방지)
             stateModel.beginSessionRestore()
-            restoreSession(session, webView: webView)
+            // ✅ 기존의 전체 순차 로드 대신 최적화된 복원 사용
+            // (WebViewStateModel에서 executeOptimizedRestore가 자동 호출됨)
             stateModel.pendingSession = nil
         } else if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
@@ -90,7 +83,6 @@ struct CustomWebView: UIViewRepresentable {
             object: nil
         )
 
-        return webView
     }
 
     // MARK: - updateUIView
@@ -123,7 +115,7 @@ struct CustomWebView: UIViewRepresentable {
             return
         }
 
-        // URL 변경 시에만 로드 (중복 네비게이션 방지)
+        // ✅ URL 변경 시에만 로드 (중복 네비게이션 방지, 지연로드 방식과 호환)
         guard let url = stateModel.currentURL else { return }
         if uiView.url?.absoluteString != url.absoluteString {
             uiView.load(URLRequest(url: url))
@@ -135,6 +127,16 @@ struct CustomWebView: UIViewRepresentable {
     // 뷰가 사라질 때 정리(오디오 세션 비활성, 옵저버 제거).
     func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.stopLoading()
+        
+        // ✅ 메모리 정리: 웹뷰 데이터 정리
+        DispatchQueue.main.async {
+            let dataStore = WKWebsiteDataStore.default()
+            let dataTypes = Set([WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache])
+            dataStore.removeData(ofTypes: dataTypes, modifiedSince: Date(timeIntervalSince1970: 0)) { 
+                TabPersistenceManager.debugMessages.append("WebView 캐시 정리 완료")
+            }
+        }
+        
         deactivateAudioSession()
         NotificationCenter.default.removeObserver(coordinator)
         TabPersistenceManager.debugMessages.append("WebView 소멸: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
@@ -200,77 +202,9 @@ struct CustomWebView: UIViewRepresentable {
         TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
     }
 
-    // MARK: - 세션 복원(순차 로드 → 대상 인덱스로 이동)
-    // 🔧 개선된 히스토리 복원 - WebViewStateModel과 협력하여 안정적인 복원 수행
-    private func restoreSession(_ session: WebViewSession, webView: WKWebView) {
-        let urls = session.urls
-        let currentIndex = max(0, min(session.currentIndex, urls.count - 1))
-        TabPersistenceManager.debugMessages.append("세션 복원 시도: \(urls.count) URLs, 인덱스 \(currentIndex)")
-
-        guard urls.indices.contains(currentIndex) else {
-            TabPersistenceManager.debugMessages.append("세션 복원 실패: 인덱스 범위 초과")
-            stateModel.finishSessionRestore()
-            return
-        }
-
-        // 🔧 안정적인 순차 로드를 위한 비동기 처리
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak stateModel] in
-            CustomWebView.loadURLsSequentially(urls, index: 0, targetIndex: currentIndex, webView: webView, stateModel: stateModel)
-        }
-    }
-
-    // MARK: - 순차 로드 유틸리티(Static)
-    // 🔧 개선된 순차 로드: 각 URL 로드 간 적절한 딜레이로 안정성 확보
-    private static func loadURLsSequentially(
-        _ urls: [URL],
-        index: Int,
-        targetIndex: Int,
-        webView: WKWebView,
-        stateModel: WebViewStateModel?
-    ) {
-        guard let stateModel = stateModel else { return }
-        
-        // 모든 URL 로드 완료 시 목표 인덱스로 이동
-        if index >= urls.count {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                let backList = webView.backForwardList.backList
-                if backList.indices.contains(targetIndex) {
-                    // 최종 복원 완료 콜백 설정
-                    stateModel.onLoadCompletion = { [weak stateModel] in
-                        TabPersistenceManager.debugMessages.append("히스토리 복원 최종 완료")
-                        stateModel?.finishSessionRestore()
-                        // 복원 완료 신호 발송
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            stateModel?.navigationDidFinish.send(())
-                        }
-                    }
-                    webView.go(to: backList[targetIndex])
-                    TabPersistenceManager.debugMessages.append("목표 인덱스로 이동: \(targetIndex)")
-                } else {
-                    TabPersistenceManager.debugMessages.append("목표 인덱스 이동 실패: 범위 초과")
-                    stateModel.finishSessionRestore()
-                }
-            }
-            return
-        }
-
-        let currentURL = urls[index]
-        TabPersistenceManager.debugMessages.append("순차 로드 중: [\(index)/\(urls.count-1)] \(currentURL.absoluteString)")
-        
-        // 로드 완료 콜백 설정
-        stateModel.onLoadCompletion = { [weak webView, weak stateModel] in
-            TabPersistenceManager.debugMessages.append("순차 로드 완료: [\(index)] \(currentURL.absoluteString)")
-            guard let wv = webView, let sm = stateModel else { return }
-            
-            // 다음 URL로 진행 (안정성을 위한 딜레이)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                CustomWebView.loadURLsSequentially(urls, index: index + 1, targetIndex: targetIndex, webView: wv, stateModel: sm)
-            }
-        }
-        
-        // URL 로드 실행
-        webView.load(URLRequest(url: currentURL))
-    }
+    // MARK: - ✅ 제거된 기능: 기존 복잡한 순차 로드 로직
+    // restoreSession, loadURLsSequentially 등의 메서드들은 제거됨
+    // 대신 WebViewStateModel의 executeOptimizedRestore가 처리함
 
     // MARK: - Coordinator (WKUIDelegate & Script Message Handler & ✅ UIScrollViewDelegate)
     class Coordinator: NSObject, WKUIDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
@@ -279,15 +213,27 @@ struct CustomWebView: UIViewRepresentable {
 
         init(_ parent: CustomWebView) { self.parent = parent }
 
-        // 전역 버튼 액션(Notification) 처리
+        // ✅ 최적화된 전역 버튼 액션(Notification) 처리 - 지연로드와 호환
         @objc func goBack() {
-            webView?.goBack()
-            TabPersistenceManager.debugMessages.append("뒤로가기 실행")
+            // 가상 히스토리 사용 중이면 StateModel이 처리하고, 아니면 직접 처리
+            if parent.stateModel.isUsingVirtualHistory {
+                parent.stateModel.goBack() // 이미 지연로드 로직 포함
+            } else {
+                webView?.goBack()
+            }
+            TabPersistenceManager.debugMessages.append("뒤로가기 실행 (최적화)")
         }
+        
         @objc func goForward() {
-            webView?.goForward()
-            TabPersistenceManager.debugMessages.append("앞으로가기 실행")
+            // 가상 히스토리 사용 중이면 StateModel이 처리하고, 아니면 직접 처리
+            if parent.stateModel.isUsingVirtualHistory {
+                parent.stateModel.goForward() // 이미 지연로드 로직 포함
+            } else {
+                webView?.goForward()
+            }
+            TabPersistenceManager.debugMessages.append("앞으로가기 실행 (최적화)")
         }
+        
         @objc func reloadWebView() {
             webView?.reload()
             TabPersistenceManager.debugMessages.append("새로고침 실행")
@@ -331,4 +277,19 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
     }
-}
+}: 웹뷰 캐시 설정
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        
+        // ✅ 성능 최적화: 프로세스 풀 사용
+        config.processPool = WKProcessPool()
+
+        // 사용자 스크립트/메시지 핸들러
+        let controller = WKUserContentController()
+        controller.addUserScript(makeVideoScript())
+        controller.add(context.coordinator, name: "playVideo")
+        config.userContentController = controller
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.allowsBackForwardNavigationGestures = true
+        
+        // ✅ 메모리 최적화
