@@ -161,6 +161,12 @@ struct ContentView: View {
             // 네비게이션 '실제 완료' 시점에만 스냅샷 저장 + 히스토리 로그
             .onReceive(state.navigationDidFinish) { _ in
                 if let wv = state.webView {
+                    // ▲ 추가: 네비게이션 완료 시 주소창에 실제 URL 반영
+                    if let current = wv.url?.absoluteString {
+                        inputURL = current
+                        TabPersistenceManager.debugMessages.append("주소창 업데이트: \(current)")
+                    }
+                    // ▼ 기존 히스토리 로깅
                     let back = wv.backForwardList.backList.count
                     let fwd = wv.backForwardList.forwardList.count
                     let cur = wv.url?.absoluteString ?? "없음"
@@ -248,10 +254,11 @@ struct ContentView: View {
                                         TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
                                     }
                                 }
+                                // ▼ 수정: onSubmit 시 URL 설정 후 loadURLIfReady() 호출
                                 .onSubmit {
-                                    // 엔터 입력 시 URL 이동
                                     if let url = fixedURL(from: inputURL) {
                                         state.currentURL = url
+                                        state.loadURLIfReady() // ← 추가
                                         TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
                                     }
                                     isTextFieldFocused = false
@@ -262,8 +269,8 @@ struct ContentView: View {
                                         if !inputURL.isEmpty {
                                             Button(action: { inputURL = "" }) {
                                                 Image(systemName: "xmark.circle.fill")
-                                                    .foregroundColor(.gray)
                                                     .font(.system(size: 14))
+                                                    .foregroundColor(.gray)
                                             }
                                             .padding(.trailing, 8)
                                         }
