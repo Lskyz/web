@@ -36,7 +36,8 @@ struct CustomWebView: UIViewRepresentable {
 
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
-        controller.addUserScript(makeVideoDetectionScript())
+        controller.addUserScript(makeVideoScript())
+        controller.add(context.coordinator, name: "playVideo")
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -70,8 +71,6 @@ struct CustomWebView: UIViewRepresentable {
             // 🔸 복원 시작 플래그 ON (히스토리/방문기록 오염 방지)
             stateModel.beginSessionRestore()
             // (WebViewStateModel에서 executeOptimizedRestore가 자동 호출됨)
-            // [FIX] 복원 완료 콜백에서 정리하므로 여기선 건드리지 않음
-            // stateModel.pendingSession = nil
         } else if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
         } else if let home = URL(string: "about:blank") {
@@ -110,67 +109,77 @@ struct CustomWebView: UIViewRepresentable {
         // (다크모드/추가 설정 동기화 자리)
     }
 
-    // MARK: - teardown
-    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.scrollView.delegate = nil
-        uiView.uiDelegate = nil
-        uiView.navigationDelegate = nil
-        coordinator.webView = nil
+    // MARK: - dismantleUIView
+    // 뷰가 사라질 때 정리(오디오 세션 비활성, 옵저버 제거).
+    func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.stopLoading()
+        deactivateAudioSession()
+        NotificationCenter.default.removeObserver(coordinator)
+        TabPersistenceManager.debugMessages.append("WebView 소멸: 탭 \(stateModel.tabID?.uuidString ?? "없음")")
     }
 
-    // MARK: - JS: 비디오 자동 감지 (예: mp4 링크 → AVPlayer)
-    private func makeVideoDetectionScript() -> WKUserScript {
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer로 재생 / PiP 활성 시도)
+    private func makeVideoScript() -> WKUserScript {
         let scriptSource = """
-        (function() {
-            function processVideos(doc) {
-                var anchors = doc.querySelectorAll('a[href]');
-                anchors.forEach(function(a) {
-                    var href = a.getAttribute('href');
-                    if (!href) return;
-                    var lower = href.toLowerCase();
-                    if (lower.endsWith('.mp4') || lower.includes('m3u8') || lower.includes('mpd')) {
-                        window.webkit.messageHandlers.videoURL?.postMessage(href);
-                    }
-                });
-            }
+        function processVideos(doc) {
+            [...doc.querySelectorAll('video')].forEach(video => {
+                // iOS 사파리 자동재생 제약 회피를 위해 기본 mute
+                video.muted = true;
+                video.volume = 0;
+                video.setAttribute('muted','true');
+
+                // AVPlayer로 넘기는 클릭 핸들러는 1회만 부착
+                if (!video.hasAttribute('nativeAVPlayerListener')) {
+                    video.addEventListener('click', () => {
+                        window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
+                    });
+                    video.setAttribute('nativeAVPlayerListener', 'true');
+                }
+
+                // 가능하면 PiP 자동 진입 시도(실패해도 무시)
+                if (document.pictureInPictureEnabled &&
+                    !video.disablePictureInPicture &&
+                    !document.pictureInPictureElement) {
+                    try { video.requestPictureInPicture().catch(() => {}); } catch (e) {}
+                }
+            });
+        }
+
+        // 최초/주기적으로 DOM 스캔(iframe 내부도 시도)
+        processVideos(document);
+        setInterval(() => {
             processVideos(document);
-            setInterval(function() {
-                var iframes = document.querySelectorAll('iframe');
-                iframes.forEach(function(iframe) {
-                    try {
-                        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                        if (doc) processVideos(doc);
-                    } catch (e) {}
-                });
-            }, 1000);
-        })();
+            [...document.querySelectorAll('iframe')].forEach(iframe => {
+                try {
+                    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                    if (doc) processVideos(doc);
+                } catch (e) {}
+            });
+        }, 1000);
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
     // MARK: - 오디오 세션 (다른 앱과 믹싱 허용)
-private func configureAudioSessionForMixing() {
-    let session = AVAudioSession.sharedInstance()
-    try? session.setCategory(.playback, options: [.mixWithOthers])
-    try? session.setActive(true)
-    TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
-}
+    private func configureAudioSessionForMixing() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, options: [.mixWithOthers])
+        try? session.setActive(true)
+        TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
+    }
 
-// MARK: - 오디오 세션 비활성화 (필요 시 호출)
-// 👉 비활성화 후에도 믹싱 모드가 풀리지 않도록, 즉시 다시 mixWithOthers 모드로 복구
-private func deactivateAudioSession() {
-    let session = AVAudioSession.sharedInstance()
-    // 세션 비활성화
-    try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-    TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
-    // 바로 다시 믹싱 모드로 재설정
-    configureAudioSessionForMixing()
-}
+    private func deactivateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
+    }
 
-    // MARK: - Coordinator
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate {
+    // JS → 네이티브: 비디오 클릭 시 AVPlayer로 재생
+    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
         var parent: CustomWebView
         weak var webView: WKWebView?
 
@@ -197,6 +206,19 @@ private func deactivateAudioSession() {
         // 재로딩
         @objc func reloadWebView() {
             webView?.reload()
+        }
+
+        // JS → 네이티브: 비디오 클릭 시 AVPlayer로 재생
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "playVideo",
+               let urlString = message.body as? String,
+               let videoURL = URL(string: urlString) {
+                DispatchQueue.main.async {
+                    self.parent.playerURL = videoURL
+                    self.parent.showAVPlayer = true
+                    TabPersistenceManager.debugMessages.append("비디오 재생 요청: \(urlString)")
+                }
+            }
         }
 
         // 파일 선택/새 창 등 WKUIDelegate 구현은 필요한 만큼 추가…
