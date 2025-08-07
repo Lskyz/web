@@ -13,7 +13,7 @@ struct WebViewSession: Codable {
 /// 메모리 효율성을 위한 히스토리 캐시 관리
 private class HistoryCacheEntry {
     let url: URL
-    let title: String
+    var title: String
     var lastAccessed: Date
     weak var webView: WKWebView?
     
@@ -45,7 +45,9 @@ private class HistoryCacheManager {
         
         if let existing = cache[key] {
             existing.updateAccess()
-            existing.title = title.isEmpty ? existing.title : title
+            if !title.isEmpty {
+                existing.title = title
+            }
         } else {
             cache[key] = HistoryCacheEntry(url: url, title: title)
             enforceMaxCacheSize()
@@ -148,7 +150,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // ✅ 지연로드를 위한 가상 히스토리 스택 (실제 로드되지 않은 URL들)
     private var virtualHistoryStack: [URL] = []
     private var virtualCurrentIndex: Int = -1
-    private var isUsingVirtualHistory: Bool = false
+    internal var isUsingVirtualHistory: Bool = false  // ✅ internal로 변경하여 외부에서 접근 가능
 
     // 세션 복원 대기 (CustomWebView.makeUIView에서 사용)
     var pendingSession: WebViewSession?
