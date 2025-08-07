@@ -149,12 +149,23 @@ struct CustomWebView: UIViewRepresentable {
     }
 
     // MARK: - 오디오 세션 (다른 앱과 믹싱 허용)
-    private func configureAudioSessionForMixing() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.mixWithOthers])
-        try? session.setActive(true)
-        TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
-    }
+private func configureAudioSessionForMixing() {
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(.playback, options: [.mixWithOthers])
+    try? session.setActive(true)
+    TabPersistenceManager.debugMessages.append("오디오 세션 활성화")
+}
+
+// MARK: - 오디오 세션 비활성화 (필요 시 호출)
+// 👉 비활성화 후에도 믹싱 모드가 풀리지 않도록, 즉시 다시 mixWithOthers 모드로 복구
+private func deactivateAudioSession() {
+    let session = AVAudioSession.sharedInstance()
+    // 세션 비활성화
+    try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+    TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
+    // 바로 다시 믹싱 모드로 재설정
+    configureAudioSessionForMixing()
+}
 
     // MARK: - Coordinator
     func makeCoordinator() -> Coordinator { Coordinator(self) }
