@@ -1,6 +1,6 @@
 //
 //  WebViewStateModel.swift
-//  설명: WKWebView 상태/히스토리/세션 저장·복원(지연로드) 관리
+//  설명: WKWebView 상태/히스토리/세션 저장·복원(지연로드) 관리 + 상세 디버그 로그
 //
 
 import Foundation
@@ -12,6 +12,13 @@ import WebKit
 struct WebViewSession: Codable {
     let urls: [URL]       // 히스토리 전체 (back + current + forward)
     let currentIndex: Int // 현재 위치(= backList.count)
+}
+
+// MARK: - 타임스탬프 유틸
+fileprivate func ts() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss.SSS"
+    return f.string(from: Date())
 }
 
 // MARK: - 히스토리 캐시 엔트리
@@ -28,9 +35,7 @@ private class HistoryCacheEntry {
         self.lastAccessed = Date()
     }
     
-    func updateAccess() {
-        lastAccessed = Date()
-    }
+    func updateAccess() { lastAccessed = Date() }
 }
 
 // MARK: - 히스토리 캐시 매니저
@@ -51,11 +56,9 @@ private class HistoryCacheManager {
         }
     }
     
-    func entry(for url: URL) -> HistoryCacheEntry? {
-        cache[url]
-    }
+    func entry(for url: URL) -> HistoryCacheEntry? { cache[url] }
     
-    func pruneIfNeeded() {
+    private func pruneIfNeeded() {
         guard cache.count > maxCacheCount else { return }
         let sorted = cache.values.sorted(by: { $0.lastAccessed < $1.lastAccessed })
         let toRemove = sorted.prefix(cache.count - maxCacheCount/2)
@@ -66,16 +69,19 @@ private class HistoryCacheManager {
 }
 
 // MARK: - WebViewStateModel
-/// WKWebView의 상태와 히스토리, 세션 저장·복원을 관리하는 ViewModel
-/// ✅ 개선사항: 지연로드 방식으로 마지막 페이지만 로드하고 나머지는 필요시 로드
+/// WKWebView의 상태/히스토리/세션 저장·복원을 관리하는 ViewModel
+/// ✅ 개선사항:
+///   - 지연로드 방식: 현재 페이지만 로드하고 앞/뒤는 누를 때 로드
+///   - 가상 히스토리 유지: 복원 직후에도 back/forward 동작 보장
+///   - 상세 디버그 로그: 단계별로 시각/인덱스/URL을 기록
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
 
-    // 탭 식별자 (외부에서 셋)
+    // 탭 식별자 (외부에서 셋; 로그에 같이 찍힘)
     var tabID: UUID?
 
     // MARK: — 네비게이션 완료 퍼블리셔
     /// 페이지 로드가 "완료"됐을 때 emit. ContentView는 이 신호만 받아 탭 스냅샷을 저장한다.
-    /// ⚠️ 복원 중엔 didFinish에서 이 신호를 보내지 않고, 복원 마지막 점프(go(to:))가 끝난 뒤 한 번만 보냄.
+    /// ⚠️ 복원 중엔 didFinish에서 이 신호를 보내지 않고, 복원 마지막 점프가 끝난 뒤 한 번만 보냄.
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
     // MARK: 상태 바인딩
@@ -85,9 +91,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
             // 마지막 URL 메모
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
-            TabPersistenceManager.debugMessages.append("URL 업데이트: \(url.absoluteString)")
+            dbg("URL 업데이트 → \(url.absoluteString)")
 
-            // 🛠 복원 중엔 커스텀/전역 히스토리에 손대지 않음(중간 단계 오염 방지)
+            // 🛠 복원 중엔 커스텀/전역 히스토리에 손대지 않음(중간 오염 방지)
             if isRestoringSession { return }
 
             // 커스텀 히스토리(웹뷰가 아직 없거나 fallback용)
@@ -110,7 +116,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // ✅ 지연로드를 위한 가상 히스토리 스택 (실제 로드되지 않은 URL들)
     private var virtualHistoryStack: [URL] = []
     private var virtualCurrentIndex: Int = -1
-    internal var isUsingVirtualHistory: Bool = false  // ✅ internal로 유지
+    internal var isUsingVirtualHistory: Bool = false  // 복원 후에도 유지하여 back/forward 동작 보장
 
     // 세션 복원 대기 (CustomWebView.makeUIView에서 사용)
     var pendingSession: WebViewSession?
@@ -121,20 +127,22 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // 🛠 복원 상태 플래그와 제어 메서드 (복원 중엔 저장/히스토리 오염 금지)
     private(set) var isRestoringSession: Bool = false
-    func beginSessionRestore() { 
-        isRestoringSession = true 
-        TabPersistenceManager.debugMessages.append("세션 복원 시작 플래그 ON")
+    func beginSessionRestore() {
+        isRestoringSession = true
+        dbg("🧭 RESTORE 시작 (가상히스토리 \(isUsingVirtualHistory ? "ON" : "OFF"))")
     }
-    func finishSessionRestore() { 
+    func finishSessionRestore() {
         isRestoringSession = false
-        // [FIX] 가상 히스토리 모드 유지 (복원 후 뒤/앞 이동용)
-        // isUsingVirtualHistory = false
-        TabPersistenceManager.debugMessages.append("세션 복원 완료 플래그 OFF")
+        // ❌ 끄지 않음: isUsingVirtualHistory = false
+        dbg("🧭 RESTORE 종료 (가상히스토리 유지: \(isUsingVirtualHistory ? "ON" : "OFF"))")
     }
 
     // 현재 연결된 웹뷰
     weak var webView: WKWebView? {
         didSet {
+            if let webView {
+                dbg("🔗 webView 연결됨: canGoBack=\(webView.canGoBack) canGoForward=\(webView.canGoForward)")
+            }
             // webView가 설정되면 대기 중인 히스토리 복원 실행 (지연로드 방식)
             if let _ = webView, let session = pendingSession {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -159,7 +167,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         didSet { saveGlobalHistory() }
     }
 
-    // ⚠️ addToHistory는 더 이상 사용하지 않지만, 남겨두는 경우를 대비해 타입 명시로 안전하게 유지
     private func addToHistory(url: URL, title: String) {
         WebViewStateModel.globalHistory.append(.init(url: url, title: title, date: Date()))
         WebViewStateModel.saveGlobalHistory()
@@ -169,13 +176,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         WebViewStateModel.globalHistory = []
         WebViewStateModel.saveGlobalHistory()
         HistoryCacheManager.shared.clearCache()
-        TabPersistenceManager.debugMessages.append("전역 방문 기록 삭제")
+        dbg("🧹 전역 방문 기록 삭제")
     }
 
     private static func saveGlobalHistory() {
         if let data = try? JSONEncoder().encode(globalHistory) {
             UserDefaults.standard.set(data, forKey: "globalHistory")
-            TabPersistenceManager.debugMessages.append("전역 방문 기록 저장: \(globalHistory.count)개")
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(globalHistory.count)개")
         }
     }
 
@@ -183,40 +190,40 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if let data = UserDefaults.standard.data(forKey: "globalHistory"),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             globalHistory = loaded
-            TabPersistenceManager.debugMessages.append("전역 방문 기록 로드: \(loaded.count)개")
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 로드: \(loaded.count)개")
         }
     }
 
     // MARK: 세션 저장(스냅샷)
     func saveSession() -> WebViewSession? {
-        // 🛠 webView가 있으면 back/forward 리스트 우선 사용 (정확도↑)
+        // webView가 있으면 back/forward 리스트 우선 사용 (정확도↑)
         if let _ = webView {
             let urls = historyURLs.compactMap { URL(string: $0) }
             let idx  = currentHistoryIndex
             guard !urls.isEmpty, idx >= 0, idx < urls.count else {
-                TabPersistenceManager.debugMessages.append("세션 저장 실패: webView 히스토리 없음")
+                dbg("💾 세션 저장 실패: webView 히스토리 없음")
                 return nil
             }
-            TabPersistenceManager.debugMessages.append("세션 저장(webView): \(urls.count) URLs, 인덱스 \(idx)")
+            dbg("💾 세션 저장(webView): \(urls.count) URLs, 인덱스 \(idx)")
             return WebViewSession(urls: urls, currentIndex: idx)
         }
 
-        // ✅ 가상 히스토리 사용 중이면 가상 스택 기준으로 저장
+        // 가상 히스토리 사용 중이면 가상 스택 기준으로 저장
         if isUsingVirtualHistory {
             guard !virtualHistoryStack.isEmpty, virtualCurrentIndex >= 0 else {
-                TabPersistenceManager.debugMessages.append("세션 저장 실패: 가상 히스토리 없음")
+                dbg("💾 세션 저장 실패: 가상 히스토리 없음")
                 return nil
             }
-            TabPersistenceManager.debugMessages.append("세션 저장(가상): \(virtualHistoryStack.count) URLs, 인덱스 \(virtualCurrentIndex)")
+            dbg("💾 세션 저장(가상): \(virtualHistoryStack.count) URLs, 인덱스 \(virtualCurrentIndex)")
             return WebViewSession(urls: virtualHistoryStack, currentIndex: virtualCurrentIndex)
         }
 
         // fallback: 커스텀 스택 사용
         guard !historyStack.isEmpty, currentIndexInStack >= 0 else {
-            TabPersistenceManager.debugMessages.append("세션 저장 실패: 히스토리 또는 인덱스 없음")
+            dbg("💾 세션 저장 실패: 히스토리 또는 인덱스 없음")
             return nil
         }
-        TabPersistenceManager.debugMessages.append("세션 저장(fallback): \(historyStack.count) URLs, 인덱스 \(currentIndexInStack)")
+        dbg("💾 세션 저장(fallback): \(historyStack.count) URLs, 인덱스 \(currentIndexInStack)")
         return WebViewSession(urls: historyStack, currentIndex: currentIndexInStack)
     }
 
@@ -228,7 +235,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let targetIndex = max(0, min(session.currentIndex, session.urls.count - 1))
         
         if !urls.isEmpty && urls.indices.contains(targetIndex) {
-            // ✅ 가상 히스토리 스택 설정 (실제 로드는 하지 않음)
+            // 가상 히스토리 스택 설정 (실제 로드는 하지 않음)
             virtualHistoryStack = urls
             virtualCurrentIndex = targetIndex
             isUsingVirtualHistory = true
@@ -242,32 +249,31 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             
             // 현재 URL만 세팅 (실제 로드는 executeOptimizedRestore에서)
             currentURL = urls[targetIndex]
-            TabPersistenceManager.debugMessages.append("✅ 지연로드 세션 복원 준비: \(urls.count) URLs, 목표 인덱스 \(targetIndex)")
+            dbg("🧭 RESTORE 준비: \(urls.count) URLs, 목표 idx \(targetIndex)")
         } else {
             currentURL = nil
             finishSessionRestore()
-            TabPersistenceManager.debugMessages.append("세션 복원 실패: 유효한 URL/인덱스 없음")
+            dbg("🧭 RESTORE 실패: 유효한 URL/인덱스 없음")
         }
     }
 
     // MARK: ✅ 최적화된 복원 실행 (마지막 페이지만 로드)
     private func executeOptimizedRestore(session: WebViewSession) {
         guard let webView = webView else {
-            TabPersistenceManager.debugMessages.append("최적화된 복원 실패: webView 없음")
+            dbg("🧭 RESTORE 실행 실패: webView 없음")
             return
         }
         
         let urls = session.urls
         let targetIndex = max(0, min(session.currentIndex, urls.count - 1))
-        
         guard urls.indices.contains(targetIndex) else {
-            TabPersistenceManager.debugMessages.append("최적화된 복원 실패: 인덱스 범위 초과")
+            dbg("🧭 RESTORE 실행 실패: 인덱스 범위 초과")
             finishSessionRestore()
             return
         }
         
         let targetURL = urls[targetIndex]
-        TabPersistenceManager.debugMessages.append("✅ 최적화된 복원: 마지막 페이지만 로드 \(targetURL.absoluteString)")
+        dbg("🧭 RESTORE 실행: 마지막 페이지만 로드 → idx \(targetIndex) | \(targetURL.absoluteString)")
         
         // 복원 완료 콜백 설정
         onLoadCompletion = { [weak self] in
@@ -282,10 +288,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             // 저장 신호 발송
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.navigationDidFinish.send(())
+                self.dbg("🧭 RESTORE 완료 신호 전송 (navigationDidFinish)")
+                self.logHistorySnapshot(reason: "RESTORE")
             }
         }
         
-        // ✅ 현재 페이지만 로드 (나머지는 앞뒤 버튼 클릭 시 지연로드)
+        // 현재 페이지만 로드 (나머지는 앞뒤 버튼 클릭 시 지연로드)
         webView.load(URLRequest(url: targetURL))
         
         // 히스토리 캐시에 현재 URL 등록
@@ -294,11 +302,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // MARK: ✅ 지연로드를 위한 히스토리 조회 API
     var historyURLs: [String] {
-        // 가상 히스토리 사용 중이면 가상 스택 반환
         if isUsingVirtualHistory {
             return virtualHistoryStack.map { $0.absoluteString }
         }
-        
         if let webView = webView {
             let back    = webView.backForwardList.backList.map { $0.url.absoluteString }
             let current = webView.backForwardList.currentItem.map { [$0.url.absoluteString] } ?? []
@@ -309,11 +315,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     var currentHistoryIndex: Int {
-        // 가상 히스토리 사용 중이면 가상 인덱스 반환
         if isUsingVirtualHistory {
             return max(0, min(virtualCurrentIndex, max(0, virtualHistoryStack.count - 1)))
         }
-        
         if let webView = webView { return webView.backForwardList.backList.count }
         guard !historyStack.isEmpty,
               currentIndexInStack >= 0,
@@ -322,11 +326,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     func historyStackIfAny() -> [URL] {
-        // 가상 히스토리 사용 중이면 가상 스택 반환
         if isUsingVirtualHistory {
             return virtualHistoryStack
         }
-        
         if let webView = webView {
             let back    = webView.backForwardList.backList.map { $0.url }
             let current = webView.backForwardList.currentItem?.url
@@ -337,11 +339,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     func currentIndexInSafeBounds() -> Int {
-        // 가상 히스토리 사용 중이면 가상 인덱스 반환
         if isUsingVirtualHistory {
             return max(0, min(virtualCurrentIndex, virtualHistoryStack.count - 1))
         }
-        
         if let webView = webView { return webView.backForwardList.backList.count }
         guard !historyStack.isEmpty,
               currentIndexInStack >= 0,
@@ -350,28 +350,24 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     // MARK: ✅ 최적화된 네비게이션 명령 (지연로드 지원)
-    func goBack() { 
+    func goBack() {
         if isUsingVirtualHistory {
             performVirtualNavigation(direction: .back)
         } else {
-            NotificationCenter.default.post(name: .init("WebViewGoBack"), object: nil) 
+            NotificationCenter.default.post(name: .init("WebViewGoBack"), object: nil)
         }
     }
-    
-    func goForward() { 
+    func goForward() {
         if isUsingVirtualHistory {
             performVirtualNavigation(direction: .forward)
         } else {
-            NotificationCenter.default.post(name: .init("WebViewGoForward"), object: nil) 
+            NotificationCenter.default.post(name: .init("WebViewGoForward"), object: nil)
         }
     }
-    
     func reload() { NotificationCenter.default.post(name: .init("WebViewReload"), object: nil) }
 
     // MARK: ✅ 가상 네비게이션 (지연로드)
-    private enum NavigationDirection {
-        case back, forward
-    }
+    private enum NavigationDirection { case back, forward }
     
     private func performVirtualNavigation(direction: NavigationDirection) {
         guard isUsingVirtualHistory, let webView = webView else { return }
@@ -379,21 +375,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let newIndex: Int
         switch direction {
         case .back:
-            guard virtualCurrentIndex > 0 else { 
-                TabPersistenceManager.debugMessages.append("가상 네비게이션: 뒤로가기 불가")
-                return 
-            }
+            guard virtualCurrentIndex > 0 else { dbg("⬅️ 가상 네비: 뒤로가기 불가"); return }
             newIndex = virtualCurrentIndex - 1
         case .forward:
-            guard virtualCurrentIndex < virtualHistoryStack.count - 1 else { 
-                TabPersistenceManager.debugMessages.append("가상 네비게이션: 앞으로가기 불가")
-                return 
-            }
+            guard virtualCurrentIndex < virtualHistoryStack.count - 1 else { dbg("➡️ 가상 네비: 앞으로가기 불가"); return }
             newIndex = virtualCurrentIndex + 1
         }
         
         let targetURL = virtualHistoryStack[newIndex]
-        TabPersistenceManager.debugMessages.append("✅ 지연로드 네비게이션: \(direction) → \(targetURL.absoluteString)")
+        dbg("🧩 V-NAV \(direction == .back ? "BACK" : "FWD") → idx \(newIndex) | \(targetURL.absoluteString)")
         
         // 인덱스 업데이트
         virtualCurrentIndex = newIndex
@@ -409,58 +399,74 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     // MARK: WKNavigationDelegate
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory)")
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         self.webView = webView
         
-        // ✅ 가상 히스토리 사용 중이 아닐 때만 기본 네비게이션 상태 업데이트
+        // 가상 히스토리 사용 중이 아닐 때만 기본 네비게이션 상태 업데이트
         if !isUsingVirtualHistory {
             canGoBack = webView.canGoBack
             canGoForward = webView.canGoForward
             
-            // 🔧 복원 중이 아닐 때만 currentURL 업데이트 (복원 중에는 오염 방지)
+            // 복원 중이 아닐 때만 currentURL 업데이트 (복원 중에는 오염 방지)
             if !isRestoringSession {
                 currentURL = webView.url
             }
         }
 
-        // 페이지 타이틀
         let title = (webView.title?.isEmpty == false) ? webView.title! : (webView.url?.host ?? "제목 없음")
 
         // 복원 중에는 전역 방문 기록 추가 금지(중간 오염 방지)
         if let finalURL = webView.url, !isRestoringSession {
             WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
             WebViewStateModel.saveGlobalHistory()
-            // 히스토리 캐시에 타이틀 업데이트
             HistoryCacheManager.shared.cacheEntry(for: finalURL, title: title)
         }
 
-        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "nil"), 복원중: \(isRestoringSession), 가상히스토리: \(isUsingVirtualHistory)")
+        dbg("🌐 LOAD 완료 → \(webView.url?.absoluteString ?? "nil") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory)")
+        logHistorySnapshot(reason: "LOAD_FINISH")
 
-        // 순차 로드 체인 진행 (복원 중이든 아니든 항상 호출)
+        // 순차 로드 체인 진행
         onLoadCompletion?()
         onLoadCompletion = nil
 
-        // ⚠️ 저장 트리거는 복원 중이 아닌 경우에만 여기서 보냄
+        // 저장 트리거는 복원 중이 아닌 경우에만 여기서 보냄
         if !isRestoringSession {
             navigationDidFinish.send(())
         }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        TabPersistenceManager.debugMessages.append("로드 실패 (Provisional): \(error.localizedDescription)")
-        
-        // 복원 중 실패 시 복원 중단
-        if isRestoringSession {
-            finishSessionRestore()
-        }
+        dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
+        if isRestoringSession { finishSessionRestore() }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        TabPersistenceManager.debugMessages.append("로드 실패 (Navigation): \(error.localizedDescription)")
-        
-        // 복원 중 실패 시 복원 중단
-        if isRestoringSession {
-            finishSessionRestore()
+        dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
+        if isRestoringSession { finishSessionRestore() }
+    }
+
+    // MARK: - 디버그 로그 도우미
+    private func dbg(_ msg: String) {
+        let id = tabID?.uuidString.prefix(6) ?? "noTab"
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
+    }
+    private func logHistorySnapshot(reason: String) {
+        if isUsingVirtualHistory {
+            let list = virtualHistoryStack.map { $0.absoluteString }
+            let idx  = max(0, min(virtualCurrentIndex, max(0, list.count - 1)))
+            let cur  = list.indices.contains(idx) ? list[idx] : "(없음)"
+            dbg("🧩 V-HIST(\(reason)) ⏪\(idx) ▶︎\(max(0, list.count - idx - 1)) | \(cur)")
+        } else if let wv = webView {
+            let back = wv.backForwardList.backList.count
+            let fwd  = wv.backForwardList.forwardList.count
+            let cur  = wv.url?.absoluteString ?? "(없음)"
+            dbg("📜 H-HIST(\(reason)) ⏪\(back) ▶︎\(fwd) | \(cur)")
+        } else {
+            dbg("📜 HIST(\(reason)) 웹뷰 미연결")
         }
     }
 
@@ -470,8 +476,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         @State private var searchQuery: String = ""
         @Environment(\.dismiss) private var dismiss
         
-        // 기본 날짜 포맷터 (private이어서 멤버와이즈 init이 private로 떨어질 수 있음)
-        // → 이슈 방지를 위해 아래에 명시 init(state:) 추가
+        // 기본 날짜 포맷터 (private이므로 멤버와이즈 init가 private로 떨어질 수 있어 명시 init 제공)
         private var dateFormatter: DateFormatter = {
             let df = DateFormatter()
             df.dateStyle = .medium
@@ -488,7 +493,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 .sorted { $0.date > $1.date }
         }
 
-        // ✅ 명시 이니셜라이저: 외부에서 접근 가능하게 보장
+        // ✅ 명시 이니셜라이저: 외부에서 접근 가능
         init(state: WebViewStateModel) {
             self._state = ObservedObject(wrappedValue: state)
         }
@@ -521,13 +526,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
 
-        // ✅ 여기서는 state.filteredHistory가 아니라 로컬 filteredHistory 사용
+        // 로컬 filteredHistory 기반 삭제 (state.filteredHistory 아님)
         func delete(at offsets: IndexSet) {
             let items = filteredHistory
             let targets = offsets.map { items[$0] }
             WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
             WebViewStateModel.saveGlobalHistory()
-            TabPersistenceManager.debugMessages.append("방문 기록 삭제: \(targets.count)개")
+            TabPersistenceManager.debugMessages.append("[\(ts())] 🧹 방문 기록 삭제: \(targets.count)개")
         }
     }
 }
