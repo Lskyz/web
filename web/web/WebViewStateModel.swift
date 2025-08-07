@@ -29,77 +29,35 @@ private class HistoryCacheEntry {
 }
 
 // MARK: - 히스토리 캐시 매니저
-/// LRU 방식으로 히스토리 캐시를 관리하여 메모리 최적화
 private class HistoryCacheManager {
     static let shared = HistoryCacheManager()
-    private var cache: [String: HistoryCacheEntry] = [:]
-    private let maxCacheSize = 20 // 최대 20개 페이지만 캐시
-    private let cleanupInterval: TimeInterval = 300 // 5분마다 정리
+    private init() {}
     
-    private init() {
-        startPeriodicCleanup()
-    }
+    private var cache: [URL: HistoryCacheEntry] = [:]
+    private let maxCacheCount = 200
     
     func cacheEntry(for url: URL, title: String = "") {
-        let key = url.absoluteString
-        
-        if let existing = cache[key] {
-            existing.updateAccess()
-            if !title.isEmpty {
-                existing.title = title
-            }
+        if let entry = cache[url] {
+            if !title.isEmpty { entry.title = title }
+            entry.updateAccess()
         } else {
-            cache[key] = HistoryCacheEntry(url: url, title: title)
-            enforceMaxCacheSize()
-        }
-        
-        TabPersistenceManager.debugMessages.append("히스토리 캐시 업데이트: \(url.host ?? "unknown")")
-    }
-    
-    func getEntry(for url: URL) -> HistoryCacheEntry? {
-        let key = url.absoluteString
-        let entry = cache[key]
-        entry?.updateAccess()
-        return entry
-    }
-    
-    private func enforceMaxCacheSize() {
-        if cache.count > maxCacheSize {
-            // LRU 정책: 가장 오래된 항목들 제거
-            let sortedEntries = cache.sorted { $0.value.lastAccessed < $1.value.lastAccessed }
-            let toRemove = sortedEntries.prefix(cache.count - maxCacheSize)
-            
-            for (key, _) in toRemove {
-                cache.removeValue(forKey: key)
-            }
-            
-            TabPersistenceManager.debugMessages.append("히스토리 캐시 정리: \(toRemove.count)개 항목 제거")
+            cache[url] = HistoryCacheEntry(url: url, title: title)
+            pruneIfNeeded()
         }
     }
     
-    private func startPeriodicCleanup() {
-        Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { _ in
-            self.performCleanup()
-        }
+    func entry(for url: URL) -> HistoryCacheEntry? {
+        cache[url]
     }
     
-    private func performCleanup() {
-        let cutoffDate = Date().addingTimeInterval(-cleanupInterval * 2) // 10분 이상 된 것들
-        let toRemove = cache.filter { $0.value.lastAccessed < cutoffDate }
-        
-        for (key, _) in toRemove {
-            cache.removeValue(forKey: key)
-        }
-        
-        if !toRemove.isEmpty {
-            TabPersistenceManager.debugMessages.append("정기 캐시 정리: \(toRemove.count)개 항목 제거")
-        }
+    func pruneIfNeeded() {
+        guard cache.count > maxCacheCount else { return }
+        let sorted = cache.values.sorted(by: { $0.lastAccessed < $1.lastAccessed })
+        let toRemove = sorted.prefix(cache.count - maxCacheCount/2)
+        for e in toRemove { cache.removeValue(forKey: e.url) }
     }
     
-    func clearCache() {
-        cache.removeAll()
-        TabPersistenceManager.debugMessages.append("히스토리 캐시 전체 정리")
-    }
+    func clearCache() { cache.removeAll() }
 }
 
 // MARK: - WebViewStateModel
@@ -134,23 +92,19 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             historyStack.append(url)
             currentIndexInStack = historyStack.count - 1
 
-            // 전역 방문기록 (표시용)
-            addToHistory(url: url, title: "")
-            
-            // ✅ 히스토리 캐시 업데이트
-            HistoryCacheManager.shared.cacheEntry(for: url)
+            // 전역 방문 기록 업데이트
+            addToHistory(url: url, title: url.host ?? "제목 없음")
         }
     }
 
-    @Published var canGoBack = false
-    @Published var canGoForward = false
-    @Published var playerURL: URL?
+    @Published var canGoBack: Bool = false
+    @Published var canGoForward: Bool = false
     @Published var showAVPlayer = false
 
     // ✅ 지연로드를 위한 가상 히스토리 스택 (실제 로드되지 않은 URL들)
     private var virtualHistoryStack: [URL] = []
     private var virtualCurrentIndex: Int = -1
-    internal var isUsingVirtualHistory: Bool = false  // ✅ internal로 변경하여 외부에서 접근 가능
+    internal var isUsingVirtualHistory: Bool = false  // ✅ internal로 유지
 
     // 세션 복원 대기 (CustomWebView.makeUIView에서 사용)
     var pendingSession: WebViewSession?
@@ -167,7 +121,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     func finishSessionRestore() { 
         isRestoringSession = false
-        isUsingVirtualHistory = false // 가상 히스토리 모드 해제
+        // [FIX] 가상 히스토리 모드 유지 (복원 후 뒤/앞 이동용)
+        // isUsingVirtualHistory = false
         TabPersistenceManager.debugMessages.append("세션 복원 완료 플래그 OFF")
     }
 
@@ -198,33 +153,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         didSet { saveGlobalHistory() }
     }
 
-    @Published var searchKeyword: String = ""
-
-    var filteredHistory: [HistoryEntry] {
-        let base = Self.globalHistory
-        if searchKeyword.isEmpty {
-            return base.reversed()
-        } else {
-            return base.filter {
-                $0.title.localizedCaseInsensitiveContains(searchKeyword) ||
-                $0.url.absoluteString.localizedCaseInsensitiveContains(searchKeyword)
-            }.reversed()
-        }
-    }
-
-    func addToHistory(url: URL, title: String) {
-        let entry = HistoryEntry(url: url, title: title, date: Date())
-        Self.globalHistory.append(entry)
-        if Self.globalHistory.count > 10_000 {
-            Self.globalHistory.removeFirst(Self.globalHistory.count - 10_000)
-        }
-        TabPersistenceManager.debugMessages.append("방문 기록 추가: \(url.absoluteString)")
-    }
-
-    static func clearGlobalHistory() {
-        globalHistory.removeAll()
+    private func addToHistory(url: URL, title: String) {
+        globalHistory.append(.init(url: url, title: title, date: Date()))
         saveGlobalHistory()
-        HistoryCacheManager.shared.clearCache() // 캐시도 함께 정리
+    }
+
+    func clearHistory() {
+        Self.globalHistory = []
+        saveGlobalHistory()
+        HistoryCacheManager.shared.clearCache()
         TabPersistenceManager.debugMessages.append("전역 방문 기록 삭제")
     }
 
@@ -276,7 +213,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return WebViewSession(urls: historyStack, currentIndex: currentIndexInStack)
     }
 
-    // MARK: ✅ 최적화된 세션 복원 (지연로드 방식)
+    // MARK: 세션 복원(지연로드)
     func restoreSession(_ session: WebViewSession) {
         beginSessionRestore()
         
@@ -328,9 +265,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // 복원 완료 콜백 설정
         onLoadCompletion = { [weak self] in
             guard let self = self else { return }
-            TabPersistenceManager.debugMessages.append("✅ 지연로드 복원 완료")
+            self.canGoBack = targetIndex > 0
+            self.canGoForward = targetIndex < urls.count - 1
             
-            // 복원 완료 처리
+            // pending 정리 + 복원 종료
             self.pendingSession = nil
             self.finishSessionRestore()
             
@@ -366,13 +304,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     var currentHistoryIndex: Int {
         // 가상 히스토리 사용 중이면 가상 인덱스 반환
         if isUsingVirtualHistory {
-            return virtualCurrentIndex
+            return max(0, min(virtualCurrentIndex, max(0, virtualHistoryStack.count - 1)))
         }
         
-        if let webView = webView {
-            return webView.backForwardList.backList.count
-        }
-        return max(0, min(currentIndexInStack, historyStack.count - 1))
+        if let webView = webView { return webView.backForwardList.backList.count }
+        guard !historyStack.isEmpty,
+              currentIndexInStack >= 0,
+              currentIndexInStack < historyStack.count else { return 0 }
+        return currentIndexInStack
     }
 
     func historyStackIfAny() -> [URL] {
@@ -487,7 +426,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             HistoryCacheManager.shared.cacheEntry(for: finalURL, title: title)
         }
 
-        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "없음"), 복원중: \(isRestoringSession), 가상히스토리: \(isUsingVirtualHistory)")
+        TabPersistenceManager.debugMessages.append("페이지 로드 완료: \(webView.url?.absoluteString ?? "nil"), 복원중: \(isRestoringSession), 가상히스토리: \(isUsingVirtualHistory)")
 
         // 순차 로드 체인 진행 (복원 중이든 아니든 항상 호출)
         onLoadCompletion?()
@@ -520,47 +459,50 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: 방문기록 화면
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
-
-        var body: some View {
-            VStack {
-                TextField("방문기록 검색", text: $state.searchKeyword)
-                    .textFieldStyle(.roundedBorder)
-                    .padding(.horizontal)
-                List {
-                    ForEach(state.filteredHistory) { entry in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Button(action: {
-                                // 방문기록에서 항목 선택 → 현재 탭으로 이동
-                                state.currentURL = entry.url
-                                TabPersistenceManager.debugMessages.append("방문 기록에서 URL 선택: \(entry.url)")
-                            }) {
-                                Text(entry.title.isEmpty ? "제목 없음" : entry.title)
-                                    .font(.headline).lineLimit(1)
-                                Text(entry.url.absoluteString)
-                                    .font(.subheadline).foregroundColor(.secondary).lineLimit(1)
-                                Text(Self.dateFormatter.string(from: entry.date))
-                                    .font(.caption).foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .onDelete(perform: delete)
-                }
-                Button(action: { WebViewStateModel.clearGlobalHistory() }) {
-                    Label("전체 기록 삭제", systemImage: "trash")
-                        .foregroundColor(.red)
-                }
-                .padding()
-            }
-            .navigationTitle("방문 기록")
-        }
-
-        static let dateFormatter: DateFormatter = {
+        @State private var searchQuery: String = ""
+        @Environment(\.dismiss) private var dismiss
+        
+        private var dateFormatter: DateFormatter = {
             let df = DateFormatter()
             df.dateStyle = .medium
             df.timeStyle = .short
             return df
         }()
+
+        private var filteredHistory: [HistoryEntry] {
+            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if q.isEmpty { return WebViewStateModel.globalHistory.sorted { $0.date > $1.date } }
+            return WebViewStateModel.globalHistory
+                .filter { $0.url.absoluteString.lowercased().contains(q) || $0.title.lowercased().contains(q) }
+                .sorted { $0.date > $1.date }
+        }
+
+        var body: some View {
+            List {
+                ForEach(filteredHistory) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title.isEmpty ? (item.url.host ?? "제목 없음") : item.title)
+                            .font(.headline)
+                        Text(item.url.absoluteString)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        Text(dateFormatter.string(from: item.date))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .onDelete(perform: delete)
+            }
+            .navigationTitle("방문 기록")
+            .searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always))
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("모두 지우기") {
+                        WebViewStateModel.globalHistory.removeAll()
+                    }
+                }
+            }
+        }
 
         func delete(at offsets: IndexSet) {
             let items = state.filteredHistory
