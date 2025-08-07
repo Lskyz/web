@@ -511,6 +511,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
+                    // ▶ 수정 시작: 클릭 시 페이지 이동 & 시트 닫기
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        state.currentURL = item.url
+                        state.loadURLIfReady()
+                        dismiss()
+                    }
+                    // ◀ 수정 끝
                 }
                 .onDelete(perform: delete)
             }
