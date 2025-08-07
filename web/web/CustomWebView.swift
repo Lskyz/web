@@ -28,6 +28,21 @@ struct CustomWebView: UIViewRepresentable {
         config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         
+        // ✅ 웹뷰 캐시 설정
+        config.websiteDataStore = WKWebsiteDataStore.default()
+        
+        // ✅ 성능 최적화: 프로세스 풀 사용
+        config.processPool = WKProcessPool()
+
+        // 사용자 스크립트/메시지 핸들러
+        let controller = WKUserContentController()
+        controller.addUserScript(makeVideoScript())
+        controller.add(context.coordinator, name: "playVideo")
+        config.userContentController = controller
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.allowsBackForwardNavigationGestures = true
+        
         // ✅ 메모리 최적화: 스크롤뷰 설정
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.decelerationRate = UIScrollView.DecelerationRate.normal
@@ -83,6 +98,7 @@ struct CustomWebView: UIViewRepresentable {
             object: nil
         )
 
+        return webView
     }
 
     // MARK: - updateUIView
@@ -277,19 +293,4 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
     }
-}: 웹뷰 캐시 설정
-        config.websiteDataStore = WKWebsiteDataStore.default()
-        
-        // ✅ 성능 최적화: 프로세스 풀 사용
-        config.processPool = WKProcessPool()
-
-        // 사용자 스크립트/메시지 핸들러
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        
-        // ✅ 메모리 최적화
+}
