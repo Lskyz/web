@@ -1,10 +1,9 @@
 //
-//  WebViewStateModel.swift (개선 버전)
-//  주요 개선사항:
-//  1) 디바운스 시간 단축 (220ms → 100ms)
-//  2) 가상 히스토리 동기화 로직 개선
-//  3) currentURL 중복 추가 방지
-//  4) 네비게이션 상태 관리 개선
+//  WebViewStateModel.swift (오류 수정 버전)
+//  주요 수정사항:
+//  1) KVO 옵저버 URL 타입 캐스팅 수정
+//  2) 누락된 헬퍼 메서드 추가 (historyStackIfAny, currentIndexInSafeBounds)
+//  3) 경고 사항들 수정
 //
 
 import Foundation
@@ -71,7 +70,7 @@ private class HistoryCacheManager {
     func clearCache() { cache.removeAll() }
 }
 
-// MARK: - WebViewStateModel (개선 버전)
+// MARK: - WebViewStateModel (수정 버전)
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     let navigationDidFinish = PassthroughSubject<Void, Never>()
@@ -176,11 +175,35 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             canGoBack = virtualCurrentIndex > 0
             canGoForward = virtualCurrentIndex < virtualHistoryStack.count - 1
         } else {
-            if let webView = webView {
-                canGoBack = webView.canGoBack
-                canGoForward = webView.canGoForward
+            if webView != nil {
+                canGoBack = webView?.canGoBack ?? false
+                canGoForward = webView?.canGoForward ?? false
             }
         }
+    }
+
+    // ✅ 누락된 헬퍼 메서드들 추가
+    func historyStackIfAny() -> [URL] {
+        if isUsingVirtualHistory {
+            return virtualHistoryStack
+        }
+        if let webView = webView {
+            let back = webView.backForwardList.backList.map { $0.url }
+            let current = webView.backForwardList.currentItem.map { [$0.url] } ?? []
+            let forward = webView.backForwardList.forwardList.map { $0.url }
+            return back + current + forward
+        }
+        return historyStack
+    }
+    
+    func currentIndexInSafeBounds() -> Int {
+        if isUsingVirtualHistory {
+            return max(0, min(virtualCurrentIndex, max(0, virtualHistoryStack.count - 1)))
+        }
+        if let webView = webView { 
+            return webView.backForwardList.backList.count 
+        }
+        return max(0, min(currentIndexInStack, max(0, historyStack.count - 1)))
     }
 
     // ====== KVO 관리 ======
@@ -201,49 +224,50 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     private func installObservers(on webView: WKWebView) {
         // ✅ KVO 옵저버 개선
         kvCanGoBack = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
-            guard let self = self else { return }
+            guard self != nil else { return }
             DispatchQueue.main.async {
-                if !self.isUsingVirtualHistory {
-                    self.canGoBack = wv.canGoBack
+                if !self!.isUsingVirtualHistory {
+                    self!.canGoBack = wv.canGoBack
                 }
             }
         }
         
         kvCanGoForward = webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in
-            guard let self = self else { return }
+            guard self != nil else { return }
             DispatchQueue.main.async {
-                if !self.isUsingVirtualHistory {
-                    self.canGoForward = wv.canGoForward
+                if !self!.isUsingVirtualHistory {
+                    self!.canGoForward = wv.canGoForward
                 }
             }
         }
         
+        // ✅ URL KVO 수정 - 타입 캐스팅 문제 해결
         kvURL = webView.observe(\.url, options: [.new]) { [weak self] wv, change in
-            guard let self = self else { return }
-            guard let url = change.newValue as? URL? ?? wv.url else { return }
+            guard self != nil else { return }
+            guard let url = change.newValue ?? wv.url else { return }
             
             DispatchQueue.main.async {
                 if let validURL = url, 
                    validURL.scheme != nil, 
                    validURL.absoluteString != "about:blank",
-                   self.currentURL != validURL {
+                   self!.currentURL != validURL {
                     // ✅ KVO를 통한 URL 변경은 내부 네비게이션으로 처리
-                    self.isInternalNavigation = true
-                    self.currentURL = validURL
-                    self.isInternalNavigation = false
+                    self!.isInternalNavigation = true
+                    self!.currentURL = validURL
+                    self!.isInternalNavigation = false
                 }
             }
         }
         
         kvIsLoading = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, _ in
-            guard let self = self else { return }
+            guard self != nil else { return }
             DispatchQueue.main.async {
-                self.updateNavigationButtons()
+                self!.updateNavigationButtons()
             }
         }
         
         kvTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
-            guard let self = self else { return }
+            guard self != nil else { return }
             DispatchQueue.main.async {
                 if let u = wv.url {
                     HistoryCacheManager.shared.cacheEntry(for: u, title: wv.title ?? "")
@@ -264,7 +288,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 updateNavigationButtons()
             }
             
-            if let _ = webView, let session = pendingSession {
+            if webView != nil, let session = pendingSession {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                     self?.executeOptimizedRestore(session: session)
                 }
@@ -317,7 +341,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return WebViewSession(urls: virtualHistoryStack, currentIndex: virtualCurrentIndex)
         }
         
-        if let webView = webView {
+        if webView != nil {
             let urls = historyURLs.compactMap { URL(string: $0) }
             let idx = currentHistoryIndex
             guard !urls.isEmpty, idx >= 0, idx < urls.count else {
