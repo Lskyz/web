@@ -10,7 +10,7 @@ import WebKit
 
 // MARK: - 세션 스냅샷 (저장/복원에 사용)
 struct WebViewSession: Codable {
-    let urls: [URL]       // 히스토리 전체 (back + current + forward)
+    let urls: [URL]       // ힸ토리 전체 (back + current + forward)
     let currentIndex: Int // 현재 위치(= backList.count)
 }
 
@@ -132,6 +132,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     private var virtualHistoryStack: [URL] = []
     private var virtualCurrentIndex: Int = -1
     internal var isUsingVirtualHistory: Bool = false  // 복원 후에도 유지하여 back/forward 동작 보장
+    
+    // ✅ 추가: 네비게이션 중복 방지를 위한 플래그
+    private var isNavigating: Bool = false
 
     // 세션 복원 대기 (CustomWebView.makeUIView에서 사용)
     var pendingSession: WebViewSession?
@@ -144,10 +147,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     private(set) var isRestoringSession: Bool = false
     func beginSessionRestore() {
         isRestoringSession = true
+        // ✅ 복원 시작 시 네비게이션 플래그 초기화
+        isNavigating = false
         dbg("🧭 RESTORE 시작 (가상히스토리 \(isUsingVirtualHistory ? "ON" : "OFF"))")
     }
     func finishSessionRestore() {
         isRestoringSession = false
+        // ✅ 복원 종료 시 네비게이션 플래그 초기화
+        isNavigating = false
         // ❌ 끄지 않음: isUsingVirtualHistory = false
         // ✅ 가상 히스토리 유지 요청에 따라 isUsingVirtualHistory 변경하지 않음
         dbg("🧭 RESTORE 종료 (가상히스토리 유지: \(isUsingVirtualHistory ? "ON" : "OFF"))")
@@ -266,7 +273,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             // 현재 URL만 세팅 (실제 로드는 executeOptimizedRestore에서)
             currentURL = urls[targetIndex]
             // ✅ 복원 시 currentURL 즉시 설정하여 탭 목록 반영
-            dbg("🧭 RESTORE 준비: \(urls.count) URLs, 목표 idx \(targetIndex) | currentURL=\(urls[targetIndex].absoluteString)")
+            // ✅ 버튼 상태 초기화
+            canGoBack = targetIndex > 0
+            canGoForward = targetIndex < urls.count - 1
+            dbg("🧭 RESTORE 준비: \(urls.count) URLs, 목표 idx \(targetIndex) | currentURL=\(urls[targetIndex].absoluteString) | canGoBack=\(canGoBack) canGoForward=\(canGoForward)")
         } else {
             currentURL = nil
             finishSessionRestore()
@@ -292,7 +302,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let targetURL = urls[targetIndex]
         // ✅ 복원 시작 시 currentURL 설정하여 탭 목록 즉시 갱신
         currentURL = targetURL
-        dbg("🧭 RESTORE 실행: 마지막 페이지만 로드 → idx \(targetIndex) | \(targetURL.absoluteString)")
+        // ✅ 복원 시작 시 네비게이션 플래그 설정
+        isNavigating = true
+        dbg("🧭 RESTORE 실행: 마지막 페이지만 로드 → idx \(targetIndex) | \(targetURL.absoluteString) | currentURL=\(currentURL?.absoluteString ?? "nil")")
         
         // 복원 완료 콜백 설정
         onLoadCompletion = { [weak self] in
@@ -305,6 +317,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             if let url = webView.url {
                 self.currentURL = url
             }
+            // ✅ 네비게이션 플래그 해제
+            self.isNavigating = false
             
             // pending 정리 + 복원 종료
             self.pendingSession = nil
@@ -313,7 +327,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             // 저장 신호 발송
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.navigationDidFinish.send(())
-                self.dbg("🧭 RESTORE 완료 신호 전송 (navigationDidFinish) | currentURL=\(self.currentURL?.absoluteString ?? "nil")")
+                self.dbg("🧭 RESTORE 완료 신호 전송 (navigationDidFinish) | currentURL=\(self.currentURL?.absoluteString ?? "nil") | canGoBack=\(self.canGoBack) canGoForward=\(self.canGoForward)")
                 self.logHistorySnapshot(reason: "RESTORE")
             }
         }
@@ -396,23 +410,37 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     private func performVirtualNavigation(direction: NavigationDirection) {
         guard isUsingVirtualHistory, let webView = webView else {
-            // ✅ 가상 히스토리 비활성 또는 webView 없음 시 에러 로그 강화
+            // ✅ 에러 로그 강화
             dbg("🧩 V-NAV 실패: 가상 히스토리 비활성 또는 webView 없음 | vhist=\(isUsingVirtualHistory) webView=\(webView != nil)")
+            return
+        }
+        
+        // ✅ 로드 중이면 네비게이션 차단
+        guard !isNavigating else {
+            dbg("🧩 V-NAV 차단: 네비게이션 진행 중 | currentURL=\(currentURL?.absoluteString ?? "nil") | isNavigating=\(isNavigating)")
             return
         }
         
         let newIndex: Int
         switch direction {
         case .back:
-            guard virtualCurrentIndex > 0 else { dbg("⬅️ 가상 네비: 뒤로가기 불가 | vIndex=\(virtualCurrentIndex)"); return }
+            guard virtualCurrentIndex > 0 else {
+                dbg("⬅️ 가상 네비: 뒤로가기 불가 | vIndex=\(virtualCurrentIndex)")
+                return
+            }
             newIndex = virtualCurrentIndex - 1
         case .forward:
-            guard virtualCurrentIndex < virtualHistoryStack.count - 1 else { dbg("➡️ 가상 네비: 앞으로가기 불가 | vIndex=\(virtualCurrentIndex) vStack=\(virtualHistoryStack.count)"); return }
+            guard virtualCurrentIndex < virtualHistoryStack.count - 1 else {
+                dbg("➡️ 가상 네비: 앞으로가기 불가 | vIndex=\(virtualCurrentIndex) vStack=\(virtualHistoryStack.count)")
+                return
+            }
             newIndex = virtualCurrentIndex + 1
         }
         
         let targetURL = virtualHistoryStack[newIndex]
-        // ✅ 네비게이션 시 currentURL 즉시 업데이트로 탭 목록 갱신
+        // ✅ 네비게이션 시작 시 플래그 설정
+        isNavigating = true
+        // ✅ currentURL 즉시 업데이트로 탭 목록 갱신
         currentURL = targetURL
         dbg("🧩 V-NAV \(direction == .back ? "BACK" : "FWD") → idx \(newIndex) | \(targetURL.absoluteString) | currentURL=\(currentURL?.absoluteString ?? "nil")")
         
@@ -424,8 +452,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // ✅ 웹뷰 URL과 targetURL이 다를 경우에만 로드
         if webView.url != targetURL {
             webView.load(URLRequest(url: targetURL))
-            // 히스토리 캐시 업데이트
             HistoryCacheManager.shared.cacheEntry(for: targetURL)
+        } else {
+            // ✅ 동일 URL이면 로드 스킵하고 즉시 완료 처리
+            isNavigating = false
+            navigationDidFinish.send(())
+            dbg("🧩 V-NAV 스킵: 동일 URL | targetURL=\(targetURL.absoluteString)")
         }
         
         // ✅ 디버그 로그로 가상 히스토리 상태 확인
@@ -436,7 +468,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // MARK: WKNavigationDelegate
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory)")
+        // ✅ 네비게이션 시작 시 플래그 확인
+        dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory) | isNavigating=\(isNavigating)")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -464,8 +497,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
         
+        // ✅ 네비게이션 플래그 해제
+        isNavigating = false
         // ✅ 디버그 로그 강화
-        dbg("🌐 LOAD 완료 → \(webView.url?.absoluteString ?? "nil") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory) | currentURL=\(currentURL?.absoluteString ?? "nil")")
+        dbg("🌐 LOAD 완료 → \(webView.url?.absoluteString ?? "nil") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory) | currentURL=\(currentURL?.absoluteString ?? "nil") | isNavigating=\(isNavigating)")
         logHistorySnapshot(reason: "LOAD_FINISH")
         
         // ✅ 순차 로드 사용 안 함: 즉시 onLoadCompletion 호출
@@ -477,23 +512,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
+        // ✅ 로드 실패 시 네비게이션 플래그 해제
+        isNavigating = false
+        dbg("❌ 로드 실패(Provisional): \(error.localizedDescription) | isNavigating=\(isNavigating)")
         if isRestoringSession { finishSessionRestore() }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
+        // ✅ 로드 실패 시 네비게이션 플래그 해제
+        isNavigating = false
+        dbg("❌ 로드 실패(Navigation): \(error.localizedDescription) | isNavigating=\(isNavigating)")
         if isRestoringSession { finishSessionRestore() }
     }
 
     // MARK: - 디버그 로그 도우미
     private func dbg(_ msg: String) {
         let id = tabID?.uuidString.prefix(6) ?? "noTab"
-        // ✅ 디버그 로그에 currentURL, virtualHistoryStack 상태 추가
+        // ✅ 디버그 로그에 currentURL, virtualHistoryStack, isNavigating 상태 추가
         let currentURLStr = currentURL?.absoluteString ?? "nil"
         let vHistCount = virtualHistoryStack.count
         let vIndex = virtualCurrentIndex
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg) | currentURL=\(currentURLStr) | vHistory=\(vHistCount) | vIndex=\(vIndex)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg) | currentURL=\(currentURLStr) | vHistory=\(vHistCount) | vIndex=\(vIndex) | isNavigating=\(isNavigating)")
     }
     private func logHistorySnapshot(reason: String) {
         if isUsingVirtualHistory {
@@ -573,7 +612,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                     }
                 }
             }
-            // ✅ navigationDidFinish 구독하여 탭 목록 UI 갱신 보장
+            // ✅ navigationDidFinish 구독하여 UI 갱신 보장
             .onReceive(state.navigationDidFinish) { _ in
                 print("HistoryPage: navigationDidFinish received, URL=\(state.currentURL?.absoluteString ?? "nil")")
             }
