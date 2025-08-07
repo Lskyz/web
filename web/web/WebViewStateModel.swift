@@ -1,6 +1,12 @@
 //
 //  WebViewStateModel.swift
 //  설명: WKWebView 상태/히스토리/세션 저장·복원(지연로드) 관리 + 상세 디버그 로그
+//  변경 요약(안정화 포인트)
+//  1) KVO 옵저버 추가: canGoBack/canGoForward/url/isLoading/title 를 관찰하여 버튼 상태와 currentURL 동기화
+//  2) 가상 히스토리 사용 시: 버튼 상태는 항상 가상 스택을 ‘단일 진실 원본(SSOT)’으로 계산, KVO는 참고만
+//  3) 네비게이션 직렬화/디바운스: 빠른 연타로 중복 호출되는 문제 방지 (탭 최소간격 + isNavigating 융합)
+//  4) 메인 스레드 보장: 퍼블리시/상태 갱신은 DispatchQueue.main에서 수행
+//  5) 옵저버 해제 안전성: webView 교체/해제 시 옵저버 정리
 //
 
 import Foundation
@@ -69,62 +75,80 @@ private class HistoryCacheManager {
 
 // MARK: - WebViewStateModel
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
-
+    // 외부에서 구분용
     var tabID: UUID?
 
+    // 로드 완료 신호 (HistoryPage 등에서 구독)
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
+    // 현재 URL (설정 시 커스텀/가상 히스토리 갱신 및 UserDefaults 기록)
     @Published var currentURL: URL? {
         didSet {
             guard let url = currentURL else { return }
+            // 메인 스레드 보장
+            if !Thread.isMainThread {
+                DispatchQueue.main.async { [weak self] in self?.currentURL = url }
+                return
+            }
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
             dbg("URL 업데이트 → \(url.absoluteString)")
 
+            // 세션 복원 중이면 히스토리 누적 방지
             if isRestoringSession { return }
 
-            // 커스텀 히스토리
+            // ✅ 커스텀 히스토리(백업 스택) 유지
             if currentIndexInStack < historyStack.count - 1 {
                 historyStack = Array(historyStack.prefix(upTo: currentIndexInStack + 1))
             }
             historyStack.append(url)
             currentIndexInStack = historyStack.count - 1
 
-            // ✅ 가상 히스토리: 세부 주소 기록 보장
+            // ✅ 가상 히스토리: 세부 주소 기록 보장(중복 허용, forward 정리)
             if isUsingVirtualHistory {
-                // 새로운 URL 추가 시 forward 항목 제거
                 if virtualCurrentIndex < virtualHistoryStack.count - 1 {
                     virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
                 }
-                // ✅ 중복 방지 로직 제거: 세부 주소를 항상 추가
                 virtualHistoryStack.append(url)
                 virtualCurrentIndex = virtualHistoryStack.count - 1
-                // ✅ 버튼 상태 즉시 업데이트
+                // 버튼 상태는 가상 스택을 단일 진실원본으로 계산
                 canGoBack = virtualCurrentIndex > 0
                 canGoForward = virtualCurrentIndex < virtualHistoryStack.count - 1
                 let urlList = virtualHistoryStack.map { $0.absoluteString }.joined(separator: ", ")
                 dbg("🧩 V-HIST 업데이트: idx=\(virtualCurrentIndex), stack=\(virtualHistoryStack.count), canGoBack=\(canGoBack), canGoForward=\(canGoForward) | urls=[\(urlList)]")
             }
 
+            // 전역 히스토리에 기록 (타이틀은 일단 host 또는 '제목 없음')
             WebViewStateModel.globalHistory.append(.init(url: url, title: url.host ?? "제목 없음", date: Date()))
             WebViewStateModel.saveGlobalHistory()
         }
     }
 
+    // 하단 버튼 상태 (메인스레드에서만 변경)
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
     @Published var showAVPlayer = false
 
+    // ====== 가상 히스토리(세밀 기록/복원 용) ======
     private var virtualHistoryStack: [URL] = []
     private var virtualCurrentIndex: Int = -1
     internal var isUsingVirtualHistory: Bool = false
+
+    // 네비 직렬화/진행 상태
     private var isNavigating: Bool = false
 
+    // 탭 디바운스 (빠른 연타 안정화)
+    private var lastNavTapAt: TimeInterval = 0
+    private let navTapMinInterval: TimeInterval = 0.22 // 220ms 최소 간격
+
+    // 지연 복원 세션
     var pendingSession: WebViewSession?
 
+    // 기본 커스텀(백업) 히스토리
     private var historyStack: [URL] = []
     private var currentIndexInStack: Int = -1
 
+    // 세션 복원 중 플래그
     private(set) var isRestoringSession: Bool = false
     func beginSessionRestore() {
         isRestoringSession = true
@@ -137,11 +161,91 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("🧭 RESTORE 종료 (가상히스토리 유지: \(isUsingVirtualHistory ? "ON" : "OFF"))")
     }
 
+    // ====== WKWebView 연결 및 KVO ======
+    // KVO 토큰
+    private var kvCanGoBack: NSKeyValueObservation?
+    private var kvCanGoForward: NSKeyValueObservation?
+    private var kvURL: NSKeyValueObservation?
+    private var kvIsLoading: NSKeyValueObservation?
+    private var kvTitle: NSKeyValueObservation?
+
+    // 안전한 옵저버 제거
+    private func removeObservers() {
+        kvCanGoBack?.invalidate(); kvCanGoBack = nil
+        kvCanGoForward?.invalidate(); kvCanGoForward = nil
+        kvURL?.invalidate(); kvURL = nil
+        kvIsLoading?.invalidate(); kvIsLoading = nil
+        kvTitle?.invalidate(); kvTitle = nil
+    }
+
+    // 옵저버 설치
+    private func installObservers(on webView: WKWebView) {
+        // canGoBack / canGoForward : 가상 히스토리 미사용시에만 직접 반영
+        kvCanGoBack = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if !self.isUsingVirtualHistory {
+                    self.canGoBack = wv.canGoBack
+                }
+            }
+        }
+        kvCanGoForward = webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if !self.isUsingVirtualHistory {
+                    self.canGoForward = wv.canGoForward
+                }
+            }
+        }
+        // URL 변경 관찰: currentURL 동기화 (복원/가상 시에는 현재 로드 중 URL이 final과 다를 수 있음)
+        kvURL = webView.observe(\.url, options: [.new]) { [weak self] wv, change in
+            guard let self = self else { return }
+            guard let url = change.newValue as? URL? ?? wv.url else { return }
+            DispatchQueue.main.async {
+                // Provisional 단계에서 nil 또는 about:blank가 올 수 있음 -> 실제 URL일 때만 반영
+                if url.scheme != nil && url.absoluteString != "about:blank" {
+                    self.currentURL = url
+                }
+            }
+        }
+        // 로딩 상태 관찰: 로딩 종료 근처에서 버튼 상태/스냅샷 재검
+        kvIsLoading = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, change in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if self.isUsingVirtualHistory {
+                    // 가상 모드에서는 스택 기반 계산 유지
+                    self.canGoBack = self.virtualCurrentIndex > 0
+                    self.canGoForward = self.virtualCurrentIndex < self.virtualHistoryStack.count - 1
+                } else {
+                    // 일반 모드에서는 웹뷰 상태 반영
+                    self.canGoBack = wv.canGoBack
+                    self.canGoForward = wv.canGoForward
+                }
+            }
+        }
+        // 타이틀 관찰 → 캐시 타이틀 최신화
+        kvTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                if let u = wv.url {
+                    HistoryCacheManager.shared.cacheEntry(for: u, title: wv.title ?? "")
+                }
+            }
+        }
+    }
+
     weak var webView: WKWebView? {
         didSet {
+            // 이전 옵저버 해제
+            if oldValue !== webView {
+                removeObservers()
+            }
+
             if let webView {
                 dbg("🔗 webView 연결됨: canGoBack=\(webView.canGoBack) canGoForward=\(webView.canGoForward)")
+                installObservers(on: webView) // ✅ 연결 즉시 옵저버 설치
             }
+            // 지연 복원 되어 있을 경우 최적화된 복원 실행
             if let _ = webView, let session = pendingSession {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                     self?.executeOptimizedRestore(session: session)
@@ -190,6 +294,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
+    // MARK: - 세션 저장/복원
     func saveSession() -> WebViewSession? {
         if let _ = webView {
             let urls = historyURLs.compactMap { URL(string: $0) }
@@ -229,6 +334,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let targetIndex = max(0, min(session.currentIndex, session.urls.count - 1))
         
         if !urls.isEmpty && urls.indices.contains(targetIndex) {
+            // 가상 스택/백업 스택 모두 동기화
             virtualHistoryStack = urls
             virtualCurrentIndex = targetIndex
             isUsingVirtualHistory = true
@@ -295,6 +401,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         HistoryCacheManager.shared.cacheEntry(for: targetURL)
     }
 
+    // MARK: - 히스토리 조회 유틸
     var historyURLs: [String] {
         if isUsingVirtualHistory {
             return virtualHistoryStack.map { $0.absoluteString }
@@ -343,21 +450,54 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return currentIndexInStack
     }
 
+    // MARK: - 하단 버튼 액션(안정화)
     func goBack() {
+        // 탭 디바운스: 너무 빠른 연타 방지
+        guard !throttleTap() else {
+            dbg("⬅️ 뒤로가기 차단: 연속 탭")
+            return
+        }
         if isUsingVirtualHistory {
             performVirtualNavigation(direction: .back)
         } else {
+            // 네비 직렬화: 이미 이동 중이면 차단
+            guard !isNavigating else {
+                dbg("⬅️ 뒤로가기 차단: isNavigating 진행 중")
+                return
+            }
+            isNavigating = true
             NotificationCenter.default.post(name: .init("WebViewGoBack"), object: nil)
+            // iOS에서 실제 네비 완료는 delegate/didFinish에서 isNavigating=false로
         }
     }
+
     func goForward() {
+        guard !throttleTap() else {
+            dbg("➡️ 앞으로가기 차단: 연속 탭")
+            return
+        }
         if isUsingVirtualHistory {
             performVirtualNavigation(direction: .forward)
         } else {
+            guard !isNavigating else {
+                dbg("➡️ 앞으로가기 차단: isNavigating 진행 중")
+                return
+            }
+            isNavigating = true
             NotificationCenter.default.post(name: .init("WebViewGoForward"), object: nil)
         }
     }
-    func reload() { NotificationCenter.default.post(name: .init("WebViewReload"), object: nil) }
+
+    func reload() {
+        NotificationCenter.default.post(name: .init("WebViewReload"), object: nil)
+    }
+
+    // 탭 디바운서
+    private func throttleTap() -> Bool {
+        let now = CACurrentMediaTime()
+        defer { lastNavTapAt = now }
+        return (now - lastNavTapAt) < navTapMinInterval
+    }
 
     private enum NavigationDirection { case back, forward }
     
@@ -393,7 +533,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         let targetURL = virtualHistoryStack[newIndex]
-        isNavigating = true
+        isNavigating = true // ✅ 직렬화: 이 줄이 중요 (중복 load 방지)
         currentURL = targetURL
         let urlList = virtualHistoryStack.map { $0.absoluteString }.joined(separator: ", ")
         dbg("🧩 V-NAV \(direction == .back ? "BACK" : "FWD") → idx \(newIndex) | \(targetURL.absoluteString) | currentURL=\(currentURL?.absoluteString ?? "nil") | canGoBack=\(canGoBack) canGoForward=\(canGoForward) | urls=[\(urlList)]")
@@ -416,14 +556,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("🧩 V-HIST SYNC: back=\(backList.count), forward=\(forwardList.count), current=\(targetURL.absoluteString) | urls=[\(urlList)]")
     }
 
+    // MARK: - WKNavigationDelegate
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         let urlList = virtualHistoryStack.map { $0.absoluteString }.joined(separator: ", ")
         dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory) | isNavigating=\(isNavigating) | urls=[\(urlList)]")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        self.webView = webView
-        
+        self.webView = webView // 옵저버 유지 목적(재연결 시도)
+
         // ✅ WKWebView의 backForwardList와 virtualHistoryStack 동기화
         if isUsingVirtualHistory {
             let backList = webView.backForwardList.backList.map { $0.url }
@@ -431,7 +572,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             let forwardList = webView.backForwardList.forwardList.map { $0.url }
             let webViewHistory = backList + (currentItem.map { [$0] } ?? []) + forwardList
             
-            // ✅ 세부 주소 포함하도록 virtualHistoryStack 업데이트
+            // ✅ 가상 스택을 웹뷰 히스토리로 재동기화(리다이렉트/해시 변경 등 포함)
             if !webViewHistory.isEmpty {
                 virtualHistoryStack = webViewHistory
                 virtualCurrentIndex = backList.count
@@ -439,6 +580,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 canGoForward = virtualCurrentIndex < virtualHistoryStack.count - 1
             }
         } else {
+            // 일반 모드: KVO가 기본 반영하지만 didFinish에서도 최종 스냅
             canGoBack = webView.canGoBack
             canGoForward = webView.canGoForward
         }
@@ -454,10 +596,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
                 WebViewStateModel.saveGlobalHistory()
                 HistoryCacheManager.shared.cacheEntry(for: finalURL, title: title)
+            } else {
+                // 동일 URL이라도 타이틀이 갱신되면 캐시 타이틀 업데이트
+                HistoryCacheManager.shared.cacheEntry(for: finalURL, title: title)
             }
         }
         
-        isNavigating = false
+        isNavigating = false // ✅ 직렬화 해제 지점
         let urlList = virtualHistoryStack.map { $0.absoluteString }.joined(separator: ", ")
         dbg("🌐 LOAD 완료 → \(webView.url?.absoluteString ?? "nil") | restoring=\(isRestoringSession) vhist=\(isUsingVirtualHistory) | currentURL=\(currentURL?.absoluteString ?? "nil") | isNavigating=\(isNavigating) | canGoBack=\(canGoBack) canGoForward=\(canGoForward) | urls=[\(urlList)]")
         logHistorySnapshot(reason: "LOAD_FINISH")
@@ -482,6 +627,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if isRestoringSession { finishSessionRestore() }
     }
 
+    // MARK: - 디버그/로깅
     private func dbg(_ msg: String) {
         let id = tabID?.uuidString.prefix(6) ?? "noTab"
         let currentURLStr = currentURL?.absoluteString ?? "nil"
@@ -509,6 +655,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
+    // MARK: - 히스토리 페이지 UI
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
         @State private var searchQuery: String = ""
@@ -579,12 +726,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
+    // MARK: - 로드 편의 함수
     func loadURLIfReady() {
         guard let webView = webView, let url = currentURL else {
             dbg("🚫 loadURLIfReady 실패: webView 또는 URL 없음 | currentURL=\(currentURL?.absoluteString ?? "nil")")
             return
         }
+        // 이미 동일 URL이면 불필요한 로드 방지
         if webView.url != url {
+            isNavigating = true // ✅ 중복 호출 방지
             webView.load(URLRequest(url: url))
             HistoryCacheManager.shared.cacheEntry(for: url)
             let urlList = virtualHistoryStack.map { $0.absoluteString }.joined(separator: ", ")
