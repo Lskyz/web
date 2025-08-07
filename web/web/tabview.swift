@@ -198,17 +198,18 @@ enum TabPersistenceManager {
     }
 }
 
+// (중복 충돌 방지를 위해 삭제됨)
 // MARK: - WebViewStateModel 유틸: 현재 URL이 준비되면 로드
-extension WebViewStateModel {
-    func loadURLIfReady() {
-        if let url = currentURL, let webView = webView {
-            webView.load(URLRequest(url: url))
-            TabPersistenceManager.debugMessages.append("URL 로드 시도: \(url.absoluteString)")
-        } else {
-            TabPersistenceManager.debugMessages.append("URL 로드 실패: WebView 또는 URL 없음")
-        }
-    }
-}
+// extension WebViewStateModel {
+//     func loadURLIfReady() {
+//         if let url = currentURL, let webView = webView {
+//             webView.load(URLRequest(url: url))
+//             TabPersistenceManager.debugMessages.append("URL 로드 시도: \(url.absoluteString)")
+//         } else {
+//             TabPersistenceManager.debugMessages.append("URL 로드 실패: WebView 또는 URL 없음")
+//         }
+//     }
+// }
 
 // MARK: - DashboardView: URL 없는 탭의 홈 화면
 /// URL이 없는 탭에서 표시되는 대시보드 뷰.
