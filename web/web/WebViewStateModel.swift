@@ -417,15 +417,18 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🏷️ 플래그 상태 - 복원중: \(isRestoringSession), 히스토리네비: \(isHistoryNavigation), 웹뷰네비: \(isNavigatingFromWebView)")
             
             if !isRestoringSession {
-                if isHistoryNavigation {
-                    // 히스토리 네비게이션 중에는 새 페이지 추가 안함
-                    updateCurrentPageTitle(title)
-                    currentURL = finalURL
-                    dbg("🔄 히스토리 네비게이션 완료: '\(title)' - 새 페이지 추가 안함")
-                    
-                    // 히스토리 네비게이션 플래그 해제
-                    isHistoryNavigation = false
-                    isNavigatingFromWebView = false
+    if isHistoryNavigation {
+        updateCurrentPageTitle(title)
+        currentURL = finalURL
+        dbg("🔄 히스토리 네비게이션 완료: '\(title)' - 새 페이지 추가 안함")
+        
+        // ✅ 히스토리 네비게이션 플래그 지연 해제
+        DispatchQueue.main.async {
+            self.isHistoryNavigation = false
+            self.isNavigatingFromWebView = false
+        }
+
+        return // ❗️이거 반드시 필요 (else 블록 실행 방지)
                 } else {
                     // 일반 네비게이션: 페이지 추가 여부 판단
                     let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
