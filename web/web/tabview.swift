@@ -2,8 +2,6 @@ import SwiftUI
 import AVKit
 import WebKit
 
-// MARK: - Bookmark: 북마크 데이터 모델
-// (기존 코드 유지, 변경 없음)
 struct Bookmark: Codable, Identifiable, Equatable {
     let id: UUID
     let title: String
@@ -17,19 +15,16 @@ struct Bookmark: Codable, Identifiable, Equatable {
     }
 }
 
-// MARK: - WebTabSessionSnapshot: 탭 상태 저장/복원용 Codable 구조체
 struct WebTabSessionSnapshot: Codable {
     let id: String
-    let history: [HistoryEntry] // [String] → [HistoryEntry]로 변경
+    let history: [HistoryEntry]
     let index: Int
     
-    // Codable 키 정의
     enum CodingKeys: String, CodingKey {
         case id, history, index
     }
 }
 
-// MARK: - WebTab: 브라우저 탭 모델
 struct WebTab: Identifiable, Equatable {
     let id: UUID
     let stateModel: WebViewStateModel
@@ -42,9 +37,7 @@ struct WebTab: Identifiable, Equatable {
     
     init(url: URL? = nil) {
         let newID = UUID()
-        let model = WebViewStateModel()
-        model.tabID = newID
-        model.currentURL = url
+        let model = WebViewStateModel(url: url, tabID: newID) // tabID 초기화
         self.id = newID
         self.stateModel = model
         TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(id.uuidString)")
@@ -52,9 +45,7 @@ struct WebTab: Identifiable, Equatable {
     
     init(restoredID: UUID, restoredHistory: [HistoryEntry], restoredIndex: Int) {
         self.id = restoredID
-        let model = WebViewStateModel()
-        model.tabID = restoredID
-        
+        let model = WebViewStateModel(url: nil, tabID: restoredID) // tabID 초기화
         let safeIndex = max(0, min(restoredIndex, max(0, restoredHistory.count - 1)))
         if !restoredHistory.isEmpty {
             model.restoreSession(WebViewSession(history: restoredHistory, currentIndex: safeIndex))
@@ -84,27 +75,17 @@ struct WebTab: Identifiable, Equatable {
     }
     
     private func alignIDsIfNeeded() {
-        if stateModel.tabID != id {
-            stateModel.tabID = id
-            TabPersistenceManager.debugMessages.append("ID 정렬: stateModel.tabID <- \(id.uuidString)")
-        }
+        // tabID는 생성자에서 일치하도록 설정됨
+        TabPersistenceManager.debugMessages.append("ID 정렬 확인: stateModel.tabID=\(stateModel.tabID.uuidString), tab.id=\(id.uuidString)")
     }
 }
 
-// MARK: - TabPersistenceManager: 탭 저장/복원 관리
 enum TabPersistenceManager {
     private static let key = "savedTabs"
     private static let bookmarkKey = "savedBookmarks"
     static var debugMessages: [String] = []
     
     static func saveTabs(_ tabs: [WebTab]) {
-        tabs.forEach { tab in
-            if tab.stateModel.tabID != tab.id {
-                tab.stateModel.tabID = tab.id
-                debugMessages.append("저장 전 정렬: \(tab.id.uuidString)")
-            }
-        }
-        
         let snapshots = tabs.map { $0.toSnapshot() }
         let summary = snapshots.map { "\($0.id): \($0.history.count) 항목, idx=\($0.index)" }.joined(separator: ", ")
         debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷 요약: [\(summary)]")
@@ -172,8 +153,6 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - DashboardView, TabManager, ToastView, Collection 확장
-// (기존 코드 유지, 변경 없음)
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks()
     @State private var showAddBookmarkAlert: Bool = false
@@ -294,7 +273,7 @@ struct DashboardView: View {
                     } placeholder: {
                         Image(systemName: "globe")
                             .resizable()
-                            .frame(width: 40, height 40)
+                            .frame(width: 40, height: 40)
                     }
                 } else {
                     Image(systemName: "globe")
@@ -371,7 +350,7 @@ struct TabManager: View {
                                 if let index = tabs.firstIndex(of: tab) {
                                     onTabSelected(index)
                                     dismiss()
-                                    let urlList = tab.stateModel.virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
+                                    let urlList = tab.stateModel.historyStack.map { $0.debugDescription }.joined(separator: ", ")
                                     TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(tab.id.uuidString), entries=[\(urlList)])")
                                     debugMessages = TabPersistenceManager.debugMessages
                                 }
