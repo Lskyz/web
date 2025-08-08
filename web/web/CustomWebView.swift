@@ -321,20 +321,20 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // 파일 업로드 처리 (iOS 14+ 버전 - 강한 참조 유지)
+       // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
         @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             DispatchQueue.main.async {
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
                 documentPicker.allowsMultipleSelection = true
-
+                
                 // 강한 참조 유지
                 self.filePicker = FilePicker(completionHandler: { urls in
                     completionHandler(urls)
                     self.filePicker = nil // 완료 후 해제
                 })
                 documentPicker.delegate = self.filePicker
-
+                
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
                    let rootVC = window.rootViewController {
@@ -356,16 +356,15 @@ struct CustomWebView: UIViewRepresentable {
 @available(iOS 14.0, *)
 class FilePicker: NSObject, UIDocumentPickerDelegate {
     let completionHandler: ([URL]?) -> Void
-
+    
     init(completionHandler: @escaping ([URL]?) -> Void) {
         self.completionHandler = completionHandler
     }
-
+    
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         completionHandler(urls)
     }
-
+    
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
-}
