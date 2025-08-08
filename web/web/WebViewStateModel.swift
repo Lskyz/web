@@ -559,18 +559,22 @@ func goForward() {
         dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)")")
     }
     
-    // 네비게이션 완료
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        self.webView = webView // 웹뷰 연결 유지
-        
-        // 가상 히스토리 동기화
-        if isUsingVirtualHistory && !isRestoringSession {
+    self.webView = webView
+
+    if isUsingVirtualHistory {
+        // **스택이 비어 있으면(최초) 현재 URL을 시딩**
+        if virtualHistoryStack.isEmpty, let u = webView.url {
+            virtualHistoryStack.append(u)
+            virtualCurrentIndex = 0
+            dbg("🧩 V-HIST 시딩: \(u.absoluteString)")
+        }
+        // 기존 동기화 로직
+        else if !isRestoringSession {
             let backList = webView.backForwardList.backList.map { $0.url }
             let currentItem = webView.backForwardList.currentItem?.url
             let forwardList = webView.backForwardList.forwardList.map { $0.url }
             let webViewHistory = backList + (currentItem.map { [$0] } ?? []) + forwardList
-            
-            // 웹뷰 히스토리가 더 정확할 경우 업데이트
             if !webViewHistory.isEmpty && webViewHistory.count >= virtualHistoryStack.count {
                 let oldCount = virtualHistoryStack.count
                 virtualHistoryStack = webViewHistory
@@ -578,6 +582,7 @@ func goForward() {
                 dbg("🧩 V-HIST 동기화: \(oldCount) → \(webViewHistory.count) URLs")
             }
         }
+    }
         
         updateNavigationButtons() // 버튼 상태 갱신
         
