@@ -9,7 +9,12 @@ struct Bookmark: Codable, Identifiable, Equatable {
     let url: String
     let faviconURL: String?
 
-    var idValue: UUID { id }
+    var idValue: UUID { id // MARK: - Collection 확장: 안전 인덱싱
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
 
     static func == (lhs: Bookmark, rhs: Bookmark) -> Bool {
         lhs.id == rhs.id
@@ -510,7 +515,7 @@ struct RecentPageCard: View {
     }
 }
 
-// MARK: - TabManager: 탭 목록 관리 뷰 (기존 기능 유지)
+// MARK: - TabManager: 탭 목록 관리 뷰 (디버깅 개선)
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
@@ -520,6 +525,7 @@ struct TabManager: View {
     @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
     @State private var showToast = false
     @State private var toastMessage = ""
+    @State private var showDebugView = false
 
     var body: some View {
         ZStack {
@@ -527,20 +533,44 @@ struct TabManager: View {
                 Text("탭 목록")
                     .font(.title.bold())
 
-                // 디버깅 로그 영역
+                // 간소화된 디버깅 로그 영역
                 VStack(alignment: .leading) {
-                    Text("디버깅 로그")
-                        .font(.headline)
-                        .padding(.top)
+                    HStack {
+                        Text("시스템 상태")
+                            .font(.headline)
+                        
+                        Spacer()
+                        
+                        Button("상세 로그") {
+                            showDebugView = true
+                        }
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(6)
+                    }
+                    .padding(.top)
+                    
                     ScrollView {
-                        ForEach(debugMessages, id: \.self) { message in
-                            Text(message)
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                                .padding(.vertical, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            // 최근 5개 메시지만 표시
+                            ForEach(Array(debugMessages.suffix(5).enumerated()), id: \.offset) { _, message in
+                                Text(message)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.gray)
+                                    .lineLimit(2)
+                            }
+                            
+                            if debugMessages.count > 5 {
+                                Text("... 및 \(debugMessages.count - 5)개 더")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
-                    .frame(maxHeight: 150)
+                    .frame(maxHeight: 100)
                     .padding()
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(10)
@@ -566,9 +596,17 @@ struct TabManager: View {
                                         .foregroundColor(.gray)
                                     
                                     // 페이지 개수 표시
-                                    Text("\(tab.historyURLs.count)개 페이지")
-                                        .font(.caption2)
-                                        .foregroundColor(.blue)
+                                    HStack {
+                                        Text("\(tab.historyURLs.count)개 페이지")
+                                            .font(.caption2)
+                                            .foregroundColor(.blue)
+                                        
+                                        Spacer()
+                                        
+                                        Text("ID: \(String(tab.id.uuidString.prefix(8)))")
+                                            .font(.caption2)
+                                            .foregroundColor(.gray)
+                                    }
                                 }
                             }
                             Spacer()
@@ -628,6 +666,9 @@ struct TabManager: View {
             TabPersistenceManager.saveTabs(tabs)
             debugMessages = TabPersistenceManager.debugMessages
         }
+        .fullScreenCover(isPresented: $showDebugView) {
+            DebugLogView()
+        }
     }
 
     private func closeTab(_ tab: WebTab) {
@@ -655,9 +696,197 @@ struct ToastView: View {
     }
 }
 
-// MARK: - Collection 확장: 안전 인덱싱
-extension Collection {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
+// MARK: - DebugLogView: 별도 디버깅 로그 뷰
+struct DebugLogView: View {
+    @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
+    @State private var searchText: String = ""
+    @State private var showCopyAlert = false
+    @State private var copyMessage = ""
+    @Environment(\.dismiss) private var dismiss
+    
+    private var filteredMessages: [String] {
+        if searchText.isEmpty {
+            return debugMessages.reversed() // 최신 메시지가 위에
+        } else {
+            return debugMessages.filter { 
+                $0.localizedCaseInsensitiveContains(searchText)
+            }.reversed()
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack {
+                // 검색바
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                    TextField("로그 검색...", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    if !searchText.isEmpty {
+                        Button("지우기") {
+                            searchText = ""
+                        }
+                        .font(.caption)
+                    }
+                }
+                .padding(.horizontal)
+                
+                // 로그 목록
+                ScrollView {
+                    ScrollViewReader { proxy in
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(filteredMessages.enumerated()), id: \.offset) { index, message in
+                                DebugLogRowView(
+                                    message: message, 
+                                    index: index,
+                                    onCopy: { text in
+                                        copyToClipboard(text)
+                                    }
+                                )
+                                .id(index)
+                            }
+                        }
+                        .padding(.horizontal)
+                        
+                        // 자동 스크롤을 맨 위로 (최신 메시지)
+                        .onAppear {
+                            if !filteredMessages.isEmpty {
+                                proxy.scrollTo(0, anchor: .top)
+                            }
+                        }
+                        .onChange(of: debugMessages.count) { _ in
+                            // 새 메시지가 추가되면 맨 위로 스크롤
+                            if !filteredMessages.isEmpty {
+                                proxy.scrollTo(0, anchor: .top)
+                            }
+                        }
+                    }
+                }
+                
+                // 하단 버튼들
+                HStack {
+                    Button("전체 복사") {
+                        let allText = debugMessages.joined(separator: "\n")
+                        copyToClipboard(allText)
+                    }
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    
+                    Button("로그 지우기") {
+                        TabPersistenceManager.debugMessages.removeAll()
+                        debugMessages.removeAll()
+                    }
+                    .padding()
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    
+                    Spacer()
+                    
+                    Text("\(debugMessages.count)개")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .padding()
+            }
+            .navigationTitle("디버그 로그")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("닫기") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            debugMessages = TabPersistenceManager.debugMessages
+        }
+        .alert("복사 완료", isPresented: $showCopyAlert) {
+            Button("확인", role: .cancel) { }
+        } message: {
+            Text(copyMessage)
+        }
+    }
+    
+    private func copyToClipboard(_ text: String) {
+        UIPasteboard.general.string = text
+        copyMessage = "\(text.count)자 복사됨"
+        showCopyAlert = true
+    }
+}
+
+// MARK: - DebugLogRowView: 개별 로그 행
+struct DebugLogRowView: View {
+    let message: String
+    let index: Int
+    let onCopy: (String) -> Void
+    
+    @State private var isExpanded = false
+    
+    private var messageColor: Color {
+        if message.contains("❌") { return .red }
+        if message.contains("🆕") { return .green }
+        if message.contains("⬅️") || message.contains("➡️") { return .blue }
+        if message.contains("🔧") || message.contains("🔄") { return .orange }
+        return .primary
+    }
+    
+    private var messageIcon: String {
+        if message.contains("❌") { return "xmark.circle" }
+        if message.contains("🆕") { return "plus.circle" }
+        if message.contains("⬅️") { return "arrow.left.circle" }
+        if message.contains("➡️") { return "arrow.right.circle" }
+        if message.contains("🌐") { return "globe" }
+        if message.contains("📄") { return "doc" }
+        return "info.circle"
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: messageIcon)
+                    .foregroundColor(messageColor)
+                    .frame(width: 16)
+                
+                Text(message)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(messageColor)
+                    .lineLimit(isExpanded ? nil : 3)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }
+                
+                Spacer()
+                
+                Button(action: {
+                    onCopy(message)
+                }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+            
+            if message.count > 100 && !isExpanded {
+                HStack {
+                    Spacer()
+                    Text("탭하여 펼치기")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .background(messageColor.opacity(0.05))
+        .cornerRadius(6)
     }
 }
