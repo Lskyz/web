@@ -77,13 +77,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             guard let url = currentURL else { return }
             
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
-            dbg("URL 업데이트 → \(url.absoluteString)")
+            dbg("🎯 currentURL 업데이트 → \(url.absoluteString) | 이전: \(oldValue?.absoluteString ?? "nil")")
             
             // 🔧 주소창에서 직접 입력한 경우 웹뷰 로드
             if !isRestoringSession && !isNavigatingFromWebView {
                 if let webView = webView {
                     webView.load(URLRequest(url: url))
                     dbg("🌐 주소창에서 웹뷰 로드: \(url.absoluteString)")
+                } else {
+                    dbg("⚠️ 웹뷰가 없어서 로드 불가")
                 }
             }
         }
@@ -91,6 +93,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // 웹뷰 내부 네비게이션인지 구분하는 플래그
     private var isNavigatingFromWebView: Bool = false
+    
+    // 리다이렉트 감지용
+    private var redirectionChain: [URL] = []
+    private var redirectionStartTime: Date?
 
     @Published var canGoBack: Bool = false {
         didSet {
@@ -158,6 +164,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // 현재 위치 이후의 forward 기록 제거
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🧹 Forward 히스토리 정리: \(pageHistory.count)개 남음")
         }
         
         let newRecord = PageRecord(url: url, title: title)
@@ -168,15 +175,23 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if pageHistory.count > 50 {
             pageHistory.removeFirst()
             currentPageIndex -= 1
+            dbg("🧹 히스토리 크기 제한: 첫 페이지 제거")
         }
         
         updateNavigationState()
-        dbg("📄 페이지 추가: \(newRecord.title) [ID: \(String(newRecord.id.uuidString.prefix(8)))] 인덱스: \(currentPageIndex)")
+        dbg("📄 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] 인덱스: \(currentPageIndex)/\(pageHistory.count)")
     }
     
     private func updateNavigationState() {
+        let oldBack = canGoBack
+        let oldForward = canGoForward
+        
         canGoBack = currentPageIndex > 0
         canGoForward = currentPageIndex < pageHistory.count - 1
+        
+        if oldBack != canGoBack || oldForward != canGoForward {
+            dbg("🔄 네비게이션 상태 업데이트: back=\(canGoBack), forward=\(canGoForward)")
+        }
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -336,10 +351,29 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: - WKNavigationDelegate (개선)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        dbg("🌐 로드 시작 → \(webView.url?.absoluteString ?? "(pending)")")
+        let startURL = webView.url
+        dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
         
-        // 🔧 웹뷰 내부 네비게이션 감지
-        if let startURL = webView.url, currentURL != startURL && !isRestoringSession {
+        // 🔧 리다이렉트 체인 감지 시작
+        if let url = startURL {
+            let now = Date()
+            
+            // 리다이렉트 체인 초기화 또는 연장
+            if redirectionChain.isEmpty || redirectionStartTime == nil || 
+               now.timeIntervalSince(redirectionStartTime!) > 3.0 {
+                // 새로운 네비게이션 시작
+                redirectionChain = [url]
+                redirectionStartTime = now
+                dbg("🔗 새 네비게이션 체인 시작: \(url.absoluteString)")
+            } else {
+                // 기존 리다이렉트 체인에 추가
+                redirectionChain.append(url)
+                dbg("🔗 리다이렉트 체인 연장: \(url.absoluteString) (총 \(redirectionChain.count)개)")
+            }
+        }
+        
+        // 웹뷰 내부 네비게이션 감지
+        if let startURL = startURL, currentURL != startURL && !isRestoringSession {
             dbg("🔄 웹뷰 내부 네비게이션 감지: \(startURL.absoluteString)")
         }
     }
@@ -351,39 +385,35 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         // 🔧 웹뷰에서 실제 로드된 URL 확인 및 페이지 기록 업데이트
         if let finalURL = webView.url {
-            dbg("🌐 didFinish: \(finalURL.absoluteString), current: \(currentURL?.absoluteString ?? "nil")")
+            dbg("🌐 didFinish: \(finalURL.absoluteString)")
+            dbg("📊 현재 상태 - currentURL: \(currentURL?.absoluteString ?? "nil"), 히스토리: \(pageHistory.count)개, 인덱스: \(currentPageIndex)")
             
-            // 🔥 핵심 수정: 항상 새 페이지로 기록 (단, 복원 중 제외)
-            if !isRestoringSession {
+            // 🔥 핵심 수정: 리다이렉트 체인 분석
+            let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
+            
+            if !isRestoringSession && shouldAddNewPage {
                 isNavigatingFromWebView = true
                 
-                // 마지막 페이지와 URL이 다르면 새 페이지 추가
-                let shouldAddNewPage: Bool
-                if pageHistory.isEmpty {
-                    shouldAddNewPage = true
-                } else if let lastRecord = pageHistory.last {
-                    shouldAddNewPage = (lastRecord.url != finalURL)
-                } else {
-                    shouldAddNewPage = true
-                }
+                addNewPage(url: finalURL, title: title)
+                dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
                 
-                if shouldAddNewPage {
-                    addNewPage(url: finalURL, title: title)
-                    dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
-                    
-                    // 전역 방문 기록 추가
-                    WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
-                    WebViewStateModel.saveGlobalHistory()
-                } else {
-                    // 같은 URL이면 제목만 업데이트
-                    updateCurrentPageTitle(title)
-                    dbg("📝 페이지 제목만 업데이트: '\(title)'")
-                }
+                // 전역 방문 기록 추가
+                WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+                WebViewStateModel.saveGlobalHistory()
                 
                 // currentURL 동기화 (didSet 호출 방지)
                 currentURL = finalURL
                 isNavigatingFromWebView = false
+            } else if !isRestoringSession {
+                // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
+                updateCurrentPageTitle(title)
+                currentURL = finalURL
+                dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
             }
+            
+            // 리다이렉트 체인 정리
+            redirectionChain.removeAll()
+            redirectionStartTime = nil
         }
         
         updateNavigationState()
@@ -395,14 +425,68 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             navigationDidFinish.send(())
         }
     }
+    
+    // 🔧 리다이렉트를 고려한 페이지 추가 판단 로직
+    private func shouldAddPageToHistory(finalURL: URL) -> Bool {
+        // 1. 히스토리가 비어있으면 무조건 추가
+        if pageHistory.isEmpty {
+            dbg("✅ 첫 페이지이므로 추가")
+            return true
+        }
+        
+        // 2. 마지막 페이지와 URL이 완전히 다르면 추가
+        guard let lastRecord = pageHistory.last else {
+            dbg("✅ 마지막 기록이 없으므로 추가")
+            return true
+        }
+        
+        if lastRecord.url != finalURL {
+            // 3. 리다이렉트 체인 분석
+            if redirectionChain.count > 1 {
+                // 리다이렉트가 발생한 경우
+                let firstURL = redirectionChain.first!
+                let lastURL = redirectionChain.last!
+                
+                // 시작 URL과 마지막 기록이 같고, 최종 URL이 다르면 리다이렉트로 판단
+                if lastRecord.url == firstURL && lastURL == finalURL {
+                    dbg("🔄 리다이렉트 감지: \(firstURL.absoluteString) → \(finalURL.absoluteString)")
+                    
+                    // 도메인이 같은 리다이렉트면 기존 페이지 업데이트만
+                    if firstURL.host == finalURL.host {
+                        dbg("🏠 같은 도메인 리다이렉트 - 기존 페이지 업데이트")
+                        return false
+                    } else {
+                        dbg("🌍 다른 도메인 리다이렉트 - 새 페이지 추가")
+                        return true
+                    }
+                }
+            }
+            
+            dbg("✅ 다른 URL이므로 새 페이지 추가: \(lastRecord.url.absoluteString) → \(finalURL.absoluteString)")
+            return true
+        } else {
+            dbg("📝 같은 URL - 제목만 업데이트")
+            return false
+        }
+    }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
+        
+        // 리다이렉트 체인 정리
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
+        
         isRestoringSession = false
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
+        
+        // 리다이렉트 체인 정리
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
+        
         isRestoringSession = false
     }
 
