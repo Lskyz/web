@@ -2,6 +2,7 @@ import SwiftUI
 import WebKit
 import AVFoundation
 import UIKit
+import UniformTypeIdentifiers // 파일 선택을 위한 UTType 사용
 
 // MARK: - CustomWebView (단순화된 시스템)
 struct CustomWebView: UIViewRepresentable {
@@ -10,6 +11,9 @@ struct CustomWebView: UIViewRepresentable {
     @Binding var showAVPlayer: Bool
 
     var onScroll: ((CGFloat) -> Void)? = nil
+
+    // MARK: - Coordinator 생성
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     // MARK: - makeUIView (단순화)
     func makeUIView(context: Context) -> WKWebView {
@@ -25,7 +29,8 @@ struct CustomWebView: UIViewRepresentable {
 
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
-        controller.addUserScript(makeVideoDetectionScript())
+        controller.addUserScript(makeVideoScript()) // 함수명 일치
+        controller.add(context.coordinator, name: "playVideo") // JS → 네이티브 메시지 핸들러 등록
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -106,7 +111,10 @@ struct CustomWebView: UIViewRepresentable {
         uiView.uiDelegate = nil
         uiView.navigationDelegate = nil
         coordinator.webView = nil
-        
+
+        // 메시지 핸들러 제거
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
+
         // NotificationCenter 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
     }
@@ -153,7 +161,6 @@ struct CustomWebView: UIViewRepresentable {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
-
     // MARK: - 오디오 세션 (다른 앱과 믹싱 허용)
     private func configureAudioSessionForMixing() {
         let session = AVAudioSession.sharedInstance()
@@ -167,24 +174,25 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
         TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
     }
- // JS → 네이티브: 비디오 클릭 시 AVPlayer로 재생
+
+    // JS → 네이티브: 비디오 클릭 시 AVPlayer로 재생
     class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
-        var parent: CustomWebView
-        weak var webView: WKWebView?
-
-        init(_ parent: CustomWebView) { self.parent = parent }
-    
-      
- 
-        // MARK: - Coordinator
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate {
         var parent: CustomWebView
         weak var webView: WKWebView?
         var filePicker: FilePicker? // 강한 참조 유지용
 
         init(_ parent: CustomWebView) { self.parent = parent }
+
+        // WKScriptMessageHandler: JS에서 보낸 메시지 처리
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "playVideo" else { return }
+            if let urlString = message.body as? String, let url = URL(string: urlString) {
+                DispatchQueue.main.async {
+                    self.parent.playerURL = url
+                    self.parent.showAVPlayer = true
+                }
+            }
+        }
 
         // Pull to Refresh
         @objc func handleRefresh(_ sender: UIRefreshControl) {
@@ -208,14 +216,14 @@ struct CustomWebView: UIViewRepresentable {
         @objc func reloadWebView() {
             webView?.reload()
         }
-        
+
         @objc func goBack() {
             guard let webView = webView else { return }
             if webView.canGoBack {
                 webView.goBack()
             }
         }
-        
+
         @objc func goForward() {
             guard let webView = webView else { return }
             if webView.canGoForward {
@@ -227,7 +235,7 @@ struct CustomWebView: UIViewRepresentable {
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             parent.onScroll?(scrollView.contentOffset.y)
         }
-        
+
         // MARK: - WKUIDelegate 메서드들
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             // 새 창 요청 시 현재 웹뷰에서 로드
@@ -236,7 +244,7 @@ struct CustomWebView: UIViewRepresentable {
             }
             return nil
         }
-        
+
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
             // JavaScript alert 처리
             DispatchQueue.main.async {
@@ -244,7 +252,7 @@ struct CustomWebView: UIViewRepresentable {
                 alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
                     completionHandler()
                 })
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
                    let rootVC = window.rootViewController {
@@ -258,7 +266,7 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
         }
-        
+
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
             // JavaScript confirm 처리
             DispatchQueue.main.async {
@@ -269,7 +277,7 @@ struct CustomWebView: UIViewRepresentable {
                 alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
                     completionHandler(true)
                 })
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
                    let rootVC = window.rootViewController {
@@ -283,7 +291,7 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
         }
-        
+
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
             // JavaScript prompt 처리
             DispatchQueue.main.async {
@@ -298,7 +306,7 @@ struct CustomWebView: UIViewRepresentable {
                     let text = alert.textFields?.first?.text
                     completionHandler(text)
                 })
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
                    let rootVC = window.rootViewController {
@@ -312,21 +320,21 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
         }
-        
-        // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
+
+        // 파일 업로드 처리 (iOS 14+ 버전 - 강한 참조 유지)
         @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             DispatchQueue.main.async {
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
                 documentPicker.allowsMultipleSelection = true
-                
+
                 // 강한 참조 유지
                 self.filePicker = FilePicker(completionHandler: { urls in
                     completionHandler(urls)
                     self.filePicker = nil // 완료 후 해제
                 })
                 documentPicker.delegate = self.filePicker
-                
+
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
                    let rootVC = window.rootViewController {
@@ -348,15 +356,15 @@ struct CustomWebView: UIViewRepresentable {
 @available(iOS 14.0, *)
 class FilePicker: NSObject, UIDocumentPickerDelegate {
     let completionHandler: ([URL]?) -> Void
-    
+
     init(completionHandler: @escaping ([URL]?) -> Void) {
         self.completionHandler = completionHandler
     }
-    
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         completionHandler(urls)
     }
-    
+
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
