@@ -107,7 +107,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     weak var webView: WKWebView? {
         didSet {
-            if let webView {
+            if webView != nil {
                 dbg("🔗 webView 연결됨")
                 updateNavigationState()
             }
@@ -169,7 +169,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         updateNavigationState()
-        dbg("📄 페이지 추가: \(newRecord.title) [ID: \(newRecord.id.uuidString.prefix(8))] 인덱스: \(currentPageIndex)")
+        dbg("📄 페이지 추가: \(newRecord.title) [ID: \(String(newRecord.id.uuidString.prefix(8)))] 인덱스: \(currentPageIndex)")
     }
     
     private func updateNavigationState() {
@@ -182,8 +182,11 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
               currentPageIndex < pageHistory.count,
               !title.isEmpty else { return }
         
-        pageHistory[currentPageIndex].updateTitle(title)
-        dbg("📝 페이지 제목 업데이트: \(title) [ID: \(pageHistory[currentPageIndex].id.uuidString.prefix(8))]")
+        var updatedRecord = pageHistory[currentPageIndex]
+        updatedRecord.updateTitle(title)
+        pageHistory[currentPageIndex] = updatedRecord
+        
+        dbg("📝 페이지 제목 업데이트: \(title) [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
     }
     
     var currentPageRecord: PageRecord? {
@@ -243,7 +246,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         currentPageIndex -= 1
         
         if let record = currentPageRecord {
-            record.updateAccess()
+            var mutableRecord = record
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+            
             currentURL = record.url
             
             if let webView = webView {
@@ -264,7 +270,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         currentPageIndex += 1
         
         if let record = currentPageRecord {
-            record.updateAccess()
+            var mutableRecord = record
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+            
             currentURL = record.url
             
             if let webView = webView {
@@ -342,7 +351,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // MARK: - 디버그 로그
     private func dbg(_ msg: String) {
-        let id = tabID?.uuidString.prefix(6) ?? "noTab"
+        let id = tabID?.uuidString.prefix(6).map(String.init) ?? "noTab"
         TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
     }
 
@@ -483,7 +492,7 @@ struct SessionHistoryRowView: View {
                     .lineLimit(1)
                 
                 HStack {
-                    Text("ID: \(record.id.uuidString.prefix(8))")
+                    Text("ID: \(String(record.id.uuidString.prefix(8)))")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
