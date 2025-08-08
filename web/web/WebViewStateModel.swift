@@ -250,16 +250,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             guard let self = self else { return }
             guard let url = (change.newValue as? URL) ?? wv.url else { return } // 옵셔널 중첩 방지
             
-            DispatchQueue.main.async {
-                if let validURL = url,
-                   validURL.scheme != nil,
-                   validURL.absoluteString != "about:blank",
-                   self.currentURL != validURL {
-                    self.isInternalNavigation = true
-                    self.currentURL = validURL
-                    self.isInternalNavigation = false
-                }
-            }
+             DispatchQueue.main.async {
++        // url은 이미 URL 타입입니다
++        if url.scheme != nil,
++           url.absoluteString != "about:blank",
++           self.currentURL != url {
++            self.isInternalNavigation = true
++            self.currentURL = url
++            self.isInternalNavigation = false
++        }
++    }
         }
         
         // 로딩 상태 관찰
