@@ -338,7 +338,8 @@ struct ContentView: View {
                         }
                     )
                 }
-                .background(.ultraThinMaterial)
+                // ✨ UITabBarAppearance 스타일 - 완전 투명 배경
+                .background(.clear)
             }
 
         } else {
