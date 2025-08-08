@@ -1,4 +1,3 @@
-```swift
 // WebViewStateModel.swift
 // WKWebView를 관리하는 상태 모델로, 웹 뷰의 네비게이션 상태, 히스토리, 세션 저장/복원 등을 처리합니다.
 // 주요 수정사항:
@@ -249,10 +248,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // URL 변경 관찰
         kvURL = webView.observe(\.url, options: [.new]) { [weak self] wv, change in
             guard let self = self else { return }
-            guard let url: URL? = change.newValue as? URL ?? wv.url else { return } // 명시적 URL? 타입
+            guard let url = (change.newValue as? URL) ?? wv.url else { return } // 옵셔널 중첩 방지
             
             DispatchQueue.main.async {
-                if let validURL = url, // url은 URL?로 처리됨
+                if let validURL = url,
                    validURL.scheme != nil,
                    validURL.absoluteString != "about:blank",
                    self.currentURL != validURL {
