@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var textFieldSelectedAll = false
     @State private var showHistorySheet = false
     @State private var showTabManager = false
+    @State private var showDebugView = false
     @State private var showAddressBar = false
     @State private var scrollOffset: CGFloat = 0
     @State private var previousOffset: CGFloat = 0
@@ -184,6 +185,10 @@ struct ContentView: View {
                     AVPlayerView(url: url)
                 }
             }
+            
+            .fullScreenCover(isPresented: $showDebugView) {
+                DebugLogView()
+            }
 
             // MARK: - 하단 UI
             .safeAreaInset(edge: .bottom) {
@@ -300,7 +305,14 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 4)
                         
-                        // 페이지 개수 표시 (새 기능)
+                        Button(action: { showDebugView = true }) {
+                            Image(systemName: "ladybug")
+                                .font(.system(size: 18))
+                                .foregroundColor(.orange)
+                        }
+                        .padding(.horizontal, 4)
+                        
+                        // 페이지 개수 표시
                         if state.historyURLs.count > 0 {
                             Text("\(state.historyURLs.count)")
                                 .font(.caption)
