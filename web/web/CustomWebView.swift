@@ -4,7 +4,6 @@ import AVFoundation
 import UIKit
 
 // MARK: - CustomWebView (단순화된 시스템)
-/// 기존 복잡한 지연로드/복원 시스템 제거, 페이지 기록 시스템으로 단순화
 struct CustomWebView: UIViewRepresentable {
     @ObservedObject var stateModel: WebViewStateModel
     @Binding var playerURL: URL?
@@ -156,6 +155,7 @@ struct CustomWebView: UIViewRepresentable {
     class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate {
         var parent: CustomWebView
         weak var webView: WKWebView?
+        var filePicker: FilePicker? // 강한 참조 유지용
 
         init(_ parent: CustomWebView) { self.parent = parent }
 
@@ -257,7 +257,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithMessage prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
             // JavaScript prompt 처리
             DispatchQueue.main.async {
                 let alert = UIAlertController(title: "입력", message: prompt, preferredStyle: .alert)
@@ -286,13 +286,19 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // 파일 업로드 처리 (iOS 버전 - WKOpenPanelParameters 없이)
+        // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
         @available(iOS 14.0, *)
         func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             DispatchQueue.main.async {
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
                 documentPicker.allowsMultipleSelection = true
-                documentPicker.delegate = FilePicker(completionHandler: completionHandler)
+                
+                // 강한 참조 유지
+                self.filePicker = FilePicker(completionHandler: { urls in
+                    completionHandler(urls)
+                    self.filePicker = nil // 완료 후 해제
+                })
+                documentPicker.delegate = self.filePicker
                 
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                    let window = windowScene.windows.first,
@@ -304,6 +310,7 @@ struct CustomWebView: UIViewRepresentable {
                     presentingVC.present(documentPicker, animated: true)
                 } else {
                     completionHandler(nil)
+                    self.filePicker = nil
                 }
             }
         }
