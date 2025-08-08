@@ -1,27 +1,18 @@
-// WebViewStateModel.swift
-// WKWebView를 관리하는 상태 모델로, 웹 뷰의 네비게이션 상태, 히스토리, 세션 저장/복원 등을 처리합니다.
-// 수정사항:
-// 1) virtualHistoryStack을 [HistoryEntry]로 변경해 고유번호 기반 지연 로드 방식 적용
-// 2) WKWebView.backForwardList 동기화 제거
-// 3) goBack, goForward를 HistoryEntry 기반으로 최적화
-// 4) WebViewSession을 HistoryEntry 배열로 변경해 세션 복원 개선
-// 5) 시간(date) 정보를 로그에 포함해 디버깅 강화
-
 import Foundation
 import Combine
 import SwiftUI
 import WebKit
 
 // MARK: - 히스토리 항목 구조체
-// 히스토리 항목을 정의하는 구조체 (이미 정의됨)
 struct HistoryEntry: Identifiable, Hashable, Codable {
     var id = UUID() // 고유 식별자
     let url: URL // 페이지 URL
-    let title: String // 페이지 제목
+    var title: String // 페이지 제목 (let → var)
     let date: Date // 방문 시간
+    let navigationID: String // WKNavigation 고유 ID 추가
     
     enum CodingKeys: String, CodingKey {
-        case id, url, title, date
+        case id, url, title, date, navigationID
     }
     
     // 디버깅용 문자열 표현
@@ -33,7 +24,6 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
 }
 
 // MARK: - 세션 스냅샷 (저장/복원에 사용)
-// 웹 뷰의 히스토리와 현재 인덱스를 저장/복원하기 위한 구조체
 struct WebViewSession: Codable {
     let history: [HistoryEntry] // 히스토리 항목 목록
     let currentIndex: Int // 현재 페이지 인덱스
@@ -94,7 +84,7 @@ private class HistoryCacheManager {
 
 // MARK: - WebViewStateModel
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
-    var tabID: UUID?
+    let tabID: UUID // optional → non-optional
     let navigationDidFinish = PassthroughSubject<Void, Never>()
     
     @Published var currentURL: URL? {
@@ -114,23 +104,49 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
-    @Published var showAVPlayer = False
+    @Published var showAVPlayer = false // False → false
     
-    private var virtualHistoryStack: [HistoryEntry] = [] // [URL] → [HistoryEntry]로 변경
+    // 공개 getter 추가 (다른 파일에서 접근 가능하도록)
+    var historyURLs: [String] {
+        virtualHistoryStack.map { $0.url.absoluteString }
+    }
+    
+    var historyStack: [HistoryEntry] {
+        virtualHistoryStack
+    }
+    
+    var currentHistoryIndex: Int {
+        virtualCurrentIndex
+    }
+    
+    private var virtualHistoryStack: [HistoryEntry] = []
     private var virtualCurrentIndex: Int = -1
-    private var isUsingVirtualHistory: Bool = true // 항상 가상 히스토리 사용
-    
+    private var isUsingVirtualHistory: Bool = true
     private var isInternalNavigation: Bool = false
     private var isNavigating: Bool = false
     private var navigationStartTime: TimeInterval = 0
     private var lastNavTapAt: TimeInterval = 0
-    private let navTapMinInterval: TimeInterval = 0.3 // 100ms → 300ms로 조정
+    private let navTapMinInterval: TimeInterval = 0.3
     
     private(set) var isRestoringSession: Bool = false
     var pendingSession: WebViewSession?
     
     private var historyStack: [URL] = []
     private var currentIndexInStack: Int = -1
+    
+    init(url: URL? = nil, tabID: UUID = UUID()) { // 기본값 추가
+        self.tabID = tabID
+        self.currentURL = url
+        super.init()
+        if let url = url {
+            let entry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
+            virtualHistoryStack.append(entry)
+            virtualCurrentIndex = 0
+            historyStack.append(url)
+            currentIndexInStack = 0
+            HistoryCacheManager.shared.cacheEntry(for: url, title: entry.title)
+        }
+    }
     
     func beginSessionRestore() {
         isRestoringSession = true
@@ -148,7 +164,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if virtualCurrentIndex < virtualHistoryStack.count - 1 {
             virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
         }
-        let newEntry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date())
+        let newEntry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
         virtualHistoryStack.append(newEntry)
         virtualCurrentIndex = virtualHistoryStack.count - 1
         
@@ -170,14 +186,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     func historyStackIfAny() -> [URL] {
-        return virtualHistoryStack.map { $0.url } // HistoryEntry에서 URL 추출
+        return virtualHistoryStack.map { $0.url }
     }
     
     func currentIndexInSafeBounds() -> Int {
         return max(0, min(virtualCurrentIndex, max(0, virtualHistoryStack.count - 1)))
     }
     
-    // KVO 관리 (kvCanGoBack, kvCanGoForward 제거)
     private var kvURL: NSKeyValueObservation?
     private var kvIsLoading: NSKeyValueObservation?
     private var kvTitle: NSKeyValueObservation?
@@ -265,7 +280,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
     
-    // 세션 저장
     func saveSession() -> WebViewSession? {
         guard !virtualHistoryStack.isEmpty, virtualCurrentIndex >= 0 else {
             dbg("💾 세션 저장 실패: 히스토리 없음")
@@ -276,11 +290,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return WebViewSession(history: virtualHistoryStack, currentIndex: virtualCurrentIndex)
     }
     
-    // 세션 복원
     func restoreSession(_ session: WebViewSession) {
         beginSessionRestore()
         
-        let history = session.history.sorted { $0.date < $1.date } // 시간순 정렬
+        let history = session.history.sorted { $0.date < $1.date }
         let targetIndex = max(0, min(session.currentIndex, history.count - 1))
         
         if !history.isEmpty && history.indices.contains(targetIndex) {
@@ -352,7 +365,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         HistoryCacheManager.shared.cacheEntry(for: targetEntry.url, title: targetEntry.title)
     }
     
-    // 네비게이션 액션
     func goBack() {
         guard !throttleTap(), !isNavigating, virtualCurrentIndex > 0, let webView = webView else {
             let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
@@ -400,7 +412,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     func reload() {
+        guard webView != nil else { // if let webView = webView → if webView != nil
+            dbg("🚫 reload 실패: webView 없음")
+            return
+        }
         NotificationCenter.default.post(name: .init("WebViewReload"), object: nil)
+        dbg("🔄 reload 요청")
     }
     
     private func throttleTap() -> Bool {
@@ -478,7 +495,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 if virtualCurrentIndex < virtualHistoryStack.count - 1 {
                     virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
                 }
-                let newEntry = HistoryEntry(url: url, title: webView.title ?? url.host ?? "제목 없음", date: Date())
+                let newEntry = HistoryEntry(url: url, title: webView.title ?? url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
                 virtualHistoryStack.append(newEntry)
                 virtualCurrentIndex = virtualHistoryStack.count - 1
                 WebViewStateModel.globalHistory.append(newEntry)
@@ -537,7 +554,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     private func dbg(_ msg: String) {
-        let id = tabID?.uuidString.prefix(6) ?? "noTab"
+        let id = tabID.uuidString.prefix(6)
         let timestamp = ts()
         print("[\(timestamp)][\(id)] \(msg)")
     }
@@ -599,7 +616,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 }
             }
             .onReceive(state.navigationDidFinish) { _ in
-                print("HistoryPage: navigationDidFinish received")
+                state.dbg("HistoryPage: navigationDidFinish received")
             }
         }
         
