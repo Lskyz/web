@@ -249,10 +249,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // URL 변경 관찰
         kvURL = webView.observe(\.url, options: [.new]) { [weak self] wv, change in
             guard let self = self else { return }
-            guard let url = change.newValue as? URL ?? wv.url else { return } // 명시적 캐스팅
+            guard let url: URL? = change.newValue as? URL ?? wv.url else { return } // 명시적 URL? 타입
             
             DispatchQueue.main.async {
-                if let validURL = url, // url은 이미 URL?로 처리됨
+                if let validURL = url, // url은 URL?로 처리됨
                    validURL.scheme != nil,
                    validURL.absoluteString != "about:blank",
                    self.currentURL != validURL {
