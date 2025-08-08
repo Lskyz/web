@@ -5,17 +5,16 @@ import WebKit
 
 // MARK: - 히스토리 항목 구조체
 struct HistoryEntry: Identifiable, Hashable, Codable {
-    var id = UUID() // 고유 식별자
-    let url: URL // 페이지 URL
-    var title: String // 페이지 제목 (let → var)
-    let date: Date // 방문 시간
-    let navigationID: String // WKNavigation 고유 ID 추가
+    var id = UUID()
+    let url: URL
+    var title: String
+    let date: Date
+    let navigationID: String
     
     enum CodingKeys: String, CodingKey {
         case id, url, title, date, navigationID
     }
     
-    // 디버깅용 문자열 표현
     var debugDescription: String {
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss.SSS"
@@ -23,10 +22,10 @@ struct HistoryEntry: Identifiable, Hashable, Codable {
     }
 }
 
-// MARK: - 세션 스냅샷 (저장/복원에 사용)
+// MARK: - 세션 스냅샷
 struct WebViewSession: Codable {
-    let history: [HistoryEntry] // 히스토리 항목 목록
-    let currentIndex: Int // 현재 페이지 인덱스
+    let history: [HistoryEntry]
+    let currentIndex: Int
 }
 
 // MARK: - 타임스탬프 유틸
@@ -84,7 +83,7 @@ private class HistoryCacheManager {
 
 // MARK: - WebViewStateModel
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
-    let tabID: UUID // optional → non-optional
+    var tabID: UUID // let → var
     let navigationDidFinish = PassthroughSubject<Void, Never>()
     
     @Published var currentURL: URL? {
@@ -104,9 +103,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
-    @Published var showAVPlayer = false // False → false
+    @Published var showAVPlayer = false
     
-    // 공개 getter 추가 (다른 파일에서 접근 가능하도록)
     var historyURLs: [String] {
         virtualHistoryStack.map { $0.url.absoluteString }
     }
@@ -121,6 +119,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     private var virtualHistoryStack: [HistoryEntry] = []
     private var virtualCurrentIndex: Int = -1
+    private var legacyHistoryStack: [URL] = [] // historyStack → legacyHistoryStack
+    private var currentIndexInStack: Int = -1
     private var isUsingVirtualHistory: Bool = true
     private var isInternalNavigation: Bool = false
     private var isNavigating: Bool = false
@@ -131,10 +131,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     private(set) var isRestoringSession: Bool = false
     var pendingSession: WebViewSession?
     
-    private var historyStack: [URL] = []
-    private var currentIndexInStack: Int = -1
-    
-    init(url: URL? = nil, tabID: UUID = UUID()) { // 기본값 추가
+    init(url: URL? = nil, tabID: UUID = UUID()) {
         self.tabID = tabID
         self.currentURL = url
         super.init()
@@ -142,7 +139,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             let entry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
             virtualHistoryStack.append(entry)
             virtualCurrentIndex = 0
-            historyStack.append(url)
+            legacyHistoryStack.append(url)
             currentIndexInStack = 0
             HistoryCacheManager.shared.cacheEntry(for: url, title: entry.title)
         }
@@ -168,11 +165,11 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         virtualHistoryStack.append(newEntry)
         virtualCurrentIndex = virtualHistoryStack.count - 1
         
-        if currentIndexInStack < historyStack.count - 1 {
-            historyStack = Array(historyStack.prefix(upTo: currentIndexInStack + 1))
+        if currentIndexInStack < legacyHistoryStack.count - 1 {
+            legacyHistoryStack = Array(legacyHistoryStack.prefix(upTo: currentIndexInStack + 1))
         }
-        historyStack.append(url)
-        currentIndexInStack = historyStack.count - 1
+        legacyHistoryStack.append(url)
+        currentIndexInStack = legacyHistoryStack.count - 1
         
         updateNavigationButtons()
         let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
@@ -299,7 +296,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if !history.isEmpty && history.indices.contains(targetIndex) {
             virtualHistoryStack = history
             virtualCurrentIndex = targetIndex
-            historyStack = history.map { $0.url }
+            legacyHistoryStack = history.map { $0.url }
             currentIndexInStack = targetIndex
             
             let targetEntry = history[targetIndex]
@@ -412,7 +409,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     func reload() {
-        guard webView != nil else { // if let webView = webView → if webView != nil
+        guard webView != nil else {
             dbg("🚫 reload 실패: webView 없음")
             return
         }
@@ -500,8 +497,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 virtualCurrentIndex = virtualHistoryStack.count - 1
                 WebViewStateModel.globalHistory.append(newEntry)
                 WebViewStateModel.saveGlobalHistory()
-                historyStack.append(url)
-                currentIndexInStack = historyStack.count - 1
+                legacyHistoryStack.append(url)
+                currentIndexInStack = legacyHistoryStack.count - 1
                 dbg("🧩 V-HIST 추가: \(newEntry.debugDescription)")
             }
         }
@@ -557,6 +554,25 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let id = tabID.uuidString.prefix(6)
         let timestamp = ts()
         print("[\(timestamp)][\(id)] \(msg)")
+    }
+    
+    func makeVideoScript() -> String {
+        return """
+        var videos = document.getElementsByTagName('video');
+        for (var i = 0; i < videos.length; i++) {
+            videos[i].addEventListener('click', function(e) {
+                e.preventDefault();
+                var src = this.currentSrc || this.src;
+                if (src) {
+                    window.webkit.messageHandlers.playVideo.postMessage(src);
+                }
+            });
+        }
+        """
+    }
+    
+    func handleRefresh(_ webView: WKWebView) {
+        webView.reload()
     }
     
     struct HistoryPage: View {
