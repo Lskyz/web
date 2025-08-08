@@ -97,6 +97,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // 리다이렉트 감지용
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
+    
+    // 히스토리 네비게이션 중인지 구분 (뒤로/앞으로 버튼 클릭)
+    private var isHistoryNavigation: Bool = false
 
     @Published var canGoBack: Bool = false {
         didSet {
@@ -259,7 +262,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
     func goBack() {
         guard canGoBack, currentPageIndex > 0 else { 
-            dbg("⬅️ 뒤로가기 불가: canGoBack=\(canGoBack), index=\(currentPageIndex)")
+            dbg("❌ 뒤로가기 실패: canGoBack=\(canGoBack), index=\(currentPageIndex)")
             return 
         }
         
@@ -270,24 +273,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            // 🔧 히스토리 네비게이션 플래그 설정
+            isHistoryNavigation = true
             isNavigatingFromWebView = true
             currentURL = record.url
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
-                dbg("🌐 뒤로가기 웹뷰 로드: \(record.url.absoluteString)")
+                dbg("🔙 뒤로가기 실행: '\(record.title)' | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+            } else {
+                dbg("⚠️ 웹뷰가 없어서 뒤로가기 실행 불가")
             }
             
             updateNavigationState()
-            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
             
-            // isNavigatingFromWebView는 didFinish에서 false로 설정
+            // isNavigatingFromWebView와 isHistoryNavigation은 didFinish에서 해제
         }
     }
     
     func goForward() {
         guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
-            dbg("➡️ 앞으로가기 불가: canGoForward=\(canGoForward), index=\(currentPageIndex)")
+            dbg("❌ 앞으로가기 실패: canGoForward=\(canGoForward), index=\(currentPageIndex), max=\(pageHistory.count - 1)")
             return 
         }
         
@@ -298,18 +304,21 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            // 🔧 히스토리 네비게이션 플래그 설정
+            isHistoryNavigation = true
             isNavigatingFromWebView = true
             currentURL = record.url
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
-                dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
+                dbg("🔜 앞으로가기 실행: '\(record.title)' | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+            } else {
+                dbg("⚠️ 웹뷰가 없어서 앞으로가기 실행 불가")
             }
             
             updateNavigationState()
-            dbg("➡️ 앞으로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
             
-            // isNavigatingFromWebView는 didFinish에서 false로 설정
+            // isNavigatingFromWebView와 isHistoryNavigation은 didFinish에서 해제
         }
     }
     
@@ -387,28 +396,41 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if let finalURL = webView.url {
             dbg("🌐 didFinish: \(finalURL.absoluteString)")
             dbg("📊 현재 상태 - currentURL: \(currentURL?.absoluteString ?? "nil"), 히스토리: \(pageHistory.count)개, 인덱스: \(currentPageIndex)")
+            dbg("🏃‍♂️ 네비게이션 상태 - 복원중: \(isRestoringSession), 히스토리네비: \(isHistoryNavigation), 웹뷰내부: \(isNavigatingFromWebView)")
             
-            // 🔥 핵심 수정: 리다이렉트 체인 분석
-            let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
-            
-            if !isRestoringSession && shouldAddNewPage {
-                isNavigatingFromWebView = true
-                
-                addNewPage(url: finalURL, title: title)
-                dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
-                
-                // 전역 방문 기록 추가
-                WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
-                WebViewStateModel.saveGlobalHistory()
-                
-                // currentURL 동기화 (didSet 호출 방지)
-                currentURL = finalURL
-                isNavigatingFromWebView = false
-            } else if !isRestoringSession {
-                // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
-                updateCurrentPageTitle(title)
-                currentURL = finalURL
-                dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
+            if !isRestoringSession {
+                if isHistoryNavigation {
+                    // 🔄 히스토리 네비게이션 (뒤로/앞으로가기)
+                    updateCurrentPageTitle(title)
+                    currentURL = finalURL
+                    dbg("🔄 히스토리 네비게이션 완료: '\(title)'")
+                    
+                    // 히스토리 네비게이션 플래그 해제
+                    isHistoryNavigation = false
+                } else {
+                    // 🆕 일반 네비게이션 - 새 페이지 추가 여부 판단
+                    let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
+                    
+                    if shouldAddNewPage {
+                        isNavigatingFromWebView = true
+                        
+                        addNewPage(url: finalURL, title: title)
+                        dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
+                        
+                        // 전역 방문 기록 추가
+                        WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+                        WebViewStateModel.saveGlobalHistory()
+                        
+                        // currentURL 동기화 (didSet 호출 방지)
+                        currentURL = finalURL
+                        isNavigatingFromWebView = false
+                    } else {
+                        // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
+                        updateCurrentPageTitle(title)
+                        currentURL = finalURL
+                        dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
+                    }
+                }
             }
             
             // 리다이렉트 체인 정리
@@ -418,7 +440,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         updateNavigationState()
         
-        dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
+        dbg("✅ 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
         
         // 저장 트리거 (복원 중이 아닐 때만)
         if !isRestoringSession {
@@ -610,6 +632,224 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
             WebViewStateModel.saveGlobalHistory()
             TabPersistenceManager.debugMessages.append("[\(ts())] 🧹 방문 기록 삭제: \(targets.count)개")
+        }
+    }
+    
+    // MARK: - 디버깅 로그 페이지 (새 추가)
+    struct DebugPage: View {
+        @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
+        @State private var searchQuery: String = ""
+        @State private var selectedMessages: Set<String> = []
+        @State private var showCopyAlert = false
+        @Environment(\.dismiss) private var dismiss
+        
+        private var filteredMessages: [String] {
+            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if q.isEmpty { 
+                return Array(debugMessages.reversed()) // 최신 메시지를 위로
+            }
+            return debugMessages.filter { $0.lowercased().contains(q) }.reversed()
+        }
+        
+        var body: some View {
+            NavigationView {
+                VStack {
+                    // 검색바
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.gray)
+                        TextField("로그 메시지 검색...", text: $searchQuery)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    .padding(.horizontal)
+                    
+                    // 상태 정보
+                    HStack {
+                        Text("전체 \(debugMessages.count)개")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        if !selectedMessages.isEmpty {
+                            Text("• 선택됨 \(selectedMessages.count)개")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("전체 삭제") {
+                            TabPersistenceManager.debugMessages.removeAll()
+                            debugMessages.removeAll()
+                            selectedMessages.removeAll()
+                        }
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    }
+                    .padding(.horizontal)
+                    
+                    // 메시지 리스트
+                    List {
+                        ForEach(Array(filteredMessages.enumerated()), id: \.offset) { index, message in
+                            DebugMessageRow(
+                                message: message,
+                                isSelected: selectedMessages.contains(message),
+                                onSelectionChanged: { isSelected in
+                                    if isSelected {
+                                        selectedMessages.insert(message)
+                                    } else {
+                                        selectedMessages.remove(message)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    .listStyle(PlainListStyle())
+                }
+                .navigationTitle("디버그 로그")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItemGroup(placement: .navigationBarLeading) {
+                        Button("닫기") {
+                            dismiss()
+                        }
+                    }
+                    
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        if !selectedMessages.isEmpty {
+                            Button("복사") {
+                                copySelectedMessages()
+                            }
+                        }
+                        
+                        Button("새로고침") {
+                            debugMessages = TabPersistenceManager.debugMessages
+                        }
+                    }
+                }
+                .alert("복사 완료", isPresented: $showCopyAlert) {
+                    Button("확인") { }
+                } message: {
+                    Text("\(selectedMessages.count)개 메시지가 클립보드에 복사되었습니다.")
+                }
+            }
+            .onAppear {
+                debugMessages = TabPersistenceManager.debugMessages
+            }
+        }
+        
+        private func copySelectedMessages() {
+            let sortedMessages = selectedMessages.sorted { message1, message2 in
+                // 원본 순서 유지를 위해 debugMessages에서의 인덱스로 정렬
+                let index1 = debugMessages.firstIndex(of: message1) ?? 0
+                let index2 = debugMessages.firstIndex(of: message2) ?? 0
+                return index1 < index2
+            }
+            
+            let combinedText = sortedMessages.joined(separator: "\n")
+            UIPasteboard.general.string = combinedText
+            
+            selectedMessages.removeAll()
+            showCopyAlert = true
+        }
+    }
+}
+
+// MARK: - 디버그 메시지 행 뷰
+struct DebugMessageRow: View {
+    let message: String
+    let isSelected: Bool
+    let onSelectionChanged: (Bool) -> Void
+    
+    private var messageComponents: (timestamp: String, tabId: String, content: String) {
+        // 메시지 파싱: [12:34:56.789][abc123] 내용
+        let pattern = #"^\[([^\]]+)\]\[([^\]]+)\] (.+)$"#
+        
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)) {
+            
+            let timestamp = String(message[Range(match.range(at: 1), in: message)!])
+            let tabId = String(message[Range(match.range(at: 2), in: message)!])
+            let content = String(message[Range(match.range(at: 3), in: message)!])
+            
+            return (timestamp, tabId, content)
+        } else {
+            return ("", "", message)
+        }
+    }
+    
+    private var messageType: (emoji: String, color: Color) {
+        let content = messageComponents.content
+        
+        if content.contains("❌") || content.contains("실패") {
+            return ("❌", .red)
+        } else if content.contains("⚠️") || content.contains("경고") {
+            return ("⚠️", .orange)
+        } else if content.contains("🆕") || content.contains("새") {
+            return ("🆕", .green)
+        } else if content.contains("🔄") || content.contains("복원") {
+            return ("🔄", .blue)
+        } else if content.contains("🌐") || content.contains("로드") {
+            return ("🌐", .blue)
+        } else if content.contains("🔧") || content.contains("설정") {
+            return ("🔧", .gray)
+        } else {
+            return ("📝", .primary)
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // 선택 체크박스
+            Button(action: {
+                onSelectionChanged(!isSelected)
+            }) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .foregroundColor(isSelected ? .blue : .gray)
+                    .font(.system(size: 18))
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // 메시지 타입 아이콘
+            Text(messageType.emoji)
+                .font(.system(size: 14))
+            
+            // 메시지 내용
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    if !messageComponents.timestamp.isEmpty {
+                        Text(messageComponents.timestamp)
+                            .font(.caption2)
+                            .foregroundColor(.gray)
+                            .monospaced()
+                    }
+                    
+                    if !messageComponents.tabId.isEmpty && messageComponents.tabId != "noTab" {
+                        Text(messageComponents.tabId)
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+                    
+                    Spacer()
+                }
+                
+                Text(messageComponents.content.isEmpty ? message : messageComponents.content)
+                    .font(.caption)
+                    .foregroundColor(messageType.color)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .background(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+        .cornerRadius(6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelectionChanged(!isSelected)
         }
     }
 }
