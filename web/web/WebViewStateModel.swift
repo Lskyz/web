@@ -73,22 +73,30 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
     @Published var currentURL: URL? {
-        didSet {
-            guard let url = currentURL else { return }
-            
-            UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
-            dbg("🎯 currentURL 업데이트 → \(url.absoluteString) | 이전: \(oldValue?.absoluteString ?? "nil")")
-            
-            // 🔧 주소창에서 직접 입력한 경우 웹뷰 로드
-            if !isRestoringSession && !isNavigatingFromWebView {
-                if let webView = webView {
-                    webView.load(URLRequest(url: url))
-                    dbg("🌐 주소창에서 웹뷰 로드: \(url.absoluteString)")
-                } else {
-                    dbg("⚠️ 웹뷰가 없어서 로드 불가")
-                }
+    didSet {
+        guard let url = currentURL else { return }
+
+        UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
+        dbg("🎯 currentURL 업데이트 → \(url.absoluteString) | 이전: \(oldValue?.absoluteString ?? "nil")")
+
+        // 콜스택 추적 로그 추가
+        Thread.callStackSymbols.prefix(5).forEach { dbg("🔍 \($0)") }
+
+        // 🔧 주소창에서 직접 입력한 경우 웹뷰 로드
+        if url != oldValue,
+           !isRestoringSession,
+           !isNavigatingFromWebView {
+            if let webView = webView {
+                webView.load(URLRequest(url: url))
+                dbg("🌐 주소창에서 웹뷰 로드: \(url.absoluteString)")
+            } else {
+                dbg("⚠️ 웹뷰가 없어서 로드 불가")
             }
+        } else {
+            dbg("⛔️ webView.load 생략됨 - 중복 또는 복원 중 또는 내부 네비게이션")
         }
+    }
+}
     }
 
     // 웹뷰 내부 네비게이션인지 구분하는 플래그
