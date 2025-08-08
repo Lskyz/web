@@ -48,7 +48,7 @@ struct WebTab: Identifiable, Equatable {
         
         self.id = newID
         self.stateModel = model
-        TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(id.uuidString.prefix(8))")
+        TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(String(id.uuidString.prefix(8)))")
     }
 
     // MARK: 복원 전용 생성자 (단순화)
@@ -62,12 +62,12 @@ struct WebTab: Identifiable, Equatable {
             model.restoreSession(session)
             
             TabPersistenceManager.debugMessages.append(
-                "복원 탭 생성: ID \(restoredID.uuidString.prefix(8)), \(pageRecords.count)개 페이지, 인덱스 \(currentIndex)"
+                "복원 탭 생성: ID \(String(restoredID.uuidString.prefix(8))), \(pageRecords.count)개 페이지, 인덱스 \(currentIndex)"
             )
         } else {
             model.currentURL = nil
             TabPersistenceManager.debugMessages.append(
-                "복원 탭 생성(빈탭): ID \(restoredID.uuidString.prefix(8))"
+                "복원 탭 생성(빈탭): ID \(String(restoredID.uuidString.prefix(8)))"
             )
         }
 
@@ -90,7 +90,7 @@ struct WebTab: Identifiable, Equatable {
             )
             
             TabPersistenceManager.debugMessages.append(
-                "스냅샷 생성: ID \(id.uuidString.prefix(8)), \(session.pageRecords.count)개 페이지, 인덱스 \(session.currentIndex)"
+                "스냅샷 생성: ID \(String(id.uuidString.prefix(8))), \(session.pageRecords.count)개 페이지, 인덱스 \(session.currentIndex)"
             )
             
             return snapshot
@@ -103,7 +103,7 @@ struct WebTab: Identifiable, Equatable {
     private func alignIDsIfNeeded() {
         if stateModel.tabID != id {
             stateModel.tabID = id
-            TabPersistenceManager.debugMessages.append("ID 정렬: stateModel.tabID <- \(id.uuidString.prefix(8))")
+            TabPersistenceManager.debugMessages.append("ID 정렬: stateModel.tabID <- \(String(id.uuidString.prefix(8)))")
         }
     }
 }
@@ -119,7 +119,7 @@ enum TabPersistenceManager {
         tabs.forEach { tab in
             if tab.stateModel.tabID != tab.id {
                 tab.stateModel.tabID = tab.id
-                debugMessages.append("저장 전 정렬: \(tab.id.uuidString.prefix(8))")
+                debugMessages.append("저장 전 정렬: \(String(tab.id.uuidString.prefix(8)))")
             }
         }
 
@@ -155,7 +155,7 @@ enum TabPersistenceManager {
                 let idx = max(0, min(snap.currentIndex, max(0, pageRecords.count - 1)))
                 
                 debugMessages.append(
-                    "탭 복원 준비: ID \(rid.uuidString.prefix(8)), \(pageRecords.count)개 페이지, idx \(idx)"
+                    "탭 복원 준비: ID \(String(rid.uuidString.prefix(8))), \(pageRecords.count)개 페이지, idx \(idx)"
                 )
                 
                 return WebTab(restoredID: rid, pageRecords: pageRecords, currentIndex: idx)
@@ -200,17 +200,8 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - WebViewStateModel 확장 (기존 호환성)
-extension WebViewStateModel {
-    func loadURLIfReady() {
-        if let url = currentURL, let webView = webView {
-            webView.load(URLRequest(url: url))
-            TabPersistenceManager.debugMessages.append("URL 로드 시도: \(url.absoluteString)")
-        } else {
-            TabPersistenceManager.debugMessages.append("URL 로드 실패: WebView 또는 URL 없음")
-        }
-    }
-}
+// MARK: - WebViewStateModel 확장 제거 (중복 방지)
+// loadURLIfReady() 메서드는 WebViewStateModel.swift에 이미 구현됨
 
 // MARK: - DashboardView: URL 없는 탭의 홈 화면 (기존 기능 유지)
 struct DashboardView: View {
@@ -563,7 +554,7 @@ struct TabManager: View {
                                 if let index = tabs.firstIndex(of: tab) {
                                     onTabSelected(index)
                                     dismiss()
-                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(tab.id.uuidString.prefix(8)))")
+                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(String(tab.id.uuidString.prefix(8))))")
                                     debugMessages = TabPersistenceManager.debugMessages
                                 }
                             }) {
@@ -603,7 +594,7 @@ struct TabManager: View {
                     }
 
                     dismiss()
-                    TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(newTab.id.uuidString.prefix(8)), 대시보드 표시")
+                    TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(String(newTab.id.uuidString.prefix(8))), 대시보드 표시")
                     debugMessages = TabPersistenceManager.debugMessages
                 }) {
                     Label("새 탭", systemImage: "plus")
@@ -645,7 +636,7 @@ struct TabManager: View {
             tmp.remove(at: idx)
             TabPersistenceManager.saveTabs(tmp)
             tabs = tmp
-            TabPersistenceManager.debugMessages.append("탭 닫힘: ID \(tab.id.uuidString.prefix(8))")
+            TabPersistenceManager.debugMessages.append("탭 닫힘: ID \(String(tab.id.uuidString.prefix(8)))")
             debugMessages = TabPersistenceManager.debugMessages
         }
     }
