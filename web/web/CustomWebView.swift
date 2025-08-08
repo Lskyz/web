@@ -257,7 +257,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithMessage prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
             // JavaScript prompt 처리
             DispatchQueue.main.async {
                 let alert = UIAlertController(title: "입력", message: prompt, preferredStyle: .alert)
@@ -286,11 +286,12 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // 파일 업로드 처리
-        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        // 파일 업로드 처리 (iOS 버전 - WKOpenPanelParameters 없이)
+        @available(iOS 14.0, *)
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             DispatchQueue.main.async {
                 let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
-                documentPicker.allowsMultipleSelection = parameters.allowsMultipleSelection
+                documentPicker.allowsMultipleSelection = true
                 documentPicker.delegate = FilePicker(completionHandler: completionHandler)
                 
                 if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -310,6 +311,7 @@ struct CustomWebView: UIViewRepresentable {
 }
 
 // MARK: - 파일 선택 헬퍼
+@available(iOS 14.0, *)
 class FilePicker: NSObject, UIDocumentPickerDelegate {
     let completionHandler: ([URL]?) -> Void
     
