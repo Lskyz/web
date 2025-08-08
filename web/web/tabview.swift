@@ -3,102 +3,86 @@ import AVKit
 import WebKit
 
 // MARK: - Bookmark: 북마크 데이터 모델
-/// 북마크를 저장하기 위한 구조체. URL과 파비콘 URL을 포함.
-/// Codable을 채택하여 UserDefaults에 저장 가능.
+// (기존 코드 유지, 변경 없음)
 struct Bookmark: Codable, Identifiable, Equatable {
-    let id: UUID           // 북마크 고유 식별자
-    let title: String      // 북마크 표시 이름 (예: "Google")
-    let url: String        // 북마크 URL (항상 절대 URL + 스킴 보장됨)
-    let faviconURL: String? // 파비콘 URL (옵셔널, 없을 경우 기본 아이콘 사용)
-
-    // Identifiable 준수를 위한 id 프로퍼티
+    let id: UUID
+    let title: String
+    let url: String
+    let faviconURL: String?
+    
     var idValue: UUID { id }
-
-    // Equatable 준수를 위한 비교 연산
+    
     static func == (lhs: Bookmark, rhs: Bookmark) -> Bool {
         lhs.id == rhs.id
     }
 }
 
 // MARK: - WebTabSessionSnapshot: 탭 상태 저장/복원용 Codable 구조체
-/// 브라우저 탭의 상태를 저장하고 복원하기 위한 구조체.
-/// 탭의 ID와 방문 히스토리, 현재 인덱스를 저장.
 struct WebTabSessionSnapshot: Codable {
-    let id: String          // 탭 UUID 문자열(= WebTab.id)
-    let history: [String]   // 방문한 URL 문자열 배열 (back + current + forward)
-    let index: Int          // 현재 히스토리 인덱스 (= backList.count)
+    let id: String
+    let history: [HistoryEntry] // [String] → [HistoryEntry]로 변경
+    let index: Int
+    
+    // Codable 키 정의
+    enum CodingKeys: String, CodingKey {
+        case id, history, index
+    }
 }
 
 // MARK: - WebTab: 브라우저 탭 모델
-/// 탭의 식별자(UUID)와 ViewModel(WebViewStateModel)을 하나로 묶는 모델.
-/// 주요 기능:
-/// - 생성 시 stateModel.tabID를 항상 WebTab.id와 일치시켜 SwiftUI .id(...)와 매칭.
-/// - 스냅샷 저장 시 webView의 back/forward 기준으로 정확한 히스토리/인덱스 보존.
-/// - 복원 전용 생성자를 통해 저장된 id/history/index로 정확히 재구성.
 struct WebTab: Identifiable, Equatable {
     let id: UUID
     let stateModel: WebViewStateModel
     var playerURL: URL? = nil
     var showAVPlayer: Bool = false
-
-    // 읽기 편의 프로퍼티(기존 기능 유지)
+    
     var currentURL: URL? { stateModel.currentURL }
     var historyURLs: [String] { stateModel.historyURLs }
-    var currentHistoryIndex: Int { stateModel.currentHistoryIndex }
-
-    // MARK: 기본 생성자 (새 탭)
+    var currentHistoryIndex: Int { stateModel.currentIndexInSafeBounds() }
+    
     init(url: URL? = nil) {
         let newID = UUID()
         let model = WebViewStateModel()
-        model.tabID = newID             // 탭과 모델 ID를 일치
-        model.currentURL = url          // 초기 URL 있으면 세팅
+        model.tabID = newID
+        model.currentURL = url
         self.id = newID
         self.stateModel = model
         TabPersistenceManager.debugMessages.append("새 탭 생성: ID \(id.uuidString)")
     }
-
-    // MARK: 복원 전용 생성자
-    /// 저장된 스냅샷(id/history/index)로 탭을 재구성한다.
-    /// - history: 문자열 배열을 그대로 받아 내부에서 URL 배열로 변환.
-    /// - index: backList 기준 인덱스.
-    init(restoredID: UUID, restoredHistory: [String], restoredIndex: Int) {
+    
+    init(restoredID: UUID, restoredHistory: [HistoryEntry], restoredIndex: Int) {
         self.id = restoredID
         let model = WebViewStateModel()
-        model.tabID = restoredID        // 탭과 모델 ID를 일치
-
-        // 복원용 세션을 만들어 모델에 전달 (WKWebView는 makeUIView에서 실제 복원)
-        let urls = restoredHistory.compactMap { URL(string: $0) }
-        let safeIndex = max(0, min(restoredIndex, max(0, urls.count - 1)))
-        if !urls.isEmpty {
-            // restoreSession은 isRestoringSession 플래그/스택/현재 URL/pendingSession까지 설정
-            model.restoreSession(WebViewSession(urls: urls, currentIndex: safeIndex))
+        model.tabID = restoredID
+        
+        let safeIndex = max(0, min(restoredIndex, max(0, restoredHistory.count - 1)))
+        if !restoredHistory.isEmpty {
+            model.restoreSession(WebViewSession(history: restoredHistory, currentIndex: safeIndex))
         } else {
-            // 히스토리 없으면 currentURL 없음(대시보드)
             model.currentURL = nil
         }
-
+        
         self.stateModel = model
-        TabPersistenceManager.debugMessages.append("복원 탭 생성: ID \(restoredID.uuidString), \(urls.count) URLs, 인덱스 \(safeIndex)")
+        let urlList = restoredHistory.map { $0.debugDescription }.joined(separator: ", ")
+        TabPersistenceManager.debugMessages.append("복원 탭 생성: ID \(restoredID.uuidString), \(restoredHistory.count) 항목, 인덱스 \(safeIndex) | entries=[\(urlList)]")
     }
-
+    
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
     }
-
-    // MARK: - 스냅샷 변환 (히스토리와 인덱스 정확히 저장)
-    /// webView가 있으면 back/forward 리스트 기준으로, 없으면 커스텀 스택 기준으로 저장.
+    
     func toSnapshot() -> WebTabSessionSnapshot {
-        // 저장 전에 혹시라도 모델 ID가 어긋나 있으면 정렬
         alignIDsIfNeeded()
-
-        let history = stateModel.historyStackIfAny().map { $0.absoluteString }
-        let index = stateModel.currentIndexInSafeBounds()
-        let snapshot = WebTabSessionSnapshot(id: id.uuidString, history: history, index: index)
-        TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(history.count) URLs, 인덱스 \(index)")
+        guard let session = stateModel.saveSession() else {
+            TabPersistenceManager.debugMessages.append("스냅샷 생성 실패: ID \(id.uuidString), 세션 없음")
+            return WebTabSessionSnapshot(id: id.uuidString, history: [], index: -1)
+        }
+        let snapshot = WebTabSessionSnapshot(id: id.uuidString, history: session.history, index: session.currentIndex)
+        let urlList = session.history.map { $0.debugDescription }.joined(separator: ", ")
+        TabPersistenceManager.debugMessages.append("스냅샷 생성: ID \(id.uuidString), \(session.history.count) 항목, 인덱스 \(session.currentIndex) | entries=[\(urlList)]")
         return snapshot
     }
-
-    /// 내부 편의: stateModel.tabID를 WebTab.id와 동기화 (저장 전에 방어)
+    
     private func alignIDsIfNeeded() {
         if stateModel.tabID != id {
             stateModel.tabID = id
@@ -108,25 +92,23 @@ struct WebTab: Identifiable, Equatable {
 }
 
 // MARK: - TabPersistenceManager: 탭 저장/복원 관리
-/// 탭과 북마크의 저장/복원을 관리하는 유틸리티 열거형.
 enum TabPersistenceManager {
-    private static let key = "savedTabs" // 탭 저장용 UserDefaults 키
-    private static let bookmarkKey = "savedBookmarks" // 북마크 저장용 UserDefaults 키
-    static var debugMessages: [String] = [] // 탭 관련 디버깅 메시지 (기존 코드 유지)
-
-    // MARK: 탭 저장
-    /// 현재 열려있는 모든 탭을 스냅샷으로 직렬화하여 UserDefaults에 저장.
+    private static let key = "savedTabs"
+    private static let bookmarkKey = "savedBookmarks"
+    static var debugMessages: [String] = []
+    
     static func saveTabs(_ tabs: [WebTab]) {
-        // 저장 직전 모든 탭의 ID 일치성을 한번 더 보장(방어)
         tabs.forEach { tab in
             if tab.stateModel.tabID != tab.id {
                 tab.stateModel.tabID = tab.id
                 debugMessages.append("저장 전 정렬: \(tab.id.uuidString)")
             }
         }
-
+        
         let snapshots = tabs.map { $0.toSnapshot() }
-        debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷 요약: \(snapshots.map { "\($0.id): \($0.history.count) URLs, idx=\($0.index)" })")
+        let summary = snapshots.map { "\($0.id): \($0.history.count) 항목, idx=\($0.index)" }.joined(separator: ", ")
+        debugMessages.append("저장 시도: 탭 \(tabs.count)개, 스냅샷 요약: [\(summary)]")
+        
         do {
             let data = try JSONEncoder().encode(snapshots)
             UserDefaults.standard.set(data, forKey: key)
@@ -135,28 +117,25 @@ enum TabPersistenceManager {
             debugMessages.append("저장 실패: 인코딩 오류 - \(error.localizedDescription)")
         }
     }
-
-    // MARK: 탭 복원
-    /// 저장된 스냅샷을 읽어 WebTab 배열로 재구성.
+    
     static func loadTabs() -> [WebTab] {
         guard let data = UserDefaults.standard.data(forKey: key) else {
             debugMessages.append("복원 실패: UserDefaults에 데이터 없음")
             return []
         }
-
+        
         debugMessages.append("복원 시도: 데이터 크기 \(data.count) 바이트")
         do {
             let snapshots = try JSONDecoder().decode([WebTabSessionSnapshot].self, from: data)
             debugMessages.append("복원 성공: \(snapshots.count)개 탭 복원")
-
-            // 저장돼 있던 id/history/index로 정확히 탭을 복원
+            
             let tabs: [WebTab] = snapshots.map { snap in
                 let rid = UUID(uuidString: snap.id) ?? UUID()
                 let hist = snap.history
                 let idx = max(0, min(snap.index, max(0, hist.count - 1)))
-                debugMessages.append("탭 복원 준비: ID \(rid.uuidString), URLs \(hist.count), idx \(idx)")
-                let restored = WebTab(restoredID: rid, restoredHistory: hist, restoredIndex: idx)
-                return restored
+                let urlList = hist.map { $0.debugDescription }.joined(separator: ", ")
+                debugMessages.append("탭 복원 준비: ID \(rid.uuidString), 항목 \(hist.count), idx \(idx) | entries=[\(urlList)]")
+                return WebTab(restoredID: rid, restoredHistory: hist, restoredIndex: idx)
             }
             return tabs
         } catch {
@@ -164,9 +143,7 @@ enum TabPersistenceManager {
             return []
         }
     }
-
-    // MARK: 북마크 저장
-    /// 북마크 리스트를 UserDefaults에 저장.
+    
     static func saveBookmarks(_ bookmarks: [Bookmark]) {
         do {
             let data = try JSONEncoder().encode(bookmarks)
@@ -175,20 +152,17 @@ enum TabPersistenceManager {
             print("북마크 저장 실패: \(error.localizedDescription)")
         }
     }
-
-    // MARK: 북마크 복원
-    /// UserDefaults에서 북마크 리스트를 복원.
+    
     static func loadBookmarks() -> [Bookmark] {
         guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else {
-            // 기본 북마크 제공 (Google, Naver)
             let defaultBookmarks = [
                 Bookmark(id: UUID(), title: "Google", url: "https://www.google.com", faviconURL: "https://www.google.com/favicon.ico"),
                 Bookmark(id: UUID(), title: "Naver", url: "https://www.naver.com", faviconURL: "https://www.naver.com/favicon.ico")
             ]
-            saveBookmarks(defaultBookmarks) // 기본 북마크 저장
+            saveBookmarks(defaultBookmarks)
             return defaultBookmarks
         }
-
+        
         do {
             return try JSONDecoder().decode([Bookmark].self, from: data)
         } catch {
@@ -198,72 +172,49 @@ enum TabPersistenceManager {
     }
 }
 
-// (중복 충돌 방지를 위해 삭제됨)
-// MARK: - WebViewStateModel 유틸: 현재 URL이 준비되면 로드
-// extension WebViewStateModel {
-//     func loadURLIfReady() {
-//         if let url = currentURL, let webView = webView {
-//             webView.load(URLRequest(url: url))
-//             TabPersistenceManager.debugMessages.append("URL 로드 시도: \(url.absoluteString)")
-//         } else {
-//             TabPersistenceManager.debugMessages.append("URL 로드 실패: WebView 또는 URL 없음")
-//         }
-//     }
-// }
-
-// MARK: - DashboardView: URL 없는 탭의 홈 화면
-/// URL이 없는 탭에서 표시되는 대시보드 뷰.
-/// 변경 사항:
-/// - (중요) 롱프레스 제스처를 `simultaneousGesture`로 적용하여 탭과 충돌 제거
-/// - 롱프레스가 감지된 셀은 바로 이어지는 탭 액션을 무시하도록 플래그 처리
-/// - 셀 전체가 제스처 히트 영역이 되도록 `.contentShape(Rectangle())` 적용
-/// - URL 입력 시 스킴(https://) 자동 보정 + 파비콘 URL 생성 개선
+// MARK: - DashboardView, TabManager, ToastView, Collection 확장
+// (기존 코드 유지, 변경 없음)
 struct DashboardView: View {
-    @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks() // 북마크 리스트
-    @State private var showAddBookmarkAlert: Bool = false // 북마크 추가 알림 상태
-    @State private var showDeleteBookmarkAlert: Bool = false // 북마크 삭제 알림 상태
-    @State private var bookmarkToDelete: Bookmark? // 삭제할 북마크
-    @State private var newBookmarkTitle: String = "" // 새 북마크 제목 입력
-    @State private var inputURL: String = "" // 새 북마크 URL 입력
-    @State private var longPressedBookmarkID: UUID? = nil // (추가) 방금 롱프레스된 북마크 ID → 탭 액션 무시용 플래그
-
-    let onSelectURL: (URL) -> Void // URL 선택 시 호출되는 콜백
-    let triggerLoad: () -> Void // URL 로드 트리거
-
-    // 그리드 레이아웃 설정: 3~4개씩 표시
+    @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks()
+    @State private var showAddBookmarkAlert: Bool = false
+    @State private var showDeleteBookmarkAlert: Bool = false
+    @State private var bookmarkToDelete: Bookmark?
+    @State private var newBookmarkTitle: String = ""
+    @State private var inputURL: String = ""
+    @State private var longPressedBookmarkID: UUID?
+    
+    let onSelectURL: (URL) -> Void
+    let triggerLoad: () -> Void
+    
     private let columns = [
         GridItem(.flexible(), spacing: 20),
         GridItem(.flexible(), spacing: 20),
         GridItem(.flexible(), spacing: 20)
     ]
-
+    
     var body: some View {
         VStack(spacing: 20) {
             Text("")
                 .font(.largeTitle.bold())
-
-            // 북마크 그리드 표시
+            
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(bookmarks) { bookmark in
-                        // (변경) 롱프레스는 탭과 동시 인식시키되, 롱프레스가 인식되면 탭을 무시하는 플래그로 처리
                         bookmarkIcon(bookmark: bookmark)
-                            .contentShape(Rectangle()) // 셀 전체를 터치 영역으로
+                            .contentShape(Rectangle())
                             .simultaneousGesture(
                                 LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
                                     .onEnded { _ in
-                                        // 롱프레스 인식 → 삭제 알림 표시, 그리고 플래그 세팅
                                         longPressedBookmarkID = bookmark.id
                                         bookmarkToDelete = bookmark
                                         showDeleteBookmarkAlert = true
                                     }
                             )
                     }
-                    // 북마크 추가 버튼
                     Button(action: {
-                        showAddBookmarkAlert = true // 추가 알림 표시
-                        newBookmarkTitle = "" // 제목 초기화
-                        inputURL = "" // URL 초기화
+                        showAddBookmarkAlert = true
+                        newBookmarkTitle = ""
+                        inputURL = ""
                     }) {
                         VStack {
                             Image(systemName: "plus.circle.fill")
@@ -277,24 +228,17 @@ struct DashboardView: View {
                 }
                 .padding(.horizontal)
             }
-
-            Spacer() // 주소창 제거 후 콘텐츠 아래 여백
+            
+            Spacer()
         }
         .padding()
-        // 북마크 추가 알림
         .alert("북마크 추가", isPresented: $showAddBookmarkAlert) {
             TextField("제목", text: $newBookmarkTitle)
             TextField("URL", text: $inputURL)
             Button("저장") {
-                // 입력된 URL에 스킴 자동 적용 및 절대 URL 보장
-                guard
-                    let normalized = normalizedURLString(from: inputURL),
-                    let url = URL(string: normalized)
-                else { return }
-
-                // 파비콘 URL을 host 기준으로 정확하게 생성
+                guard let normalized = normalizedURLString(from: inputURL),
+                      let url = URL(string: normalized) else { return }
                 let faviconURL = faviconURLString(for: url)
-
                 let newBookmark = Bookmark(
                     id: UUID(),
                     title: newBookmarkTitle.isEmpty ? (url.host ?? "북마크") : newBookmarkTitle,
@@ -308,7 +252,6 @@ struct DashboardView: View {
         } message: {
             Text("새로운 북마크의 제목과 URL을 입력하세요.\n예) naver.com → https://naver.com 자동 적용")
         }
-        // 북마크 삭제 알림
         .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert) {
             Button("삭제", role: .destructive) {
                 if let bookmark = bookmarkToDelete, let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }) {
@@ -316,7 +259,6 @@ struct DashboardView: View {
                     TabPersistenceManager.saveBookmarks(bookmarks)
                 }
                 bookmarkToDelete = nil
-                // (중요) 삭제 후에는 롱프레스 플래그도 초기화
                 longPressedBookmarkID = nil
             }
             Button("취소", role: .cancel) {
@@ -327,22 +269,19 @@ struct DashboardView: View {
             Text("'\(bookmarkToDelete?.title ?? "")' 북마크를 삭제하시겠습니까?")
         }
         .onChange(of: bookmarks) { _ in
-            TabPersistenceManager.saveBookmarks(bookmarks) // 북마크 변경 시 저장
+            TabPersistenceManager.saveBookmarks(bookmarks)
         }
     }
-
-    /// 북마크 아이콘 뷰: 파비콘 이미지를 표시하거나 기본 아이콘 사용.
+    
     private func bookmarkIcon(bookmark: Bookmark) -> some View {
         Button(action: {
-            // (중요) 직전에 롱프레스가 인식된 셀이라면 탭 액션 차단
             if longPressedBookmarkID == bookmark.id {
-                longPressedBookmarkID = nil // 한 번만 막고 바로 초기화
+                longPressedBookmarkID = nil
                 return
             }
-
             guard let url = URL(string: bookmark.url) else { return }
-            onSelectURL(url) // URL 선택 콜백 호출
-            triggerLoad()    // 즉시 로드 트리거
+            onSelectURL(url)
+            triggerLoad()
         }) {
             VStack {
                 if let faviconURL = bookmark.faviconURL, let url = URL(string: faviconURL) {
@@ -355,7 +294,7 @@ struct DashboardView: View {
                     } placeholder: {
                         Image(systemName: "globe")
                             .resizable()
-                            .frame(width: 40, height: 40)
+                            .frame(width: 40, height 40)
                     }
                 } else {
                     Image(systemName: "globe")
@@ -363,66 +302,50 @@ struct DashboardView: View {
                         .frame(width: 40, height: 40)
                 }
                 Text(bookmark.title)
-                    .font(.subheadline) // 폰트 크기 축소
-                    .foregroundColor(.black) // 글자 색상 검정
+                    .font(.subheadline)
+                    .foregroundColor(.black)
             }
         }
-        // 기본 버튼 스타일(탭 하이라이트만). 필요 시 .buttonStyle(.plain)로 바꿔도 무방.
     }
-
-    // MARK: - URL 보정/생성 유틸
-    /// 사용자가 입력한 문자열에서 스킴(https://)을 자동으로 붙이고,
-    /// 절대 URL(스킴 + 호스트)을 만족하는지 검사하여 문자열로 반환.
+    
     private func normalizedURLString(from raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-
-        // 이미 절대 URL이면 그대로 사용
         if let u = URL(string: trimmed), u.scheme != nil, u.host != nil {
             return trimmed
         }
-
-        // 스킴이 없으면 https:// 붙이기
         var candidate = trimmed
         if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
             candidate = "https://" + trimmed
         }
-
-        // 보정된 URL이 유효한 절대 URL인지 최종 확인
         if let u2 = URL(string: candidate), u2.scheme != nil, u2.host != nil {
             return candidate
         }
         return nil
     }
-
-    /// 파비콘 URL을 host 기준으로 생성한다. (예: https://example.com/favicon.ico)
+    
     private func faviconURLString(for url: URL) -> String? {
         guard let scheme = url.scheme, let host = url.host else { return nil }
         return "\(scheme)://\(host)/favicon.ico"
     }
 }
 
-// MARK: - TabManager: 탭 목록 관리 뷰
-/// 탭 목록을 표시하고 관리하는 뷰.
-/// - onTabSelected는 ViewModel가 아닌 "인덱스"를 넘겨 참조 엉킴 방지.
-/// - 탭 추가/삭제 시 저장 호출 유지.
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
     let initialStateModel: WebViewStateModel
     let onTabSelected: (Int) -> Void
-
+    
     @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
     @State private var showToast = false
     @State private var toastMessage = ""
-
+    
     var body: some View {
         ZStack {
             VStack {
                 Text("탭 목록")
                     .font(.title.bold())
-
-                // 디버깅 로그 영역 (기존 코드 유지)
+                
                 VStack(alignment: .leading) {
                     Text("디버깅 로그")
                         .font(.headline)
@@ -440,17 +363,16 @@ struct TabManager: View {
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(10)
                 }
-
-                // 탭 리스트
+                
                 ScrollView {
                     ForEach(tabs) { tab in
                         HStack {
                             Button(action: {
-                                // 인덱스를 계산하여 콜백으로 전달
                                 if let index = tabs.firstIndex(of: tab) {
                                     onTabSelected(index)
                                     dismiss()
-                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(tab.id.uuidString))")
+                                    let urlList = tab.stateModel.virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
+                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(tab.id.uuidString), entries=[\(urlList)])")
                                     debugMessages = TabPersistenceManager.debugMessages
                                 }
                             }) {
@@ -471,19 +393,16 @@ struct TabManager: View {
                         .padding()
                     }
                 }
-
-                // 새 탭 버튼
+                
                 Button(action: {
                     let newTab = WebTab(url: nil)
                     var tmp = tabs
                     tmp.append(newTab)
                     TabPersistenceManager.saveTabs(tmp)
                     tabs = tmp
-
                     if let newIndex = tabs.firstIndex(of: newTab) {
                         onTabSelected(newIndex)
                     }
-
                     dismiss()
                     TabPersistenceManager.debugMessages.append("새 탭 추가: ID \(newTab.id.uuidString), 대시보드 표시")
                     debugMessages = TabPersistenceManager.debugMessages
@@ -496,8 +415,7 @@ struct TabManager: View {
                 }
                 .padding()
             }
-
-            // 토스트
+            
             if showToast {
                 ToastView(message: toastMessage)
                     .transition(.opacity)
@@ -520,7 +438,7 @@ struct TabManager: View {
             debugMessages = TabPersistenceManager.debugMessages
         }
     }
-
+    
     private func closeTab(_ tab: WebTab) {
         if let idx = tabs.firstIndex(of: tab) {
             var tmp = tabs
@@ -533,8 +451,6 @@ struct TabManager: View {
     }
 }
 
-// MARK: - ToastView: 알림 메시지 뷰
-/// 디버깅 메시지나 상태 변화를 사용자에게 알리는 토스트 뷰.
 struct ToastView: View {
     let message: String
     var body: some View {
@@ -547,8 +463,6 @@ struct ToastView: View {
     }
 }
 
-// MARK: - Collection 확장: 안전 인덱싱
-/// Collection의 인덱스 접근을 안전하게 처리.
 extension Collection {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
