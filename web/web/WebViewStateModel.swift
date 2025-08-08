@@ -353,7 +353,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return session
     }
 
-    // 🔧 복원 과정 개선
+    // ✅ 🔧 복원 과정 개선 (didFinish에서 복원 완료 처리)
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
         isRestoringSession = true
@@ -387,13 +387,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🌐 복원 시 웹뷰 로드: \(url.absoluteString)")
         }
         
-        // 복원 완료 시간 증가 및 최종 상태 확인
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.isRestoringSession = false
-            self.updateNavigationState() // 복원 완료 후 한번 더 상태 업데이트
-            self.dbg("🔄 세션 복원 완료 - 최종 상태: back=\(self.canGoBack), forward=\(self.canGoForward)")
-            self.dbg("🔄 === 세션 복원 끝 ===")
-        }
+        // ✅ 타이머 제거 - didFinish에서 복원 완료 처리
+        dbg("🔄 복원 타이머 없이 didFinish 대기")
     }
 
     // MARK: - 네비게이션 메서드 (WebView 네이티브 메서드 사용 안함)
@@ -535,6 +530,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
         
+        // ✅ didFinish 시작 시점의 복원 상태 기억
+        let wasRestoringSession = isRestoringSession
+        
         if let finalURL = webView.url {
             dbg("🌐 === didFinish 상세 분석 ===")
             dbg("🌐 didFinish URL: \(finalURL.absoluteString)")
@@ -551,57 +549,63 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("🏷️   - 히스토리 네비게이션 경과시간: \(elapsed)초")
             }
             
-            if !isRestoringSession {
-                if isHistoryNavigationActive() {
-                    dbg("🔄 === 히스토리 네비게이션 처리 ===")
-                    updateCurrentPageTitle(title)
-                    currentURL = finalURL
-                    dbg("🔄 히스토리 네비게이션 완료: '\(title)' - 새 페이지 추가 안함")
-                    
-                    // ✅ 히스토리 네비게이션 플래그 지연 해제 (시간 기반으로 더 안전하게)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        self.isHistoryNavigation = false
-                        self.isNavigatingFromWebView = false
-                        self.dbg("🏁 히스토리 네비게이션 플래그 지연 해제 완료")
-                    }
-                    
-                    dbg("🔄 === 히스토리 네비게이션 처리 끝 ===")
-                    dbg("🌐 === didFinish 분석 끝 (히스토리) ===")
-                    return // ❗️이거 반드시 필요 (else 블록 실행 방지)
-                } else {
-                    dbg("🆕 === 일반 네비게이션 처리 ===")
-                    // 일반 네비게이션: 페이지 추가 여부 판단
-                    let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
-                    
-                    dbg("🤔 새 페이지 추가 여부: \(shouldAddNewPage)")
-                    
-                    if shouldAddNewPage {
-                        isNavigatingFromWebView = true
-                        
-                        addNewPage(url: finalURL, title: title)
-                        dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
-                        
-                        // 전역 방문 기록 추가
-                        WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
-                        WebViewStateModel.saveGlobalHistory()
-                        
-                        // currentURL 동기화 (didSet 호출 방지)
-                        currentURL = finalURL
-                        isNavigatingFromWebView = false
-                    } else {
-                        // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
-                        updateCurrentPageTitle(title)
-                        currentURL = finalURL
-                        dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
-                    }
-                    dbg("🆕 === 일반 네비게이션 처리 끝 ===")
-                }
-            } else {
-                // 🔧 복원 중일 때는 제목만 업데이트하고 상태 건드리지 않음
+            // ✅ 복원 상태 우선 처리 (절대 새 페이지 추가하지 않음)
+            if isRestoringSession {
                 dbg("🔄 === 복원 중 처리 ===")
                 updateCurrentPageTitle(title)
-                dbg("🔄 복원 중 제목 업데이트: '\(title)'")
+                
+                // ✅ 복원 완료 처리를 didFinish에서 수행
+                isRestoringSession = false
+                updateNavigationState()
+                dbg("🔄 복원 완료: '\(title)' - isRestoringSession = false")
+                dbg("🔄 최종 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
                 dbg("🔄 === 복원 중 처리 끝 ===")
+                dbg("🔄 === 세션 복원 끝 ===")
+                
+            } else if isHistoryNavigationActive() {
+                dbg("🔄 === 히스토리 네비게이션 처리 ===")
+                updateCurrentPageTitle(title)
+                currentURL = finalURL
+                dbg("🔄 히스토리 네비게이션 완료: '\(title)' - 새 페이지 추가 안함")
+                
+                // ✅ 히스토리 네비게이션 플래그 지연 해제 (시간 기반으로 더 안전하게)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.isHistoryNavigation = false
+                    self.isNavigatingFromWebView = false
+                    self.dbg("🏁 히스토리 네비게이션 플래그 지연 해제 완료")
+                }
+                
+                dbg("🔄 === 히스토리 네비게이션 처리 끝 ===")
+                dbg("🌐 === didFinish 분석 끝 (히스토리) ===")
+                return // ❗️이거 반드시 필요 (else 블록 실행 방지)
+                
+            } else {
+                dbg("🆕 === 일반 네비게이션 처리 ===")
+                // 일반 네비게이션: 페이지 추가 여부 판단
+                let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
+                
+                dbg("🤔 새 페이지 추가 여부: \(shouldAddNewPage)")
+                
+                if shouldAddNewPage {
+                    isNavigatingFromWebView = true
+                    
+                    addNewPage(url: finalURL, title: title)
+                    dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
+                    
+                    // 전역 방문 기록 추가
+                    WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+                    WebViewStateModel.saveGlobalHistory()
+                    
+                    // currentURL 동기화 (didSet 호출 방지)
+                    currentURL = finalURL
+                    isNavigatingFromWebView = false
+                } else {
+                    // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
+                    updateCurrentPageTitle(title)
+                    currentURL = finalURL
+                    dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
+                }
+                dbg("🆕 === 일반 네비게이션 처리 끝 ===")
             }
             
             // 리다이렉트 체인 정리
@@ -611,14 +615,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🌐 === didFinish 분석 끝 ===")
         }
         
-        // 🔧 복원 중이 아닐 때만 상태 업데이트
-        if !isRestoringSession {
+        // ✅ 복원 완료 후에만 상태 업데이트 (처음에 복원 중이었다면 위에서 이미 처리됨)
+        if !wasRestoringSession {
             updateNavigationState()
+        } else {
+            dbg("🔧 원래 복원 중이었으므로 상태 업데이트 생략 (위에서 처리됨)")
         }
         
         dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
         
-        if !isRestoringSession {
+        // ✅ 복원이 아닐 때만 navigationDidFinish 호출
+        if !wasRestoringSession {  // 원래 복원 상태를 기억해야 함
             navigationDidFinish.send(())
         }
     }
