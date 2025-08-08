@@ -114,9 +114,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     @Published var showAVPlayer = false // AVPlayer 표시 여부
     
     // 가상 히스토리 관리
-    private var virtualHistoryStack: [URL] = [] // 가상 히스토리 스택
-    private var virtualCurrentIndex: Int = -1 // 현재 가상 히스토리 인덱스
-    internal var isUsingVirtualHistory: Bool = false // 가상 히스토리 사용 여부
+    private var virtualHistoryStack: [URL] = []         // 가상 히스토리 스택
+    private var virtualCurrentIndex: Int = -1          // 현재 가상 히스토리 인덱스
+    internal var isUsingVirtualHistory: Bool = true   // 항상 가상 히스토리 모드
     
     private var isInternalNavigation: Bool = false // 내부 네비게이션 플래그
     private var isNavigating: Bool = false // 네비게이션 진행 상태
@@ -474,49 +474,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     // MARK: - 네비게이션 액션
-    // 뒤로가기
-    func goBack() {
-        guard !throttleTap() else {
-            dbg("⬅️ 뒤로가기 차단: 연속 탭")
-            return
-        }
-        
-        guard !isNavigating else {
-            dbg("⬅️ 뒤로가기 차단: 네비게이션 진행 중")
-            return
-        }
-        
-        if isUsingVirtualHistory {
-            performVirtualNavigation(direction: .back) // 가상 히스토리 뒤로가기
-        } else {
-            isNavigating = true
-            navigationStartTime = CACurrentMediaTime()
-            NotificationCenter.default.post(name: .init("WebViewGoBack"), object: nil) // 네이티브 뒤로가기
-            dbg("⬅️ 네이티브 뒤로가기 실행")
-        }
-    }
-    
-    // 앞으로가기
-    func goForward() {
-        guard !throttleTap() else {
-            dbg("➡️ 앞으로가기 차단: 연속 탭")
-            return
-        }
-        
-        guard !isNavigating else {
-            dbg("➡️ 앞으로가기 차단: 네비게이션 진행 중")
-            return
-        }
-        
-        if isUsingVirtualHistory {
-            performVirtualNavigation(direction: .forward) // 가상 히스토리 앞으로가기
-        } else {
-            isNavigating = true
-            navigationStartTime = CACurrentMediaTime()
-            NotificationCenter.default.post(name: .init("WebViewGoForward"), object: nil) // 네이티브 앞으로가기
-            dbg("➡️ 네이티브 앞으로가기 실행")
-        }
-    }
+// 뒤로가기 (항상 가상 히스토리만 사용)
+func goBack() {
+    guard !throttleTap(), !isNavigating else { return }
+    performVirtualNavigation(direction: .back)
+}
+
+// 앞으로가기 (항상 가상 히스토리만 사용)
+func goForward() {
+    guard !throttleTap(), !isNavigating else { return }
+    performVirtualNavigation(direction: .forward)
+}
     
     // 페이지 새로고침
     func reload() {
