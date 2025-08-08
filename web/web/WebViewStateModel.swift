@@ -1,31 +1,57 @@
+//
+//  WebViewStateModel.swift
+//  페이지 고유번호 기반 히스토리 시스템 (기존 복잡한 시스템 교체)
+//
+
 import Foundation
 import Combine
 import SwiftUI
 import WebKit
 
-// MARK: - 히스토리 항목 구조체
-struct HistoryEntry: Identifiable, Hashable, Codable {
-    var id = UUID()
+// MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
+struct PageRecord: Codable, Identifiable, Hashable {
+    let id: UUID
     let url: URL
     var title: String
-    let date: Date
-    let navigationID: String
+    let timestamp: Date
+    var lastAccessed: Date
     
-    enum CodingKeys: String, CodingKey {
-        case id, url, title, date, navigationID
+    init(url: URL, title: String = "") {
+        self.id = UUID()
+        self.url = url
+        self.title = title.isEmpty ? (url.host ?? "제목 없음") : title
+        self.timestamp = Date()
+        self.lastAccessed = Date()
     }
     
-    var debugDescription: String {
-        let df = DateFormatter()
-        df.dateFormat = "HH:mm:ss.SSS"
-        return "[\(df.string(from: date))] \(url.absoluteString) (\(title), id: \(id.uuidString.prefix(6)))"
+    mutating func updateTitle(_ newTitle: String) {
+        if !newTitle.isEmpty {
+            title = newTitle
+        }
+        lastAccessed = Date()
+    }
+    
+    mutating func updateAccess() {
+        lastAccessed = Date()
     }
 }
 
-// MARK: - 세션 스냅샷
+// MARK: - 간단한 히스토리 세션 
 struct WebViewSession: Codable {
-    let history: [HistoryEntry]
+    let pageRecords: [PageRecord]
     let currentIndex: Int
+    let sessionId: UUID
+    let createdAt: Date
+    
+    init(pageRecords: [PageRecord], currentIndex: Int) {
+        self.pageRecords = pageRecords
+        self.currentIndex = currentIndex
+        self.sessionId = UUID()
+        self.createdAt = Date()
+    }
+    
+    // 기존 시스템과의 호환성을 위한 computed properties
+    var urls: [URL] { pageRecords.map { $0.url } }
 }
 
 // MARK: - 타임스탬프 유틸
@@ -35,546 +61,292 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 히스토리 캐시 엔트리
-private class HistoryCacheEntry {
-    let url: URL
-    var title: String
-    var lastAccessed: Date
-    weak var webView: WKWebView?
-    
-    init(url: URL, title: String = "") {
-        self.url = url
-        self.title = title
-        self.lastAccessed = Date()
-    }
-    
-    func updateAccess() { lastAccessed = Date() }
-}
-
-// MARK: - 히스토리 캐시 매니저
-private class HistoryCacheManager {
-    static let shared = HistoryCacheManager()
-    private init() {}
-    
-    private var cache: [URL: HistoryCacheEntry] = [:]
-    private let maxCacheCount = 200
-    
-    func cacheEntry(for url: URL, title: String = "") {
-        if let entry = cache[url] {
-            if !title.isEmpty { entry.title = title }
-            entry.updateAccess()
-        } else {
-            cache[url] = HistoryCacheEntry(url: url, title: title)
-            pruneIfNeeded()
-        }
-    }
-    
-    func entry(for url: URL) -> HistoryCacheEntry? { cache[url] }
-    
-    private func pruneIfNeeded() {
-        guard cache.count > maxCacheCount else { return }
-        let sorted = cache.values.sorted(by: { $0.lastAccessed < $1.lastAccessed })
-        let toRemove = sorted.prefix(cache.count - maxCacheCount/2)
-        for e in toRemove { cache.removeValue(forKey: e.url) }
-    }
-    
-    func clearCache() { cache.removeAll() }
-}
-
-// MARK: - WebViewStateModel
+// MARK: - WebViewStateModel (기존 인터페이스 유지, 내부 구현 교체)
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
-    var tabID: UUID // let → var
-    let navigationDidFinish = PassthroughSubject<Void, Never>()
+
+    var tabID: UUID?
     
+    // 페이지 기록 기반 히스토리 (기존 복잡한 시스템 교체)
+    @Published private var pageHistory: [PageRecord] = []
+    @Published private var currentPageIndex: Int = -1
+    
+    let navigationDidFinish = PassthroughSubject<Void, Never>()
+
     @Published var currentURL: URL? {
         didSet {
-            guard let url = currentURL, oldValue != url, !isRestoringSession else { return }
-            if !Thread.isMainThread {
-                DispatchQueue.main.async { [weak self] in self?.currentURL = url }
-                return
-            }
+            guard let url = currentURL else { return }
+            
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
             dbg("URL 업데이트 → \(url.absoluteString)")
-            if !isInternalNavigation {
-                updateHistoryStacks(with: url)
-            }
+            
+            if isRestoringSession { return }
+            
+            // 새 페이지 기록 추가
+            addNewPage(url: url)
+            
+            // 전역 방문 기록 업데이트
+            WebViewStateModel.globalHistory.append(.init(url: url, title: url.host ?? "제목 없음", date: Date()))
+            WebViewStateModel.saveGlobalHistory()
         }
     }
-    
-    @Published var canGoBack: Bool = false
-    @Published var canGoForward: Bool = false
+
+    @Published var canGoBack: Bool = false {
+        didSet {
+            dbg("canGoBack 업데이트: \(canGoBack)")
+        }
+    }
+    @Published var canGoForward: Bool = false {
+        didSet {
+            dbg("canGoForward 업데이트: \(canGoForward)")
+        }
+    }
     @Published var showAVPlayer = false
-    
-    var historyURLs: [String] {
-        virtualHistoryStack.map { $0.url.absoluteString }
-    }
-    
-    var historyStack: [HistoryEntry] {
-        virtualHistoryStack
-    }
-    
-    var currentHistoryIndex: Int {
-        virtualCurrentIndex
-    }
-    
-    private var virtualHistoryStack: [HistoryEntry] = []
-    private var virtualCurrentIndex: Int = -1
-    private var legacyHistoryStack: [URL] = [] // historyStack → legacyHistoryStack
-    private var currentIndexInStack: Int = -1
-    private var isUsingVirtualHistory: Bool = true
-    private var isInternalNavigation: Bool = false
-    private var isNavigating: Bool = false
-    private var navigationStartTime: TimeInterval = 0
-    private var lastNavTapAt: TimeInterval = 0
-    private let navTapMinInterval: TimeInterval = 0.3
-    
+
+    // 복원 상태 관리 (단순화)
     private(set) var isRestoringSession: Bool = false
-    var pendingSession: WebViewSession?
-    
-    init(url: URL? = nil, tabID: UUID = UUID()) {
-        self.tabID = tabID
-        self.currentURL = url
-        super.init()
-        if let url = url {
-            let entry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
-            virtualHistoryStack.append(entry)
-            virtualCurrentIndex = 0
-            legacyHistoryStack.append(url)
-            currentIndexInStack = 0
-            HistoryCacheManager.shared.cacheEntry(for: url, title: entry.title)
-        }
-    }
-    
-    func beginSessionRestore() {
-        isRestoringSession = true
-        isNavigating = false
-        dbg("🧭 RESTORE 시작")
-    }
-    
-    func finishSessionRestore() {
-        isRestoringSession = false
-        isNavigating = false
-        dbg("🧭 RESTORE 종료")
-    }
-    
-    private func updateHistoryStacks(with url: URL) {
-        if virtualCurrentIndex < virtualHistoryStack.count - 1 {
-            virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
-        }
-        let newEntry = HistoryEntry(url: url, title: url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
-        virtualHistoryStack.append(newEntry)
-        virtualCurrentIndex = virtualHistoryStack.count - 1
-        
-        if currentIndexInStack < legacyHistoryStack.count - 1 {
-            legacyHistoryStack = Array(legacyHistoryStack.prefix(upTo: currentIndexInStack + 1))
-        }
-        legacyHistoryStack.append(url)
-        currentIndexInStack = legacyHistoryStack.count - 1
-        
-        updateNavigationButtons()
-        let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-        dbg("🧩 V-HIST 업데이트: idx=\(virtualCurrentIndex), stack=\(virtualHistoryStack.count) | entries=[\(urlList)]")
-    }
-    
-    private func updateNavigationButtons() {
-        canGoBack = virtualCurrentIndex > 0
-        canGoForward = virtualCurrentIndex < virtualHistoryStack.count - 1
-        dbg("🧩 NAV 버튼 갱신: canGoBack=\(canGoBack), canGoForward=\(canGoForward), idx=\(virtualCurrentIndex), stackSize=\(virtualHistoryStack.count)")
-    }
-    
-    func historyStackIfAny() -> [URL] {
-        return virtualHistoryStack.map { $0.url }
-    }
-    
-    func currentIndexInSafeBounds() -> Int {
-        return max(0, min(virtualCurrentIndex, max(0, virtualHistoryStack.count - 1)))
-    }
-    
-    private var kvURL: NSKeyValueObservation?
-    private var kvIsLoading: NSKeyValueObservation?
-    private var kvTitle: NSKeyValueObservation?
-    
-    private func removeObservers() {
-        kvURL?.invalidate(); kvURL = nil
-        kvIsLoading?.invalidate(); kvIsLoading = nil
-        kvTitle?.invalidate(); kvTitle = nil
-    }
-    
-    private func installObservers(on webView: WKWebView) {
-        kvURL = webView.observe(\.url, options: [.new]) { [weak self] wv, change in
-            guard let self = self, let url = wv.url, url.scheme != nil, url.absoluteString != "about:blank" else { return }
-            DispatchQueue.main.async {
-                if self.currentURL != url && !self.isRestoringSession {
-                    self.isInternalNavigation = true
-                    self.currentURL = url
-                    self.isInternalNavigation = false
-                }
-            }
-        }
-        
-        kvIsLoading = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, _ in
-            guard let self = self else { return }
-            DispatchQueue.main.async {
-                self.updateNavigationButtons()
-            }
-        }
-        
-        kvTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
-            guard let self = self, let url = wv.url else { return }
-            DispatchQueue.main.async {
-                if let index = self.virtualHistoryStack.firstIndex(where: { $0.url == url }) {
-                    self.virtualHistoryStack[index].title = wv.title ?? url.host ?? "제목 없음"
-                }
-                HistoryCacheManager.shared.cacheEntry(for: url, title: wv.title ?? "")
-            }
-        }
-    }
     
     weak var webView: WKWebView? {
         didSet {
-            if oldValue !== webView {
-                removeObservers()
-            }
             if let webView {
                 dbg("🔗 webView 연결됨")
-                installObservers(on: webView)
-                updateNavigationButtons()
-                if let session = pendingSession {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                        self?.executeOptimizedRestore(session: session)
-                    }
-                }
+                updateNavigationState()
             }
         }
     }
-    
-    var onLoadCompletion: (() -> Void)?
-    
+
+    // 기존 방문기록 구조체 유지
+    struct HistoryEntry: Identifiable, Hashable, Codable {
+        var id = UUID()
+        let url: URL
+        let title: String
+        let date: Date
+    }
+
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
     }
-    
+
     func clearHistory() {
         WebViewStateModel.globalHistory = []
         WebViewStateModel.saveGlobalHistory()
-        HistoryCacheManager.shared.clearCache()
-        virtualHistoryStack = []
-        virtualCurrentIndex = -1
-        updateNavigationButtons()
-        dbg("🧹 전역 방문 기록 삭제")
+        pageHistory.removeAll()
+        currentPageIndex = -1
+        updateNavigationState()
+        dbg("🧹 전체 히스토리 삭제")
     }
-    
+
     private static func saveGlobalHistory() {
         if let data = try? JSONEncoder().encode(globalHistory) {
             UserDefaults.standard.set(data, forKey: "globalHistory")
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(globalHistory.count)개")
         }
     }
-    
+
     static func loadGlobalHistory() {
         if let data = UserDefaults.standard.data(forKey: "globalHistory"),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             globalHistory = loaded
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 로드: \(loaded.count)개")
         }
     }
+
+    // MARK: - 새로운 페이지 기록 시스템
+    
+    private func addNewPage(url: URL, title: String = "") {
+        // 현재 위치 이후의 forward 기록 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+        }
+        
+        let newRecord = PageRecord(url: url, title: title)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // 최대 50개 유지
+        if pageHistory.count > 50 {
+            pageHistory.removeFirst()
+            currentPageIndex -= 1
+        }
+        
+        updateNavigationState()
+        dbg("📄 페이지 추가: \(newRecord.title) [ID: \(newRecord.id.uuidString.prefix(8))] 인덱스: \(currentPageIndex)")
+    }
+    
+    private func updateNavigationState() {
+        canGoBack = currentPageIndex > 0
+        canGoForward = currentPageIndex < pageHistory.count - 1
+    }
+    
+    func updateCurrentPageTitle(_ title: String) {
+        guard currentPageIndex >= 0, 
+              currentPageIndex < pageHistory.count,
+              !title.isEmpty else { return }
+        
+        pageHistory[currentPageIndex].updateTitle(title)
+        dbg("📝 페이지 제목 업데이트: \(title) [ID: \(pageHistory[currentPageIndex].id.uuidString.prefix(8))]")
+    }
+    
+    var currentPageRecord: PageRecord? {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return nil }
+        return pageHistory[currentPageIndex]
+    }
+
+    // MARK: - 세션 저장/복원 (단순화)
     
     func saveSession() -> WebViewSession? {
-        guard !virtualHistoryStack.isEmpty, virtualCurrentIndex >= 0 else {
+        guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
             dbg("💾 세션 저장 실패: 히스토리 없음")
             return nil
         }
-        let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-        dbg("💾 세션 저장: \(virtualHistoryStack.count) 항목, 인덱스 \(virtualCurrentIndex) | entries=[\(urlList)]")
-        return WebViewSession(history: virtualHistoryStack, currentIndex: virtualCurrentIndex)
+        
+        let session = WebViewSession(pageRecords: pageHistory, currentIndex: currentPageIndex)
+        dbg("💾 세션 저장: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
+        return session
     }
-    
+
     func restoreSession(_ session: WebViewSession) {
-        beginSessionRestore()
+        isRestoringSession = true
         
-        let history = session.history.sorted { $0.date < $1.date }
-        let targetIndex = max(0, min(session.currentIndex, history.count - 1))
+        pageHistory = session.pageRecords
+        currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
         
-        if !history.isEmpty && history.indices.contains(targetIndex) {
-            virtualHistoryStack = history
-            virtualCurrentIndex = targetIndex
-            legacyHistoryStack = history.map { $0.url }
-            currentIndexInStack = targetIndex
-            
-            let targetEntry = history[targetIndex]
-            isInternalNavigation = true
-            currentURL = targetEntry.url
-            isInternalNavigation = false
-            updateNavigationButtons()
-            
-            let urlList = history.map { $0.debugDescription }.joined(separator: ", ")
-            dbg("🧭 RESTORE 준비: \(history.count) 항목, 목표 idx \(targetIndex) | entries=[\(urlList)]")
-            
-            if let webView = webView {
-                executeOptimizedRestore(session: session)
-            } else {
-                pendingSession = session
-            }
+        // 현재 페이지 URL 설정
+        if let currentRecord = currentPageRecord {
+            currentURL = currentRecord.url
+            dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
         } else {
             currentURL = nil
-            finishSessionRestore()
-            dbg("🧭 RESTORE 실패: 유효한 항목/인덱스 없음")
+            dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
+        }
+        
+        updateNavigationState()
+        
+        // 복원 완료 후 웹뷰 로드
+        if let webView = webView, let url = currentURL {
+            webView.load(URLRequest(url: url))
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.isRestoringSession = false
+            self.dbg("🔄 세션 복원 완료")
         }
     }
-    
-    private func executeOptimizedRestore(session: WebViewSession) {
-        guard let webView = webView else {
-            dbg("🧭 RESTORE 실행 실패: webView 없음")
-            return
-        }
-        
-        let history = session.history.sorted { $0.date < $1.date }
-        let targetIndex = max(0, min(session.currentIndex, history.count - 1))
-        guard history.indices.contains(targetIndex) else {
-            dbg("🧭 RESTORE 실행 실패: 인덱스 범위 초과")
-            finishSessionRestore()
-            return
-        }
-        
-        let targetEntry = history[targetIndex]
-        isNavigating = true
-        navigationStartTime = CACurrentMediaTime()
-        
-        dbg("🧭 RESTORE 실행: \(targetEntry.debugDescription)")
-        
-        onLoadCompletion = { [weak self] in
-            guard let self = self else { return }
-            self.virtualCurrentIndex = targetIndex
-            self.updateNavigationButtons()
-            if let url = webView.url {
-                self.isInternalNavigation = true
-                self.currentURL = url
-                self.isInternalNavigation = false
-            }
-            self.isNavigating = false
-            self.pendingSession = nil
-            self.finishSessionRestore()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.navigationDidFinish.send(())
-                self.dbg("🧭 RESTORE 완료")
-            }
-        }
-        
-        webView.load(URLRequest(url: targetEntry.url))
-        HistoryCacheManager.shared.cacheEntry(for: targetEntry.url, title: targetEntry.title)
-    }
+
+    // MARK: - 네비게이션 메서드 (기존 인터페이스 유지)
     
     func goBack() {
-        guard !throttleTap(), !isNavigating, virtualCurrentIndex > 0, let webView = webView else {
-            let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-            dbg("⬅️ 가상 네비 실패: idx=\(virtualCurrentIndex), navigating=\(isNavigating), webView=\(webView != nil), stack=[\(urlList)]")
-            return
+        guard canGoBack else { 
+            dbg("⬅️ 뒤로가기 불가")
+            return 
         }
         
-        virtualCurrentIndex -= 1
-        let targetEntry = virtualHistoryStack[virtualCurrentIndex]
-        isNavigating = true
-        navigationStartTime = CACurrentMediaTime()
+        currentPageIndex -= 1
         
-        isInternalNavigation = true
-        currentURL = targetEntry.url
-        isInternalNavigation = false
-        
-        webView.load(URLRequest(url: targetEntry.url))
-        HistoryCacheManager.shared.cacheEntry(for: targetEntry.url, title: targetEntry.title)
-        updateNavigationButtons()
-        
-        dbg("⬅️ V-NAV BACK → idx \(virtualCurrentIndex) (\(targetEntry.debugDescription))")
+        if let record = currentPageRecord {
+            record.updateAccess()
+            currentURL = record.url
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: record.url))
+            }
+            
+            updateNavigationState()
+            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(record.id.uuidString.prefix(8))]")
+        }
     }
     
     func goForward() {
-        guard !throttleTap(), !isNavigating, virtualCurrentIndex < virtualHistoryStack.count - 1, let webView = webView else {
-            let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-            dbg("➡️ 가상 네비 실패: idx=\(virtualCurrentIndex)/\(virtualHistoryStack.count-1), navigating=\(isNavigating), webView=\(webView != nil), stack=[\(urlList)]")
-            return
+        guard canGoForward else { 
+            dbg("➡️ 앞으로가기 불가")
+            return 
         }
         
-        virtualCurrentIndex += 1
-        let targetEntry = virtualHistoryStack[virtualCurrentIndex]
-        isNavigating = true
-        navigationStartTime = CACurrentMediaTime()
+        currentPageIndex += 1
         
-        isInternalNavigation = true
-        currentURL = targetEntry.url
-        isInternalNavigation = false
-        
-        webView.load(URLRequest(url: targetEntry.url))
-        HistoryCacheManager.shared.cacheEntry(for: targetEntry.url, title: targetEntry.title)
-        updateNavigationButtons()
-        
-        dbg("➡️ V-NAV FWD → idx \(virtualCurrentIndex) (\(targetEntry.debugDescription))")
-    }
-    
-    func reload() {
-        guard webView != nil else {
-            dbg("🚫 reload 실패: webView 없음")
-            return
-        }
-        NotificationCenter.default.post(name: .init("WebViewReload"), object: nil)
-        dbg("🔄 reload 요청")
-    }
-    
-    private func throttleTap() -> Bool {
-        let now = CACurrentMediaTime()
-        defer { lastNavTapAt = now }
-        return (now - lastNavTapAt) < navTapMinInterval
-    }
-    
-    private enum NavigationDirection { case back, forward }
-    
-    private func performVirtualNavigation(direction: NavigationDirection) {
-        guard isUsingVirtualHistory, let webView = webView else {
-            dbg("🧩 V-NAV 실패: 가상 히스토리 비활성 또는 webView 없음")
-            return
-        }
-        
-        let newIndex: Int
-        switch direction {
-        case .back:
-            guard virtualCurrentIndex > 0 else {
-                NotificationCenter.default.post(name: .init("WebViewNavigationBlocked"),
-                                               object: nil,
-                                               userInfo: ["message": "뒤로 갈 페이지가 없습니다"])
-                let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-                dbg("⬅️ 가상 네비: 뒤로가기 불가 (인덱스: \(virtualCurrentIndex), stack=[\(urlList)])")
-                return
+        if let record = currentPageRecord {
+            record.updateAccess()
+            currentURL = record.url
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: record.url))
             }
-            newIndex = virtualCurrentIndex - 1
-        case .forward:
-            guard virtualCurrentIndex < virtualHistoryStack.count - 1 else {
-                NotificationCenter.default.post(name: .init("WebViewNavigationBlocked"),
-                                               object: nil,
-                                               userInfo: ["message": "앞으로 갈 페이지가 없습니다"])
-                let urlList = virtualHistoryStack.map { $0.debugDescription }.joined(separator: ", ")
-                dbg("➡️ 가상 네비: 앞으로가기 불가 (인덱스: \(virtualCurrentIndex)/\(virtualHistoryStack.count-1), stack=[\(urlList)])")
-                return
-            }
-            newIndex = virtualCurrentIndex + 1
-        }
-        
-        let targetEntry = virtualHistoryStack[newIndex]
-        isNavigating = true
-        navigationStartTime = CACurrentMediaTime()
-        
-        virtualCurrentIndex = newIndex
-        updateNavigationButtons()
-        
-        dbg("🧩 V-NAV \(direction == .back ? "BACK" : "FWD") → idx \(newIndex) (\(targetEntry.debugDescription))")
-        
-        if webView.url == targetEntry.url {
-            isNavigating = false
-            navigationDidFinish.send(())
-            dbg("🧩 V-NAV 스킵: 동일 URL")
-        } else {
-            isInternalNavigation = true
-            currentURL = targetEntry.url
-            isInternalNavigation = false
-            webView.load(URLRequest(url: targetEntry.url))
-            HistoryCacheManager.shared.cacheEntry(for: targetEntry.url, title: targetEntry.title)
+            
+            updateNavigationState()
+            dbg("➡️ 앞으로: '\(record.title)' [ID: \(record.id.uuidString.prefix(8))]")
         }
     }
+    
+    func reload() { 
+        guard let webView = webView else { return }
+        webView.reload()
+        dbg("🔄 페이지 새로고침")
+    }
+
+    // MARK: - 기존 호환성 API (기존 코드가 계속 작동하도록)
+    
+    var historyURLs: [String] {
+        return pageHistory.map { $0.url.absoluteString }
+    }
+
+    var currentHistoryIndex: Int {
+        return max(0, currentPageIndex)
+    }
+
+    func historyStackIfAny() -> [URL] {
+        return pageHistory.map { $0.url }
+    }
+
+    func currentIndexInSafeBounds() -> Int {
+        return max(0, min(currentPageIndex, pageHistory.count - 1))
+    }
+
+    // MARK: - WKNavigationDelegate (단순화)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        dbg("🌐 LOAD 시작 → \(webView.url?.absoluteString ?? "(pending)")")
+        dbg("🌐 로드 시작 → \(webView.url?.absoluteString ?? "(pending)")")
     }
-    
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         self.webView = webView
         
-        if let url = webView.url, !isRestoringSession {
-            if let index = virtualHistoryStack.firstIndex(where: { $0.url == url }) {
-                virtualHistoryStack[index].title = webView.title ?? url.host ?? "제목 없음"
-                dbg("🧩 V-HIST 제목 업데이트: \(virtualHistoryStack[index].debugDescription)")
-            } else {
-                if virtualCurrentIndex < virtualHistoryStack.count - 1 {
-                    virtualHistoryStack = Array(virtualHistoryStack.prefix(upTo: virtualCurrentIndex + 1))
-                }
-                let newEntry = HistoryEntry(url: url, title: webView.title ?? url.host ?? "제목 없음", date: Date(), navigationID: UUID().uuidString)
-                virtualHistoryStack.append(newEntry)
-                virtualCurrentIndex = virtualHistoryStack.count - 1
-                WebViewStateModel.globalHistory.append(newEntry)
-                WebViewStateModel.saveGlobalHistory()
-                legacyHistoryStack.append(url)
-                currentIndexInStack = legacyHistoryStack.count - 1
-                dbg("🧩 V-HIST 추가: \(newEntry.debugDescription)")
-            }
+        let title = webView.title ?? webView.url?.host ?? "제목 없음"
+        
+        // 현재 페이지 제목 업데이트
+        updateCurrentPageTitle(title)
+        
+        // 전역 방문 기록 추가 (복원 중이 아닐 때만)
+        if let finalURL = webView.url, !isRestoringSession {
+            WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+            WebViewStateModel.saveGlobalHistory()
         }
         
-        updateNavigationButtons()
+        updateNavigationState()
         
-        if let url = webView.url {
-            let title = webView.title ?? url.host ?? "제목 없음"
-            HistoryCacheManager.shared.cacheEntry(for: url, title: title)
-            if currentURL != url {
-                isInternalNavigation = true
-                currentURL = url
-                isInternalNavigation = false
-            }
+        dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward)")
+        
+        // 저장 트리거 (복원 중이 아닐 때만)
+        if !isRestoringSession {
+            navigationDidFinish.send(())
         }
-        
-        isNavigating = false
-        let navigationTime = CACurrentMediaTime() - navigationStartTime
-        dbg("🌐 LOAD 완료 → \(webView.url?.absoluteString ?? "nil") (소요시간: \(String(format: "%.3f", navigationTime))초)")
-        
-        onLoadCompletion?()
-        onLoadCompletion = nil
-        navigationDidFinish.send(())
     }
-    
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        isNavigating = false
         dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
-        if isRestoringSession { finishSessionRestore() }
+        isRestoringSession = false
     }
-    
+
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        isNavigating = false
         dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
-        if isRestoringSession { finishSessionRestore() }
+        isRestoringSession = false
     }
-    
-    func loadURLIfReady() {
-        guard let webView = webView, let url = currentURL else {
-            dbg("🚫 loadURLIfReady 실패: webView 또는 URL 없음")
-            return
-        }
-        if webView.url != url {
-            isNavigating = true
-            navigationStartTime = CACurrentMediaTime()
-            webView.load(URLRequest(url: url))
-            HistoryCacheManager.shared.cacheEntry(for: url)
-            dbg("🌐 loadURLIfReady: \(url.absoluteString)")
-        }
-    }
-    
+
+    // MARK: - 디버그 로그
     private func dbg(_ msg: String) {
-        let id = tabID.uuidString.prefix(6)
-        let timestamp = ts()
-        print("[\(timestamp)][\(id)] \(msg)")
+        let id = tabID?.uuidString.prefix(6) ?? "noTab"
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
     }
-    
-    func makeVideoScript() -> String {
-        return """
-        var videos = document.getElementsByTagName('video');
-        for (var i = 0; i < videos.length; i++) {
-            videos[i].addEventListener('click', function(e) {
-                e.preventDefault();
-                var src = this.currentSrc || this.src;
-                if (src) {
-                    window.webkit.messageHandlers.playVideo.postMessage(src);
-                }
-            });
-        }
-        """
-    }
-    
-    func handleRefresh(_ webView: WKWebView) {
-        webView.reload()
-    }
-    
+
+    // MARK: - 방문기록 페이지 (기존 UI 유지하면서 새 시스템 연동)
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
         @State private var searchQuery: String = ""
@@ -586,61 +358,156 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             df.timeStyle = .short
             return df
         }()
+
+        // 현재 세션 히스토리
+        private var sessionHistory: [PageRecord] {
+            return state.pageHistory.reversed()
+        }
         
-        private var filteredHistory: [HistoryEntry] {
+        // 전역 히스토리 (검색 필터링)
+        private var filteredGlobalHistory: [HistoryEntry] {
             let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if q.isEmpty { return WebViewStateModel.globalHistory.sorted { $0.date > $1.date } }
             return WebViewStateModel.globalHistory
                 .filter { $0.url.absoluteString.lowercased().contains(q) || $0.title.lowercased().contains(q) }
                 .sorted { $0.date > $1.date }
         }
-        
+
         init(state: WebViewStateModel) {
             self._state = ObservedObject(wrappedValue: state)
         }
-        
+
         var body: some View {
             List {
-                ForEach(filteredHistory) { item in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title.isEmpty ? (item.url.host ?? "제목 없음") : item.title)
-                            .font(.headline)
-                        Text(item.url.absoluteString)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        Text(dateFormatter.string(from: item.date))
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        state.currentURL = item.url
-                        state.loadURLIfReady()
-                        dismiss()
+                // 현재 세션 히스토리
+                if !sessionHistory.isEmpty {
+                    Section("현재 세션") {
+                        ForEach(sessionHistory) { record in
+                            SessionHistoryRowView(
+                                record: record, 
+                                isCurrent: record.id == state.currentPageRecord?.id
+                            )
+                            .onTapGesture {
+                                // 특정 페이지로 직접 이동
+                                if let index = state.pageHistory.firstIndex(where: { $0.id == record.id }) {
+                                    state.currentPageIndex = index
+                                    state.currentURL = record.url
+                                    if let webView = state.webView {
+                                        webView.load(URLRequest(url: record.url))
+                                    }
+                                    state.updateNavigationState()
+                                    dismiss()
+                                }
+                            }
+                        }
                     }
                 }
-                .onDelete(perform: delete)
+                
+                // 전역 히스토리
+                Section("전체 기록") {
+                    ForEach(filteredGlobalHistory) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "globe")
+                                    .frame(width: 16, height: 16)
+                                    .foregroundColor(.blue)
+                                
+                                Text(item.title)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                
+                                Spacer()
+                                
+                                Text(dateFormatter.string(from: item.date))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text(item.url.absoluteString)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                        }
+                        .padding(.vertical, 2)
+                        .onTapGesture {
+                            // 전역 히스토리에서 페이지 로드
+                            state.currentURL = item.url
+                            dismiss()
+                        }
+                    }
+                    .onDelete(perform: deleteGlobalHistory)
+                }
             }
             .navigationTitle("방문 기록")
             .searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("모두 지우기") {
-                        WebViewStateModel.globalHistory.removeAll()
-                        WebViewStateModel.saveGlobalHistory()
+                        state.clearHistory()
                     }
                 }
             }
-            .onReceive(state.navigationDidFinish) { _ in
-                state.dbg("HistoryPage: navigationDidFinish received")
-            }
         }
-        
-        func delete(at offsets: IndexSet) {
-            let items = filteredHistory
+
+        func deleteGlobalHistory(at offsets: IndexSet) {
+            let items = filteredGlobalHistory
             let targets = offsets.map { items[$0] }
             WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
             WebViewStateModel.saveGlobalHistory()
+            TabPersistenceManager.debugMessages.append("[\(ts())] 🧹 방문 기록 삭제: \(targets.count)개")
         }
     }
+}
+
+// MARK: - 세션 히스토리 행 뷰
+struct SessionHistoryRowView: View {
+    let record: PageRecord
+    let isCurrent: Bool
+    
+    var body: some View {
+        HStack {
+            // 현재 페이지 표시
+            Image(systemName: isCurrent ? "arrow.right.circle.fill" : "circle")
+                .foregroundColor(isCurrent ? .blue : .gray)
+                .frame(width: 20)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.title)
+                    .font(isCurrent ? .headline : .body)
+                    .fontWeight(isCurrent ? .bold : .regular)
+                    .lineLimit(1)
+                
+                Text(record.url.absoluteString)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .lineLimit(1)
+                
+                HStack {
+                    Text("ID: \(record.id.uuidString.prefix(8))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(DateFormatter.shortTime.string(from: record.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .background(isCurrent ? Color.blue.opacity(0.1) : Color.clear)
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - DateFormatter 확장
+extension DateFormatter {
+    static let shortTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
