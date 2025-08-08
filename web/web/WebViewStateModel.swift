@@ -79,16 +79,18 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
             dbg("URL 업데이트 → \(url.absoluteString)")
             
-            if isRestoringSession { return }
-            
-            // 새 페이지 기록 추가
-            addNewPage(url: url)
-            
-            // 전역 방문 기록 업데이트
-            WebViewStateModel.globalHistory.append(.init(url: url, title: url.host ?? "제목 없음", date: Date()))
-            WebViewStateModel.saveGlobalHistory()
+            // 🔧 주소창에서 직접 입력한 경우 웹뷰 로드
+            if !isRestoringSession && !isNavigatingFromWebView {
+                if let webView = webView {
+                    webView.load(URLRequest(url: url))
+                    dbg("🌐 주소창에서 웹뷰 로드: \(url.absoluteString)")
+                }
+            }
         }
     }
+
+    // 웹뷰 내부 네비게이션인지 구분하는 플래그
+    private var isNavigatingFromWebView: Bool = false
 
     @Published var canGoBack: Bool = false {
         didSet {
@@ -215,7 +217,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         // 현재 페이지 URL 설정
         if let currentRecord = currentPageRecord {
+            isNavigatingFromWebView = true
             currentURL = currentRecord.url
+            isNavigatingFromWebView = false
+            
             dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
         } else {
             currentURL = nil
@@ -250,7 +255,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            isNavigatingFromWebView = true
             currentURL = record.url
+            isNavigatingFromWebView = false
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
@@ -274,7 +281,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            isNavigatingFromWebView = true
             currentURL = record.url
+            isNavigatingFromWebView = false
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
@@ -308,11 +317,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     func currentIndexInSafeBounds() -> Int {
         return max(0, min(currentPageIndex, pageHistory.count - 1))
     }
+    
+    // MARK: - 기존 호환성 메서드
+    
+    func loadURLIfReady() {
+        if let url = currentURL, let webView = webView {
+            webView.load(URLRequest(url: url))
+            dbg("URL 로드 시도: \(url.absoluteString)")
+        } else {
+            dbg("URL 로드 실패: WebView 또는 URL 없음")
+        }
+    }
 
-    // MARK: - WKNavigationDelegate (단순화)
+    // MARK: - WKNavigationDelegate (개선)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         dbg("🌐 로드 시작 → \(webView.url?.absoluteString ?? "(pending)")")
+        
+        // 🔧 웹뷰 내부 네비게이션 감지
+        if let startURL = webView.url, currentURL != startURL && !isRestoringSession {
+            dbg("🔄 웹뷰 내부 네비게이션 감지: \(startURL.absoluteString)")
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -320,13 +345,29 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
         
-        // 현재 페이지 제목 업데이트
-        updateCurrentPageTitle(title)
-        
-        // 전역 방문 기록 추가 (복원 중이 아닐 때만)
-        if let finalURL = webView.url, !isRestoringSession {
-            WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
-            WebViewStateModel.saveGlobalHistory()
+        // 🔧 웹뷰에서 실제 로드된 URL 확인 및 페이지 기록 업데이트
+        if let finalURL = webView.url {
+            isNavigatingFromWebView = true
+            
+            // 현재 URL과 다르면 새 페이지로 기록
+            if currentURL != finalURL || pageHistory.isEmpty {
+                addNewPage(url: finalURL, title: title)
+                currentURL = finalURL  // currentURL 동기화
+                
+                // 전역 방문 기록 추가 (복원 중이 아닐 때만)
+                if !isRestoringSession {
+                    WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+                    WebViewStateModel.saveGlobalHistory()
+                }
+                
+                dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
+            } else {
+                // 같은 URL이면 제목만 업데이트
+                updateCurrentPageTitle(title)
+                dbg("📝 페이지 제목만 업데이트: '\(title)'")
+            }
+            
+            isNavigatingFromWebView = false
         }
         
         updateNavigationState()
