@@ -368,3 +368,4 @@ class FilePicker: NSObject, UIDocumentPickerDelegate {
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
+}
