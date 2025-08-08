@@ -9,15 +9,17 @@ struct Bookmark: Codable, Identifiable, Equatable {
     let url: String
     let faviconURL: String?
 
-    var idValue: UUID { id // MARK: - Collection 확장: 안전 인덱싱
-extension Collection {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
+    var idValue: UUID { id } // 🔧 컴파일 에러 수정: 중괄호 닫힘
 
     static func == (lhs: Bookmark, rhs: Bookmark) -> Bool {
         lhs.id == rhs.id
+    }
+}
+
+// MARK: - Collection 확장: 안전 인덱싱
+extension Collection {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
@@ -204,9 +206,6 @@ enum TabPersistenceManager {
         }
     }
 }
-
-// MARK: - WebViewStateModel 확장 제거 (중복 방지)
-// loadURLIfReady() 메서드는 WebViewStateModel.swift에 이미 구현됨
 
 // MARK: - DashboardView: URL 없는 탭의 홈 화면 (기존 기능 유지)
 struct DashboardView: View {
