@@ -243,8 +243,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: - 네비게이션 메서드 (기존 인터페이스 유지)
     
     func goBack() {
-        guard canGoBack else { 
-            dbg("⬅️ 뒤로가기 불가")
+        guard canGoBack, currentPageIndex > 0 else { 
+            dbg("⬅️ 뒤로가기 불가: canGoBack=\(canGoBack), index=\(currentPageIndex)")
             return 
         }
         
@@ -257,20 +257,22 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             
             isNavigatingFromWebView = true
             currentURL = record.url
-            isNavigatingFromWebView = false
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
+                dbg("🌐 뒤로가기 웹뷰 로드: \(record.url.absoluteString)")
             }
             
             updateNavigationState()
-            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
+            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+            
+            // isNavigatingFromWebView는 didFinish에서 false로 설정
         }
     }
     
     func goForward() {
-        guard canGoForward else { 
-            dbg("➡️ 앞으로가기 불가")
+        guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
+            dbg("➡️ 앞으로가기 불가: canGoForward=\(canGoForward), index=\(currentPageIndex)")
             return 
         }
         
@@ -283,14 +285,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             
             isNavigatingFromWebView = true
             currentURL = record.url
-            isNavigatingFromWebView = false
             
             if let webView = webView {
                 webView.load(URLRequest(url: record.url))
+                dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
             }
             
             updateNavigationState()
-            dbg("➡️ 앞으로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
+            dbg("➡️ 앞으로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+            
+            // isNavigatingFromWebView는 didFinish에서 false로 설정
         }
     }
     
@@ -347,32 +351,44 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         // 🔧 웹뷰에서 실제 로드된 URL 확인 및 페이지 기록 업데이트
         if let finalURL = webView.url {
-            isNavigatingFromWebView = true
+            dbg("🌐 didFinish: \(finalURL.absoluteString), current: \(currentURL?.absoluteString ?? "nil")")
             
-            // 현재 URL과 다르면 새 페이지로 기록
-            if currentURL != finalURL || pageHistory.isEmpty {
-                addNewPage(url: finalURL, title: title)
-                currentURL = finalURL  // currentURL 동기화
+            // 🔥 핵심 수정: 항상 새 페이지로 기록 (단, 복원 중 제외)
+            if !isRestoringSession {
+                isNavigatingFromWebView = true
                 
-                // 전역 방문 기록 추가 (복원 중이 아닐 때만)
-                if !isRestoringSession {
-                    WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
-                    WebViewStateModel.saveGlobalHistory()
+                // 마지막 페이지와 URL이 다르면 새 페이지 추가
+                let shouldAddNewPage: Bool
+                if pageHistory.isEmpty {
+                    shouldAddNewPage = true
+                } else if let lastRecord = pageHistory.last {
+                    shouldAddNewPage = (lastRecord.url != finalURL)
+                } else {
+                    shouldAddNewPage = true
                 }
                 
-                dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
-            } else {
-                // 같은 URL이면 제목만 업데이트
-                updateCurrentPageTitle(title)
-                dbg("📝 페이지 제목만 업데이트: '\(title)'")
+                if shouldAddNewPage {
+                    addNewPage(url: finalURL, title: title)
+                    dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
+                    
+                    // 전역 방문 기록 추가
+                    WebViewStateModel.globalHistory.append(.init(url: finalURL, title: title, date: Date()))
+                    WebViewStateModel.saveGlobalHistory()
+                } else {
+                    // 같은 URL이면 제목만 업데이트
+                    updateCurrentPageTitle(title)
+                    dbg("📝 페이지 제목만 업데이트: '\(title)'")
+                }
+                
+                // currentURL 동기화 (didSet 호출 방지)
+                currentURL = finalURL
+                isNavigatingFromWebView = false
             }
-            
-            isNavigatingFromWebView = false
         }
         
         updateNavigationState()
         
-        dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward)")
+        dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
         
         // 저장 트리거 (복원 중이 아닐 때만)
         if !isRestoringSession {
