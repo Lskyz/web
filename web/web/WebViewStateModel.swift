@@ -257,7 +257,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
             
             updateNavigationState()
-            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(record.id.uuidString.prefix(8))]")
+            dbg("⬅️ 뒤로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
         }
     }
     
@@ -281,7 +281,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
             
             updateNavigationState()
-            dbg("➡️ 앞으로: '\(record.title)' [ID: \(record.id.uuidString.prefix(8))]")
+            dbg("➡️ 앞으로: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
         }
     }
     
@@ -351,7 +351,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // MARK: - 디버그 로그
     private func dbg(_ msg: String) {
-        let id = tabID?.uuidString.prefix(6).map(String.init) ?? "noTab"
+        let id: String
+        if let tabID = tabID {
+            id = String(tabID.uuidString.prefix(6))
+        } else {
+            id = "noTab"
+        }
         TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
     }
 
