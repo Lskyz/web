@@ -17,6 +17,7 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - makeUIView (단순화)
     func makeUIView(context: Context) -> WKWebView {
+        // ✅ 오디오 세션 활성화 (다른 앱 오디오와 믹싱 허용)
         configureAudioSessionForMixing()
 
         // 웹뷰 설정 구성
@@ -111,6 +112,9 @@ struct CustomWebView: UIViewRepresentable {
         uiView.uiDelegate = nil
         uiView.navigationDelegate = nil
         coordinator.webView = nil
+
+        // ✅ 오디오 세션 비활성화 추가
+        coordinator.parent.deactivateAudioSession()
 
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
@@ -246,7 +250,6 @@ struct CustomWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-            // JavaScript alert 처리
             DispatchQueue.main.async {
                 let alert = UIAlertController(title: "알림", message: message, preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
@@ -268,7 +271,6 @@ struct CustomWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-            // JavaScript confirm 처리
             DispatchQueue.main.async {
                 let alert = UIAlertController(title: "확인", message: message, preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
@@ -293,7 +295,6 @@ struct CustomWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-            // JavaScript prompt 처리
             DispatchQueue.main.async {
                 let alert = UIAlertController(title: "입력", message: prompt, preferredStyle: .alert)
                 alert.addTextField { textField in
@@ -321,7 +322,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-       // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
+        // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
         @available(iOS 14.0, *)
         func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
             DispatchQueue.main.async {
@@ -368,4 +369,4 @@ class FilePicker: NSObject, UIDocumentPickerDelegate {
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
-}
+} // ✅ 클래스 닫는 중괄호 추가
