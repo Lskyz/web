@@ -500,6 +500,54 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let startURL = webView.url
         dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
         
+        // ✅ 스와이프 제스처 뒤로가기/앞으로가기 감지 개선
+        if let startURL = startURL, 
+           !isRestoringSession, 
+           !isHistoryNavigationActive(),
+           currentURL != startURL {
+            
+            dbg("👆 === 스와이프 제스처 감지 분석 ===")
+            dbg("👆 시작 URL: \(startURL.absoluteString)")
+            dbg("👆 현재 URL: \(currentURL?.absoluteString ?? "nil")")
+            
+            // 현재 커스텀 히스토리에서 URL 찾기
+            if let foundIndex = pageHistory.firstIndex(where: { $0.url == startURL }) {
+                let currentIndex = currentPageIndex
+                
+                dbg("👆 히스토리에서 발견: 인덱스 \(foundIndex), 현재 인덱스: \(currentIndex)")
+                
+                if foundIndex < currentIndex {
+                    // 스와이프 뒤로가기 감지
+                    dbg("👆 ⬅️ 스와이프 뒤로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
+                    currentPageIndex = foundIndex
+                    isHistoryNavigation = true
+                    
+                } else if foundIndex > currentIndex {
+                    // 스와이프 앞으로가기 감지
+                    dbg("👆 ➡️ 스와이프 앞으로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
+                    currentPageIndex = foundIndex
+                    isHistoryNavigation = true
+                    
+                } else {
+                    dbg("👆 같은 인덱스 - 일반 네비게이션으로 처리")
+                }
+                
+                if isHistoryNavigation {
+                    // 히스토리 기록 접근 시간 업데이트
+                    var mutableRecord = pageHistory[foundIndex]
+                    mutableRecord.updateAccess()
+                    pageHistory[foundIndex] = mutableRecord
+                    
+                    updateNavigationState()
+                    dbg("👆 스와이프 제스처로 히스토리 인덱스 동기화: \(foundIndex)")
+                }
+            } else {
+                dbg("👆 히스토리에 없는 URL - 일반 네비게이션으로 처리")
+            }
+            
+            dbg("👆 === 스와이프 제스처 감지 분석 끝 ===")
+        }
+        
         // 🔧 리다이렉트 체인 감지 시작
         if let url = startURL {
             let now = Date()
@@ -563,16 +611,26 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("🔄 === 세션 복원 끝 ===")
                 
             } else if isHistoryNavigationActive() {
-                dbg("🔄 === 히스토리 네비게이션 처리 ===")
+                dbg("🔄 === 히스토리 네비게이션 처리 (버튼 또는 스와이프) ===")
                 updateCurrentPageTitle(title)
-                currentURL = finalURL
-                dbg("🔄 히스토리 네비게이션 완료: '\(title)' - 새 페이지 추가 안함")
+                
+                // ✅ 스와이프 제스처든 버튼이든 currentURL 동기화
+                if currentURL != finalURL {
+                    dbg("🔄 스와이프 제스처로 인한 주소창 동기화: \(currentURL?.absoluteString ?? "nil") → \(finalURL.absoluteString)")
+                    isNavigatingFromWebView = true
+                    currentURL = finalURL
+                    isNavigatingFromWebView = false
+                } else {
+                    dbg("🔄 주소창 이미 동기화됨")
+                }
+                
+                dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] - 새 페이지 추가 안함")
                 
                 // ✅ 히스토리 네비게이션 플래그 지연 해제 (시간 기반으로 더 안전하게)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self.isHistoryNavigation = false
                     self.isNavigatingFromWebView = false
-                    self.dbg("🏁 히스토리 네비게이션 플래그 지연 해제 완료")
+                    self.dbg("🏁 히스토리 네비게이션 플래그 지연 해제 완료 (스와이프/버튼)")
                 }
                 
                 dbg("🔄 === 히스토리 네비게이션 처리 끝 ===")
