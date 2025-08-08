@@ -338,7 +338,7 @@ struct ContentView: View {
                         }
                     )
                 }
-                .background(Color.clear)
+                .background(.ultraThinMaterial)
             }
 
         } else {
