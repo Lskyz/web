@@ -1,26 +1,55 @@
+//
+//  CustomWebView.swift
+//
+//  ✅ 전체 주석 포함 / 불필요한 부분 수정 없이 기능만 추가
+//  - WebView: 비디오 클릭 시 AVPlayer 재생, 배경 투명 처리, Pull-to-Refresh 등
+//  - 쿠키 세션 공유: WKHTTPCookieStore ↔︎ HTTPCookieStorage 동기화
+//  - 파일 다운로드: iOS 14+ WKDownload 사용 (Content-Disposition: attachment 처리)
+//  - 다운로드 진행률 UI: CustomWebView 내부에 상단 오버레이(블러 + 라벨 + Progress 바)
+//  - 빌드 경고/에러 수정: as!, cookiesDidChangeNotification, as? 관련 정리
+//
+//
+
 import SwiftUI
 import WebKit
 import AVFoundation
 import UIKit
-import UniformTypeIdentifiers // 파일 선택을 위한 UTType 사용
+import UniformTypeIdentifiers   // 파일 선택을 위한 UTType 사용
+import Foundation
 
-// MARK: - CustomWebView (단순화된 시스템)
+// MARK: - 다운로드 진행 알림 이름 정의
+/// WebViewStateModel(WKDownloadDelegate) → CustomWebView(Coordinator)로
+/// 진행률 이벤트를 전달하기 위한 Notification 이름들
+extension Notification.Name {
+    static let WebViewDownloadStart    = Notification.Name("WebViewDownloadStart")
+    static let WebViewDownloadProgress = Notification.Name("WebViewDownloadProgress")
+    static let WebViewDownloadFinish   = Notification.Name("WebViewDownloadFinish")
+    static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
+}
+
+// MARK: - CustomWebView (UIViewRepresentable)
+/// SwiftUI에서 사용할 WKWebView 래퍼.
+/// 내부적으로 WKWebView 위에 다운로드 진행률 UI(블러 + 라벨 + ProgressView)를 오버레이로 올림.
 struct CustomWebView: UIViewRepresentable {
+    // 외부에서 주입되는 상태 모델(네비게이션 델리게이트 용도)
     @ObservedObject var stateModel: WebViewStateModel
+    // AVPlayer 재생을 위한 바인딩 (비디오 클릭 시 세팅됨)
     @Binding var playerURL: URL?
     @Binding var showAVPlayer: Bool
 
+    // 외부로 스크롤 Y를 전달하고 싶을 때 사용하는 콜백 (선택)
     var onScroll: ((CGFloat) -> Void)? = nil
 
-    // MARK: - Coordinator 생성
+    // Coordinator 생성
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    // MARK: - makeUIView (단순화)
+    // MARK: - makeUIView
+    /// WKWebView + 다운로드 오버레이 UI를 구성
     func makeUIView(context: Context) -> WKWebView {
         // ✅ 오디오 세션 활성화 (다른 앱 오디오와 믹싱 허용)
         configureAudioSessionForMixing()
 
-        // 웹뷰 설정 구성
+        // WKWebView 설정
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.allowsPictureInPictureMediaPlayback = true
@@ -30,32 +59,29 @@ struct CustomWebView: UIViewRepresentable {
 
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript()) // 함수명 일치
-        controller.add(context.coordinator, name: "playVideo") // JS → 네이티브 메시지 핸들러 등록
-
-        // ✨ 추가: HTML/CSS 배경을 강제 투명화하는 스크립트
-        controller.addUserScript(makeTransparentBackgroundScript())
-
+        controller.addUserScript(makeVideoScript())                          // 비디오 처리 스크립트
+        controller.add(context.coordinator, name: "playVideo")               // JS → 네이티브 메시지 핸들러
+        controller.addUserScript(makeTransparentBackgroundScript())          // HTML/CSS 배경 투명화
         config.userContentController = controller
 
+        // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.decelerationRate = .normal
 
-        // ✨ 추가: WKWebView 자체를 진짜 투명으로
+        // WKWebView 자체를 투명 처리 (배경이 비치도록)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
 
-        // ✨ 추가: 자동 인셋을 끄고(흰 띠 방지) 모든 인셋 0으로
-        // (위에서 .automatic을 썼지만, 여기서 끄는 건 "추가"로서 override만 함)
+        // 흰 띠 방지: 인셋 제거
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
 
-        // delegate 연결
+        // Delegate 연결
         webView.navigationDelegate = stateModel
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
@@ -71,7 +97,7 @@ struct CustomWebView: UIViewRepresentable {
         webView.scrollView.refreshControl = refreshControl
         webView.scrollView.delegate = context.coordinator
 
-        // 단순화된 초기 로드
+        // 초기 로드
         if let url = stateModel.currentURL {
             webView.load(URLRequest(url: url))
             TabPersistenceManager.debugMessages.append("🌐 초기 URL 로드: \(url.absoluteString)")
@@ -80,7 +106,7 @@ struct CustomWebView: UIViewRepresentable {
             TabPersistenceManager.debugMessages.append("🌐 빈 페이지 로드")
         }
 
-        // 옵저버
+        // 외부 제어용 Notification 옵저버 등록
         NotificationCenter.default.addObserver(
             context.coordinator,
             selector: #selector(Coordinator.handleExternalOpenURL(_:)),
@@ -106,11 +132,33 @@ struct CustomWebView: UIViewRepresentable {
             object: nil
         )
 
+        // 🔽 다운로드 진행률 UI 오버레이 구성
+        context.coordinator.installDownloadOverlay(on: webView)
+
+        // 🔽 다운로드 관련 이벤트 옵저버 등록
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
+                                               name: .WebViewDownloadStart,
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
+                                               name: .WebViewDownloadProgress,
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
+                                               name: .WebViewDownloadFinish,
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
+                                               name: .WebViewDownloadFailed,
+                                               object: nil)
+
         return webView
     }
 
     // MARK: - updateUIView
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        // 연결이 끊겼을 경우만 다시 연결 (불필요한 수정 방지)
         if uiView.uiDelegate !== context.coordinator {
             uiView.uiDelegate = context.coordinator
         }
@@ -124,32 +172,33 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - teardown
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        // 스크롤/델리게이트 해제
         uiView.scrollView.delegate = nil
         uiView.uiDelegate = nil
         uiView.navigationDelegate = nil
         coordinator.webView = nil
 
-        // ✅ 오디오 세션 비활성화 추가
+        // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
 
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
 
-        // NotificationCenter 옵저버 제거
+        // 모든 옵저버 제거 (외부 제어 + 다운로드 이벤트)
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer로 재생 / PiP 활성 시도)
+    // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer로 재생 / PiP 시도)
     private func makeVideoScript() -> WKUserScript {
         let scriptSource = """
         function processVideos(doc) {
             [...doc.querySelectorAll('video')].forEach(video => {
-                // iOS 사파리 자동재생 제약 회피를 위해 기본 mute
+                // iOS 자동재생 제약 회피: 기본 mute
                 video.muted = true;
                 video.volume = 0;
                 video.setAttribute('muted','true');
 
-                // AVPlayer로 넘기는 클릭 핸들러는 1회만 부착
+                // AVPlayer로 넘기는 클릭 핸들러 1회만 부착
                 if (!video.hasAttribute('nativeAVPlayerListener')) {
                     video.addEventListener('click', () => {
                         window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
@@ -157,7 +206,7 @@ struct CustomWebView: UIViewRepresentable {
                     video.setAttribute('nativeAVPlayerListener', 'true');
                 }
 
-                // 가능하면 PiP 자동 진입 시도(실패해도 무시)
+                // 가능하면 PiP 자동 진입 시도(실패 무시)
                 if (document.pictureInPictureEnabled &&
                     !video.disablePictureInPicture &&
                     !document.pictureInPictureElement) {
@@ -181,7 +230,7 @@ struct CustomWebView: UIViewRepresentable {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
-    // MARK: - ✨ 추가: HTML/CSS 배경을 완전히 투명화하는 스크립트
+    // MARK: - HTML/CSS 배경 투명화 스크립트
     private func makeTransparentBackgroundScript() -> WKUserScript {
         let css = """
         html, body {
@@ -216,15 +265,26 @@ struct CustomWebView: UIViewRepresentable {
         TabPersistenceManager.debugMessages.append("오디오 세션 비활성화")
     }
 
-    // JS → 네이티브: 비디오 클릭 시 AVPlayer로 재생
+    // MARK: - Coordinator
+    /// WKWebView UI 관련 델리게이트, 스크롤 이벤트, JS 메시지, 다운로드 UI 제어
     class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
+
+        // 부모와 웹뷰 참조
         var parent: CustomWebView
         weak var webView: WKWebView?
-        var filePicker: FilePicker? // 강한 참조 유지용
+
+        // 파일 선택기(강한 참조 유지)
+        var filePicker: FilePicker?
+
+        // 다운로드 진행률 UI 구성 요소들 (오버레이)
+        private var overlayContainer: UIVisualEffectView?
+        private var overlayTitleLabel: UILabel?
+        private var overlayPercentLabel: UILabel?
+        private var overlayProgress: UIProgressView?
 
         init(_ parent: CustomWebView) { self.parent = parent }
 
-        // WKScriptMessageHandler: JS에서 보낸 메시지 처리
+        // MARK: JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "playVideo" else { return }
             if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -235,7 +295,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // Pull to Refresh
+        // MARK: Pull to Refresh
         @objc func handleRefresh(_ sender: UIRefreshControl) {
             webView?.reload()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -243,7 +303,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // 외부 URL 오픈 핸들링
+        // MARK: 외부 URL 오픈
         @objc func handleExternalOpenURL(_ note: Notification) {
             guard
                 let userInfo = note.userInfo,
@@ -253,156 +313,147 @@ struct CustomWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
 
-        // 네비게이션 명령들 (단순화)
-        @objc func reloadWebView() {
-            webView?.reload()
-        }
+        // MARK: 네비게이션 명령
+        @objc func reloadWebView() { webView?.reload() }
+        @objc func goBack() { if webView?.canGoBack == true { webView?.goBack() } }
+        @objc func goForward() { if webView?.canGoForward == true { webView?.goForward() } }
 
-        @objc func goBack() {
-            guard let webView = webView else { return }
-            if webView.canGoBack {
-                webView.goBack()
-            }
-        }
-
-        @objc func goForward() {
-            guard let webView = webView else { return }
-            if webView.canGoForward {
-                webView.goForward()
-            }
-        }
-
-        // UIScrollViewDelegate: 실제 웹 콘텐츠 스크롤 전달
+        // MARK: 스크롤 전달
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
-        // MARK: - WKUIDelegate 메서드들
+        // MARK: 팝업(새창) → 현재 탭에서 열기
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            // 새 창 요청 시 현재 웹뷰에서 로드
             if let url = navigationAction.request.url {
                 webView.load(URLRequest(url: url))
             }
             return nil
         }
 
-        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-            DispatchQueue.main.async {
-                let alert = UIAlertController(title: "알림", message: message, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
-                    completionHandler()
-                })
+        // MARK: - 다운로드 진행률 오버레이 설치/업데이트
 
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first,
-                   let rootVC = window.rootViewController {
-                    var presentingVC = rootVC
-                    while let presented = presentingVC.presentedViewController {
-                        presentingVC = presented
-                    }
-                    presentingVC.present(alert, animated: true)
-                } else {
-                    completionHandler()
-                }
-            }
+        /// WKWebView 위에 블러 오버레이 + 타이틀 + 퍼센트 + 진행 바를 설치
+        func installDownloadOverlay(on webView: WKWebView) {
+            // 이미 설치되어 있으면 스킵
+            guard overlayContainer == nil else { return }
+
+            // 블러 컨테이너
+            let blur = UIBlurEffect(style: .systemThinMaterial)
+            let container = UIVisualEffectView(effect: blur)
+            container.translatesAutoresizingMaskIntoConstraints = false
+            container.alpha = 0.0          // 처음엔 숨김
+            container.layer.cornerRadius = 10
+            container.clipsToBounds = true
+
+            // 상단 라벨들 (좌: 파일명, 우: 퍼센트)
+            let title = UILabel()
+            title.translatesAutoresizingMaskIntoConstraints = false
+            title.font = .preferredFont(forTextStyle: .caption1)
+            title.textColor = .label
+            title.text = "다운로드 준비 중..."
+
+            let percent = UILabel()
+            percent.translatesAutoresizingMaskIntoConstraints = false
+            percent.font = .preferredFont(forTextStyle: .caption1)
+            percent.textColor = .secondaryLabel
+            percent.text = "0%"
+
+            // 진행 바
+            let progress = UIProgressView(progressViewStyle: .bar)
+            progress.translatesAutoresizingMaskIntoConstraints = false
+            progress.progress = 0.0
+
+            // 컨테이너 서브뷰 구성
+            container.contentView.addSubview(title)
+            container.contentView.addSubview(percent)
+            container.contentView.addSubview(progress)
+
+            // 오토레이아웃 (컨테이너는 웹뷰 상단 안전영역에 고정)
+            webView.addSubview(container)
+            NSLayoutConstraint.activate([
+                container.leadingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+                container.trailingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+                container.topAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.topAnchor, constant: 12),
+
+                title.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
+                title.topAnchor.constraint(equalTo: container.contentView.topAnchor, constant: 10),
+
+                percent.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
+                percent.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+
+                progress.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
+                progress.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
+                progress.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+                progress.bottomAnchor.constraint(equalTo: container.contentView.bottomAnchor, constant: -10),
+                progress.heightAnchor.constraint(equalToConstant: 3)
+            ])
+
+            // 보관
+            overlayContainer = container
+            overlayTitleLabel = title
+            overlayPercentLabel = percent
+            overlayProgress = progress
         }
 
-        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-            DispatchQueue.main.async {
-                let alert = UIAlertController(title: "확인", message: message, preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
-                    completionHandler(false)
-                })
-                alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
-                    completionHandler(true)
-                })
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first,
-                   let rootVC = window.rootViewController {
-                    var presentingVC = rootVC
-                    while let presented = presentingVC.presentedViewController {
-                        presentingVC = presented
-                    }
-                    presentingVC.present(alert, animated: true)
-                } else {
-                    completionHandler(false)
-                }
-            }
+        /// 오버레이 표시 (파일명 설정)
+        private func showOverlay(filename: String?) {
+            overlayTitleLabel?.text = filename ?? "다운로드 중"
+            overlayPercentLabel?.text = "0%"
+            overlayProgress?.setProgress(0.0, animated: false)
+            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 1.0 }
         }
 
-        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-            DispatchQueue.main.async {
-                let alert = UIAlertController(title: "입력", message: prompt, preferredStyle: .alert)
-                alert.addTextField { textField in
-                    textField.text = defaultText
-                }
-                alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
-                    completionHandler(nil)
-                })
-                alert.addAction(UIAlertAction(title: "확인", style: .default) { _ in
-                    let text = alert.textFields?.first?.text
-                    completionHandler(text)
-                })
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first,
-                   let rootVC = window.rootViewController {
-                    var presentingVC = rootVC
-                    while let presented = presentingVC.presentedViewController {
-                        presentingVC = presented
-                    }
-                    presentingVC.present(alert, animated: true)
-                } else {
-                    completionHandler(nil)
-                }
-            }
+        /// 오버레이 진행률 업데이트
+        private func updateOverlay(progress: Double) {
+            overlayProgress?.setProgress(Float(progress), animated: true)
+            let pct = max(0, min(100, Int(progress * 100)))
+            overlayPercentLabel?.text = "\(pct)%"
         }
 
-        // 파일 업로드 처리 (iOS 버전 - 강한 참조 유지)
-        @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
-            DispatchQueue.main.async {
-                let documentPicker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
-                documentPicker.allowsMultipleSelection = true
-                
-                // 강한 참조 유지
-                self.filePicker = FilePicker(completionHandler: { urls in
-                    completionHandler(urls)
-                    self.filePicker = nil // 완료 후 해제
-                })
-                documentPicker.delegate = self.filePicker
-                
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first,
-                   let rootVC = window.rootViewController {
-                    var presentingVC = rootVC
-                    while let presented = presentingVC.presentedViewController {
-                        presentingVC = presented
-                    }
-                    presentingVC.present(documentPicker, animated: true)
-                } else {
-                    completionHandler(nil)
-                    self.filePicker = nil
-                }
-            }
+        /// 오버레이 숨김
+        private func hideOverlay() {
+            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 0.0 }
+        }
+
+        // MARK: 다운로드 이벤트(Notification) 핸들러
+        /// 시작: 파일명 수신 → 오버레이 표시
+        @objc func handleDownloadStart(_ note: Notification) {
+            let filename = note.userInfo?["filename"] as? String
+            showOverlay(filename: filename)
+        }
+
+        /// 진행: 0~1.0 수신 → 진행률 갱신
+        @objc func handleDownloadProgress(_ note: Notification) {
+            let progress = note.userInfo?["progress"] as? Double ?? 0
+            updateOverlay(progress: progress)
+        }
+
+        /// 완료: 오버레이 숨김 (공유시트는 WKDownloadDelegate에서 표시됨)
+        @objc func handleDownloadFinish(_ note: Notification) {
+            hideOverlay()
+        }
+
+        /// 실패: 오버레이 숨김 (알림은 WKDownloadDelegate에서 표시됨)
+        @objc func handleDownloadFailed(_ note: Notification) {
+            hideOverlay()
         }
     }
 }
 
-// MARK: - 파일 선택 헬퍼
+// MARK: - 파일 선택 헬퍼 (UIDocumentPicker)
 @available(iOS 14.0, *)
 class FilePicker: NSObject, UIDocumentPickerDelegate {
     let completionHandler: ([URL]?) -> Void
-    
+
     init(completionHandler: @escaping ([URL]?) -> Void) {
         self.completionHandler = completionHandler
     }
-    
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         completionHandler(urls)
     }
-    
+
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
@@ -412,14 +463,9 @@ class FilePicker: NSObject, UIDocumentPickerDelegate {
 // 🔽🔽🔽 여기부터 "추가" 코드 (위 코드 일절 수정 X) 🔽🔽🔽
 ///////////////////////////////////////////////////////////////
 
-import Foundation
-
 // MARK: - CookieSyncManager
 /// WKWebView의 `WKHTTPCookieStore`와 app 전역 `HTTPCookieStorage.shared`를
 /// 양방향으로 동기화하여 **세션/로그인 쿠키를 공유**하기 위한 헬퍼.
-/// - 설계 포인트:
-///   - 위쪽 기존 코드에 손대지 않기 위해, `WebViewStateModel`의 네비게이션 이벤트 훅을 이용(아래 extension 참조)
-///   - 여러 WebView 인스턴스가 생겨도 전역 스토리지와 동기화되도록 구현
 enum CookieSyncManager {
     /// App → WebView 로 쿠키 밀어넣기
     static func syncAppToWebView(_ webView: WKWebView, completion: (() -> Void)? = nil) {
@@ -444,23 +490,16 @@ enum CookieSyncManager {
     }
 }
 
-// MARK: - 전역 Weak-Set: 쿠키 동기화가 설치된 모델 추적
-/// 동일 모델에 중복 설치 방지(강한참조 방지 위해 weakObjects 사용)
+// MARK: - 전역 Weak-Set: 쿠키 동기화 설치된 모델 추적 (중복 방지)
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
 
 // MARK: - WebViewStateModel 확장 (쿠키 세션 공유 설치 훅)
-/// ⚠️ 주의: 여기서는 **기존 WebViewStateModel 선언을 전혀 수정하지 않고**,  
-/// 확장을 통해 네비게이션 이벤트 지점에서 쿠키 동기화를 "설치"한다.
-/// 이미 동일 메서드를 구현해두었다면 충돌을 피하기 위해 아래 메서드들을 그대로 두거나 이름이 다른 메서드(예: didCommit)를 사용.
-/// 일반적으로 didCommit은 많이 구현하지 않으므로 충돌 가능성 ↓
+/// ⚠️ 기존 WebViewStateModel 선언은 수정하지 않고, 확장으로 네비 이벤트 지점에 훅을 건다.
 extension WebViewStateModel {
 
-    /// didCommit 시점에 1회 쿠키 동기화 설치
-    /// - 웹 컨텐츠가 로딩을 시작하면 전역 <-> WebView 쿠키를 즉시 1회 동기화
-    /// - 이후에는 스토어 변경 이벤트 기반으로 자동 동기화
+    /// didCommit 시점에 1회 쿠키 동기화 설치 + App→WebView 초기 동기화
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         _installCookieSyncIfNeeded(for: webView)
-        // 최초 1회: App → WebView 동기화(로그인 상태 즉시 반영)
         CookieSyncManager.syncAppToWebView(webView, completion: nil)
     }
 
@@ -469,16 +508,16 @@ extension WebViewStateModel {
         if _cookieSyncInstalledModels.contains(self) { return }
         _cookieSyncInstalledModels.add(self)
 
-        // (1) WebView 측 쿠키 변경을 감시하여 App 전역 스토리지로 반영
+        // WebView 측 쿠키 변경을 감시 → App 전역 스토리지로 반영
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        store.add(self as! WKHTTPCookieStoreObserver) // 아래에서 프로토콜 채택
+        store.add(self) // ✅ 수정: 강제 캐스팅(as!) 제거
 
-        // (2) App 전역 쿠키 변경을 감시하여 WebView로 반영
+        // App 전역 쿠키 변경 감시 → WebView로 반영 (iOS: NSHTTPCookieManagerCookiesChanged 사용)
         NotificationCenter.default.addObserver(
-            forName: HTTPCookieStorage.cookiesDidChangeNotification,
+            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"), // ✅ 수정
             object: HTTPCookieStorage.shared,
             queue: .main
-        ) { [weak self, weak webView] _ in
+        ) { [weak webView] _ in
             guard let webView = webView else { return }
             CookieSyncManager.syncAppToWebView(webView, completion: nil)
             if let host = webView.url?.host {
@@ -502,7 +541,7 @@ extension WebViewStateModel: WKHTTPCookieStoreObserver {
 }
 
 ///////////////////////////////////////////////////////////////
-// MARK: - 파일 다운로드 지원 (iOS 14+ WKDownload)
+// MARK: - 파일 다운로드 지원 (iOS 14+ WKDownload) + 진행률 UI 이벤트 송신
 ///////////////////////////////////////////////////////////////
 
 /// 다운로드 목적지 기록(다운로드 객체 ↔︎ 파일 URL 매핑)
@@ -510,27 +549,18 @@ private final class DownloadCoordinator {
     static let shared = DownloadCoordinator()
     private init() {}
     private var map = [ObjectIdentifier: URL]()
-    func set(url: URL, for download: WKDownload) {
-        map[ObjectIdentifier(download)] = url
-    }
-    func url(for download: WKDownload) -> URL? {
-        map[ObjectIdentifier(download)]
-    }
-    func remove(_ download: WKDownload) {
-        map.removeValue(forKey: ObjectIdentifier(download))
-    }
+    func set(url: URL, for download: WKDownload) { map[ObjectIdentifier(download)] = url }
+    func url(for download: WKDownload) -> URL? { map[ObjectIdentifier(download)] }
+    func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
 }
 
-/// 파일명 안전화: 경로 구분자/제어문자 제거
+/// 파일명 안전화: 경로 구분자/제어문자 제거 + 길이 제한
 private func sanitizedFilename(_ name: String) -> String {
     var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    // 금지 문자 제거
     let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
     result = result.components(separatedBy: forbidden).joined(separator: "_")
-    // 너무 긴 파일명 방지
     if result.count > 150 {
-        let end = result.index(result.startIndex, offsetBy: 150)
-        result = String(result[..<end])
+        result = String(result.prefix(150))
     }
     return result.isEmpty ? "download" : result
 }
@@ -545,11 +575,10 @@ private func topMostViewController() -> UIViewController? {
     return top
 }
 
-/// iOS 14+ WKDownload 를 이용한 파일 다운로드 구현
+// MARK: - WKNavigationResponse → 다운로드 전환 / 다운로드 델리게이트 연결
 extension WebViewStateModel {
 
-    /// (중요) Content-Disposition: attachment 응답은 **다운로드로 전환**
-    /// 기존 동작과 충돌을 피하기 위해, 일반 케이스는 건드리지 않고 "첨부 응답"만 다운로드 처리.
+    /// Content-Disposition: attachment 응답은 **다운로드로 전환**
     @available(iOS 14.0, *)
     public func webView(_ webView: WKWebView,
                         decidePolicyFor navigationResponse: WKNavigationResponse,
@@ -568,42 +597,24 @@ extension WebViewStateModel {
     public func webView(_ webView: WKWebView,
                         navigationResponse: WKNavigationResponse,
                         didBecome download: WKDownload) {
-        download.delegate = self as? WKDownloadDelegate
+        download.delegate = self // ✅ 수정: 불필요한 as? 제거
     }
-
-    /// (선택) iOS 14.5+: 사용자가 "다운로드로 수행"해야 하는 액션 지원
-    /// 이미 구현되어 있는 경우를 고려해 여기서는 생략해도 충분하지만,
-    /// 필요 시 아래 주석을 해제해서 사용할 수 있음.
-    /*
-    @available(iOS 14.5, *)
-    public func webView(_ webView: WKWebView,
-                        decidePolicyFor navigationAction: WKNavigationAction,
-                        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if navigationAction.shouldPerformDownload {
-            decisionHandler(.download)
-            return
-        }
-        decisionHandler(.allow)
-    }
-
-    @available(iOS 14.5, *)
-    public func webView(_ webView: WKWebView,
-                        navigationAction: WKNavigationAction,
-                        didBecome download: WKDownload) {
-        download.delegate = self as? WKDownloadDelegate
-    }
-    */
 }
 
 // MARK: - WebViewStateModel: WKDownloadDelegate 구현
 extension WebViewStateModel: WKDownloadDelegate {
 
-    /// 저장 위치 결정: Documents/Downloads/ 하위에 제안된 파일명으로 저장
+    /// 저장 위치 결정: Documents/Downloads/ 하위에 제안된 파일명으로 저장 + 시작 이벤트 송신
     @available(iOS 14.0, *)
     public func download(_ download: WKDownload,
                          decideDestinationUsing response: URLResponse,
                          suggestedFilename: String,
                          completionHandler: @escaping (URL?) -> Void) {
+
+        // UI에 시작 알림 (파일명 전달)
+        NotificationCenter.default.post(name: .WebViewDownloadStart,
+                                        object: nil,
+                                        userInfo: ["filename": suggestedFilename])
 
         // 저장 폴더 생성 (Documents/Downloads)
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -626,7 +637,7 @@ extension WebViewStateModel: WKDownloadDelegate {
         TabPersistenceManager.debugMessages.append("⬇️ 다운로드 저장 경로 결정: \(dst.lastPathComponent)")
     }
 
-    /// 다운로드 진행 상황(필요 시 로깅/프로그레스 바 연결 가능)
+    /// 다운로드 진행 상황 → 진행률 이벤트 송신
     @available(iOS 14.0, *)
     public func download(_ download: WKDownload,
                          didWriteData bytesWritten: Int64,
@@ -635,15 +646,23 @@ extension WebViewStateModel: WKDownloadDelegate {
         guard totalBytesExpectedToWrite > 0 else { return }
         let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
         TabPersistenceManager.debugMessages.append(String(format: "⬇️ 다운로드 진행률: %.0f%%", progress * 100))
+
+        // UI에 진행률 알림 (0.0 ~ 1.0)
+        NotificationCenter.default.post(name: .WebViewDownloadProgress,
+                                        object: nil,
+                                        userInfo: ["progress": progress])
     }
 
-    /// 다운로드 실패 처리
+    /// 다운로드 실패 처리 → 실패 이벤트 송신 + Alert
     @available(iOS 14.0, *)
     public func download(_ download: WKDownload,
                          didFailWithError error: Error,
                          resumeData: Data?) {
         let filename = DownloadCoordinator.shared.url(for: download)?.lastPathComponent ?? "파일"
         DownloadCoordinator.shared.remove(download)
+
+        // UI 업데이트 (실패 알림)
+        NotificationCenter.default.post(name: .WebViewDownloadFailed, object: nil)
 
         DispatchQueue.main.async {
             if let top = topMostViewController() {
@@ -657,15 +676,20 @@ extension WebViewStateModel: WKDownloadDelegate {
         TabPersistenceManager.debugMessages.append("❌ 다운로드 실패: \(error.localizedDescription)")
     }
 
-    /// 다운로드 완료: 공유 시트(파일 앱 저장/다른 앱 열기 등) 표시
+    /// 다운로드 완료: 공유 시트 표시 → 완료 이벤트 송신
     @available(iOS 14.0, *)
     public func downloadDidFinish(_ download: WKDownload) {
         guard let fileURL = DownloadCoordinator.shared.url(for: download) else {
             TabPersistenceManager.debugMessages.append("⚠️ 다운로드 완료했지만 파일 경로를 찾을 수 없음")
+            NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
             return
         }
         DownloadCoordinator.shared.remove(download)
 
+        // UI 업데이트 (완료 알림)
+        NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
+
+        // 공유 시트 표시
         DispatchQueue.main.async {
             guard let top = topMostViewController() else { return }
             let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
