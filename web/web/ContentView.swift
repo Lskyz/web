@@ -59,7 +59,7 @@ struct ContentView: View {
     private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
     private let toolbarSpacing: CGFloat        = 22    // 하단 버튼 간격
-    private let glassTintOpacity: CGFloat      = 0.14  // ✨ 변경: '화이트 글라스' 흰 틴트 투명도 (0.08~0.20 사이 추천)
+    private let glassTintOpacity: CGFloat      = 0.08  // ✨ 변경: '화이트 글라스' 흰 틴트 투명도 (0.08~0.20 사이 추천)
 
     // 재질: 더 하얗게 비치도록 Light 계열 사용
     private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterialLight // ✨ 변경
