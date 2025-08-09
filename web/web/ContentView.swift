@@ -218,7 +218,7 @@ struct ContentView: View {
                                 let back = switched.canGoBack ? "가능" : "불가"
                                 let fwd = switched.canGoForward ? "가능" : "불가"
                                 let pageId = r.id.uuidString.prefix(8)
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
                             }
