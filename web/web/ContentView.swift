@@ -26,7 +26,7 @@ struct VisualEffectBlur: UIViewRepresentable {
     }
 }
 
-/// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
+/// 웹 브라우저의 메인 콘텐츠 뷰 - 🛡️ 복원 상태 고려한 뷰 전환 로직
 struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
@@ -49,6 +49,10 @@ struct ContentView: View {
 
     // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
     @State private var allowTopOverlap: Bool = false
+    
+    // 🛡️ 새로 추가: 복원 상태 추적
+    @State private var isSessionRestoring: Bool = false
+    @State private var forceShowWebView: Bool = false
 
     // ============================================================
     // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (여기만 만지면 전체가 같이 바뀜)
@@ -70,8 +74,8 @@ struct ContentView: View {
             let state = tabs[selectedTabIndex].stateModel
 
             ZStack {
-                // MARK: 웹 콘텐츠 영역
-                if state.currentURL != nil {
+                // MARK: 🛡️ 강화된 웹 콘텐츠 영역 조건 판단
+                if shouldShowWebView(for: state) {
                     CustomWebView(
                         stateModel: state,
                         playerURL: Binding(
@@ -133,15 +137,33 @@ struct ContentView: View {
                     }
 
                 } else {
-                    // ✅ 수정: DashboardView를 onNavigateToURL 단일 함수로 통합
-                    DashboardView(
-                        onNavigateToURL: { selectedURL in
-                            // 원자적 처리: URL 설정 + 로딩을 한번에
-                            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-                            tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
+                    // 🛡️ 대시보드 표시 (복원 상태 고려)
+                    ZStack {
+                        DashboardView(
+                            onNavigateToURL: { selectedURL in
+                                handleDashboardNavigation(selectedURL)
+                            }
+                        )
+                        
+                        // 🛡️ 복원 중일 때 로딩 인디케이터 표시
+                        if isSessionRestoring {
+                            VStack {
+                                ProgressView()
+                                    .scaleEffect(1.2)
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
+                                
+                                Text("페이지 복원 중...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.top, 8)
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(.ultraThinMaterial)
+                            )
                         }
-                    )
+                    }
                     .contentShape(Rectangle())
                     .onTapGesture {
                         withAnimation {
@@ -162,18 +184,47 @@ struct ContentView: View {
                 }
             }
 
-            // MARK: - 뷰 생명주기/이벤트 (기존)
+            // MARK: - 🛡️ 강화된 뷰 생명주기/이벤트
             .onAppear {
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
                     TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
+                    
+                    // 🛡️ 복원 상태 감지
+                    if !state.pageHistory.isEmpty && state.currentPageRecord != nil {
+                        isSessionRestoring = true
+                        TabPersistenceManager.debugMessages.append("🔄 복원 상태 감지: 웹뷰 준비 대기")
+                        
+                        // 🛡️ 복원 타임아웃 (10초)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+                            if isSessionRestoring {
+                                TabPersistenceManager.debugMessages.append("⚠️ 복원 타임아웃: 강제 웹뷰 표시")
+                                isSessionRestoring = false
+                                forceShowWebView = true
+                            }
+                        }
+                    }
                 }
                 TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
             }
             .onReceive(state.$currentURL) { url in
-                if let url = url { inputURL = url.absoluteString }
+                if let url = url { 
+                    inputURL = url.absoluteString 
+                    
+                    // 🛡️ URL 변경 시 복원 상태 체크
+                    if isSessionRestoring {
+                        TabPersistenceManager.debugMessages.append("🔄 복원 중 URL 변경: \(url.absoluteString)")
+                    }
+                }
             }
             .onReceive(state.navigationDidFinish) { _ in
+                // 🛡️ 네비게이션 완료 시 복원 상태 해제
+                if isSessionRestoring {
+                    TabPersistenceManager.debugMessages.append("🔄 복원 완료: 네비게이션 성공")
+                    isSessionRestoring = false
+                    forceShowWebView = true
+                }
+                
                 if let currentRecord = state.currentPageRecord {
                     let back = state.canGoBack ? "가능" : "불가"
                     let fwd = state.canGoForward ? "가능" : "불가"
@@ -197,6 +248,11 @@ struct ContentView: View {
                         onTabSelected: { index in
                             selectedTabIndex = index
                             let switched = tabs[index].stateModel
+                            
+                            // 🛡️ 탭 전환 시 복원 상태 초기화
+                            isSessionRestoring = false
+                            forceShowWebView = false
+                            
                             if let r = switched.currentPageRecord {
                                 let back = switched.canGoBack ? "가능" : "불가"
                                 let fwd = switched.canGoForward ? "가능" : "불가"
@@ -249,8 +305,7 @@ struct ContentView: View {
                                 }
                                 .onSubmit {
                                     if let url = fixedURL(from: inputURL) {
-                                        state.currentURL = url
-                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+                                        handleAddressBarNavigation(url)
                                     }
                                     isTextFieldFocused = false
                                 }
@@ -359,16 +414,82 @@ struct ContentView: View {
             // ✅ 수정: 탭이 비어있을 때도 onNavigateToURL 단일 함수로 통합
             DashboardView(
                 onNavigateToURL: { url in
-                    // 원자적 처리: 새 탭 생성 + URL 설정 + 로딩을 한번에
-                    let newTab = WebTab(url: url)
-                    tabs.append(newTab)
-                    selectedTabIndex = tabs.count - 1
-                    newTab.stateModel.loadURLIfReady()
-                    TabPersistenceManager.saveTabs(tabs)
-                    TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(url.absoluteString)")
+                    handleEmptyTabNavigation(url)
                 }
             )
         }
+    }
+
+    // MARK: - 🛡️ 웹뷰 표시 조건 판단 로직
+    
+    private func shouldShowWebView(for state: WebViewStateModel) -> Bool {
+        // 1. 기본 조건: currentURL이 있어야 함
+        guard state.currentURL != nil else {
+            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시 안함: currentURL 없음")
+            return false
+        }
+        
+        // 2. 강제 웹뷰 표시 플래그가 있으면 표시
+        if forceShowWebView {
+            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 강제 표시 플래그")
+            return true
+        }
+        
+        // 3. 복원 중이 아니면 표시
+        if !isSessionRestoring {
+            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 복원 상태 아님")
+            return true
+        }
+        
+        // 4. 복원 중이지만 페이지 히스토리가 없으면 표시 (새 페이지)
+        if state.pageHistory.isEmpty {
+            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 빈 히스토리")
+            return true
+        }
+        
+        // 5. 복원 중이면서 페이지 히스토리가 있으면 대기
+        TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시 안함: 복원 중 + 히스토리 있음")
+        return false
+    }
+    
+    // MARK: - 🛡️ 네비게이션 처리 메서드들
+    
+    private func handleDashboardNavigation(_ selectedURL: URL) {
+        let state = tabs[selectedTabIndex].stateModel
+        
+        // 복원 상태 초기화
+        isSessionRestoring = false
+        forceShowWebView = true
+        
+        // 원자적 처리: URL 설정 + 로딩을 한번에
+        state.currentURL = selectedURL
+        state.loadURLIfReady()
+        TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
+    }
+    
+    private func handleAddressBarNavigation(_ url: URL) {
+        let state = tabs[selectedTabIndex].stateModel
+        
+        // 복원 상태 초기화
+        isSessionRestoring = false
+        forceShowWebView = true
+        
+        state.currentURL = url
+        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+    }
+    
+    private func handleEmptyTabNavigation(_ url: URL) {
+        // 복원 상태 초기화
+        isSessionRestoring = false
+        forceShowWebView = false
+        
+        // 원자적 처리: 새 탭 생성 + URL 설정 + 로딩을 한번에
+        let newTab = WebTab(url: url)
+        tabs.append(newTab)
+        selectedTabIndex = tabs.count - 1
+        newTab.stateModel.loadURLIfReady()
+        TabPersistenceManager.saveTabs(tabs)
+        TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(url.absoluteString)")
     }
 
     // MARK: - WKWebView 스크롤 콜백 처리 (기존)
