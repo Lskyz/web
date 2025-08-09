@@ -52,17 +52,18 @@ struct ContentView: View {
 
     // ============================================================
     // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (여기만 만지면 전체가 같이 바뀜)
+    // 블러 약하게 = UltraThin 재질(가장 투명/블러 약함)
+    // 화이트 글라스 = Light 계열 + 흰색 틴트 오버레이
     // ============================================================
-    private let outerHorizontalPadding: CGFloat = 23   // 주소창/툴바의 외부 좌우 여백(폭 조절)
-    private let barCornerRadius: CGFloat       = 22    // 둥근 정도 (유리 캡슐 느낌)
-    private let barVPadding: CGFloat           = 12    // 내부 상하 여백(높이)
-    private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기
+    private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
+    private let barCornerRadius: CGFloat       = 22
+    private let barVPadding: CGFloat           = 12
+    private let iconSize: CGFloat              = 23
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
-    private let toolbarSpacing: CGFloat        = 23    // 하단 버튼 간격
-    private let glassTintOpacity: CGFloat      = 0.08  // ✨ 변경: '화이트 글라스' 흰 틴트 투명도 (0.08~0.20 사이 추천)
+    private let toolbarSpacing: CGFloat        = 22
 
-    // 재질: 더 하얗게 비치도록 Light 계열 사용
-    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterialLight // ✨ 변경
+    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterialLight // ✨ 변경: 가장 얇은(블러 약함) + 라이트
+    private let glassTintOpacity: CGFloat      = 0.20  // ✨ 변경: 화이트 틴트 강도(사파리 느낌이면 0.14~0.20 권장)
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -100,8 +101,7 @@ struct ContentView: View {
                     )
                     .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
                         if isTextFieldFocused || Date() < ignoreAutoHideUntil {
-                            previousOffset = offset
-                            return
+                            previousOffset = offset; return
                         }
                         let delta = offset - previousOffset
                         if delta < -30 && showAddressBar {
@@ -219,7 +219,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (화이트 글라스: Light + White Tint + 더 투명 스트로크)
+            // MARK: - 하단 UI (화이트 글라스 + 툴바 빈공간 탭 시 주소창 열기)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     // 주소창
@@ -272,7 +272,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
-                        // ✨ 변경: Light 재질 + White Tint(알파로 불투명도 낮춤 → 뒤가 더 비침)
+                        // ✨ 변경: UltraThin Light + 흰색 틴트(화이트 글라스)
                         .background(
                             ZStack {
                                 VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
@@ -280,14 +280,14 @@ struct ContentView: View {
                                     .fill(Color.white.opacity(glassTintOpacity))
                             }
                         )
-                        // ✨ 변경: 스트로크 투명도 살짝 낮춰 더 투명한 글라스
+                        // 테두리(하이라이트/섀도)는 낮은 불투명도로 유지
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                         .padding(.horizontal, outerHorizontalPadding)
                         .transition(.opacity)
                     }
 
-                    // 하단 통합 툴바 (주소창과 폭 동일 + 같은 글라스)
+                    // 하단 통합 툴바
                     HStack(spacing: 0) {
                         HStack(spacing: toolbarSpacing) {
                             Button(action: { state.goBack() }) {
@@ -332,7 +332,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, barVPadding)
-                    // ✨ 변경: 동일 재질 + White Tint
+                    // ✨ 변경: UltraThin Light + 흰색 틴트(화이트 글라스)
                     .background(
                         ZStack {
                             VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
@@ -340,10 +340,19 @@ struct ContentView: View {
                                 .fill(Color.white.opacity(glassTintOpacity))
                         }
                     )
-                    // ✨ 변경: 투명한 글라스 스트로크
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                     .padding(.horizontal, outerHorizontalPadding)
+                    // ✨ 변경: "툴바의 빈공간"을 탭하면 주소창 열기 (버튼 영역 탭은 버튼이 소비하므로 충돌 X)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !showAddressBar {                  // 조건만 추가 (밖 말고 안에)
+                            withAnimation {
+                                showAddressBar = true
+                                allowTopOverlap = false       // 주소창 보일 땐 상단 보호
+                            }
+                        }
+                    }
                 }
                 .background(Color.clear)
             }
