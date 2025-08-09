@@ -407,3 +407,271 @@ class FilePicker: NSObject, UIDocumentPickerDelegate {
         completionHandler(nil)
     }
 }
+
+///////////////////////////////////////////////////////////////
+// 🔽🔽🔽 여기부터 "추가" 코드 (위 코드 일절 수정 X) 🔽🔽🔽
+///////////////////////////////////////////////////////////////
+
+import Foundation
+
+// MARK: - CookieSyncManager
+/// WKWebView의 `WKHTTPCookieStore`와 app 전역 `HTTPCookieStorage.shared`를
+/// 양방향으로 동기화하여 **세션/로그인 쿠키를 공유**하기 위한 헬퍼.
+/// - 설계 포인트:
+///   - 위쪽 기존 코드에 손대지 않기 위해, `WebViewStateModel`의 네비게이션 이벤트 훅을 이용(아래 extension 참조)
+///   - 여러 WebView 인스턴스가 생겨도 전역 스토리지와 동기화되도록 구현
+enum CookieSyncManager {
+    /// App → WebView 로 쿠키 밀어넣기
+    static func syncAppToWebView(_ webView: WKWebView, completion: (() -> Void)? = nil) {
+        let appCookies = HTTPCookieStorage.shared.cookies ?? []
+        guard !appCookies.isEmpty else { completion?(); return }
+        let store = webView.configuration.websiteDataStore.httpCookieStore
+        let group = DispatchGroup()
+        appCookies.forEach { cookie in
+            group.enter()
+            store.setCookie(cookie) { group.leave() }
+        }
+        group.notify(queue: .main) { completion?() }
+    }
+
+    /// WebView → App 으로 쿠키 끌어오기
+    static func syncWebToApp(_ store: WKHTTPCookieStore, completion: (() -> Void)? = nil) {
+        store.getAllCookies { cookies in
+            let appStorage = HTTPCookieStorage.shared
+            cookies.forEach { appStorage.setCookie($0) }
+            completion?()
+        }
+    }
+}
+
+// MARK: - 전역 Weak-Set: 쿠키 동기화가 설치된 모델 추적
+/// 동일 모델에 중복 설치 방지(강한참조 방지 위해 weakObjects 사용)
+private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
+
+// MARK: - WebViewStateModel 확장 (쿠키 세션 공유 설치 훅)
+/// ⚠️ 주의: 여기서는 **기존 WebViewStateModel 선언을 전혀 수정하지 않고**,  
+/// 확장을 통해 네비게이션 이벤트 지점에서 쿠키 동기화를 "설치"한다.
+/// 이미 동일 메서드를 구현해두었다면 충돌을 피하기 위해 아래 메서드들을 그대로 두거나 이름이 다른 메서드(예: didCommit)를 사용.
+/// 일반적으로 didCommit은 많이 구현하지 않으므로 충돌 가능성 ↓
+extension WebViewStateModel {
+
+    /// didCommit 시점에 1회 쿠키 동기화 설치
+    /// - 웹 컨텐츠가 로딩을 시작하면 전역 <-> WebView 쿠키를 즉시 1회 동기화
+    /// - 이후에는 스토어 변경 이벤트 기반으로 자동 동기화
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        _installCookieSyncIfNeeded(for: webView)
+        // 최초 1회: App → WebView 동기화(로그인 상태 즉시 반영)
+        CookieSyncManager.syncAppToWebView(webView, completion: nil)
+    }
+
+    // 쿠키 동기화 설치(중복 방지)
+    private func _installCookieSyncIfNeeded(for webView: WKWebView) {
+        if _cookieSyncInstalledModels.contains(self) { return }
+        _cookieSyncInstalledModels.add(self)
+
+        // (1) WebView 측 쿠키 변경을 감시하여 App 전역 스토리지로 반영
+        let store = webView.configuration.websiteDataStore.httpCookieStore
+        store.add(self as! WKHTTPCookieStoreObserver) // 아래에서 프로토콜 채택
+
+        // (2) App 전역 쿠키 변경을 감시하여 WebView로 반영
+        NotificationCenter.default.addObserver(
+            forName: HTTPCookieStorage.cookiesDidChangeNotification,
+            object: HTTPCookieStorage.shared,
+            queue: .main
+        ) { [weak self, weak webView] _ in
+            guard let webView = webView else { return }
+            CookieSyncManager.syncAppToWebView(webView, completion: nil)
+            if let host = webView.url?.host {
+                TabPersistenceManager.debugMessages.append("🍪 App→Web 쿠키 동기화(\(host))")
+            }
+        }
+        if let host = webView.url?.host {
+            TabPersistenceManager.debugMessages.append("🍪 쿠키 동기화 설치됨(\(host))")
+        }
+    }
+}
+
+// MARK: - WebViewStateModel: WKHTTPCookieStoreObserver 구현
+/// WebView의 쿠키가 바뀔 때마다 호출 → App 전역 쿠키로 반영
+extension WebViewStateModel: WKHTTPCookieStoreObserver {
+    public func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        CookieSyncManager.syncWebToApp(cookieStore) {
+            TabPersistenceManager.debugMessages.append("🍪 Web→App 쿠키 동기화 완료")
+        }
+    }
+}
+
+///////////////////////////////////////////////////////////////
+// MARK: - 파일 다운로드 지원 (iOS 14+ WKDownload)
+///////////////////////////////////////////////////////////////
+
+/// 다운로드 목적지 기록(다운로드 객체 ↔︎ 파일 URL 매핑)
+private final class DownloadCoordinator {
+    static let shared = DownloadCoordinator()
+    private init() {}
+    private var map = [ObjectIdentifier: URL]()
+    func set(url: URL, for download: WKDownload) {
+        map[ObjectIdentifier(download)] = url
+    }
+    func url(for download: WKDownload) -> URL? {
+        map[ObjectIdentifier(download)]
+    }
+    func remove(_ download: WKDownload) {
+        map.removeValue(forKey: ObjectIdentifier(download))
+    }
+}
+
+/// 파일명 안전화: 경로 구분자/제어문자 제거
+private func sanitizedFilename(_ name: String) -> String {
+    var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    // 금지 문자 제거
+    let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+    result = result.components(separatedBy: forbidden).joined(separator: "_")
+    // 너무 긴 파일명 방지
+    if result.count > 150 {
+        let end = result.index(result.startIndex, offsetBy: 150)
+        result = String(result[..<end])
+    }
+    return result.isEmpty ? "download" : result
+}
+
+/// 최상위 표시 가능한 뷰컨트롤러 추출(공유시트/알림표시용)
+private func topMostViewController() -> UIViewController? {
+    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first,
+          let root = window.rootViewController else { return nil }
+    var top = root
+    while let presented = top.presentedViewController { top = presented }
+    return top
+}
+
+/// iOS 14+ WKDownload 를 이용한 파일 다운로드 구현
+extension WebViewStateModel {
+
+    /// (중요) Content-Disposition: attachment 응답은 **다운로드로 전환**
+    /// 기존 동작과 충돌을 피하기 위해, 일반 케이스는 건드리지 않고 "첨부 응답"만 다운로드 처리.
+    @available(iOS 14.0, *)
+    public func webView(_ webView: WKWebView,
+                        decidePolicyFor navigationResponse: WKNavigationResponse,
+                        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if let http = navigationResponse.response as? HTTPURLResponse,
+           let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
+           disp.contains("attachment") {
+            decisionHandler(.download) // ✅ 다운로드로 전환
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    /// 응답이 다운로드로 전환되었을 때 호출 → WKDownload delegate 연결
+    @available(iOS 14.0, *)
+    public func webView(_ webView: WKWebView,
+                        navigationResponse: WKNavigationResponse,
+                        didBecome download: WKDownload) {
+        download.delegate = self as? WKDownloadDelegate
+    }
+
+    /// (선택) iOS 14.5+: 사용자가 "다운로드로 수행"해야 하는 액션 지원
+    /// 이미 구현되어 있는 경우를 고려해 여기서는 생략해도 충분하지만,
+    /// 필요 시 아래 주석을 해제해서 사용할 수 있음.
+    /*
+    @available(iOS 14.5, *)
+    public func webView(_ webView: WKWebView,
+                        decidePolicyFor navigationAction: WKNavigationAction,
+                        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    @available(iOS 14.5, *)
+    public func webView(_ webView: WKWebView,
+                        navigationAction: WKNavigationAction,
+                        didBecome download: WKDownload) {
+        download.delegate = self as? WKDownloadDelegate
+    }
+    */
+}
+
+// MARK: - WebViewStateModel: WKDownloadDelegate 구현
+extension WebViewStateModel: WKDownloadDelegate {
+
+    /// 저장 위치 결정: Documents/Downloads/ 하위에 제안된 파일명으로 저장
+    @available(iOS 14.0, *)
+    public func download(_ download: WKDownload,
+                         decideDestinationUsing response: URLResponse,
+                         suggestedFilename: String,
+                         completionHandler: @escaping (URL?) -> Void) {
+
+        // 저장 폴더 생성 (Documents/Downloads)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
+
+        // 파일명 안전화
+        let safeName = sanitizedFilename(suggestedFilename)
+        let dst = downloadsDir.appendingPathComponent(safeName)
+
+        // 기존 파일이 있으면 제거(덮어쓰기)
+        if FileManager.default.fileExists(atPath: dst.path) {
+            try? FileManager.default.removeItem(at: dst)
+        }
+
+        // 목적지 기록(완료 시 공유시트 노출 위해)
+        DownloadCoordinator.shared.set(url: dst, for: download)
+
+        completionHandler(dst)
+        TabPersistenceManager.debugMessages.append("⬇️ 다운로드 저장 경로 결정: \(dst.lastPathComponent)")
+    }
+
+    /// 다운로드 진행 상황(필요 시 로깅/프로그레스 바 연결 가능)
+    @available(iOS 14.0, *)
+    public func download(_ download: WKDownload,
+                         didWriteData bytesWritten: Int64,
+                         totalBytesWritten: Int64,
+                         totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        TabPersistenceManager.debugMessages.append(String(format: "⬇️ 다운로드 진행률: %.0f%%", progress * 100))
+    }
+
+    /// 다운로드 실패 처리
+    @available(iOS 14.0, *)
+    public func download(_ download: WKDownload,
+                         didFailWithError error: Error,
+                         resumeData: Data?) {
+        let filename = DownloadCoordinator.shared.url(for: download)?.lastPathComponent ?? "파일"
+        DownloadCoordinator.shared.remove(download)
+
+        DispatchQueue.main.async {
+            if let top = topMostViewController() {
+                let alert = UIAlertController(title: "다운로드 실패",
+                                              message: "\(filename) 다운로드 중 오류가 발생했습니다.\n\(error.localizedDescription)",
+                                              preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "확인", style: .default))
+                top.present(alert, animated: true)
+            }
+        }
+        TabPersistenceManager.debugMessages.append("❌ 다운로드 실패: \(error.localizedDescription)")
+    }
+
+    /// 다운로드 완료: 공유 시트(파일 앱 저장/다른 앱 열기 등) 표시
+    @available(iOS 14.0, *)
+    public func downloadDidFinish(_ download: WKDownload) {
+        guard let fileURL = DownloadCoordinator.shared.url(for: download) else {
+            TabPersistenceManager.debugMessages.append("⚠️ 다운로드 완료했지만 파일 경로를 찾을 수 없음")
+            return
+        }
+        DownloadCoordinator.shared.remove(download)
+
+        DispatchQueue.main.async {
+            guard let top = topMostViewController() else { return }
+            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+            activityVC.popoverPresentationController?.sourceView = top.view
+            top.present(activityVC, animated: true)
+        }
+        TabPersistenceManager.debugMessages.append("✅ 다운로드 완료: \(fileURL.lastPathComponent)")
+    }
+}
