@@ -190,7 +190,7 @@ struct ContentView: View {
                 DebugLogView()
             }
 
-            // MARK: - 하단 UI
+            // MARK: - 하단 UI (Safari 스타일 투명 블러)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     // 주소창
@@ -236,7 +236,7 @@ struct ContentView: View {
                                         if !inputURL.isEmpty {
                                             Button(action: { inputURL = "" }) {
                                                 Image(systemName: "xmark.circle.fill")
-                                                    .foregroundColor(.gray)
+                                                    .foregroundColor(.secondary)
                                                     .font(.system(size: 14))
                                             }
                                             .padding(.trailing, 8)
@@ -247,8 +247,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(Color(red: 248/255, green: 249/255, blue: 250/255))
-                        .cornerRadius(10)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 8)
                         .transition(.opacity)
                         .gesture(
@@ -274,7 +273,7 @@ struct ContentView: View {
                         Button(action: { state.goBack() }) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 18))
-                                .foregroundColor(state.canGoBack ? .black : .gray)
+                                .foregroundColor(state.canGoBack ? .primary : .secondary)
                         }
                         .disabled(!state.canGoBack)
                         .padding(.horizontal, 4)
@@ -282,7 +281,7 @@ struct ContentView: View {
                         Button(action: { state.goForward() }) {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 18))
-                                .foregroundColor(state.canGoForward ? .black : .gray)
+                                .foregroundColor(state.canGoForward ? .primary : .secondary)
                         }
                         .disabled(!state.canGoForward)
                         .padding(.horizontal, 4)
@@ -290,18 +289,21 @@ struct ContentView: View {
                         Button(action: { state.reload() }) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 18))
+                                .foregroundColor(.primary)
                         }
                         .padding(.horizontal, 4)
 
                         Button(action: { showTabManager = true }) {
                             Image(systemName: "square.on.square")
                                 .font(.system(size: 18))
+                                .foregroundColor(.primary)
                         }
                         .padding(.horizontal, 4)
 
                         Button(action: { showHistorySheet = true }) {
                             Image(systemName: "clock.arrow.circlepath")
                                 .font(.system(size: 18))
+                                .foregroundColor(.primary)
                         }
                         .padding(.horizontal, 4)
                         
@@ -322,8 +324,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .background(Color(red: 248/255, green: 249/255, blue: 250/255))
-                    .cornerRadius(10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
                     .padding(.horizontal, 8)
                     .gesture(
                         DragGesture(minimumDistance: 10).onEnded { value in
@@ -338,7 +339,7 @@ struct ContentView: View {
                         }
                     )
                 }
-                // ✨ UITabBarAppearance 스타일 - 완전 투명 배경
+                // ✨ Safari 스타일 - 완전 투명 배경
                 .background(.clear)
             }
 
