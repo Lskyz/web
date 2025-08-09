@@ -32,12 +32,28 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript()) // 함수명 일치
         controller.add(context.coordinator, name: "playVideo") // JS → 네이티브 메시지 핸들러 등록
+
+        // ✨ 추가: HTML/CSS 배경을 강제 투명화하는 스크립트
+        controller.addUserScript(makeTransparentBackgroundScript())
+
         config.userContentController = controller
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.decelerationRate = .normal
+
+        // ✨ 추가: WKWebView 자체를 진짜 투명으로
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isOpaque = false
+
+        // ✨ 추가: 자동 인셋을 끄고(흰 띠 방지) 모든 인셋 0으로
+        // (위에서 .automatic을 썼지만, 여기서 끄는 건 "추가"로서 override만 함)
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.contentInset = .zero
+        webView.scrollView.scrollIndicatorInsets = .zero
 
         // delegate 연결
         webView.navigationDelegate = stateModel
@@ -163,6 +179,27 @@ struct CustomWebView: UIViewRepresentable {
         }, 1000);
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+    }
+
+    // MARK: - ✨ 추가: HTML/CSS 배경을 완전히 투명화하는 스크립트
+    private func makeTransparentBackgroundScript() -> WKUserScript {
+        let css = """
+        html, body {
+            background: transparent !important;
+            background-color: transparent !important;
+        }
+        """
+        let js = """
+        (function(){
+            try {
+                var style = document.createElement('style');
+                style.type = 'text/css';
+                style.appendChild(document.createTextNode(`\(css)`));
+                document.documentElement.appendChild(style);
+            } catch (e) {}
+        })();
+        """
+        return WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
     // MARK: - 오디오 세션 (다른 앱과 믹싱 허용)
@@ -369,4 +406,4 @@ class FilePicker: NSObject, UIDocumentPickerDelegate {
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         completionHandler(nil)
     }
-} // ✅ 클래스 닫는 중괄호 추가
+}
