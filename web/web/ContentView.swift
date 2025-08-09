@@ -420,29 +420,27 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 🛡️ 웹뷰 표시 조건 판단 로직
+    // MARK: - 🛡️ 웹뷰 표시 조건 판단 로직 (단순화)
     
     private func shouldShowWebView(for state: WebViewStateModel) -> Bool {
-        // 1. 기본 조건: currentURL이 있어야 함
+        // 1. currentURL이 없으면 대시보드
         guard state.currentURL != nil else {
-            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시 안함: currentURL 없음")
             return false
         }
         
-        // 2. 강제 웹뷰 표시 플래그가 있으면 표시
+        // 2. 강제 표시 플래그가 있으면 웹뷰
         if forceShowWebView {
-            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 강제 표시 플래그")
             return true
         }
         
-        // 3. 복원 중이 아니면 표시
+        // 3. 복원 중이 아니면 웹뷰
         if !isSessionRestoring {
-            TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 복원 상태 아님")
             return true
         }
         
-        // 4. 복원 중이지만 페이지 히스토리가 없으면 표시 (새 페이지)
-        if state.pageHistory.isEmpty {
+        // 4. 복원 중이면서 히스토리가 비어있으면 웹뷰 (새 페이지)
+        return state.pageHistory.isEmpty
+    }
             TabPersistenceManager.debugMessages.append("🔍 웹뷰 표시: 빈 히스토리")
             return true
         }
