@@ -185,7 +185,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                     dbg("⚠️ 웹뷰가 없어서 로드 불가")
                 }
             } else {
-                dbg("⛔️ webView.load 생략됨 - 중복 또는 복원 중 또는 내부 네비게이션")
+                var skipReason = ""
+                if url == oldValue { skipReason += "[중복URL] " }
+                if isRestoringSession { skipReason += "[복원중] " }
+                if isNavigatingFromWebView { skipReason += "[웹뷰네비] " }
+                if isHistoryNavigationActive() { skipReason += "[히스토리네비] " }
+                if isJavaScriptNavigation { skipReason += "[JavaScript네비] " }
+                
+                dbg("⛔️ webView.load 생략됨 - \(skipReason)")
             }
         }
     }
@@ -961,7 +968,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         return session
     }
 
-    // ✅ 🔧 복원 과정 개선 (didFinish에서 복원 완료 처리)
+    // ✅ 🔧 복원 과정 개선 (🛡️ 이중 로딩 방지)
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
         
@@ -979,27 +986,80 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
             }
             
             if let currentRecord = currentPageRecord {
-                isNavigatingFromWebView = true
-                currentURL = currentRecord.url
-                isNavigatingFromWebView = false
+                // 🛡️ 이중 로딩 방지: isUpdatingCurrentURL 플래그 사용
+                isUpdatingCurrentURL = true
+                currentURL = currentRecord.url  // didSet 로딩 방지
+                isUpdatingCurrentURL = false
                 
                 dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
+                
+                // 🛡️ 단일 웹뷰 로딩만 수행
+                if let webView = webView {
+                    webView.load(URLRequest(url: currentRecord.url))
+                    dbg("🌐 복원 시 웹뷰 로드: \(currentRecord.url.absoluteString)")
+                    
+                    // 🛡️ 복원 상태 검증을 위한 타이머 (5초 후 실패 시 대안 실행)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                        if self.isRestoringSession {
+                            self.dbg("⚠️ 복원 타임아웃: 강제 완료 처리")
+                            self.isRestoringSession = false
+                            self.updateNavigationState()
+                            
+                            // 복원 실패 시 대시보드로 돌아가기 방지
+                            if self.currentURL == nil || self.pageHistory.isEmpty {
+                                self.dbg("🚨 복원 실패 감지: 히스토리 재구성")
+                                self.fallbackRestoreFromURL(currentRecord.url)
+                            }
+                        }
+                    }
+                } else {
+                    dbg("⚠️ 웹뷰가 없어서 복원 로드 불가")
+                }
             } else {
                 currentURL = nil
                 dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
+                
+                // 🛡️ 완전 실패 시 대안: 빈 히스토리로 시작
+                if pageHistory.isEmpty {
+                    dbg("🚨 히스토리가 완전히 비어있음 - 정상 상태로 초기화")
+                    isRestoringSession = false
+                }
             }
             
             // 복원 즉시 상태 업데이트
             updateNavigationState()
             dbg("🔧 복원 후 즉시 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
-            
-            if let webView = webView, let url = currentURL {
-                webView.load(URLRequest(url: url))
-                dbg("🌐 복원 시 웹뷰 로드: \(url.absoluteString)")
-            }
         }
         
         dbg("🔄 복원 타이머 없이 didFinish 대기")
+    }
+    
+    // 🛡️ 복원 실패 시 대안 메서드
+    private func fallbackRestoreFromURL(_ url: URL) {
+        dbg("🚨 === 복원 실패 대안 실행 ===")
+        
+        safeHistoryModification { [self] in
+            // 최소한의 히스토리 생성
+            pageHistory.removeAll()
+            let fallbackRecord = PageRecord(url: url, title: url.host ?? "복원된 페이지")
+            pageHistory.append(fallbackRecord)
+            currentPageIndex = 0
+            
+            // 강제 로딩
+            isUpdatingCurrentURL = true
+            currentURL = url
+            isUpdatingCurrentURL = false
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: url))
+                dbg("🚨 대안 로딩: \(url.absoluteString)")
+            }
+            
+            updateNavigationState()
+            isRestoringSession = false
+            
+            dbg("🚨 대안 복원 완료: 1개 페이지로 시작")
+        }
     }
 
     // MARK: - 네비게이션 메서드 (WebView 네이티브 메서드 사용 안함, 🛡️ 안전성 강화)
@@ -1236,6 +1296,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                     // ✅ 복원 완료 처리를 didFinish에서 수행
                     isRestoringSession = false
                     updateNavigationState()
+                    
+                    // 🛡️ 복원 완료 후 상태 검증
+                    if currentURL != finalURL {
+                        dbg("🔄 복원 후 URL 불일치 감지: \(currentURL?.absoluteString ?? "nil") → \(finalURL.absoluteString)")
+                        isUpdatingCurrentURL = true
+                        currentURL = finalURL
+                        isUpdatingCurrentURL = false
+                    }
                 }
                 
                 dbg("🔄 복원 완료: '\(title)' - isRestoringSession = false")
