@@ -170,21 +170,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
     
-    // 🔧 WebView 연결 시 네이티브 히스토리 상태 무시하고 강제 동기화
+    // 🔧 WebView 연결 시 네이티브 히스토리 상태 무시
     weak var webView: WKWebView? {
         didSet {
-            if let webView = webView {
+            if webView != nil {
                 dbg("🔗 webView 연결됨")
                 // 네이티브 히스토리 상태 대신 커스텀 히스토리 상태만 사용
                 DispatchQueue.main.async {
-                    self.forceUpdateNavigationState()
+                    self.updateNavigationState()
                     self.dbg("🔧 WebView 연결 후 커스텀 상태 강제 적용: back=\(self.canGoBack), forward=\(self.canGoForward)")
-                }
-                
-                // ✅ 추가: 약간의 지연 후 한 번 더 상태 동기화 (웹뷰 완전 초기화 대기)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.forceUpdateNavigationState()
-                    self.dbg("🔧 지연 상태 동기화 완료: back=\(self.canGoBack), forward=\(self.canGoForward)")
                 }
             }
         }
@@ -207,7 +201,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         WebViewStateModel.saveGlobalHistory()
         pageHistory.removeAll()
         currentPageIndex = -1
-        forceUpdateNavigationState()
+        updateNavigationState()
         dbg("🧹 전체 히스토리 삭제")
     }
 
@@ -306,31 +300,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🧹 히스토리 크기 제한: 첫 페이지 제거")
         }
         
-        forceUpdateNavigationState()
+        updateNavigationState()
         dbg("📄 ✅ 새 페이지 추가 완료: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] 인덱스: \(currentPageIndex)/\(pageHistory.count)")
         dbg("📋 === addNewPage 호출 분석 끝 (추가 완료) ===")
     }
     
-    // ✅ 새로운 강제 상태 업데이트 메서드 (기존 updateNavigationState보다 강력)
-    private func forceUpdateNavigationState() {
-        let oldBack = canGoBack
-        let oldForward = canGoForward
-        
-        // WebView 네이티브 히스토리를 완전히 무시하고 커스텀 히스토리만 사용
-        canGoBack = currentPageIndex > 0
-        canGoForward = currentPageIndex < pageHistory.count - 1
-        
-        // ✅ 상태가 변경되지 않았어도 강제로 UI 업데이트 트리거
-        objectWillChange.send()
-        
-        dbg("🔄 강제 네비게이션 상태 업데이트: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
-        
-        if oldBack != canGoBack || oldForward != canGoForward {
-            dbg("📢 네비게이션 상태 변경됨: back(\(oldBack)→\(canGoBack)), forward(\(oldForward)→\(canGoForward))")
-        }
-    }
-    
-    // 🔧 완전히 커스텀 히스토리 기반으로 상태 업데이트 (기존 메서드 유지하되 강화)
+    // 🔧 완전히 커스텀 히스토리 기반으로 상태 업데이트
     private func updateNavigationState() {
         let oldBack = canGoBack
         let oldForward = canGoForward
@@ -378,7 +353,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return session
     }
 
-    // ✅ 🔧 복원 과정 개선 (상태 동기화 강화)
+    // ✅ 🔧 복원 과정 개선 (didFinish에서 복원 완료 처리)
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
         isRestoringSession = true
@@ -403,21 +378,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
         }
         
-        // ✅ 복원 즉시 강제 상태 업데이트
-        forceUpdateNavigationState()
+        // 복원 즉시 상태 업데이트
+        updateNavigationState()
         dbg("🔧 복원 후 즉시 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
         
         if let webView = webView, let url = currentURL {
             webView.load(URLRequest(url: url))
             dbg("🌐 복원 시 웹뷰 로드: \(url.absoluteString)")
-            
-            // ✅ 웹뷰 로드 후 추가 상태 동기화
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.forceUpdateNavigationState()
-                self.dbg("🔄 복원 로드 후 지연 상태 동기화: back=\(self.canGoBack), forward=\(self.canGoForward)")
-            }
         }
         
+        // ✅ 타이머 제거 - didFinish에서 복원 완료 처리
         dbg("🔄 복원 타이머 없이 didFinish 대기")
     }
 
@@ -450,7 +420,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("🌐 뒤로가기 웹뷰 로드: \(record.url.absoluteString)")
             }
             
-            forceUpdateNavigationState()
+            updateNavigationState()
             dbg("⬅️ 뒤로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
         }
         dbg("⬅️ === 뒤로가기 끝 ===")
@@ -483,45 +453,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
             }
             
-            forceUpdateNavigationState()
+            updateNavigationState()
             dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
         }
         dbg("➡️ === 앞으로가기 끝 ===")
     }
     
-    // ✅ reload 메서드 강화 (새로고침 시 상태 강제 동기화)
     func reload() { 
         guard let webView = webView else { return }
-        
-        // 새로고침 전 상태 기록
-        let beforeBack = canGoBack
-        let beforeForward = canGoForward
-        
         webView.reload()
         dbg("🔄 페이지 새로고침")
-        
-        // ✅ 새로고침 즉시 상태 강제 업데이트
-        forceUpdateNavigationState()
-        
-        // ✅ 약간의 지연 후 한 번 더 상태 동기화 (새로고침 완료 후)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.forceUpdateNavigationState()
-            self.dbg("🔄 새로고침 후 지연 상태 동기화: back=\(self.canGoBack), forward=\(self.canGoForward)")
-            
-            // 상태가 복원되지 않았다면 한 번 더 시도
-            if self.canGoBack != beforeBack || self.canGoForward != beforeForward {
-                self.dbg("📢 새로고침 후 상태가 변경됨, 추가 동기화 실행")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.forceUpdateNavigationState()
-                }
-            }
-        }
-    }
-
-    // ✅ 사용자 상호작용 시 상태 동기화를 위한 새로운 메서드 추가
-    func refreshNavigationState() {
-        dbg("👆 사용자 상호작용으로 인한 상태 새로고침")
-        forceUpdateNavigationState()
     }
 
     // MARK: - 기존 호환성 API (기존 코드가 계속 작동하도록)
@@ -597,7 +538,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                     mutableRecord.updateAccess()
                     pageHistory[foundIndex] = mutableRecord
                     
-                    forceUpdateNavigationState()
+                    updateNavigationState()
                     dbg("👆 스와이프 제스처로 히스토리 인덱스 동기화: \(foundIndex)")
                 }
             } else {
@@ -631,7 +572,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // ✅ didFinish에서 상태 업데이트 강화
+    // 🔧 복원 중일 때 상태 업데이트 방지
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         self.webView = webView
         
@@ -663,7 +604,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 
                 // ✅ 복원 완료 처리를 didFinish에서 수행
                 isRestoringSession = false
-                forceUpdateNavigationState()  // 강제 상태 업데이트로 변경
+                updateNavigationState()
                 dbg("🔄 복원 완료: '\(title)' - isRestoringSession = false")
                 dbg("🔄 최종 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
                 dbg("🔄 === 복원 중 처리 끝 ===")
@@ -732,23 +673,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🌐 === didFinish 분석 끝 ===")
         }
         
-        // ✅ 복원 완료 후에만 상태 업데이트 (강제 업데이트로 변경)
+        // ✅ 복원 완료 후에만 상태 업데이트 (처음에 복원 중이었다면 위에서 이미 처리됨)
         if !wasRestoringSession {
-            forceUpdateNavigationState()
+            updateNavigationState()
         } else {
             dbg("🔧 원래 복원 중이었으므로 상태 업데이트 생략 (위에서 처리됨)")
-        }
-        
-        // ✅ 추가: didFinish 완료 후 약간의 지연을 두고 한 번 더 상태 확인
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.forceUpdateNavigationState()
-            self.dbg("🔄 didFinish 후 지연 상태 검증: back=\(self.canGoBack), forward=\(self.canGoForward)")
         }
         
         dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
         
         // ✅ 복원이 아닐 때만 navigationDidFinish 호출
-        if !wasRestoringSession {
+        if !wasRestoringSession {  // 원래 복원 상태를 기억해야 함
             navigationDidFinish.send(())
         }
     }
@@ -928,7 +863,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                                     if let webView = state.webView {
                                         webView.load(URLRequest(url: record.url))
                                     }
-                                    state.forceUpdateNavigationState()
+                                    state.updateNavigationState()
                                     dismiss()
                                 }
                             }
