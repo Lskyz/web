@@ -53,12 +53,12 @@ struct ContentView: View {
     // ============================================================
     // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (여기만 만지면 전체가 같이 바뀜)
     // ============================================================
-    private let outerHorizontalPadding: CGFloat = 22   // 주소창/툴바의 외부 좌우 여백(폭 조절)
+    private let outerHorizontalPadding: CGFloat = 23   // 주소창/툴바의 외부 좌우 여백(폭 조절)
     private let barCornerRadius: CGFloat       = 22    // 둥근 정도 (유리 캡슐 느낌)
     private let barVPadding: CGFloat           = 12    // 내부 상하 여백(높이)
     private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
-    private let toolbarSpacing: CGFloat        = 22    // 하단 버튼 간격
+    private let toolbarSpacing: CGFloat        = 23    // 하단 버튼 간격
     private let glassTintOpacity: CGFloat      = 0.08  // ✨ 변경: '화이트 글라스' 흰 틴트 투명도 (0.08~0.20 사이 추천)
 
     // 재질: 더 하얗게 비치도록 Light 계열 사용
