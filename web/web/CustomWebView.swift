@@ -77,6 +77,9 @@ struct CustomWebView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
+        if #available(iOS 15.0, *) {
+            webView.underPageBackgroundColor = .clear   // ✅ 핵심 추가: 흰 under-page 배경 제거
+        }
 
         // 흰 띠 방지: 인셋 제거
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -169,6 +172,17 @@ struct CustomWebView: UIViewRepresentable {
         }
         if context.coordinator.webView !== uiView {
             context.coordinator.webView = uiView
+        }
+
+        // ✅ 핵심 추가: 테마 전환/재사용 시에도 항상 투명 배경 유지 보증
+        if uiView.isOpaque { uiView.isOpaque = false }
+        if uiView.backgroundColor != .clear { uiView.backgroundColor = .clear }
+        if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
+        uiView.scrollView.isOpaque = false
+        if #available(iOS 15.0, *) {
+            if uiView.underPageBackgroundColor != .clear {
+                uiView.underPageBackgroundColor = .clear
+            }
         }
     }
 
