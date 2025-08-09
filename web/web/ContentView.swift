@@ -69,6 +69,7 @@ struct ContentView: View {
                         }
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
+                    .ignoresSafeArea(.container, edges: [.top, .bottom]) // ✨ 추가: 웹콘텐츠를 상/하단까지 확장해 하단바 뒤로 "겹치게"
 
                     .overlay(
                         GeometryReader { geometry in
