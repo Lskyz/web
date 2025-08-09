@@ -16,9 +16,6 @@
 //  - ASWebAuthenticationSession을 쓰면 OAuth 콜백 스킴 필요. 본 브라우저 앱 구조에선 범용 적용이 어려워
 //    기본은 SFSafariViewController 우회로 둠. 필요 시 주석의 예시 참고.
 //
-//  ⚠️ 메모리(기억) 안내: 이 코드를 자동으로 '기억'하진 못해요.
-//  장기 저장 원하시면 앱/도구의 메모리 기능을 켜주세요.
-//
 
 import SwiftUI
 import WebKit
@@ -26,7 +23,7 @@ import AVFoundation
 import UIKit
 import UniformTypeIdentifiers   // 파일 선택을 위한 UTType 사용
 import Foundation
-import SafariServices           // ✅ 추가: SFSafariViewController 사용
+import SafariServices           // ✅ SFSafariViewController 사용
 
 // MARK: - 다운로드 진행 알림 이름 정의
 /// WebViewStateModel(WKDownloadDelegate) → CustomWebView(Coordinator)로
@@ -340,6 +337,34 @@ struct CustomWebView: UIViewRepresentable {
                 webView.load(URLRequest(url: url))
             }
             return nil
+        }
+
+        // MARK: - 파일 업로드 패널 (유지)
+        /// input type="file" 요청 대응: 문서 선택기 표시
+        @available(iOS 14.0, *)
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: Any, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            DispatchQueue.main.async {
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item])
+                picker.allowsMultipleSelection = true
+
+                // 강한 참조 유지
+                self.filePicker = FilePicker(completionHandler: { urls in
+                    completionHandler(urls)
+                    self.filePicker = nil
+                })
+                picker.delegate = self.filePicker
+
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let window = windowScene.windows.first,
+                   let rootVC = window.rootViewController {
+                    var vc = rootVC
+                    while let presented = vc.presentedViewController { vc = presented }
+                    vc.present(picker, animated: true)
+                } else {
+                    completionHandler(nil)
+                    self.filePicker = nil
+                }
+            }
         }
 
         // MARK: - 다운로드 진행률 오버레이 설치/업데이트
@@ -714,7 +739,7 @@ extension WebViewStateModel: WKDownloadDelegate {
 // - 제3자 사이트의 "OOO로 로그인"을 WKWebView 세션에 그대로 반영하려면, 앱 수준에서
 //   ASWebAuthenticationSession + 커스텀 스킴으로 토큰을 받고, 웹 쪽에 세션 주입하는 별도 구현 필요.
 //
-extension WebViewStateModel: WKNavigationDelegate {
+extension WebViewStateModel {   // ✅ 여기! 중복 conform 방지: 프로토콜명 제거
 
     public func webView(_ webView: WKWebView,
                         decidePolicyFor navigationAction: WKNavigationAction,
