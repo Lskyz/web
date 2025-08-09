@@ -51,7 +51,7 @@ struct ContentView: View {
     @State private var allowTopOverlap: Bool = false
 
     // ============================================================
-    // ✨ 변경: 사파리처럼 시스템 적응형 블러 사용 (Light/Dark 자동 전환 없음)
+    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
     // ============================================================
     private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
     private let barCornerRadius: CGFloat       = 22
@@ -60,9 +60,9 @@ struct ContentView: View {
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
     private let toolbarSpacing: CGFloat        = 22
 
-    // ✨ 핵심 수정: 사파리처럼 시스템 적응형 재질 + 틴트 제거
-    private let glassMaterial: UIBlurEffect.Style = .systemThinMaterial  // Light/Dark 없이 시스템 자동 적응
-    private let glassTintOpacity: CGFloat = 0.0  // ✨ 틴트 완전 제거 (사파리처럼)
+    // ✨ 핵심 수정: 가장 투명한 블러 + 흰색 틴트로 은은한 효과
+    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
+    private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -216,7 +216,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (✨ 사파리처럼 순수 블러만 사용)
+            // MARK: - 하단 UI (✨ 가장 투명한 블러 + 흰색 틴트)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     // 주소창
@@ -269,11 +269,14 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
-                        // ✨ 변경: 사파리처럼 순수 블러만 사용 (틴트 제거)
+                        // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
                         .background(
-                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                            ZStack {
+                                VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                                RoundedRectangle(cornerRadius: barCornerRadius)
+                                    .fill(Color.white.opacity(glassTintOpacity))
+                            }
                         )
-                        // 테두리 유지 (블러만으로는 경계가 약해서)
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                         .padding(.horizontal, outerHorizontalPadding)
@@ -325,9 +328,13 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, barVPadding)
-                    // ✨ 변경: 사파리처럼 순수 블러만 사용 (틴트 제거)
+                    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
                     .background(
-                        VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                        ZStack {
+                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color.white.opacity(glassTintOpacity))
+                        }
                     )
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
