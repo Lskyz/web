@@ -4,8 +4,8 @@ import WebKit
 
 // ============================================================
 // UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
-// - 사파리 같은 반투명 유리 효과
-// - 배경은 .clear 유지 (흰 박스/여백 방지)
+// - 재질 스타일만 바꿔도 투명감(뒤 비침) 조절 가능
+// - 이번 버전은 호출부에서 .systemUltraThinMaterial 사용 (더 투명)
 // ============================================================
 struct VisualEffectBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
@@ -47,15 +47,16 @@ struct ContentView: View {
 
     @State private var lastWebContentOffsetY: CGFloat = 0
 
-    // ✨ 변경: 상단(Dynamic Island) 기본 보호, 주소창이 숨겨질 때만 상단 겹치기 허용
+    // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
     @State private var allowTopOverlap: Bool = false
 
-    // ✨ 변경: UI 규격(더 크게 + 동일 폭) — 한 곳에서 조정
-    private let outerHorizontalPadding: CGFloat = 16   // 주소창/툴바의 양쪽 외부 여백
-    private let barCornerRadius: CGFloat       = 22    // 둥근 정도 (유리 캡슐 느낌)
-    private let barVPadding: CGFloat           = 12    // 바 내부 상하 여백(높이 커짐)
-    private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기 ↑
+    // UI 규격(폭 살짝 축소 + 버튼 크게 + 버튼 간격 늘림 + 중앙정렬)
+    private let outerHorizontalPadding: CGFloat = 22
+    private let barCornerRadius: CGFloat       = 22
+    private let barVPadding: CGFloat           = 12
+    private let iconSize: CGFloat              = 22
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
+    private let toolbarSpacing: CGFloat        = 22
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -80,10 +81,10 @@ struct ContentView: View {
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
 
-                    // ✨ 변경: 하단은 항상 겹치고, 상단은 주소창 숨김 상태에서만 겹치기 허용
+                    // 하단은 항상 겹치고, 상단은 주소창 숨김 상태에서만 겹치기 허용
                     .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom])
 
-                    // 스크롤 오프셋 트래킹 (기존 로직)
+                    // 스크롤 오프셋 트래킹 (기존)
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
@@ -104,7 +105,7 @@ struct ContentView: View {
                                 showAddressBar = false
                                 isTextFieldFocused = false
                             }
-                            allowTopOverlap = true // ✨ 변경: 주소창 숨기면 상단도 겹침
+                            allowTopOverlap = true
                         }
                         previousOffset = offset
                     }
@@ -115,10 +116,10 @@ struct ContentView: View {
                             if showAddressBar {
                                 showAddressBar = false
                                 isTextFieldFocused = false
-                                allowTopOverlap = true  // ✨ 변경
+                                allowTopOverlap = true
                             } else {
                                 showAddressBar = true
-                                allowTopOverlap = false // ✨ 변경: 주소창 보이면 상단 보호
+                                allowTopOverlap = false
                                 DispatchQueue.main.async {
                                     isTextFieldFocused = true
                                     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
@@ -214,15 +215,15 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (블러 강화 + 동일 폭 + 더 큼)
+            // MARK: - 하단 UI (폭 살짝 축소 + 중앙정렬 유지)
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 10) { // ✨ 변경: 바 간 간격 살짝 키움
+                VStack(spacing: 10) {
                     // 주소창
                     if showAddressBar {
                         HStack {
                             TextField("URL 또는 검색어", text: $inputURL)
-                                .textFieldStyle(.plain)           // 내부 흰 채움 제거
-                                .font(textFont)                    // ✨ 변경: 글자 크게
+                                .textFieldStyle(.plain)
+                                .font(textFont)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
                                 .keyboardType(.URL)
@@ -265,81 +266,69 @@ struct ContentView: View {
                                     }
                                 )
                         }
-                        .padding(.horizontal, 14)                // ✨ 변경: 내부 좌우 여백 ↑
-                        .padding(.vertical, barVPadding)         // ✨ 변경: 내부 상하 여백 ↑ (높이 커짐)
-                        // ✨ 변경: 블러 강도 업 — .systemMaterial + 유리 느낌 스트로크
-                        .background(VisualEffectBlur(blurStyle: .systemMaterial, cornerRadius: barCornerRadius))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, barVPadding)
+                        // ✨ 변경(재질: UltraThin) — 뒤가 더 비치도록 투명한 재질로 전환
+                        .background(VisualEffectBlur(blurStyle: .systemUltraThinMaterial, cornerRadius: barCornerRadius))
+                        // 유리 경계선은 유지(필요하면 투명감 더 원할 때 아래 두 줄 opacity를 더 낮춰도 됨)
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
                         .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
-                        .padding(.horizontal, outerHorizontalPadding) // ✨ 변경: 주소창/툴바 동일 폭 되도록 동일 외부 여백
+                        .padding(.horizontal, outerHorizontalPadding)
                         .transition(.opacity)
-                        .gesture(
-                            DragGesture(minimumDistance: 10).onEnded { value in
-                                if value.translation.height > 20 {
-                                    withAnimation { showAddressBar = false; isTextFieldFocused = false }
-                                    allowTopOverlap = true
-                                } else if value.translation.height < -20 {
-                                    withAnimation { showAddressBar = true }
-                                    allowTopOverlap = false
-                                    DispatchQueue.main.async {
-                                        isTextFieldFocused = true
-                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                    }
-                                }
+                    }
+
+                    // 하단 통합 툴바 (주소창과 폭 동일)
+                    HStack(spacing: 0) {
+                        HStack(spacing: toolbarSpacing) {
+                            Button(action: { state.goBack() }) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(state.canGoBack ? .primary : .secondary)
                             }
-                        )
+                            .disabled(!state.canGoBack)
+
+                            Button(action: { state.goForward() }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(state.canGoForward ? .primary : .secondary)
+                            }
+                            .disabled(!state.canGoForward)
+
+                            Button(action: { state.reload() }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showHistorySheet = true }) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showTabManager = true }) {
+                                Image(systemName: "square.on.square")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showDebugView = true }) {
+                                Image(systemName: "ladybug")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
-
-                    // 하단 통합 툴바 (폭/모서리/블러 주소창과 동일)
-                    HStack(spacing: 14) { // ✨ 변경: 버튼 간격 약간 ↑
-                        Button(action: { state.goBack() }) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: iconSize))          // ✨ 변경: 아이콘 크게
-                                .foregroundColor(state.canGoBack ? .primary : .secondary)
-                        }
-                        .disabled(!state.canGoBack)
-
-                        Button(action: { state.goForward() }) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: iconSize))          // ✨ 변경
-                                .foregroundColor(state.canGoForward ? .primary : .secondary)
-                        }
-                        .disabled(!state.canGoForward)
-
-                        Button(action: { state.reload() }) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: iconSize))          // ✨ 변경
-                                .foregroundColor(.primary)
-                        }
-
-                        Spacer(minLength: 8)
-
-                        Button(action: { showHistorySheet = true }) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: iconSize))          // ✨ 변경
-                                .foregroundColor(.primary)
-                        }
-
-                        Button(action: { showTabManager = true }) {
-                            Image(systemName: "square.on.square")
-                                .font(.system(size: iconSize))          // ✨ 변경
-                                .foregroundColor(.primary)
-                        }
-
-                        Button(action: { showDebugView = true }) {
-                            Image(systemName: "ladybug")
-                                .font(.system(size: iconSize))          // ✨ 변경
-                                .foregroundColor(.orange)
-                        }
-                    }
-                    .padding(.horizontal, 16)                 // ✨ 변경: 내부 좌우 여백 ↑
-                    .padding(.vertical, barVPadding)          // ✨ 변경: 내부 상하 여백 ↑
-                    .background(VisualEffectBlur(blurStyle: .systemMaterial, cornerRadius: barCornerRadius)) // ✨ 변경: 블러 강도 업
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, barVPadding)
+                    // ✨ 변경(재질: UltraThin)
+                    .background(VisualEffectBlur(blurStyle: .systemUltraThinMaterial, cornerRadius: barCornerRadius))
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
                     .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
-                    .padding(.horizontal, outerHorizontalPadding) // ✨ 변경: 주소창과 동일 외부 여백 → 동일 폭 보장
+                    .padding(.horizontal, outerHorizontalPadding)
                 }
-                .background(Color.clear) // 컨테이너는 완전 투명
+                .background(Color.clear)
             }
 
         } else {
@@ -375,10 +364,10 @@ struct ContentView: View {
         }
         if delta > 4 && showAddressBar {
             withAnimation { showAddressBar = false; isTextFieldFocused = false }
-            allowTopOverlap = true // ✨ 변경
+            allowTopOverlap = true
         } else if delta < -12 && !showAddressBar {
             withAnimation { showAddressBar = true }
-            allowTopOverlap = false // ✨ 변경
+            allowTopOverlap = false
         }
         lastWebContentOffsetY = yOffset
     }
