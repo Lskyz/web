@@ -31,9 +31,6 @@ struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
     @Binding var selectedTabIndex: Int
-    
-    // ✨ 추가: 다크모드/라이트모드 자동 감지
-    @Environment(\.colorScheme) var colorScheme
 
     @State private var inputURL: String = ""
     @FocusState private var isTextFieldFocused: Bool
@@ -54,7 +51,7 @@ struct ContentView: View {
     @State private var allowTopOverlap: Bool = false
 
     // ============================================================
-    // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (다크모드 적응형)
+    // ✨ 변경: 사파리처럼 시스템 적응형 블러 사용 (Light/Dark 자동 전환 없음)
     // ============================================================
     private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
     private let barCornerRadius: CGFloat       = 22
@@ -63,24 +60,9 @@ struct ContentView: View {
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
     private let toolbarSpacing: CGFloat        = 22
 
-    // ✨ 다크모드 적응형 재질 및 색상
-    private var glassMaterial: UIBlurEffect.Style {
-        colorScheme == .dark ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight
-    }
-    
-    private var glassTintColor: Color {
-        colorScheme == .dark ? .black : .white
-    }
-    
-    private let glassTintOpacity: CGFloat = 0.15  // ✨ 약간 줄임 (더 자연스러운 느낌)
-    
-    private var borderHighlightColor: Color {
-        colorScheme == .dark ? .white.opacity(0.08) : .white.opacity(0.12)
-    }
-    
-    private var borderShadowColor: Color {
-        colorScheme == .dark ? .black.opacity(0.12) : .black.opacity(0.08)
-    }
+    // ✨ 핵심 수정: 사파리처럼 시스템 적응형 재질 + 틴트 제거
+    private let glassMaterial: UIBlurEffect.Style = .systemThinMaterial  // Light/Dark 없이 시스템 자동 적응
+    private let glassTintOpacity: CGFloat = 0.0  // ✨ 틴트 완전 제거 (사파리처럼)
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -234,7 +216,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (✨ 다크모드 적응형 글라스 + 툴바 빈공간 탭 시 주소창 열기)
+            // MARK: - 하단 UI (✨ 사파리처럼 순수 블러만 사용)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     // 주소창
@@ -287,17 +269,13 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
-                        // ✨ 변경: 다크모드 적응형 글라스 효과
+                        // ✨ 변경: 사파리처럼 순수 블러만 사용 (틴트 제거)
                         .background(
-                            ZStack {
-                                VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
-                                RoundedRectangle(cornerRadius: barCornerRadius)
-                                    .fill(glassTintColor.opacity(glassTintOpacity))
-                            }
+                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
                         )
-                        // ✨ 변경: 다크모드 적응형 테두리
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderHighlightColor, lineWidth: 0.75))
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderShadowColor, lineWidth: 0.25))
+                        // 테두리 유지 (블러만으로는 경계가 약해서)
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                         .padding(.horizontal, outerHorizontalPadding)
                         .transition(.opacity)
                     }
@@ -347,17 +325,12 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, barVPadding)
-                    // ✨ 변경: 다크모드 적응형 글라스 효과
+                    // ✨ 변경: 사파리처럼 순수 블러만 사용 (틴트 제거)
                     .background(
-                        ZStack {
-                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
-                            RoundedRectangle(cornerRadius: barCornerRadius)
-                                .fill(glassTintColor.opacity(glassTintOpacity))
-                        }
+                        VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
                     )
-                    // ✨ 변경: 다크모드 적응형 테두리
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderHighlightColor, lineWidth: 0.75))
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderShadowColor, lineWidth: 0.25))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                     .padding(.horizontal, outerHorizontalPadding)
                     // ✨ 변경: "툴바의 빈공간"을 탭하면 주소창 열기 (버튼 영역 탭은 버튼이 소비하므로 충돌 X)
                     .contentShape(Rectangle())
