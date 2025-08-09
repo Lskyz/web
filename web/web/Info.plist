@@ -32,5 +32,22 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+
+	<!-- ✅ ASWebAuthenticationSession 콜백을 받기 위한 커스텀 URL 스킴 등록 -->
+	<!-- redirect_uri 예: webapp://auth -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<!-- 구분용 이름(아무 문자열 가능, 보통 번들ID) -->
+			<key>CFBundleURLName</key>
+			<string>com.view.web</string>
+			<!-- 이 앱이 처리할 스킴 목록 -->
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>webapp</string>
+			</array>
+		</dict>
+	</array>
+
 </dict>
 </plist>
