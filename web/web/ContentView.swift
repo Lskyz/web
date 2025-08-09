@@ -4,8 +4,8 @@ import WebKit
 
 // ============================================================
 // UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
-// - 재질 스타일만 바꿔도 투명감(뒤 비침) 조절 가능
-// - 이번 버전은 호출부에서 .systemUltraThinMaterial 사용 (더 투명)
+// - 배경은 .clear 유지 (흰 박스/여백 방지)
+// - 재질(blurStyle)은 호출부에서 지정
 // ============================================================
 struct VisualEffectBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
@@ -50,13 +50,19 @@ struct ContentView: View {
     // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
     @State private var allowTopOverlap: Bool = false
 
-    // UI 규격(폭 살짝 축소 + 버튼 크게 + 버튼 간격 늘림 + 중앙정렬)
-    private let outerHorizontalPadding: CGFloat = 22
-    private let barCornerRadius: CGFloat       = 22
-    private let barVPadding: CGFloat           = 12
-    private let iconSize: CGFloat              = 22
+    // ============================================================
+    // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (여기만 만지면 전체가 같이 바뀜)
+    // ============================================================
+    private let outerHorizontalPadding: CGFloat = 22   // 주소창/툴바의 외부 좌우 여백(폭 조절)
+    private let barCornerRadius: CGFloat       = 22    // 둥근 정도 (유리 캡슐 느낌)
+    private let barVPadding: CGFloat           = 12    // 내부 상하 여백(높이)
+    private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
-    private let toolbarSpacing: CGFloat        = 22
+    private let toolbarSpacing: CGFloat        = 22    // 하단 버튼 간격
+    private let glassTintOpacity: CGFloat      = 0.14  // ✨ 변경: '화이트 글라스' 흰 틴트 투명도 (0.08~0.20 사이 추천)
+
+    // 재질: 더 하얗게 비치도록 Light 계열 사용
+    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterialLight // ✨ 변경
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -80,11 +86,9 @@ struct ContentView: View {
                         }
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
+                    .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom]) // 하단 겹치기 + (주소창 숨김 시) 상단 겹치기
 
-                    // 하단은 항상 겹치고, 상단은 주소창 숨김 상태에서만 겹치기 허용
-                    .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom])
-
-                    // 스크롤 오프셋 트래킹 (기존)
+                    // 스크롤 오프셋 트래킹 (기존 로직)
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
@@ -215,7 +219,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (폭 살짝 축소 + 중앙정렬 유지)
+            // MARK: - 하단 UI (화이트 글라스: Light + White Tint + 더 투명 스트로크)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     // 주소창
@@ -268,16 +272,22 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
-                        // ✨ 변경(재질: UltraThin) — 뒤가 더 비치도록 투명한 재질로 전환
-                        .background(VisualEffectBlur(blurStyle: .systemUltraThinMaterial, cornerRadius: barCornerRadius))
-                        // 유리 경계선은 유지(필요하면 투명감 더 원할 때 아래 두 줄 opacity를 더 낮춰도 됨)
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
+                        // ✨ 변경: Light 재질 + White Tint(알파로 불투명도 낮춤 → 뒤가 더 비침)
+                        .background(
+                            ZStack {
+                                VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                                RoundedRectangle(cornerRadius: barCornerRadius)
+                                    .fill(Color.white.opacity(glassTintOpacity))
+                            }
+                        )
+                        // ✨ 변경: 스트로크 투명도 살짝 낮춰 더 투명한 글라스
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                         .padding(.horizontal, outerHorizontalPadding)
                         .transition(.opacity)
                     }
 
-                    // 하단 통합 툴바 (주소창과 폭 동일)
+                    // 하단 통합 툴바 (주소창과 폭 동일 + 같은 글라스)
                     HStack(spacing: 0) {
                         HStack(spacing: toolbarSpacing) {
                             Button(action: { state.goBack() }) {
@@ -322,10 +332,17 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, barVPadding)
-                    // ✨ 변경(재질: UltraThin)
-                    .background(VisualEffectBlur(blurStyle: .systemUltraThinMaterial, cornerRadius: barCornerRadius))
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
+                    // ✨ 변경: 동일 재질 + White Tint
+                    .background(
+                        ZStack {
+                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color.white.opacity(glassTintOpacity))
+                        }
+                    )
+                    // ✨ 변경: 투명한 글라스 스트로크
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
                     .padding(.horizontal, outerHorizontalPadding)
                 }
                 .background(Color.clear)
