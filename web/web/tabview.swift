@@ -207,7 +207,7 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - DashboardView: URL 없는 탭의 홈 화면 (기존 기능 유지)
+// MARK: - DashboardView: URL 없는 탭의 홈 화면 (클릭 시 단일 네비게이션 보장)
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks()
     @State private var showAddBookmarkAlert: Bool = false
@@ -218,7 +218,7 @@ struct DashboardView: View {
     @State private var longPressedBookmarkID: UUID? = nil
 
     let onSelectURL: (URL) -> Void
-    let triggerLoad: () -> Void
+    let triggerLoad: () -> Void  // ⚠️ 유지하되, 대시보드 클릭 경로에서는 더 이상 호출하지 않음
 
     private let columns = [
         GridItem(.flexible(), spacing: 20),
@@ -257,8 +257,11 @@ struct DashboardView: View {
                             HStack(spacing: 12) {
                                 ForEach(recentPages) { page in
                                     RecentPageCard(page: page) {
-                                        onSelectURL(page.url)
-                                        triggerLoad()
+                                        // ✅ 단일 네비게이션: onSelectURL만 호출 (메인 큐 보장)
+                                        DispatchQueue.main.async {
+                                            onSelectURL(page.url)
+                                        }
+                                        // ❌ triggerLoad() 제거 (이중 네비게이션 방지)
                                     }
                                 }
                             }
@@ -407,8 +410,11 @@ struct DashboardView: View {
             }
 
             guard let url = URL(string: bookmark.url) else { return }
-            onSelectURL(url)
-            triggerLoad()
+            // ✅ 단일 네비게이션: onSelectURL만 호출 (메인 큐 보장)
+            DispatchQueue.main.async {
+                onSelectURL(url)
+            }
+            // ❌ triggerLoad() 제거 (이중 네비게이션 방지)
         }) {
             VStack(spacing: 8) {
                 if let faviconURL = bookmark.faviconURL, let url = URL(string: faviconURL) {
@@ -514,24 +520,22 @@ struct RecentPageCard: View {
     }
 }
 
-// MARK: - TabManager: 탭 목록 관리 뷰 (버튼/배경/강조 + 닫기 로직 강화)
+// MARK: - TabManager: (이전 버전 유지 — 하단 둥근버튼/블러/현재탭 강조/닫기 로직 포함)
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
-    let initialStateModel: WebViewStateModel  // 현재 보고 있던 탭의 stateModel (들어올 때 고정)
+    let initialStateModel: WebViewStateModel
     let onTabSelected: (Int) -> Void
 
     @State private var debugMessages: [String] = TabPersistenceManager.debugMessages
     @State private var showToast = false
     @State private var toastMessage = ""
     @State private var showDebugView = false
-
-    // ✅ 현재 보고 있던 탭의 ID (TabManager가 열릴 때 기준)
+    
     private var currentTabID: UUID? { initialStateModel.tabID }
 
     var body: some View {
         ZStack {
-            // ✨ 배경: 블러 + 그라데이션 (사파리 느낌)
             LinearGradient(
                 colors: [Color.black.opacity(0.25), Color.black.opacity(0.05)],
                 startPoint: .top, endPoint: .bottom
@@ -544,20 +548,17 @@ struct TabManager: View {
                     .font(.title.bold())
                     .padding(.top, 6)
 
-                // 간소화된 디버깅 로그 영역 (기존 유지)
                 VStack(alignment: .leading) {
                     HStack {
                         Text("시스템 상태").font(.headline)
                         Spacer()
-                        Button("상세 로그") {
-                            showDebugView = true
-                        }
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .cornerRadius(6)
+                        Button("상세 로그") { showDebugView = true }
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
                     }
                     .padding(.top)
                     
@@ -582,15 +583,13 @@ struct TabManager: View {
                     .cornerRadius(10)
                 }
 
-                // 탭 리스트
                 ScrollView {
                     ForEach(tabs) { tab in
                         HStack(spacing: 12) {
-                            // 탭 선택
                             Button(action: {
                                 if let index = tabs.firstIndex(of: tab) {
                                     onTabSelected(index)
-                                    dismiss()
+                                    DispatchQueue.main.async { dismiss() }
                                     TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(String(tab.id.uuidString.prefix(8))))")
                                     debugMessages = TabPersistenceManager.debugMessages
                                 }
@@ -600,7 +599,6 @@ struct TabManager: View {
                                         Text(tab.currentURL?.host ?? "대시보드")
                                             .font(.headline)
                                             .lineLimit(1)
-                                        // ✅ 현재 탭 강조 배지
                                         if tab.id == currentTabID {
                                             Text("현재")
                                                 .font(.caption2.bold())
@@ -622,9 +620,7 @@ struct TabManager: View {
                                         Text("\(tab.historyURLs.count)개 페이지")
                                             .font(.caption2)
                                             .foregroundColor(.blue)
-                                        
                                         Spacer()
-                                        
                                         Text("ID: \(String(tab.id.uuidString.prefix(8)))")
                                             .font(.caption2)
                                             .foregroundColor(.gray)
@@ -632,7 +628,6 @@ struct TabManager: View {
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
-                                // ✅ 현재 탭 강조 스타일 (사파리 느낌)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
                                         .fill(Color(UIColor.secondarySystemBackground).opacity(tab.id == currentTabID ? 0.9 : 0.6))
@@ -644,7 +639,6 @@ struct TabManager: View {
                             }
                             .buttonStyle(.plain)
                             
-                            // 탭 닫기
                             Button(action: { closeTab(tab) }) {
                                 Image(systemName: "xmark")
                                     .font(.headline)
@@ -657,16 +651,15 @@ struct TabManager: View {
                         .padding(.horizontal)
                         .padding(.vertical, 4)
                     }
-                    .padding(.bottom, 100) // 하단 플로팅 버튼들과 간격 확보
+                    .padding(.bottom, 100)
                 }
             }
 
-            // ✅ 하단 플로팅 둥근 버튼들: + (새탭추가), v (목록닫기)
             VStack {
                 Spacer()
                 HStack(spacing: 18) {
-                    FloatingCircleButton(symbol: "plus") { addNewTabAndExit() }      // 새 탭 추가
-                    FloatingCircleButton(symbol: "chevron.down") {                  // 목록 닫기
+                    FloatingCircleButton(symbol: "plus") { addNewTabAndExit() }
+                    FloatingCircleButton(symbol: "chevron.down") {
                         dismiss()
                         TabPersistenceManager.debugMessages.append("목록 닫기")
                         debugMessages = TabPersistenceManager.debugMessages
@@ -676,7 +669,6 @@ struct TabManager: View {
             }
             .ignoresSafeArea(edges: .bottom)
 
-            // 토스트
             if showToast {
                 ToastView(message: toastMessage)
                     .transition(.opacity)
@@ -689,8 +681,8 @@ struct TabManager: View {
         }
         .onAppear {
             debugMessages = TabPersistenceManager.debugMessages
-            if let lastMessage = debugMessages.last {
-                toastMessage = lastMessage
+            if let last = debugMessages.last {
+                toastMessage = last
                 showToast = true
             }
         }
@@ -705,74 +697,60 @@ struct TabManager: View {
 
     // MARK: - 동작들
 
-    /// 하단 + 버튼: 새 탭을 만들고 곧바로 선택, 목록 닫기
     private func addNewTabAndExit() {
         let newTab = WebTab(url: nil)
         var tmp = tabs
         tmp.append(newTab)
-        TabPersistenceManager.saveTabs(tmp)
         tabs = tmp
+        TabPersistenceManager.saveTabs(tabs)
 
         if let newIndex = tabs.firstIndex(of: newTab) {
             onTabSelected(newIndex)
+            DispatchQueue.main.async { dismiss() }
+            TabPersistenceManager.debugMessages.append("🆕 새 탭 추가(+버튼): index \(newIndex) / ID \(String(newTab.id.uuidString.prefix(8)))")
+            debugMessages = TabPersistenceManager.debugMessages
         }
-        dismiss()
-        TabPersistenceManager.debugMessages.append("🆕 새 탭 추가(+버튼): ID \(String(newTab.id.uuidString.prefix(8)))")
-        debugMessages = TabPersistenceManager.debugMessages
     }
 
-    /// 탭 닫기: 
-    /// - 다른 탭을 닫으면 항상 '지금 보던 탭'으로 복귀
-    /// - 현재 탭을 닫으면 인접 탭으로 이동
-    /// - 🔥 모든 탭이 사라지면 '대시보드 탭(빈 탭)'을 새로 만들어 선택
     private func closeTab(_ tab: WebTab) {
         guard let closingIndex = tabs.firstIndex(of: tab) else { return }
-        let wasCurrent = (tab.id == currentTabID)
-        let indexOfCurrentBefore = tabs.firstIndex(where: { $0.id == currentTabID }) ?? 0
+        let wasCurrent = (tab.id == initialStateModel.tabID)
+        let indexOfCurrentBefore = tabs.firstIndex(where: { $0.id == initialStateModel.tabID }) ?? 0
 
         var newList = tabs
         newList.remove(at: closingIndex)
 
-        // ✅ 모든 탭이 닫힌 경우: 대시보드 탭 생성 후 선택
         if newList.isEmpty {
-            let dashboard = WebTab(url: nil) // currentURL == nil → 대시보드
+            let dashboard = WebTab(url: nil)
             newList = [dashboard]
             TabPersistenceManager.saveTabs(newList)
             tabs = newList
-
-            if let idx = tabs.firstIndex(of: dashboard) {
-                onTabSelected(idx)
-            }
-            dismiss()
-
+            if let idx = tabs.firstIndex(of: dashboard) { onTabSelected(idx) }
+            DispatchQueue.main.async { dismiss() }
             TabPersistenceManager.debugMessages.append("탭 닫힘(마지막): 새 대시보드 생성 → 선택")
             debugMessages = TabPersistenceManager.debugMessages
             return
         }
 
-        // 그 외 일반 케이스
         TabPersistenceManager.saveTabs(newList)
         tabs = newList
         
         let targetIndex: Int = {
             if wasCurrent {
-                // 현재 보던 탭을 닫았으면 인접한 탭(오른쪽 있으면 그거, 없으면 왼쪽)
                 return min(closingIndex, tabs.count - 1)
             } else {
-                // 현재 보던 탭은 그대로 → 그 탭 인덱스로 복귀
-                return tabs.firstIndex(where: { $0.id == currentTabID }) ?? min(indexOfCurrentBefore, tabs.count - 1)
+                return tabs.firstIndex(where: { $0.id == initialStateModel.tabID }) ?? min(indexOfCurrentBefore, tabs.count - 1)
             }
         }()
 
         onTabSelected(targetIndex)
-        dismiss()
-        
+        DispatchQueue.main.async { dismiss() }
         TabPersistenceManager.debugMessages.append("탭 닫힘: ID \(String(tab.id.uuidString.prefix(8))) → 복귀 인덱스 \(targetIndex)")
         debugMessages = TabPersistenceManager.debugMessages
     }
 }
 
-// MARK: - 둥근 플로팅 버튼 컴포넌트 (심플)
+// MARK: - 둥근 플로팅 버튼 컴포넌트
 private struct FloatingCircleButton: View {
     let symbol: String
     let action: () -> Void
@@ -783,7 +761,7 @@ private struct FloatingCircleButton: View {
                 .font(.title2.weight(.bold))
                 .foregroundColor(.primary)
                 .frame(width: 56, height: 56)
-                .background(.ultraThickMaterial) // 둥근버튼은 재질감 있는 블러
+                .background(.ultraThickMaterial)
                 .clipShape(Circle())
                 .shadow(radius: 6)
         }
@@ -814,7 +792,7 @@ struct DebugLogView: View {
     
     private var filteredMessages: [String] {
         if searchText.isEmpty {
-            return debugMessages.reversed() // 최신 메시지가 위에
+            return debugMessages.reversed()
         } else {
             return debugMessages.filter { 
                 $0.localizedCaseInsensitiveContains(searchText)
@@ -825,55 +803,32 @@ struct DebugLogView: View {
     var body: some View {
         NavigationView {
             VStack {
-                // 검색바
                 HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.gray)
+                    Image(systemName: "magnifyingglass").foregroundColor(.gray)
                     TextField("로그 검색...", text: $searchText)
                         .textFieldStyle(.roundedBorder)
-                    
                     if !searchText.isEmpty {
-                        Button("지우기") {
-                            searchText = ""
-                        }
-                        .font(.caption)
+                        Button("지우기") { searchText = "" }.font(.caption)
                     }
                 }
                 .padding(.horizontal)
                 
-                // 로그 목록
                 ScrollView {
                     ScrollViewReader { proxy in
                         LazyVStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(filteredMessages.enumerated()), id: \.offset) { index, message in
-                                DebugLogRowView(
-                                    message: message, 
-                                    index: index,
-                                    onCopy: { text in
-                                        copyToClipboard(text)
-                                    }
-                                )
+                                DebugLogRowView(message: message, index: index, onCopy: { copyToClipboard($0) })
                                 .id(index)
                             }
                         }
                         .padding(.horizontal)
-                        
-                        // 자동 스크롤을 맨 위로 (최신 메시지)
-                        .onAppear {
-                            if !filteredMessages.isEmpty {
-                                proxy.scrollTo(0, anchor: .top)
-                            }
-                        }
+                        .onAppear { if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) } }
                         .onChange(of: debugMessages.count) { _ in
-                            // 새 메시지가 추가되면 맨 위로 스크롤
-                            if !filteredMessages.isEmpty {
-                                proxy.scrollTo(0, anchor: .top)
-                            }
+                            if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) }
                         }
                     }
                 }
                 
-                // 하단 버튼들
                 HStack {
                     Button("전체 복사") {
                         let allText = debugMessages.joined(separator: "\n")
@@ -894,10 +849,7 @@ struct DebugLogView: View {
                     .cornerRadius(8)
                     
                     Spacer()
-                    
-                    Text("\(debugMessages.count)개")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                    Text("\(debugMessages.count)개").font(.caption).foregroundColor(.gray)
                 }
                 .padding()
             }
@@ -905,20 +857,14 @@ struct DebugLogView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("닫기") {
-                        dismiss()
-                    }
+                    Button("닫기") { dismiss() }
                 }
             }
         }
-        .onAppear {
-            debugMessages = TabPersistenceManager.debugMessages
-        }
+        .onAppear { debugMessages = TabPersistenceManager.debugMessages }
         .alert("복사 완료", isPresented: $showCopyAlert) {
             Button("확인", role: .cancel) { }
-        } message: {
-            Text(copyMessage)
-        }
+        } message: { Text(copyMessage) }
     }
     
     private func copyToClipboard(_ text: String) {
@@ -966,16 +912,12 @@ struct DebugLogRowView: View {
                     .foregroundColor(messageColor)
                     .lineLimit(isExpanded ? nil : 3)
                     .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isExpanded.toggle()
-                        }
+                        withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
                     }
                 
                 Spacer()
                 
-                Button(action: {
-                    onCopy(message)
-                }) {
+                Button(action: { onCopy(message) }) {
                     Image(systemName: "doc.on.doc")
                         .font(.caption)
                         .foregroundColor(.blue)
@@ -985,9 +927,7 @@ struct DebugLogRowView: View {
             if message.count > 100 && !isExpanded {
                 HStack {
                     Spacer()
-                    Text("탭하여 펼치기")
-                        .font(.caption2)
-                        .foregroundColor(.gray)
+                    Text("탭하여 펼치기").font(.caption2).foregroundColor(.gray)
                     Spacer()
                 }
             }
