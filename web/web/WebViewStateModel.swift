@@ -130,8 +130,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
 
     var tabID: UUID?
     
-    // 페이지 기록 기반 히스토리 (기존 복잡한 시스템 교체)
-    @Published private var pageHistory: [PageRecord] = []
+    // 페이지 기록 기반 히스토리 (기존 복잡한 시스템 교체) - ✨ internal로 변경
+    @Published internal var pageHistory: [PageRecord] = []
     @Published private var currentPageIndex: Int = -1
     
     let navigationDidFinish = PassthroughSubject<Void, Never>()
