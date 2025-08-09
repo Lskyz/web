@@ -3,31 +3,26 @@ import AVKit
 import WebKit
 
 // ============================================================
-// UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼 뷰
-// - .ultraThinMaterial 대비 더 일관된 사파리 느낌의 반투명 블러 제공
-// - cornerRadius로 둥근 박스 모양을 만들되, 배경색은 .clear로 유지하여
-//   "흰 박스"가 남지 않도록 처리
+// UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
+// - 사파리 같은 안정적인 반투명 블러
+// - 내부/주변은 .clear 유지 → 흰 박스/여백 방지
 // ============================================================
 struct VisualEffectBlur: UIViewRepresentable {
-    /// iOS의 UIBlurEffect 스타일 (예: .systemThinMaterial, .systemMaterial 등)
     var blurStyle: UIBlurEffect.Style
-    /// 모서리 둥글기
     var cornerRadius: CGFloat = 0
 
     func makeUIView(context: Context) -> UIVisualEffectView {
         let effect = UIBlurEffect(style: blurStyle)
         let v = UIVisualEffectView(effect: effect)
-        v.clipsToBounds = true                      // 둥근 모서리 적용 시 내부만 보여주기
+        v.clipsToBounds = true
         v.layer.cornerRadius = cornerRadius
-        v.backgroundColor = .clear                  // ✨ 흰 배경 방지 (반드시 clear)
+        v.backgroundColor = .clear            // ✨ 변경: 흰 배경 방지
         return v
     }
-
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        // 스타일/코너 반영
         uiView.effect = UIBlurEffect(style: blurStyle)
         uiView.layer.cornerRadius = cornerRadius
-        uiView.backgroundColor = .clear             // ✨ 안전하게 매 프레임 clear 유지
+        uiView.backgroundColor = .clear       // ✨ 변경: 안전하게 clear 유지
     }
 }
 
@@ -75,7 +70,6 @@ struct ContentView: View {
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
 
-                    // 스크롤 오프셋 추적용 오버레이 (기존 로직 유지)
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
@@ -102,7 +96,6 @@ struct ContentView: View {
 
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        // 탭 시 주소창 토글 (기존 로직 유지)
                         withAnimation {
                             if showAddressBar {
                                 showAddressBar = false
@@ -118,7 +111,6 @@ struct ContentView: View {
                     }
 
                 } else {
-                    // 대시보드 (기존 로직 유지)
                     DashboardView(
                         onSelectURL: { selectedURL in
                             // 단순화된 시스템: currentURL 설정으로 자동 기록
@@ -148,7 +140,7 @@ struct ContentView: View {
                 }
             }
 
-            // MARK: - 뷰 생명주기 및 이벤트 (기존 로직 유지)
+            // MARK: - 뷰 생명주기 및 이벤트
             .onAppear {
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
@@ -229,7 +221,8 @@ struct ContentView: View {
                     if showAddressBar {
                         HStack {
                             TextField("URL 또는 검색어", text: $inputURL)
-                                .textFieldStyle(.roundedBorder)
+                                // ✨ 변경: 기본 둥근 텍스트필드(흰 내부 채움) 제거
+                                .textFieldStyle(.plain)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
                                 .keyboardType(.URL)
@@ -276,10 +269,12 @@ struct ContentView: View {
                                     }
                                 )
                                 .frame(maxWidth: 300)
+                                // ✨ 변경: 텍스트필드 자체 배경을 투명으로
+                                .background(Color.clear)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        // ✨ 변경: 주소창 배경을 UIKit 블러로 교체 (흰 박스 방지 + 사파리 느낌)
+                        // ✨ 변경: 주소창 컨테이너 배경을 UIKit 블러로 교체
                         .background(
                             VisualEffectBlur(blurStyle: .systemThinMaterial, cornerRadius: 10)
                         )
@@ -359,7 +354,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    // ✨ 변경: 툴바 배경을 UIKit 블러로 교체 (흰 박스 방지 + 사파리 느낌)
+                    // ✨ 변경: 툴바 배경을 UIKit 블러로 교체 (흰 박스 방지)
                     .background(
                         VisualEffectBlur(blurStyle: .systemThinMaterial, cornerRadius: 10)
                     )
@@ -377,12 +372,12 @@ struct ContentView: View {
                         }
                     )
                 }
-                // ✨ Safari 스타일 - 완전 투명 배경 (컨테이너 자체 배경 제거)
-                .background(Color.clear) // 기존 .clear 유지, 명시적으로 Color.clear
+                // ✨ 변경: 인셋 컨테이너 자체는 완전 투명
+                .background(Color.clear)
             }
 
         } else {
-            // 탭이 비어있을 때 대시보드 (기존 로직 유지)
+            // 탭이 비어있을 때 대시보드
             DashboardView(
                 onSelectURL: { url in
                     let newTab = WebTab(url: url)
@@ -402,7 +397,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - WKWebView 스크롤 콜백 처리 (기존 로직 유지)
+    // MARK: - WKWebView 스크롤 콜백 처리
     private func handleWebViewScroll(yOffset: CGFloat) {
         if isTextFieldFocused || Date() < ignoreAutoHideUntil {
             lastWebContentOffsetY = yOffset
@@ -427,7 +422,6 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 입력 문자열을 URL로 정규화 (기존 로직 유지)
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
@@ -441,7 +435,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존 로직 유지)
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
