@@ -207,7 +207,7 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - DashboardView: URL 없는 탭의 홈 화면 (클릭 시 단일 네비게이션 보장)
+// MARK: - DashboardView: URL 없는 탭의 홈 화면 (✅ 단일 네비게이션 함수로 통합)
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks()
     @State private var showAddBookmarkAlert: Bool = false
@@ -217,8 +217,8 @@ struct DashboardView: View {
     @State private var inputURL: String = ""
     @State private var longPressedBookmarkID: UUID? = nil
 
-    let onSelectURL: (URL) -> Void
-    let triggerLoad: () -> Void  // ⚠️ 유지하되, 대시보드 클릭 경로에서는 더 이상 호출하지 않음
+    // ✅ 단일 함수로 통합: URL 설정 + 로딩을 원자적으로 처리
+    let onNavigateToURL: (URL) -> Void
 
     private let columns = [
         GridItem(.flexible(), spacing: 20),
@@ -257,11 +257,10 @@ struct DashboardView: View {
                             HStack(spacing: 12) {
                                 ForEach(recentPages) { page in
                                     RecentPageCard(page: page) {
-                                        // ✅ 단일 네비게이션: onSelectURL만 호출 (메인 큐 보장)
+                                        // ✅ 단일 네비게이션: 원자적 처리
                                         DispatchQueue.main.async {
-                                            onSelectURL(page.url)
+                                            onNavigateToURL(page.url)
                                         }
-                                        // ❌ triggerLoad() 제거 (이중 네비게이션 방지)
                                     }
                                 }
                             }
@@ -410,11 +409,10 @@ struct DashboardView: View {
             }
 
             guard let url = URL(string: bookmark.url) else { return }
-            // ✅ 단일 네비게이션: onSelectURL만 호출 (메인 큐 보장)
+            // ✅ 단일 네비게이션: 원자적 처리
             DispatchQueue.main.async {
-                onSelectURL(url)
+                onNavigateToURL(url)
             }
-            // ❌ triggerLoad() 제거 (이중 네비게이션 방지)
         }) {
             VStack(spacing: 8) {
                 if let faviconURL = bookmark.faviconURL, let url = URL(string: faviconURL) {
@@ -938,3 +936,20 @@ struct DebugLogRowView: View {
         .cornerRadius(6)
     }
 }
+
+// MARK: - ✅ 상위 뷰에서 사용하는 예시 (DashboardView 호출 방법)
+/*
+상위 뷰에서 다음과 같이 사용하세요:
+
+DashboardView(
+    onNavigateToURL: { url in
+        // ✅ 원자적 처리: URL 설정 + 로딩을 한번에
+        currentStateModel.currentURL = url
+        currentStateModel.triggerReload() // 또는 해당하는 로드 메서드
+        TabPersistenceManager.debugMessages.append("🌐 네비게이션: \(url.absoluteString)")
+    }
+)
+
+기존의 onSelectURL + triggerLoad 분리 방식 대신, 
+단일 onNavigateToURL 클로저로 이중 네비게이션을 완전히 방지합니다.
+*/
