@@ -2,14 +2,13 @@
 //  CustomWebView.swift
 //
 //  ✅ 전체 주석 포함 / 불필요한 부분 수정 없이 기능만 추가
-//  - WebView: 비디오 클릭 시 AVPlayer 재생, 배경 투명 처리, Pull-to-Refresh 등
+//  - WebView: 비디오 클릭 시 AVPlayer 재생, Pull-to-Refresh 등
 //  - 쿠키 세션 공유: WKHTTPCookieStore ↔︎ HTTPCookieStorage 동기화
 //  - 파일 다운로드: iOS 14+ WKDownload 사용 (Content-Disposition: attachment 처리)
 //  - 다운로드 진행률 UI: CustomWebView 내부에 상단 오버레이(블러 + 라벨 + Progress 바)
 //  - 빌드 경고/에러 수정: as!, cookiesDidChangeNotification, as? 관련 정리
-//
-//  ⚠️ 메모리(기억) 안내: 이 코드를 자동으로 '기억'하진 못해요.
-//  장기 저장 원하시면 앱/도구의 메모리 기능을 켜주세요.
+//  ✅ CSS 강제 주입 제거: 웹사이트 원본 디자인 존중 (검정 배경 사이트도 그대로 표시)
+//  ✅ 하단 UI 투명화 유지: 웹 콘텐츠 위에 하단 툴바가 겹쳐지는 효과 보존
 //
 
 import SwiftUI
@@ -54,7 +53,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 설정
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
+        config.allowsPictureInPictureMediaPlaybook = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.websiteDataStore = WKWebsiteDataStore.default()
         config.processPool = WKProcessPool()
@@ -63,7 +62,8 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())                          // 비디오 처리 스크립트
         controller.add(context.coordinator, name: "playVideo")               // JS → 네이티브 메시지 핸들러
-        controller.addUserScript(makeTransparentBackgroundScript())          // HTML/CSS 배경 투명화
+        // ✅ CSS 강제 주입 제거 - 웹사이트 원본 디자인 존중
+        // controller.addUserScript(makeTransparentBackgroundScript())
         config.userContentController = controller
 
         // WKWebView 생성
@@ -72,14 +72,11 @@ struct CustomWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.decelerationRate = .normal
 
-        // WKWebView 자체를 투명 처리 (배경이 비치도록)
+        // ✅ 하단 UI 겹치기를 위한 투명 처리 (웹 콘텐츠는 건드리지 않음)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
-        if #available(iOS 15.0, *) {
-            webView.underPageBackgroundColor = .clear   // ✅ 핵심 추가: 흰 under-page 배경 제거
-        }
 
         // 흰 띠 방지: 인셋 제거
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -174,16 +171,11 @@ struct CustomWebView: UIViewRepresentable {
             context.coordinator.webView = uiView
         }
 
-        // ✅ 핵심 추가: 테마 전환/재사용 시에도 항상 투명 배경 유지 보증
+        // ✅ 하단 UI 겹치기를 위한 투명 설정 유지
         if uiView.isOpaque { uiView.isOpaque = false }
         if uiView.backgroundColor != .clear { uiView.backgroundColor = .clear }
         if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
         uiView.scrollView.isOpaque = false
-        if #available(iOS 15.0, *) {
-            if uiView.underPageBackgroundColor != .clear {
-                uiView.underPageBackgroundColor = .clear
-            }
-        }
     }
 
     // MARK: - teardown
@@ -244,27 +236,6 @@ struct CustomWebView: UIViewRepresentable {
         }, 1000);
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-    }
-
-    // MARK: - HTML/CSS 배경 투명화 스크립트
-    private func makeTransparentBackgroundScript() -> WKUserScript {
-        let css = """
-        html, body {
-            background: transparent !important;
-            background-color: transparent !important;
-        }
-        """
-        let js = """
-        (function(){
-            try {
-                var style = document.createElement('style');
-                style.type = 'text/css';
-                style.appendChild(document.createTextNode(`\(css)`));
-                document.documentElement.appendChild(style);
-            } catch (e) {}
-        })();
-        """
-        return WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
     // MARK: - 오디오 세션 (다른 앱과 믹싱 허용)
@@ -526,11 +497,11 @@ extension WebViewStateModel {
 
         // WebView 측 쿠키 변경을 감시 → App 전역 스토리지로 반영
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        store.add(self) // ✅ 수정: 강제 캐스팅(as!) 제거
+        store.add(self)
 
         // App 전역 쿠키 변경 감시 → WebView로 반영 (iOS: NSHTTPCookieManagerCookiesChanged 사용)
         NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"), // ✅ 수정
+            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"),
             object: HTTPCookieStorage.shared,
             queue: .main
         ) { [weak webView] _ in
@@ -602,7 +573,7 @@ extension WebViewStateModel {
         if let http = navigationResponse.response as? HTTPURLResponse,
            let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
            disp.contains("attachment") {
-            decisionHandler(.download) // ✅ 다운로드로 전환
+            decisionHandler(.download)
             return
         }
         decisionHandler(.allow)
@@ -613,7 +584,7 @@ extension WebViewStateModel {
     public func webView(_ webView: WKWebView,
                         navigationResponse: WKNavigationResponse,
                         didBecome download: WKDownload) {
-        download.delegate = self // ✅ 수정: 불필요한 as? 제거
+        download.delegate = self
     }
 }
 
