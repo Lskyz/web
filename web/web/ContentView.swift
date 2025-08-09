@@ -4,8 +4,8 @@ import WebKit
 
 // ============================================================
 // UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
-// - 사파리 같은 안정적인 반투명 블러
-// - 내부/주변은 .clear 유지 → 흰 박스/여백 방지
+// - 사파리 같은 반투명 유리 효과
+// - 배경은 .clear 유지 (흰 박스/여백 방지)
 // ============================================================
 struct VisualEffectBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
@@ -16,13 +16,13 @@ struct VisualEffectBlur: UIViewRepresentable {
         let v = UIVisualEffectView(effect: effect)
         v.clipsToBounds = true
         v.layer.cornerRadius = cornerRadius
-        v.backgroundColor = .clear            // ✨ 변경: 흰 배경 방지
+        v.backgroundColor = .clear
         return v
     }
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
         uiView.effect = UIBlurEffect(style: blurStyle)
         uiView.layer.cornerRadius = cornerRadius
-        uiView.backgroundColor = .clear       // ✨ 변경: 안전하게 clear 유지
+        uiView.backgroundColor = .clear
     }
 }
 
@@ -47,6 +47,16 @@ struct ContentView: View {
 
     @State private var lastWebContentOffsetY: CGFloat = 0
 
+    // ✨ 변경: 상단(Dynamic Island) 기본 보호, 주소창이 숨겨질 때만 상단 겹치기 허용
+    @State private var allowTopOverlap: Bool = false
+
+    // ✨ 변경: UI 규격(더 크게 + 동일 폭) — 한 곳에서 조정
+    private let outerHorizontalPadding: CGFloat = 16   // 주소창/툴바의 양쪽 외부 여백
+    private let barCornerRadius: CGFloat       = 22    // 둥근 정도 (유리 캡슐 느낌)
+    private let barVPadding: CGFloat           = 12    // 바 내부 상하 여백(높이 커짐)
+    private let iconSize: CGFloat              = 22    // 툴바 아이콘 크기 ↑
+    private let textFont: Font                 = .system(size: 18, weight: .semibold)
+
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
@@ -69,8 +79,11 @@ struct ContentView: View {
                         }
                     )
                     .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
-                    .ignoresSafeArea(.container, edges: [.top, .bottom]) // ✨ 추가: 웹콘텐츠를 상/하단까지 확장해 하단바 뒤로 "겹치게"
 
+                    // ✨ 변경: 하단은 항상 겹치고, 상단은 주소창 숨김 상태에서만 겹치기 허용
+                    .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom])
+
+                    // 스크롤 오프셋 트래킹 (기존 로직)
                     .overlay(
                         GeometryReader { geometry in
                             Color.clear
@@ -91,6 +104,7 @@ struct ContentView: View {
                                 showAddressBar = false
                                 isTextFieldFocused = false
                             }
+                            allowTopOverlap = true // ✨ 변경: 주소창 숨기면 상단도 겹침
                         }
                         previousOffset = offset
                     }
@@ -101,8 +115,10 @@ struct ContentView: View {
                             if showAddressBar {
                                 showAddressBar = false
                                 isTextFieldFocused = false
+                                allowTopOverlap = true  // ✨ 변경
                             } else {
                                 showAddressBar = true
+                                allowTopOverlap = false // ✨ 변경: 주소창 보이면 상단 보호
                                 DispatchQueue.main.async {
                                     isTextFieldFocused = true
                                     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
@@ -112,9 +128,9 @@ struct ContentView: View {
                     }
 
                 } else {
+                    // 대시보드 (기존)
                     DashboardView(
                         onSelectURL: { selectedURL in
-                            // 단순화된 시스템: currentURL 설정으로 자동 기록
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
                             TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
                         },
@@ -129,8 +145,10 @@ struct ContentView: View {
                             if showAddressBar {
                                 showAddressBar = false
                                 isTextFieldFocused = false
+                                allowTopOverlap = true
                             } else {
                                 showAddressBar = true
+                                allowTopOverlap = false
                                 DispatchQueue.main.async {
                                     isTextFieldFocused = true
                                     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
@@ -141,7 +159,7 @@ struct ContentView: View {
                 }
             }
 
-            // MARK: - 뷰 생명주기 및 이벤트
+            // MARK: - 뷰 생명주기/이벤트 (기존)
             .onAppear {
                 if let url = state.currentURL {
                     inputURL = url.absoluteString
@@ -149,15 +167,10 @@ struct ContentView: View {
                 }
                 TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
             }
-
             .onReceive(state.$currentURL) { url in
-                if let url = url {
-                    inputURL = url.absoluteString
-                }
+                if let url = url { inputURL = url.absoluteString }
             }
-
             .onReceive(state.navigationDidFinish) { _ in
-                // 단순화된 로그
                 if let currentRecord = state.currentPageRecord {
                     let back = state.canGoBack ? "가능" : "불가"
                     let fwd = state.canGoForward ? "가능" : "불가"
@@ -167,17 +180,12 @@ struct ContentView: View {
                 } else {
                     TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
                 }
-                
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
             }
-
             .sheet(isPresented: $showHistorySheet) {
-                NavigationView {
-                    WebViewStateModel.HistoryPage(state: state)
-                }
+                NavigationView { WebViewStateModel.HistoryPage(state: state) }
             }
-
             .fullScreenCover(isPresented: $showTabManager) {
                 NavigationView {
                     TabManager(
@@ -185,15 +193,12 @@ struct ContentView: View {
                         initialStateModel: state,
                         onTabSelected: { index in
                             selectedTabIndex = index
-                            
-                            // 탭 전환 시 히스토리 상태 로그
-                            let switchedState = tabs[index].stateModel
-                            if let currentRecord = switchedState.currentPageRecord {
-                                let back = switchedState.canGoBack ? "가능" : "불가"
-                                let fwd = switchedState.canGoForward ? "가능" : "불가"
-                                let title = currentRecord.title
-                                let pageId = currentRecord.id.uuidString.prefix(8)
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
+                            let switched = tabs[index].stateModel
+                            if let r = switched.currentPageRecord {
+                                let back = switched.canGoBack ? "가능" : "불가"
+                                let fwd = switched.canGoForward ? "가능" : "불가"
+                                let pageId = r.id.uuidString.prefix(8)
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
                             }
@@ -201,29 +206,23 @@ struct ContentView: View {
                     )
                 }
             }
-
             .fullScreenCover(isPresented: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
             )) {
-                if let url = tabs[selectedTabIndex].playerURL {
-                    AVPlayerView(url: url)
-                }
+                if let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
             }
-            
-            .fullScreenCover(isPresented: $showDebugView) {
-                DebugLogView()
-            }
+            .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (Safari 스타일 투명 블러)
+            // MARK: - 하단 UI (블러 강화 + 동일 폭 + 더 큼)
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) { // ✨ 변경: 바 간 간격 살짝 키움
                     // 주소창
                     if showAddressBar {
                         HStack {
                             TextField("URL 또는 검색어", text: $inputURL)
-                                // ✨ 변경: 기본 둥근 텍스트필드(흰 내부 채움) 제거
-                                .textFieldStyle(.plain)
+                                .textFieldStyle(.plain)           // 내부 흰 채움 제거
+                                .font(textFont)                    // ✨ 변경: 글자 크게
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
                                 .keyboardType(.URL)
@@ -231,10 +230,7 @@ struct ContentView: View {
                                 .onTapGesture {
                                     if !textFieldSelectedAll {
                                         DispatchQueue.main.async {
-                                            UIApplication.shared.sendAction(
-                                                #selector(UIResponder.selectAll(_:)),
-                                                to: nil, from: nil, for: nil
-                                            )
+                                            UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
                                             textFieldSelectedAll = true
                                             TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
                                         }
@@ -250,7 +246,6 @@ struct ContentView: View {
                                 }
                                 .onSubmit {
                                     if let url = fixedURL(from: inputURL) {
-                                        // 단순화: currentURL 설정으로 자동 기록
                                         state.currentURL = url
                                         TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
                                     }
@@ -262,34 +257,30 @@ struct ContentView: View {
                                         if !inputURL.isEmpty {
                                             Button(action: { inputURL = "" }) {
                                                 Image(systemName: "xmark.circle.fill")
+                                                    .font(.system(size: 16))
                                                     .foregroundColor(.secondary)
-                                                    .font(.system(size: 14))
                                             }
                                             .padding(.trailing, 8)
                                         }
                                     }
                                 )
-                                .frame(maxWidth: 300)
-                                // ✨ 변경: 텍스트필드 자체 배경을 투명으로
-                                .background(Color.clear)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        // ✨ 변경: 주소창 컨테이너 배경을 UIKit 블러로 교체
-                        .background(
-                            VisualEffectBlur(blurStyle: .systemThinMaterial, cornerRadius: 10)
-                        )
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 14)                // ✨ 변경: 내부 좌우 여백 ↑
+                        .padding(.vertical, barVPadding)         // ✨ 변경: 내부 상하 여백 ↑ (높이 커짐)
+                        // ✨ 변경: 블러 강도 업 — .systemMaterial + 유리 느낌 스트로크
+                        .background(VisualEffectBlur(blurStyle: .systemMaterial, cornerRadius: barCornerRadius))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
+                        .padding(.horizontal, outerHorizontalPadding) // ✨ 변경: 주소창/툴바 동일 폭 되도록 동일 외부 여백
                         .transition(.opacity)
                         .gesture(
                             DragGesture(minimumDistance: 10).onEnded { value in
                                 if value.translation.height > 20 {
-                                    withAnimation {
-                                        showAddressBar = false
-                                        isTextFieldFocused = false
-                                    }
+                                    withAnimation { showAddressBar = false; isTextFieldFocused = false }
+                                    allowTopOverlap = true
                                 } else if value.translation.height < -20 {
                                     withAnimation { showAddressBar = true }
+                                    allowTopOverlap = false
                                     DispatchQueue.main.async {
                                         isTextFieldFocused = true
                                         ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
@@ -299,92 +290,65 @@ struct ContentView: View {
                         )
                     }
 
-                    // 하단 통합 툴바
-                    HStack(spacing: 8) {
+                    // 하단 통합 툴바 (폭/모서리/블러 주소창과 동일)
+                    HStack(spacing: 14) { // ✨ 변경: 버튼 간격 약간 ↑
                         Button(action: { state.goBack() }) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 18))
+                                .font(.system(size: iconSize))          // ✨ 변경: 아이콘 크게
                                 .foregroundColor(state.canGoBack ? .primary : .secondary)
                         }
                         .disabled(!state.canGoBack)
-                        .padding(.horizontal, 4)
 
                         Button(action: { state.goForward() }) {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 18))
+                                .font(.system(size: iconSize))          // ✨ 변경
                                 .foregroundColor(state.canGoForward ? .primary : .secondary)
                         }
                         .disabled(!state.canGoForward)
-                        .padding(.horizontal, 4)
 
                         Button(action: { state.reload() }) {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 18))
+                                .font(.system(size: iconSize))          // ✨ 변경
                                 .foregroundColor(.primary)
                         }
-                        .padding(.horizontal, 4)
 
-                        Button(action: { showTabManager = true }) {
-                            Image(systemName: "square.on.square")
-                                .font(.system(size: 18))
-                                .foregroundColor(.primary)
-                        }
-                        .padding(.horizontal, 4)
+                        Spacer(minLength: 8)
 
                         Button(action: { showHistorySheet = true }) {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 18))
+                                .font(.system(size: iconSize))          // ✨ 변경
                                 .foregroundColor(.primary)
                         }
-                        .padding(.horizontal, 4)
-                        
+
+                        Button(action: { showTabManager = true }) {
+                            Image(systemName: "square.on.square")
+                                .font(.system(size: iconSize))          // ✨ 변경
+                                .foregroundColor(.primary)
+                        }
+
                         Button(action: { showDebugView = true }) {
                             Image(systemName: "ladybug")
-                                .font(.system(size: 18))
+                                .font(.system(size: iconSize))          // ✨ 변경
                                 .foregroundColor(.orange)
                         }
-                        .padding(.horizontal, 4)
-                        
-                        // 페이지 개수 표시
-                        if state.historyURLs.count > 0 {
-                            Text("\(state.historyURLs.count)")
-                                .font(.caption)
-                                .foregroundColor(.blue)
-                                .padding(.horizontal, 4)
-                        }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    // ✨ 변경: 툴바 배경을 UIKit 블러로 교체 (흰 박스 방지)
-                    .background(
-                        VisualEffectBlur(blurStyle: .systemThinMaterial, cornerRadius: 10)
-                    )
-                    .padding(.horizontal, 8)
-                    .gesture(
-                        DragGesture(minimumDistance: 10).onEnded { value in
-                            if value.translation.height > 20 {
-                                withAnimation {
-                                    showAddressBar = false
-                                    isTextFieldFocused = false
-                                }
-                            } else if value.translation.height < -20 {
-                                withAnimation { showAddressBar = true }
-                            }
-                        }
-                    )
+                    .padding(.horizontal, 16)                 // ✨ 변경: 내부 좌우 여백 ↑
+                    .padding(.vertical, barVPadding)          // ✨ 변경: 내부 상하 여백 ↑
+                    .background(VisualEffectBlur(blurStyle: .systemMaterial, cornerRadius: barCornerRadius)) // ✨ 변경: 블러 강도 업
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.15), lineWidth: 0.75))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.10), lineWidth: 0.25))
+                    .padding(.horizontal, outerHorizontalPadding) // ✨ 변경: 주소창과 동일 외부 여백 → 동일 폭 보장
                 }
-                // ✨ 변경: 인셋 컨테이너 자체는 완전 투명
-                .background(Color.clear)
+                .background(Color.clear) // 컨테이너는 완전 투명
             }
 
         } else {
-            // 탭이 비어있을 때 대시보드
+            // 탭이 비어있을 때 대시보드 (기존)
             DashboardView(
                 onSelectURL: { url in
                     let newTab = WebTab(url: url)
                     tabs.append(newTab)
                     selectedTabIndex = tabs.count - 1
-                    
                     TabPersistenceManager.saveTabs(tabs)
                     TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
                 },
@@ -398,31 +362,28 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - WKWebView 스크롤 콜백 처리
+    // MARK: - WKWebView 스크롤 콜백 처리 (기존)
     private func handleWebViewScroll(yOffset: CGFloat) {
         if isTextFieldFocused || Date() < ignoreAutoHideUntil {
             lastWebContentOffsetY = yOffset
             return
         }
-
         let delta = yOffset - lastWebContentOffsetY
         if abs(delta) < 2 {
             lastWebContentOffsetY = yOffset
             return
         }
-
         if delta > 4 && showAddressBar {
-            withAnimation {
-                showAddressBar = false
-                isTextFieldFocused = false
-            }
+            withAnimation { showAddressBar = false; isTextFieldFocused = false }
+            allowTopOverlap = true // ✨ 변경
         } else if delta < -12 && !showAddressBar {
             withAnimation { showAddressBar = true }
+            allowTopOverlap = false // ✨ 변경
         }
-
         lastWebContentOffsetY = yOffset
     }
 
+    // MARK: - 입력 문자열을 URL로 정규화 (기존)
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
@@ -436,10 +397,8 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
