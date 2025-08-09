@@ -31,6 +31,9 @@ struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
     @Binding var selectedTabIndex: Int
+    
+    // ✨ 추가: 다크모드/라이트모드 자동 감지
+    @Environment(\.colorScheme) var colorScheme
 
     @State private var inputURL: String = ""
     @FocusState private var isTextFieldFocused: Bool
@@ -51,9 +54,7 @@ struct ContentView: View {
     @State private var allowTopOverlap: Bool = false
 
     // ============================================================
-    // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (여기만 만지면 전체가 같이 바뀜)
-    // 블러 약하게 = UltraThin 재질(가장 투명/블러 약함)
-    // 화이트 글라스 = Light 계열 + 흰색 틴트 오버레이
+    // ✨ 변경: UI 규격 + 재질/투명도 제어 상수 (다크모드 적응형)
     // ============================================================
     private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
     private let barCornerRadius: CGFloat       = 22
@@ -62,8 +63,24 @@ struct ContentView: View {
     private let textFont: Font                 = .system(size: 18, weight: .semibold)
     private let toolbarSpacing: CGFloat        = 22
 
-    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterialLight // ✨ 변경: 가장 얇은(블러 약함) + 라이트
-    private let glassTintOpacity: CGFloat      = 0.20  // ✨ 변경: 화이트 틴트 강도(사파리 느낌이면 0.14~0.20 권장)
+    // ✨ 다크모드 적응형 재질 및 색상
+    private var glassMaterial: UIBlurEffect.Style {
+        colorScheme == .dark ? .systemUltraThinMaterialDark : .systemUltraThinMaterialLight
+    }
+    
+    private var glassTintColor: Color {
+        colorScheme == .dark ? .black : .white
+    }
+    
+    private let glassTintOpacity: CGFloat = 0.15  // ✨ 약간 줄임 (더 자연스러운 느낌)
+    
+    private var borderHighlightColor: Color {
+        colorScheme == .dark ? .white.opacity(0.08) : .white.opacity(0.12)
+    }
+    
+    private var borderShadowColor: Color {
+        colorScheme == .dark ? .black.opacity(0.12) : .black.opacity(0.08)
+    }
 
     var body: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -201,7 +218,7 @@ struct ContentView: View {
                                 let back = switched.canGoBack ? "가능" : "불가"
                                 let fwd = switched.canGoForward ? "가능" : "불가"
                                 let pageId = r.id.uuidString.prefix(8)
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
                             } else {
                                 TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
                             }
@@ -217,7 +234,7 @@ struct ContentView: View {
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
 
-            // MARK: - 하단 UI (화이트 글라스 + 툴바 빈공간 탭 시 주소창 열기)
+            // MARK: - 하단 UI (✨ 다크모드 적응형 글라스 + 툴바 빈공간 탭 시 주소창 열기)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     // 주소창
@@ -270,17 +287,17 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
-                        // ✨ 변경: UltraThin Light + 흰색 틴트(화이트 글라스)
+                        // ✨ 변경: 다크모드 적응형 글라스 효과
                         .background(
                             ZStack {
                                 VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
                                 RoundedRectangle(cornerRadius: barCornerRadius)
-                                    .fill(Color.white.opacity(glassTintOpacity))
+                                    .fill(glassTintColor.opacity(glassTintOpacity))
                             }
                         )
-                        // 테두리(하이라이트/섀도)는 낮은 불투명도로 유지
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
+                        // ✨ 변경: 다크모드 적응형 테두리
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderHighlightColor, lineWidth: 0.75))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderShadowColor, lineWidth: 0.25))
                         .padding(.horizontal, outerHorizontalPadding)
                         .transition(.opacity)
                     }
@@ -330,16 +347,17 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, barVPadding)
-                    // ✨ 변경: UltraThin Light + 흰색 틴트(화이트 글라스)
+                    // ✨ 변경: 다크모드 적응형 글라스 효과
                     .background(
                         ZStack {
                             VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
                             RoundedRectangle(cornerRadius: barCornerRadius)
-                                .fill(Color.white.opacity(glassTintOpacity))
+                                .fill(glassTintColor.opacity(glassTintOpacity))
                         }
                     )
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
+                    // ✨ 변경: 다크모드 적응형 테두리
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderHighlightColor, lineWidth: 0.75))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(borderShadowColor, lineWidth: 0.25))
                     .padding(.horizontal, outerHorizontalPadding)
                     // ✨ 변경: "툴바의 빈공간"을 탭하면 주소창 열기 (버튼 영역 탭은 버튼이 소비하므로 충돌 X)
                     .contentShape(Rectangle())
