@@ -308,13 +308,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
     }
 
     func clearHistory() {
-        safeHistoryModification {
+        safeHistoryModification { [self] in
             WebViewStateModel.globalHistory = []
             WebViewStateModel.saveGlobalHistory()
-            self.pageHistory.removeAll()
-            self.currentPageIndex = -1
-            self.updateNavigationState()
-            self.dbg("🧹 전체 히스토리 삭제")
+            pageHistory.removeAll()
+            currentPageIndex = -1
+            updateNavigationState()
+            dbg("🧹 전체 히스토리 삭제")
         }
     }
 
@@ -545,9 +545,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         // 현재 URL과 같으면 제목만 업데이트
         if currentURL == url {
             if changeType == "title" && !title.isEmpty {
-                safeHistoryModification {
-                    self.updateCurrentPageTitle(title)
-                    self.dbg("📝 제목만 업데이트: '\(title)'")
+                safeHistoryModification { [self] in
+                    updateCurrentPageTitle(title)
+                    dbg("📝 제목만 업데이트: '\(title)'")
                 }
             }
             dbg("🔄 === JavaScript URL 변경 처리 끝 (제목만) ===")
@@ -558,14 +558,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         isJavaScriptNavigation = true
         
         // 🛡️ 안전한 변경 타입 분석 및 처리
-        safeHistoryModification {
-            let pageChangeType = self.analyzePageChange(finalURL: url)
+        safeHistoryModification { [self] in
+            let pageChangeType = analyzePageChange(finalURL: url)
             let finalTitle = title.isEmpty ? (url.host ?? "제목 없음") : title
             
-            self.handlePageChange(url: url, title: finalTitle, changeType: pageChangeType)
+            handlePageChange(url: url, title: finalTitle, changeType: pageChangeType)
             
             // currentURL 동기화
-            self.currentURL = url
+            currentURL = url
             
             // 전역 히스토리 추가 (새 페이지인 경우만)
             if pageChangeType == .newPage || pageChangeType == .inPageNavigation {
@@ -906,12 +906,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         }
         
         // 🛡️ 안전한 히스토리 수정
-        safeHistoryModification {
+        safeHistoryModification { [self] in
             // 변경 타입 분석
-            let changeType = self.analyzePageChange(finalURL: url)
+            let changeType = analyzePageChange(finalURL: url)
             
             // 변경 타입에 따라 처리
-            self.handlePageChange(url: url, title: title, changeType: changeType)
+            handlePageChange(url: url, title: title, changeType: changeType)
         }
         
         dbg("📋 === addNewPage 호출 끝 ===")
@@ -966,34 +966,34 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         dbg("🔄 === 세션 복원 시작 ===")
         
         // 🛡️ 안전한 세션 복원
-        safeHistoryModification {
-            self.isRestoringSession = true
+        safeHistoryModification { [self] in
+            isRestoringSession = true
             
-            self.pageHistory = session.pageRecords
-            self.currentPageIndex = self.safeIndex(session.currentIndex)
+            pageHistory = session.pageRecords
+            currentPageIndex = safeIndex(session.currentIndex)
             
             dbg("🔄 복원된 히스토리:")
-            for (index, record) in self.pageHistory.enumerated() {
-                let marker = index == self.currentPageIndex ? "👉" : "  "
+            for (index, record) in pageHistory.enumerated() {
+                let marker = index == currentPageIndex ? "👉" : "  "
                 dbg("🔄\(marker) [\(index)] \(record.title) | \(record.url.absoluteString)")
             }
             
-            if let currentRecord = self.currentPageRecord {
-                self.isNavigatingFromWebView = true
-                self.currentURL = currentRecord.url
-                self.isNavigatingFromWebView = false
+            if let currentRecord = currentPageRecord {
+                isNavigatingFromWebView = true
+                currentURL = currentRecord.url
+                isNavigatingFromWebView = false
                 
-                dbg("🔄 세션 복원: \(self.pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
+                dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
             } else {
-                self.currentURL = nil
+                currentURL = nil
                 dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
             }
             
             // 복원 즉시 상태 업데이트
-            self.updateNavigationState()
-            dbg("🔧 복원 후 즉시 상태: back=\(self.canGoBack), forward=\(self.canGoForward), 인덱스=\(self.currentPageIndex)/\(self.pageHistory.count)")
+            updateNavigationState()
+            dbg("🔧 복원 후 즉시 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
             
-            if let webView = self.webView, let url = self.currentURL {
+            if let webView = webView, let url = currentURL {
                 webView.load(URLRequest(url: url))
                 dbg("🌐 복원 시 웹뷰 로드: \(url.absoluteString)")
             }
@@ -1014,27 +1014,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         dbg("⬅️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex - 1)")
         
         // 🛡️ 안전한 히스토리 수정
-        safeHistoryModification {
-            self.currentPageIndex -= 1
+        safeHistoryModification { [self] in
+            currentPageIndex -= 1
             
-            if let record = self.currentPageRecord {
+            if let record = currentPageRecord {
                 var mutableRecord = record
                 mutableRecord.updateAccess()
-                self.pageHistory[self.currentPageIndex] = mutableRecord
+                pageHistory[currentPageIndex] = mutableRecord
                 
                 // ✅ 🔧 히스토리 네비게이션 플래그 설정 강화
                 dbg("⬅️ 히스토리 네비게이션 플래그 설정")
-                self.isHistoryNavigation = true
-                self.isNavigatingFromWebView = true
-                self.currentURL = record.url
+                isHistoryNavigation = true
+                isNavigatingFromWebView = true
+                currentURL = record.url
                 
-                if let webView = self.webView {
+                if let webView = webView {
                     webView.load(URLRequest(url: record.url))
                     dbg("🌐 뒤로가기 웹뷰 로드: \(record.url.absoluteString)")
                 }
                 
-                self.updateNavigationState()
-                dbg("⬅️ 뒤로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(self.currentPageIndex)/\(self.pageHistory.count)")
+                updateNavigationState()
+                dbg("⬅️ 뒤로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
             }
         }
         
@@ -1052,27 +1052,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
         dbg("➡️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex + 1)")
         
         // 🛡️ 안전한 히스토리 수정
-        safeHistoryModification {
-            self.currentPageIndex += 1
+        safeHistoryModification { [self] in
+            currentPageIndex += 1
             
-            if let record = self.currentPageRecord {
+            if let record = currentPageRecord {
                 var mutableRecord = record
                 mutableRecord.updateAccess()
-                self.pageHistory[self.currentPageIndex] = mutableRecord
+                pageHistory[currentPageIndex] = mutableRecord
                 
                 // ✅ 🔧 히스토리 네비게이션 플래그 설정 강화
                 dbg("➡️ 히스토리 네비게이션 플래그 설정")
-                self.isHistoryNavigation = true
-                self.isNavigatingFromWebView = true
-                self.currentURL = record.url
+                isHistoryNavigation = true
+                isNavigatingFromWebView = true
+                currentURL = record.url
                 
-                if let webView = self.webView {
+                if let webView = webView {
                     webView.load(URLRequest(url: record.url))
                     dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
                 }
                 
-                self.updateNavigationState()
-                dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(self.currentPageIndex)/\(self.pageHistory.count)")
+                updateNavigationState()
+                dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
             }
         }
         
@@ -1230,12 +1230,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                 dbg("🔄 === 복원 중 처리 ===")
                 
                 // 🛡️ 안전한 제목 업데이트
-                safeHistoryModification {
-                    self.updateCurrentPageTitle(title)
+                safeHistoryModification { [self] in
+                    updateCurrentPageTitle(title)
                     
                     // ✅ 복원 완료 처리를 didFinish에서 수행
-                    self.isRestoringSession = false
-                    self.updateNavigationState()
+                    isRestoringSession = false
+                    updateNavigationState()
                 }
                 
                 dbg("🔄 복원 완료: '\(title)' - isRestoringSession = false")
@@ -1247,8 +1247,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                 dbg("🔄 === 히스토리 네비게이션 처리 (버튼 또는 스와이프) ===")
                 
                 // 🛡️ 안전한 제목 업데이트
-                safeHistoryModification {
-                    self.updateCurrentPageTitle(title)
+                safeHistoryModification { [self] in
+                    updateCurrentPageTitle(title)
                 }
                 
                 // ✅ 스와이프 제스처든 버튼이든 currentURL 동기화
@@ -1293,13 +1293,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                 dbg("🆕 === 일반 네비게이션 처리 ===")
                 
                 // 🛡️ 안전한 페이지 변경 분석 및 처리
-                safeHistoryModification {
-                    let changeType = self.analyzePageChange(finalURL: finalURL)
+                safeHistoryModification { [self] in
+                    let changeType = analyzePageChange(finalURL: finalURL)
                     
                     dbg("🤔 페이지 변경 타입: \(changeType.description)")
                     
                     // 변경 타입에 따라 처리
-                    self.handlePageChange(url: finalURL, title: title, changeType: changeType)
+                    handlePageChange(url: finalURL, title: title, changeType: changeType)
                     
                     // 전역 방문 기록 추가 (새 페이지 또는 페이지 내 네비게이션인 경우)
                     if changeType == .newPage || changeType == .inPageNavigation {
@@ -1308,9 +1308,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                     }
                     
                     // currentURL 동기화
-                    self.isNavigatingFromWebView = true
-                    self.currentURL = finalURL
-                    self.isNavigatingFromWebView = false
+                    isNavigatingFromWebView = true
+                    currentURL = finalURL
+                    isNavigatingFromWebView = false
                 }
                 
                 dbg("🆕 === 일반 네비게이션 처리 끝 ===")
@@ -1445,7 +1445,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate,
                                 // 🛡️ 안전한 페이지 이동
                                 if let index = state.pageHistory.firstIndex(where: { $0.id == record.id }),
                                    state.isValidIndex(index) {
-                                    state.safeHistoryModification {
+                                    state.safeHistoryModification { [state] in
                                         state.currentPageIndex = index
                                         state.currentURL = record.url
                                         if let webView = state.webView {
