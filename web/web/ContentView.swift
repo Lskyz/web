@@ -133,15 +133,13 @@ struct ContentView: View {
                     }
 
                 } else {
-                    // 대시보드 (기존)
+                    // ✅ 수정: DashboardView를 onNavigateToURL 단일 함수로 통합
                     DashboardView(
-                        onSelectURL: { selectedURL in
+                        onNavigateToURL: { selectedURL in
+                            // 원자적 처리: URL 설정 + 로딩을 한번에
                             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-                            TabPersistenceManager.debugMessages.append("대시보드에서 URL 선택: \(selectedURL)")
-                        },
-                        triggerLoad: {
                             tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                            TabPersistenceManager.debugMessages.append("대시보드 URL 로드 트리거")
+                            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
                         }
                     )
                     .contentShape(Rectangle())
@@ -358,20 +356,16 @@ struct ContentView: View {
             }
 
         } else {
-            // 탭이 비어있을 때 대시보드 (기존)
+            // ✅ 수정: 탭이 비어있을 때도 onNavigateToURL 단일 함수로 통합
             DashboardView(
-                onSelectURL: { url in
+                onNavigateToURL: { url in
+                    // 원자적 처리: 새 탭 생성 + URL 설정 + 로딩을 한번에
                     let newTab = WebTab(url: url)
                     tabs.append(newTab)
                     selectedTabIndex = tabs.count - 1
+                    newTab.stateModel.loadURLIfReady()
                     TabPersistenceManager.saveTabs(tabs)
-                    TabPersistenceManager.debugMessages.append("새 탭 생성 (대시보드): \(url)")
-                },
-                triggerLoad: {
-                    if tabs.indices.contains(selectedTabIndex) {
-                        tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                    }
-                    TabPersistenceManager.debugMessages.append("대시보드 fallback 트리거")
+                    TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(url.absoluteString)")
                 }
             )
         }
