@@ -53,7 +53,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 설정
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlaybook = true
+        config.allowsPictureInPictureMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.websiteDataStore = WKWebsiteDataStore.default()
         config.processPool = WKProcessPool()
