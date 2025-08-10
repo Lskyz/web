@@ -192,11 +192,11 @@ struct ContentView: View {
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
             }
-            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시
+            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시 (UUID 타입 수정)
             .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
                 guard let userInfo = notification.userInfo,
-                      let tabID = userInfo["tabID"] as? String,
-                      tabID == state.tabID else { return }
+                      let tabIDString = userInfo["tabID"] as? String,
+                      tabIDString == state.tabID?.uuidString else { return }  // ✅ UUID를 String으로 변환하여 비교
                 
                 if let statusCode = userInfo["statusCode"] as? Int,
                    let url = userInfo["url"] as? String {
@@ -205,6 +205,14 @@ struct ContentView: View {
                     errorMessage = error.message
                     showErrorAlert = true
                     TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
+                } else if let sslError = userInfo["sslError"] as? Bool, sslError,
+                          let url = userInfo["url"] as? String {
+                    // ✨ SSL 에러 처리 추가
+                    let domain = URL(string: url)?.host ?? "사이트"
+                    errorTitle = "보안 연결 취소됨"
+                    errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
                 } else if let error = userInfo["error"] as? Error,
                           let url = userInfo["url"] as? String {
                     let networkError = getNetworkErrorMessage(for: error, url: url)
@@ -244,11 +252,13 @@ struct ContentView: View {
                 if let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
-            // ✨ 에러 알림 표시
+            // ✨ 에러 알림 표시 (SSL 에러 케이스 별도 처리)
             .alert(errorTitle, isPresented: $showErrorAlert) {
                 Button("확인") { }
-                Button("다시 시도") {
-                    state.reload()
+                if !errorTitle.contains("보안 연결") {  // SSL 에러가 아닐 때만 다시 시도 버튼 표시
+                    Button("다시 시도") {
+                        state.reload()
+                    }
                 }
             } message: {
                 Text(errorMessage)
