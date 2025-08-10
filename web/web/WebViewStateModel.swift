@@ -374,29 +374,35 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return
         }
         
-        // ✅ 중복 URL 체크 강화 - 정규화된 URL로 비교
+        // ✅ 중복 URL 체크 강화 - 정규화된 URL로 비교 (시간 기반)
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = normalizeURL(currentRecord.url)
             let newNormalizedURL = normalizeURL(url)
             
             if currentNormalizedURL == newNormalizedURL {
-                dbg("🚫 중복 URL 감지 - 현재 페이지와 동일 (정규화됨): \(newNormalizedURL)")
-                
-                // 제목만 업데이트
-                var mutableRecord = currentRecord
-                let oldTitle = mutableRecord.title
-                mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
-                pageHistory[currentPageIndex] = mutableRecord
-                
-                dbg("📝 제목만 업데이트: '\(oldTitle)' → '\(mutableRecord.title)'")
-                dbg("📋 === addNewPage 호출 분석 끝 (중복으로 추가 안함) ===")
-                return
+                // 같은 URL이지만 시간이 충분히 지났는지 확인 (30초 이상 차이나면 새로 저장)
+                let timeDifference = Date().timeIntervalSince(currentRecord.lastAccessed)
+                if timeDifference < 30.0 {
+                    dbg("🚫 짧은 시간 내 중복 URL 감지 - 현재 페이지와 동일 (정규화됨, \(Int(timeDifference))초 전): \(newNormalizedURL)")
+                    
+                    // 제목만 업데이트
+                    var mutableRecord = currentRecord
+                    let oldTitle = mutableRecord.title
+                    mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
+                    pageHistory[currentPageIndex] = mutableRecord
+                    
+                    dbg("📝 제목만 업데이트: '\(oldTitle)' → '\(mutableRecord.title)'")
+                    dbg("📋 === addNewPage 호출 분석 끝 (시간 기반 중복으로 추가 안함) ===")
+                    return
+                } else {
+                    dbg("✅ 같은 URL이지만 충분한 시간 경과 (\(Int(timeDifference))초) - 새로 저장")
+                }
             }
         }
         
-        // ✅ 히스토리 전체에서 중복 URL 체크 (최근 5개 페이지 내에서) - 정규화된 URL로 비교
-        let recentCheckCount = min(5, pageHistory.count)
+        // ✅ 히스토리 전체에서 중복 URL 체크 (최근 3개 페이지 내에서, 시간 기반)
+        let recentCheckCount = min(3, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
         let newNormalizedURL = normalizeURL(url)
         
@@ -405,26 +411,32 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             let recordNormalizedURL = normalizeURL(record.url)
             
             if recordNormalizedURL == newNormalizedURL {
-                dbg("🚫 최근 히스토리에서 중복 URL 감지 [인덱스: \(actualIndex)] (정규화됨): \(newNormalizedURL)")
-                
-                // 해당 페이지로 이동하고 제목 업데이트
-                currentPageIndex = actualIndex
-                var mutableRecord = record
-                mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
-                mutableRecord.updateAccess()
-                pageHistory[actualIndex] = mutableRecord
-                
-                // 해당 인덱스 이후의 forward 기록 제거
-                if actualIndex < pageHistory.count - 1 {
-                    let removedCount = pageHistory.count - actualIndex - 1
-                    pageHistory.removeSubrange((actualIndex + 1)...)
-                    dbg("🧹 중복 발견으로 인한 Forward 히스토리 정리: \(removedCount)개 제거")
+                // 시간 차이 확인 (10초 이내면 중복으로 간주)
+                let timeDifference = Date().timeIntervalSince(record.lastAccessed)
+                if timeDifference < 10.0 {
+                    dbg("🚫 최근 히스토리에서 짧은 시간 내 중복 URL 감지 [인덱스: \(actualIndex)] (정규화됨, \(Int(timeDifference))초 전): \(newNormalizedURL)")
+                    
+                    // 해당 페이지로 이동하고 제목 업데이트
+                    currentPageIndex = actualIndex
+                    var mutableRecord = record
+                    mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
+                    mutableRecord.updateAccess()
+                    pageHistory[actualIndex] = mutableRecord
+                    
+                    // 해당 인덱스 이후의 forward 기록 제거
+                    if actualIndex < pageHistory.count - 1 {
+                        let removedCount = pageHistory.count - actualIndex - 1
+                        pageHistory.removeSubrange((actualIndex + 1)...)
+                        dbg("🧹 중복 발견으로 인한 Forward 히스토리 정리: \(removedCount)개 제거")
+                    }
+                    
+                    updateNavigationState()
+                    dbg("🔄 기존 중복 페이지로 이동: '\(mutableRecord.title)' [인덱스: \(currentPageIndex)]")
+                    dbg("📋 === addNewPage 호출 분석 끝 (시간 기반 중복으로 이동) ===")
+                    return
+                } else {
+                    dbg("✅ 같은 URL이지만 충분한 시간 경과 (\(Int(timeDifference))초) - 새로 저장")
                 }
-                
-                updateNavigationState()
-                dbg("🔄 기존 중복 페이지로 이동: '\(mutableRecord.title)' [인덱스: \(currentPageIndex)]")
-                dbg("📋 === addNewPage 호출 분석 끝 (중복으로 이동) ===")
-                return
             }
         }
         
@@ -883,28 +895,41 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // ✅ 정규화된 URL 미리 계산 (중복 선언 방지)
         let finalNormalizedURL = normalizeURL(finalURL)
         
-        // ✅ 현재 페이지와 완전히 같은 URL인지 체크 - 정규화된 URL로 비교
+        // ✅ 현재 페이지와 완전히 같은 URL인지 체크 - 정규화된 URL로 비교 (시간 기반)
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = normalizeURL(currentRecord.url)
+            let finalNormalizedURL = normalizeURL(finalURL)
             
             if currentNormalizedURL == finalNormalizedURL {
-                dbg("🚫 현재 페이지와 동일한 URL (정규화됨) - 제목만 업데이트: \(finalNormalizedURL)")
-                dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
-                return false
+                // 시간 차이 확인 (30초 이내면 중복으로 간주)
+                let timeDifference = Date().timeIntervalSince(currentRecord.lastAccessed)
+                if timeDifference < 30.0 {
+                    dbg("🚫 현재 페이지와 동일한 URL (정규화됨, \(Int(timeDifference))초 전) - 제목만 업데이트: \(finalNormalizedURL)")
+                    dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+                    return false
+                } else {
+                    dbg("✅ 같은 URL이지만 충분한 시간 경과 (\(Int(timeDifference))초) - 새로 저장 가능")
+                }
             }
         }
         
-        // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서) - 정규화된 URL로 비교
+        // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서, 시간 기반)
         let recentCheckCount = min(3, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
         
         for record in recentPages {
             let recordNormalizedURL = normalizeURL(record.url)
             if recordNormalizedURL == finalNormalizedURL {
-                dbg("🚫 최근 히스토리에서 중복 URL 발견 (정규화됨): \(finalNormalizedURL)")
-                dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
-                return false
+                // 시간 차이 확인 (10초 이내면 중복으로 간주)
+                let timeDifference = Date().timeIntervalSince(record.lastAccessed)
+                if timeDifference < 10.0 {
+                    dbg("🚫 최근 히스토리에서 중복 URL 발견 (정규화됨, \(Int(timeDifference))초 전): \(finalNormalizedURL)")
+                    dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+                    return false
+                } else {
+                    dbg("✅ 같은 URL이지만 충분한 시간 경과 (\(Int(timeDifference))초) - 새로 저장 가능")
+                }
             }
         }
         
