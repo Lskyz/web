@@ -1,7 +1,7 @@
 //
 //  WebViewStateModel.swift
-//  페이지 고유번호 기반 히스토리 시스템 (스와이프-버튼 동기화 강화)
-//  ✨ 안정적인 제스처-버튼 동기화 및 에러 처리 개선
+//  페이지 고유번호 기반 히스토리 시스템 (기존 구조 유지하며 동기화 강화)
+//  ✨ CustomWebView와 호환되는 스와이프-버튼 동기화 개선
 //
 
 import Foundation
@@ -55,33 +55,6 @@ struct WebViewSession: Codable {
     var urls: [URL] { pageRecords.map { $0.url } }
 }
 
-// MARK: - 네비게이션 동기화 상태 관리
-private enum NavigationSyncState: Equatable {
-    case idle                           // 평상시
-    case buttonNavigation(target: Int)  // 버튼으로 시작된 네비게이션
-    case gestureDetected(target: Int)   // 스와이프 제스처 감지
-    case gestureConfirmed(target: Int)  // 스와이프 제스처 확정
-    case restoring                      // 세션 복원 중
-    
-    var isNavigating: Bool {
-        switch self {
-        case .idle, .restoring: return false
-        default: return true
-        }
-    }
-    
-    var targetIndex: Int? {
-        switch self {
-        case .buttonNavigation(let target),
-             .gestureDetected(let target),
-             .gestureConfirmed(let target):
-            return target
-        default:
-            return nil
-        }
-    }
-}
-
 // MARK: - 타임스탬프 유틸
 fileprivate func ts() -> String {
     let f = DateFormatter()
@@ -89,9 +62,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 알림 이름 (기존에 선언되어 있음 - 중복 방지)
-
-// MARK: - WebViewStateModel (스와이프-버튼 동기화 강화)
+// MARK: - WebViewStateModel (기존 구조 유지하며 동기화 강화)
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     var tabID: UUID?
@@ -99,13 +70,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // 페이지 기록 기반 히스토리
     @Published private var pageHistory: [PageRecord] = []
     @Published private var currentPageIndex: Int = -1
-    
-    // ✅ 강화된 동기화 상태 관리
-    private var syncState: NavigationSyncState = .idle {
-        didSet {
-            dbg("🔄 동기화 상태 변경: \(oldValue) → \(syncState)")
-        }
-    }
     
     // ✨ 로딩 상태 관리
     @Published var isLoading: Bool = false {
@@ -134,17 +98,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
             dbg("📞 === 스택 추적 끝 ===")
 
-            // ✅ 웹뷰 로드 조건 개선 (동기화 상태 고려)
+            // ✅ 웹뷰 로드 조건 개선
             let shouldLoad = url != oldValue && 
-                           !syncState.isNavigating &&
+                           !isRestoringSession &&
                            !isNavigatingFromWebView &&
-                           syncState != .restoring
+                           !isHistoryNavigationActive()
             
             dbg("🤔 webView.load 여부 판단:")
             dbg("🤔   url != oldValue: \(url != oldValue)")
-            dbg("🤔   !syncState.isNavigating: \(!syncState.isNavigating)")
+            dbg("🤔   !isRestoringSession: \(!isRestoringSession)")
             dbg("🤔   !isNavigatingFromWebView: \(!isNavigatingFromWebView)")
-            dbg("🤔   syncState != .restoring: \(syncState != .restoring)")
+            dbg("🤔   !isHistoryNavigationActive(): \(!isHistoryNavigationActive())")
             dbg("🤔   shouldLoad: \(shouldLoad)")
             
             if shouldLoad {
@@ -155,12 +119,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                     dbg("⚠️ 웹뷰가 없어서 로드 불가")
                 }
             } else {
-                dbg("⛔️ webView.load 생략됨 - 동기화 네비게이션 중")
+                dbg("⛔️ webView.load 생략됨 - 네비게이션 중")
             }
         }
     }
     
-    // ✅ 웹뷰 내부 네비게이션 플래그 (간소화)
+    // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false {
         didSet {
             if oldValue != isNavigatingFromWebView {
@@ -173,8 +137,27 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
     
-    // ✅ 타이머 기반 상태 자동 정리
-    private var stateCleanupTimer: Timer?
+    // ✅ 강화된 히스토리 네비게이션 플래그
+    private var isHistoryNavigation: Bool = false {
+        didSet {
+            if oldValue != isHistoryNavigation {
+                dbg("🏁 isHistoryNavigation: \(oldValue) → \(isHistoryNavigation)")
+                if isHistoryNavigation {
+                    historyNavigationStartTime = Date()
+                    dbg("⏰ 히스토리 네비게이션 시작 시간 기록")
+                } else {
+                    historyNavigationStartTime = nil
+                    dbg("⏰ 히스토리 네비게이션 시간 초기화")
+                }
+            }
+        }
+    }
+    
+    private var historyNavigationStartTime: Date?
+    
+    // ✅ 스와이프 제스처 관련 추가 플래그
+    private var swipeDetectedTargetIndex: Int? = nil
+    private var swipeConfirmationTimer: Timer?
 
     @Published var canGoBack: Bool = false {
         didSet {
@@ -192,7 +175,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     @Published var showAVPlayer = false
 
-    // ✅ WebView 연결 시 강화된 상태 관리
+    // 복원 상태 관리
+    private(set) var isRestoringSession: Bool = false {
+        didSet {
+            if oldValue != isRestoringSession {
+                dbg("🏁 isRestoringSession: \(oldValue) → \(isRestoringSession)")
+            }
+        }
+    }
+    
     weak var webView: WKWebView? {
         didSet {
             if webView != nil {
@@ -221,7 +212,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     func stopLoading() {
         webView?.stopLoading()
         isLoading = false
-        resetSyncState()
+        resetNavigationFlags()
         dbg("⏹️ 로딩 중지")
     }
 
@@ -230,7 +221,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         WebViewStateModel.saveGlobalHistory()
         pageHistory.removeAll()
         currentPageIndex = -1
-        resetSyncState()
+        resetNavigationFlags()
         updateNavigationState()
         dbg("🧹 전체 히스토리 삭제")
     }
@@ -250,25 +241,39 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // MARK: - ✅ 강화된 동기화 상태 관리
+    // MARK: - ✅ 강화된 네비게이션 상태 관리
     
-    private func resetSyncState() {
-        syncState = .idle
-        cleanupStateTimer()
-        dbg("🔄 동기화 상태 초기화")
+    private func resetNavigationFlags() {
+        isHistoryNavigation = false
+        historyNavigationStartTime = nil
+        swipeDetectedTargetIndex = nil
+        swipeConfirmationTimer?.invalidate()
+        swipeConfirmationTimer = nil
+        dbg("🔄 네비게이션 플래그 초기화")
     }
     
-    private func cleanupStateTimer() {
-        stateCleanupTimer?.invalidate()
-        stateCleanupTimer = nil
-    }
-    
-    private func startStateCleanupTimer() {
-        cleanupStateTimer()
-        stateCleanupTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-            self?.dbg("⏰ 상태 정리 타이머 실행")
-            self?.resetSyncState()
+    private func isHistoryNavigationActive() -> Bool {
+        // 기본 플래그 체크
+        if isHistoryNavigation {
+            dbg("✅ 히스토리 네비게이션 활성: isHistoryNavigation = true")
+            return true
         }
+        
+        // 시간 기반 체크
+        if let startTime = historyNavigationStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed < 2.0 {
+                dbg("✅ 히스토리 네비게이션 활성: 시작 후 \(elapsed)초 경과")
+                return true
+            } else {
+                dbg("⏰ 히스토리 네비게이션 타임아웃: \(elapsed)초 경과, 플래그 자동 해제")
+                isHistoryNavigation = false
+                historyNavigationStartTime = nil
+                return false
+            }
+        }
+        
+        return false
     }
 
     // MARK: - 새로운 페이지 기록 시스템
@@ -277,21 +282,10 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("📋 === addNewPage 호출 상세 분석 ===")
         dbg("📋 추가하려는 URL: \(url.absoluteString)")
         dbg("📋 추가하려는 제목: \(title)")
-        dbg("📋 현재 동기화 상태: \(syncState)")
-        dbg("📋 현재 히스토리 상태:")
-        dbg("📋   - 총 페이지 수: \(pageHistory.count)")
-        dbg("📋   - 현재 인덱스: \(currentPageIndex)")
         
-        if !pageHistory.isEmpty {
-            for (index, record) in pageHistory.enumerated() {
-                let marker = index == currentPageIndex ? "👉" : "  "
-                dbg("📋\(marker) [\(index)] \(record.title) | \(record.url.absoluteString)")
-            }
-        }
-        
-        // ✅ 동기화 상태 기반 판단
-        if syncState.isNavigating {
-            dbg("🚫 동기화 네비게이션 중 - 새 페이지 추가 방지")
+        // ✅ 히스토리 네비게이션 중인지 체크
+        if isHistoryNavigationActive() {
+            dbg("🚫 히스토리 네비게이션 활성 중 - 새 페이지 추가 방지")
             dbg("📋 === addNewPage 호출 분석 끝 (추가 안함) ===")
             return
         }
@@ -319,7 +313,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("📋 === addNewPage 호출 분석 끝 (추가 완료) ===")
     }
     
-    // ✅ 완전히 커스텀 히스토리 기반으로 상태 업데이트
     private func updateNavigationState() {
         let oldBack = canGoBack
         let oldForward = canGoForward
@@ -366,12 +359,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return session
     }
 
-    // ✅ 복원 과정 개선
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
-        
-        // ✅ 복원 상태 설정
-        syncState = .restoring
+        isRestoringSession = true
         
         pageHistory = session.pageRecords
         currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
@@ -385,6 +375,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if let currentRecord = currentPageRecord {
             isNavigatingFromWebView = true
             currentURL = currentRecord.url
+            isNavigatingFromWebView = false
             
             dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
         } else {
@@ -401,7 +392,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // MARK: - ✅ 강화된 네비게이션 메서드 (완전 동기화)
+    // MARK: - ✅ 강화된 네비게이션 메서드
     
     func goBack() {
         guard canGoBack, currentPageIndex > 0 else { 
@@ -409,17 +400,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return 
         }
         
-        let targetIndex = currentPageIndex - 1
-        
         dbg("⬅️ === 뒤로가기 시작 ===")
-        dbg("⬅️ 인덱스 변경: \(currentPageIndex) → \(targetIndex)")
+        dbg("⬅️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex - 1)")
         
-        // ✅ 동기화 상태 설정
-        syncState = .buttonNavigation(target: targetIndex)
-        startStateCleanupTimer()
+        // ✅ 히스토리 네비게이션 플래그 설정
+        isHistoryNavigation = true
+        isNavigatingFromWebView = true
         
-        // ✅ 즉시 인덱스 및 URL 동기화
-        currentPageIndex = targetIndex
+        currentPageIndex -= 1
         
         if let record = currentPageRecord {
             var mutableRecord = record
@@ -427,7 +415,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             pageHistory[currentPageIndex] = mutableRecord
             
             // ✅ currentURL 즉시 동기화
-            isNavigatingFromWebView = true
             currentURL = record.url
             
             if let webView = webView {
@@ -438,7 +425,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             updateNavigationState()
             dbg("⬅️ 뒤로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
         }
-        
         dbg("⬅️ === 뒤로가기 끝 ===")
     }
     
@@ -448,17 +434,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return 
         }
         
-        let targetIndex = currentPageIndex + 1
-        
         dbg("➡️ === 앞으로가기 시작 ===")
-        dbg("➡️ 인덱스 변경: \(currentPageIndex) → \(targetIndex)")
+        dbg("➡️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex + 1)")
         
-        // ✅ 동기화 상태 설정
-        syncState = .buttonNavigation(target: targetIndex)
-        startStateCleanupTimer()
+        // ✅ 히스토리 네비게이션 플래그 설정
+        isHistoryNavigation = true
+        isNavigatingFromWebView = true
         
-        // ✅ 즉시 인덱스 및 URL 동기화
-        currentPageIndex = targetIndex
+        currentPageIndex += 1
         
         if let record = currentPageRecord {
             var mutableRecord = record
@@ -466,7 +449,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             pageHistory[currentPageIndex] = mutableRecord
             
             // ✅ currentURL 즉시 동기화
-            isNavigatingFromWebView = true
             currentURL = record.url
             
             if let webView = webView {
@@ -477,7 +459,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             updateNavigationState()
             dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
         }
-        
         dbg("➡️ === 앞으로가기 끝 ===")
     }
     
@@ -485,6 +466,73 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         guard let webView = webView else { return }
         webView.reload()
         dbg("🔄 페이지 새로고침")
+    }
+
+    // MARK: - ✅ CustomWebView와 연동을 위한 메서드들
+    
+    /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
+    func setNavigatingFromWebView(_ value: Bool) {
+        self.isNavigatingFromWebView = value
+    }
+    
+    // CustomWebView에서 호출할 수 있는 스와이프 감지 메서드
+    func handleSwipeGestureDetected(to url: URL) {
+        guard !isHistoryNavigationActive() else {
+            dbg("👆 스와이프 감지 무시: 이미 네비게이션 중")
+            return
+        }
+        
+        if let foundIndex = pageHistory.firstIndex(where: { $0.url == url }) {
+            dbg("👆 === 스와이프 제스처 감지 ===")
+            dbg("👆 감지된 URL: \(url.absoluteString)")
+            dbg("👆 목표 인덱스: \(foundIndex), 현재 인덱스: \(currentPageIndex)")
+            
+            if foundIndex != currentPageIndex {
+                swipeDetectedTargetIndex = foundIndex
+                
+                // ✅ 스와이프 확정 타이머 (didCommit가 CustomWebView에서 처리되므로)
+                swipeConfirmationTimer?.invalidate()
+                swipeConfirmationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+                    self?.confirmSwipeGesture()
+                }
+                
+                dbg("👆 스와이프 목표 인덱스 예약: \(foundIndex)")
+            }
+        }
+    }
+    
+    private func confirmSwipeGesture() {
+        guard let targetIndex = swipeDetectedTargetIndex else { return }
+        
+        dbg("👆 ✅ 스와이프 제스처 확정: \(currentPageIndex) → \(targetIndex)")
+        
+        isHistoryNavigation = true
+        currentPageIndex = targetIndex
+        
+        // 히스토리 기록 접근 시간 업데이트
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
+            var mutableRecord = pageHistory[currentPageIndex]
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+        }
+        
+        // ✅ currentURL 즉시 동기화
+        if let record = currentPageRecord {
+            isNavigatingFromWebView = true
+            currentURL = record.url
+            dbg("👆 🔄 스와이프 currentURL 즉시 동기화: \(record.url.absoluteString)")
+        }
+        
+        updateNavigationState()
+        swipeDetectedTargetIndex = nil
+        
+        dbg("👆 스와이프 제스처 확정 완료: 인덱스=\(currentPageIndex)/\(pageHistory.count)")
+    }
+    
+    // ✅ CustomWebView의 didCommit에서 호출할 쿠키 동기화 메서드
+    func handleDidCommitNavigation() {
+        // 쿠키 동기화는 CustomWebView에서 처리하므로 여기서는 로그만
+        dbg("🍪 didCommit 호출됨 (쿠키 동기화는 CustomWebView에서 처리)")
     }
 
     // MARK: - 기존 호환성 API
@@ -514,42 +562,21 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // MARK: - ✅ WKNavigationDelegate (강화된 동기화 처리)
+    // MARK: - WKNavigationDelegate (기존 구조 유지)
     
-    @objc func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
         
         let startURL = webView.url
         dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
         
-        // ✅ 스와이프 제스처 감지 (인덱스 예약만)
+        // ✅ 자동 스와이프 감지 (기존 로직 유지하되 개선)
         if let startURL = startURL, 
-           syncState == .idle,  // idle 상태에서만 제스처 감지
+           !isRestoringSession, 
+           !isHistoryNavigationActive(),
            currentURL != startURL {
             
-            dbg("👆 === 스와이프 제스처 감지 분석 ===")
-            
-            if let foundIndex = pageHistory.firstIndex(where: { $0.url == startURL }) {
-                let currentIndex = currentPageIndex
-                
-                dbg("👆 히스토리에서 발견: 인덱스 \(foundIndex), 현재 인덱스: \(currentIndex)")
-                
-                if foundIndex != currentIndex {
-                    dbg("👆 🔍 스와이프 제스처 감지: 인덱스 \(currentIndex) → \(foundIndex)")
-                    
-                    // ✅ 제스처 감지 상태로 설정 (아직 확정 안함)
-                    syncState = .gestureDetected(target: foundIndex)
-                    startStateCleanupTimer()
-                    
-                    dbg("👆 📝 스와이프 목표 인덱스 감지: \(foundIndex)")
-                } else {
-                    dbg("👆 같은 인덱스 - 일반 네비게이션으로 처리")
-                }
-            } else {
-                dbg("👆 히스토리에 없는 URL - 일반 네비게이션으로 처리")
-            }
-            
-            dbg("👆 === 스워이프 제스처 감지 분석 끝 ===")
+            handleSwipeGestureDetected(to: startURL)
         }
         
         // 리다이렉트 체인 관리
@@ -567,66 +594,35 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
     }
-    
-    // ✅ didCommit에서 스와이프 제스처 확정
-    @objc func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        dbg("🌐 didCommit 호출")
-        
-        // ✅ 스와이프 제스처 확정 처리
-        if case .gestureDetected(let targetIndex) = syncState {
-            dbg("👆 ✅ 스와이프 제스처 확정: \(currentPageIndex) → \(targetIndex)")
-            
-            // ✅ 상태 변경 및 인덱스 동기화
-            syncState = .gestureConfirmed(target: targetIndex)
-            currentPageIndex = targetIndex
-            
-            // 히스토리 기록 접근 시간 업데이트
-            if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
-                var mutableRecord = pageHistory[currentPageIndex]
-                mutableRecord.updateAccess()
-                pageHistory[currentPageIndex] = mutableRecord
-            }
-            
-            // ✅ currentURL 즉시 동기화 (버튼과 동일한 타이밍)
-            if let record = currentPageRecord {
-                isNavigatingFromWebView = true
-                currentURL = record.url
-                dbg("👆 🔄 스와이프 currentURL 즉시 동기화: \(record.url.absoluteString)")
-            }
-            
-            updateNavigationState()
-            dbg("👆 스와이프 제스처 확정 완료: 인덱스=\(currentPageIndex)/\(pageHistory.count)")
-        }
-    }
 
-    @objc func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isLoading = false
         self.webView = webView
         
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
         
+        let wasRestoringSession = isRestoringSession
+        
         if let finalURL = webView.url {
             dbg("🌐 === didFinish 상세 분석 ===")
             dbg("🌐 didFinish URL: \(finalURL.absoluteString)")
             dbg("🌐 didFinish 제목: '\(title)'")
-            dbg("🌐 현재 동기화 상태: \(syncState)")
-            dbg("📊 현재 상태 - currentURL: \(currentURL?.absoluteString ?? "nil"), 히스토리: \(pageHistory.count)개, 인덱스: \(currentPageIndex)")
             
-            switch syncState {
-            case .restoring:
+            // ✅ 복원 상태 우선 처리
+            if isRestoringSession {
                 dbg("🔄 === 복원 중 처리 ===")
                 updateCurrentPageTitle(title)
-                resetSyncState()
+                isRestoringSession = false
                 updateNavigationState()
                 dbg("🔄 복원 완료: '\(title)'")
                 
-            case .buttonNavigation, .gestureConfirmed:
-                dbg("🔄 === 동기화 네비게이션 처리 ===")
+            } else if isHistoryNavigationActive() {
+                dbg("🔄 === 히스토리 네비게이션 처리 ===")
                 updateCurrentPageTitle(title)
                 
-                // URL 일치 확인
+                // URL 동기화 확인
                 if currentURL != finalURL {
-                    dbg("🔄 ⚠️ 예상치 못한 URL 불일치 - 강제 동기화")
+                    dbg("🔄 ⚠️ URL 불일치 감지 - 강제 동기화")
                     isNavigatingFromWebView = true
                     currentURL = finalURL
                     isNavigatingFromWebView = false
@@ -634,22 +630,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                     dbg("🔄 ✅ currentURL 동기화 확인됨")
                 }
                 
-                // ✅ 지연 상태 정리
+                // ✅ 플래그 지연 해제
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.isNavigatingFromWebView = false
-                    self.resetSyncState()
-                    self.dbg("🏁 동기화 네비게이션 완료 정리")
+                    self.resetNavigationFlags()
+                    self.dbg("🏁 히스토리 네비게이션 완료 정리")
                 }
                 
-                dbg("🔄 동기화 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+                dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
-            case .gestureDetected:
-                // 확정되지 않은 제스처는 일반 네비게이션으로 처리
-                dbg("🆕 === 미확정 제스처 → 일반 네비게이션 처리 ===")
-                resetSyncState()
-                fallthrough
-                
-            case .idle:
+            } else {
                 dbg("🆕 === 일반 네비게이션 처리 ===")
                 let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
                 
@@ -677,27 +667,21 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         
         updateNavigationState()
         
-        // ✅ 복원이 아닐 때만 완료 신호 전송
-        if syncState != .restoring {
+        if !wasRestoringSession {
             navigationDidFinish.send(())
         }
         
         dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
     }
     
-    // ✅ 페이지 추가 판단 로직 (동기화 상태 고려)
     private func shouldAddPageToHistory(finalURL: URL) -> Bool {
         dbg("🤔 === shouldAddPageToHistory 분석 ===")
-        dbg("🤔 검사할 URL: \(finalURL.absoluteString)")
-        dbg("🤔 현재 동기화 상태: \(syncState)")
         
-        // 동기화 네비게이션 중이면 새 페이지 추가 안함
-        if syncState.isNavigating {
-            dbg("🚫 동기화 네비게이션 중 - 새 페이지 추가 방지")
+        if isHistoryNavigationActive() {
+            dbg("🚫 히스토리 네비게이션 중 - 새 페이지 추가 방지")
             return false
         }
         
-        // 히스토리가 비어있으면 무조건 추가
         if pageHistory.isEmpty {
             dbg("✅ 첫 페이지이므로 추가")
             return true
@@ -733,16 +717,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // ✨ 에러 처리 강화
-    @objc func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    // ✨ 에러 처리
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         isLoading = false
-        resetSyncState()
+        resetNavigationFlags()
         
         dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
         
         if let tabID = tabID {
             NotificationCenter.default.post(
-                name: .webViewDidFailLoad,
+                name: Notification.Name("webViewDidFailLoad"),
                 object: nil,
                 userInfo: [
                     "tabID": tabID.uuidString,
@@ -756,15 +740,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         redirectionStartTime = nil
     }
 
-    @objc func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         isLoading = false
-        resetSyncState()
+        resetNavigationFlags()
         
         dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
         
         if let tabID = tabID {
             NotificationCenter.default.post(
-                name: .webViewDidFailLoad,
+                name: Notification.Name("webViewDidFailLoad"),
                 object: nil,
                 userInfo: [
                     "tabID": tabID.uuidString,
@@ -778,7 +762,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         redirectionStartTime = nil
     }
 
-    @objc func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         
         if let httpResponse = navigationResponse.response as? HTTPURLResponse {
             let statusCode = httpResponse.statusCode
@@ -789,7 +773,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 
                 if let tabID = tabID {
                     NotificationCenter.default.post(
-                        name: .webViewDidFailLoad,
+                        name: Notification.Name("webViewDidFailLoad"),
                         object: nil,
                         userInfo: [
                             "tabID": tabID.uuidString,
@@ -801,7 +785,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
         
-        // 다운로드 처리
         if #available(iOS 14.0, *) {
             if let http = navigationResponse.response as? HTTPURLResponse,
                let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
@@ -814,7 +797,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         decisionHandler(.allow)
     }
 
-    // MARK: - 디버그 및 상태 확인
+    // MARK: - 디버그 메서드
     
     private func dbg(_ msg: String) {
         let id: String
@@ -834,7 +817,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         dbg("📋 총 \(pageHistory.count)개 페이지, 현재 인덱스: \(currentPageIndex)")
-        dbg("📋 동기화 상태: \(syncState)")
         
         if pageHistory.isEmpty {
             dbg("📋 (히스토리가 비어있음)")
@@ -849,10 +831,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("📋 === 히스토리 상태 출력 끝 ===")
     }
     
-    // ✅ 동기화 상태 확인 메서드
     func checkSyncState(reason: String = "") {
         dbg("🔍 === 동기화 상태 체크 (\(reason)) ===")
-        dbg("🔍 동기화 상태: \(syncState)")
         dbg("🔍 currentURL: \(currentURL?.absoluteString ?? "nil")")
         dbg("🔍 현재 인덱스: \(currentPageIndex)")
         
@@ -864,16 +844,16 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         dbg("🔍 네비게이션 버튼 상태: back=\(canGoBack), forward=\(canGoForward)")
-        dbg("🔍 플래그 상태: webview=\(isNavigatingFromWebView)")
+        dbg("🔍 플래그 상태: history=\(isHistoryNavigation), webview=\(isNavigatingFromWebView), restore=\(isRestoringSession)")
         dbg("🔍 === 동기화 상태 체크 끝 ===")
     }
     
     // MARK: - 메모리 정리
     deinit {
-        cleanupStateTimer()
+        swipeConfirmationTimer?.invalidate()
     }
 
-    // MARK: - 방문기록 페이지 (기존 UI 유지)
+    // MARK: - 방문기록 페이지
     struct HistoryPage: View {
         @ObservedObject var state: WebViewStateModel
         @State private var searchQuery: String = ""
