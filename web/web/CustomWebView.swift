@@ -294,15 +294,15 @@ struct CustomWebView: UIViewRepresentable {
                 let progress = change.newValue ?? 0.0
                 
                 DispatchQueue.main.async {
-                    // ✅ 모든 진행률 변화를 반영 (조건 제거)
+                    // ✅ 모든 진행률 변화를 반영
                     let newProgress = max(0.0, min(1.0, progress))
                     self.parent.stateModel.loadingProgress = newProgress
                     
-                    // 100% 완료 시 확실히 로딩 상태 해제
-                    if progress >= 1.0 && self.parent.stateModel.isLoading {
-                        self.parent.stateModel.isLoading = false
-                        TabPersistenceManager.debugMessages.append("✅ 로딩 완료 (100%)")
-                    }
+                    // ✅ 100% 도달 시 즉시 해제하지 않음 (didFinish에서 처리)
+                    // if progress >= 1.0 && self.parent.stateModel.isLoading {
+                    //     self.parent.stateModel.isLoading = false
+                    //     TabPersistenceManager.debugMessages.append("✅ 로딩 완료 (100%)")
+                    // }
                 }
             }
 
@@ -364,11 +364,13 @@ struct CustomWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             // ✨ 로딩 완료를 StateModel에 전달
             DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
+                // ✅ 진행률을 먼저 확실히 100%로 설정
+                self.parent.stateModel.loadingProgress = 1.0
+                
+                // 잠깐 후 로딩 상태 해제 (100% 표시 시간 확보)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.parent.stateModel.isLoading = false
                 }
-                // ✅ 진행률을 확실히 100%로 설정
-                self.parent.stateModel.loadingProgress = 1.0
                 
                 // ✅ 스와이프 플래그 리셋
                 self.isSwipeBackNavigation = false
@@ -403,13 +405,11 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            // ✅ 정말 중요한 에러만 알림 (사용자가 모를 수 있는 경우만)
-            let shouldNotify = nsError.domain == NSURLErrorDomain && [
-                NSURLErrorNotConnectedToInternet,  // 와이파이 연결되어 있지만 인터넷 없음
-                NSURLErrorCannotFindHost          // 잘못된 주소/도메인
-            ].contains(nsError.code)
+            // ✅ 잘못된 주소만 알림 (연결 문제는 모두 무시)
+            let shouldNotify = nsError.domain == NSURLErrorDomain && 
+                               nsError.code == NSURLErrorCannotFindHost  // 잘못된 주소/도메인만
             
-            // 정말 중요한 에러만 알림
+            // 잘못된 주소만 알림
             if shouldNotify, let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
                     name: .webViewDidFailLoad,
@@ -420,9 +420,9 @@ struct CustomWebView: UIViewRepresentable {
                         "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
                     ]
                 )
-                TabPersistenceManager.debugMessages.append("❌ 중요한 네트워크 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 잘못된 주소: \(error.localizedDescription)")
             }
-            // 나머지는 모두 조용히 무시 (타임아웃, 연결불가, 네트워크끊김 등)
+            // 연결 실패, 인터넷 문제 등은 모두 조용히 무시
             
             // 기존 StateModel의 didFailProvisionalNavigation 호출
             parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
