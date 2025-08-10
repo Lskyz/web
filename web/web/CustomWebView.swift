@@ -254,6 +254,9 @@ struct CustomWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         var filePicker: FilePicker?
 
+        // ✅ 사용자가 허용한 도메인 목록 (SSL 경고 중복 방지)
+        private var allowedHosts: Set<String> = []
+
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
         private var overlayTitleLabel: UILabel?
@@ -509,7 +512,7 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
-        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
+        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과, 허용된 도메인 기억)
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             
             let host = challenge.protectionSpace.host
@@ -518,9 +521,16 @@ struct CustomWebView: UIViewRepresentable {
             // 서버 신뢰성 검증 (SSL/TLS)
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
                 
-                // ✅ 먼저 시스템 기본 검증 시도
                 guard let serverTrust = challenge.protectionSpace.serverTrust else {
                     completionHandler(.performDefaultHandling, nil)
+                    return
+                }
+                
+                // ✅ 이미 사용자가 허용한 도메인인지 확인
+                if allowedHosts.contains(host) {
+                    let credential = URLCredential(trust: serverTrust)
+                    completionHandler(.useCredential, credential)
+                    TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 이미 허용된 도메인: \(host)")
                     return
                 }
                 
@@ -555,9 +565,11 @@ struct CustomWebView: UIViewRepresentable {
                     
                     // 무시하고 방문
                     alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
+                        // ✅ 도메인을 허용 목록에 추가하여 중복 알림 방지
+                        self.allowedHosts.insert(host)
                         let credential = URLCredential(trust: serverTrust)
                         completionHandler(.useCredential, credential)
-                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
+                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용 및 기억: \(host)")
                     })
                     
                     // 취소 (안전한 선택)
