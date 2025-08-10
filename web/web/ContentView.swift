@@ -398,17 +398,43 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 입력 문자열을 URL로 정규화 (기존)
+    // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
+        
+        // 이미 완전한 URL인 경우
+        if let url = URL(string: trimmed), url.scheme != nil {
+            // HTTP를 HTTPS로 자동 전환 (보안 강화 + 현대 웹 표준)
+            if url.scheme == "http" {
+                var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                components?.scheme = "https"
+                if let httpsURL = components?.url {
+                    TabPersistenceManager.debugMessages.append("🔒 HTTP → HTTPS 자동 전환: \(httpsURL.absoluteString)")
+                    return httpsURL
+                }
+            }
             return url
         }
+        
+        // 도메인처럼 보이는 경우 (점이 있고 공백이 없음)
         if trimmed.contains(".") && !trimmed.contains(" ") {
-            return URL(string: "https://\(trimmed)")
+            // 기본적으로 HTTPS 사용 (현대 웹 표준)
+            let httpsURL = URL(string: "https://\(trimmed)")
+            TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
+            return httpsURL
         }
+        
+        // 검색어로 처리
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+    
+    // MARK: - 사용자가 원래 HTTP를 원할 경우를 위한 대안 함수
+    private func getHTTPFallbackURL(from httpsURL: URL) -> URL? {
+        guard httpsURL.scheme == "https" else { return nil }
+        var components = URLComponents(url: httpsURL, resolvingAgainstBaseURL: false)
+        components?.scheme = "http"
+        return components?.url
     }
 }
 
