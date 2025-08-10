@@ -9,6 +9,7 @@
 //  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
 //  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
 //  - ✅ 에러 처리 개선: 모든 중요한 에러를 ContentView로 전달
+//  - ✨ 스와이프-버튼 동기화 연동 추가
 //
 
 import SwiftUI
@@ -335,7 +336,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
 
-        // MARK: - ✨ WKNavigationDelegate (에러 처리 강화)
+        // MARK: - ✨ WKNavigationDelegate (에러 처리 강화 + 스와이프 동기화)
         
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             // ✅ 간단한 스와이프 뒤로가기 감지
@@ -350,6 +351,11 @@ struct CustomWebView: UIViewRepresentable {
                 
                 // ✅ 항상 0%로 시작 (KVO가 실제 진행률 업데이트)
                 self.parent.stateModel.loadingProgress = 0.0
+            }
+            
+            // ✅ 스와이프 제스처 감지 추가 - WebViewStateModel과 동기화
+            if let startURL = webView.url {
+                parent.stateModel.handleSwipeGestureDetected(to: startURL)
             }
             
             // 기존 StateModel의 didStartProvisionalNavigation 호출
@@ -402,7 +408,7 @@ struct CustomWebView: UIViewRepresentable {
             // ✅ 명확한 에러 전달 - 모든 중요한 에러를 ContentView로 전달
             if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
+                    name: Notification.Name("webViewDidFailLoad"),
                     object: nil,
                     userInfo: [
                         "tabID": tabID.uuidString,
@@ -434,7 +440,7 @@ struct CustomWebView: UIViewRepresentable {
             // ✅ 명확한 에러 전달 - 로딩 진행 중 에러도 ContentView로 전달
             if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
+                    name: Notification.Name("webViewDidFailLoad"),
                     object: nil,
                     userInfo: [
                         "tabID": tabID.uuidString,
@@ -525,6 +531,7 @@ struct CustomWebView: UIViewRepresentable {
                 return false
             }
         }
+        
         private func shouldNotifyUserForError(_ error: NSError) -> Bool {
             // NSURLError가 아닌 경우는 무시 (내부 리소스 에러 등)
             guard error.domain == NSURLErrorDomain else { 
@@ -584,7 +591,7 @@ struct CustomWebView: UIViewRepresentable {
                     
                     if shouldNotifyHTTPError, let tabID = parent.stateModel.tabID {
                         NotificationCenter.default.post(
-                            name: .webViewDidFailLoad,
+                            name: Notification.Name("webViewDidFailLoad"),
                             object: nil,
                             userInfo: [
                                 "tabID": tabID.uuidString,
@@ -721,7 +728,7 @@ struct CustomWebView: UIViewRepresentable {
                         // SSL 에러 알림 전송
                         if let tabID = self.parent.stateModel.tabID {
                             NotificationCenter.default.post(
-                                name: .webViewDidFailLoad,
+                                name: Notification.Name("webViewDidFailLoad"),
                                 object: nil,
                                 userInfo: [
                                     "tabID": tabID.uuidString,
@@ -898,19 +905,17 @@ enum CookieSyncManager {
 // MARK: - 전역 쿠키 동기화 추적
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
 
-// MARK: - WebViewStateModel 확장 (CustomWebView 연동용)
+// MARK: - WebViewStateModel 확장 (쿠키 세션 공유 + 스와이프 동기화)
 extension WebViewStateModel {
-    /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
-    func setNavigatingFromWebView(_ value: Bool) {
-        self.isNavigatingFromWebView = value
-    }
-}
-
-// MARK: - WebViewStateModel 확장 (쿠키 세션 공유)
-extension WebViewStateModel {
+    
+    // ✅ 스와이프-버튼 동기화를 위한 didCommit 처리
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // 기존 쿠키 동기화 로직
         _installCookieSyncIfNeeded(for: webView)
         CookieSyncManager.syncAppToWebView(webView, completion: nil)
+        
+        // ✅ 추가: 스와이프-버튼 동기화 연동
+        handleDidCommitNavigation()
     }
 
     private func _installCookieSyncIfNeeded(for webView: WKWebView) {
