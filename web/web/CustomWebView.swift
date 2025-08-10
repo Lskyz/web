@@ -267,6 +267,7 @@ struct CustomWebView: UIViewRepresentable {
         private var loadingObserver: NSKeyValueObservation?
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
+        private var progressObserver: NSKeyValueObservation?
 
         init(_ parent: CustomWebView) { 
             self.parent = parent 
@@ -316,15 +317,28 @@ struct CustomWebView: UIViewRepresentable {
                     TabPersistenceManager.debugMessages.append("📝 CustomWebView 제목 동기화: \(title)")
                 }
             }
+
+            // ✨ 진행률 관찰 (로딩 진행률 바용)
+            progressObserver = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, change in
+                guard let self = self else { return }
+                let progress = change.newValue ?? 0.0
+                
+                DispatchQueue.main.async {
+                    self.parent.stateModel.loadingProgress = progress
+                    TabPersistenceManager.debugMessages.append("📊 로딩 진행률: \(Int(progress * 100))%")
+                }
+            }
         }
 
         func removeLoadingObservers(for webView: WKWebView?) {
             loadingObserver?.invalidate()
             urlObserver?.invalidate()
             titleObserver?.invalidate()
+            progressObserver?.invalidate()
             loadingObserver = nil
             urlObserver = nil
             titleObserver = nil
+            progressObserver = nil
         }
 
         // MARK: - ✨ WKNavigationDelegate (에러 처리 강화)
