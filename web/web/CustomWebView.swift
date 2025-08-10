@@ -6,6 +6,10 @@
 //  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
 //  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
 //  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
+//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
+//  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
+//
+
 import SwiftUI
 import WebKit
 import AVFoundation
@@ -393,22 +397,20 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            // ✅ 일반적인 취소 에러도 무시 (사용자 액션)
+            // ✅ 사용자 취소는 당연히 무시 (새 URL 입력, 링크 클릭 등)
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
                 parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
                 return
             }
             
-            // ✅ 심각한 네트워크 에러만 알림
-            let isSeriousError = nsError.domain == NSURLErrorDomain && [
-                NSURLErrorNotConnectedToInternet,  // 인터넷 연결 없음
-                NSURLErrorTimedOut,                // 타임아웃
-                NSURLErrorCannotFindHost,          // 호스트 찾을 수 없음
-                NSURLErrorCannotConnectToHost      // 호스트에 연결할 수 없음
+            // ✅ 정말 중요한 에러만 알림 (사용자가 모를 수 있는 경우만)
+            let shouldNotify = nsError.domain == NSURLErrorDomain && [
+                NSURLErrorNotConnectedToInternet,  // 와이파이 연결되어 있지만 인터넷 없음
+                NSURLErrorCannotFindHost          // 잘못된 주소/도메인
             ].contains(nsError.code)
             
-            // 심각한 에러만 알림
-            if isSeriousError, let tabID = parent.stateModel.tabID {
+            // 정말 중요한 에러만 알림
+            if shouldNotify, let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
                     name: .webViewDidFailLoad,
                     object: nil,
@@ -418,8 +420,9 @@ struct CustomWebView: UIViewRepresentable {
                         "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
                     ]
                 )
-                TabPersistenceManager.debugMessages.append("❌ 연결 실패: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 중요한 네트워크 오류: \(error.localizedDescription)")
             }
+            // 나머지는 모두 조용히 무시 (타임아웃, 연결불가, 네트워크끊김 등)
             
             // 기존 StateModel의 didFailProvisionalNavigation 호출
             parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
