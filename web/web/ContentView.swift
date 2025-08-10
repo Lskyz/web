@@ -352,13 +352,14 @@ struct ContentView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, barVPadding)
                             
-                            // ✨ 로딩 진행률 바 (자물쇠 아이콘과 같은 색상)
-                            if state.isLoading && state.loadingProgress > 0 {
+                            // ✨ 로딩 진행률 바 (부드러운 애니메이션 + 조건 완화)
+                            if state.isLoading || state.loadingProgress > 0.05 {
                                 ProgressView(value: state.loadingProgress)
                                     .progressViewStyle(LinearProgressViewStyle(tint: state.currentURL?.scheme == "https" ? .green : .secondary))
                                     .frame(height: 2)
                                     .padding(.horizontal, 14)
-                                    .animation(.easeInOut(duration: 0.2), value: state.loadingProgress)
+                                    .animation(.easeInOut(duration: 0.6), value: state.loadingProgress)  // 0.6초로 부드럽게
+                                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))           // 나타남/사라짐도 부드럽게
                             }
                         }
                         // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
@@ -548,50 +549,40 @@ struct ContentView: View {
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
     
-    // MARK: - HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환
+    // MARK: - ✨ HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환 (단순화 + 에러 코드 포함)
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
         
         switch statusCode {
-        case 400:
-            return ("잘못된 요청", "입력한 주소나 요청이 올바르지 않습니다.\n주소를 다시 확인해 주세요.")
-        case 401:
-            return ("로그인 필요", "\(domain)에 접근하려면 로그인이 필요합니다.\n사이트에서 로그인 후 다시 시도해 주세요.")
         case 403:
-            return ("접근 금지", "\(domain)에 접근할 권한이 없습니다.\n관리자에게 문의하거나 다른 페이지를 이용해 주세요.")
+            return ("접근 금지 (\(statusCode))", "\(domain)에 접근할 권한이 없습니다.\n관리자에게 문의하거나 다른 페이지를 이용해 주세요.")
         case 404:
-            return ("페이지를 찾을 수 없음", "요청한 페이지가 존재하지 않습니다.\n주소를 확인하거나 사이트 홈페이지로 이동해 보세요.")
-        case 408:
-            return ("요청 시간 초과", "서버 응답 시간이 초과되었습니다.\n잠시 후 다시 시도해 주세요.")
-        case 429:
-            return ("너무 많은 요청", "짧은 시간에 너무 많은 요청을 보냈습니다.\n잠시 기다린 후 다시 시도해 주세요.")
+            return ("페이지를 찾을 수 없음 (\(statusCode))", "요청한 페이지가 존재하지 않습니다.\n주소를 확인하거나 사이트 홈페이지로 이동해 보세요.")
         case 500:
-            return ("서버 오류", "\(domain) 서버에서 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.")
+            return ("서버 오류 (\(statusCode))", "\(domain) 서버에서 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.")
         case 502:
-            return ("서버 연결 오류", "\(domain) 서버가 일시적으로 불안정합니다.\n잠시 후 다시 시도해 주세요.")
+            return ("서버 연결 오류 (\(statusCode))", "\(domain) 서버가 일시적으로 불안정합니다.\n잠시 후 다시 시도해 주세요.")
         case 503:
-            return ("서비스 이용 불가", "\(domain)이 점검 중이거나 서버가 과부하 상태입니다.\n잠시 후 다시 시도해 주세요.")
+            return ("서비스 이용 불가 (\(statusCode))", "\(domain)이 점검 중이거나 서버가 과부하 상태입니다.\n잠시 후 다시 시도해 주세요.")
         case 504:
-            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 늦습니다.\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+            return ("연결 시간 초과 (\(statusCode))", "\(domain) 서버 응답이 너무 늦습니다.\n인터넷 연결을 확인하고 다시 시도해 주세요.")
         default:
-            return ("연결 오류", "페이지를 불러올 수 없습니다. (오류 코드: \(statusCode))\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+            return ("연결 오류 (\(statusCode))", "페이지를 불러올 수 없습니다.\n인터넷 연결을 확인하고 다시 시도해 주세요.")
         }
     }
     
-    // MARK: - 네트워크 오류 메시지 처리
+    // MARK: - ✨ 네트워크 오류 메시지 처리 (단순화 - 핵심만)
     private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
-        let errorDescription = error.localizedDescription.lowercased()
+        let nsError = error as NSError
         
-        if errorDescription.contains("internet") || errorDescription.contains("network") {
-            return ("인터넷 연결 없음", "인터넷 연결을 확인하고 다시 시도해 주세요.")
-        } else if errorDescription.contains("dns") || errorDescription.contains("host") {
+        // ✅ 이제 두 가지 경우만 처리하면 됨
+        if nsError.code == NSURLErrorNotConnectedToInternet {
+            return ("인터넷 연결 없음", "와이파이는 연결되어 있지만 인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
+        } else if nsError.code == NSURLErrorCannotFindHost {
             return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
-        } else if errorDescription.contains("ssl") || errorDescription.contains("certificate") {
-            return ("보안 연결 오류", "\(domain)의 보안 인증서에 문제가 있습니다.\nHTTP로 접속하거나 다른 사이트를 이용해 주세요.")
-        } else if errorDescription.contains("timeout") {
-            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 느립니다.\n잠시 후 다시 시도해 주세요.")
         } else {
+            // 혹시 모를 다른 에러 (실제로는 거의 오지 않을 것)
             return ("연결 실패", "\(domain)에 연결할 수 없습니다.\n주소를 확인하고 다시 시도해 주세요.")
         }
     }
