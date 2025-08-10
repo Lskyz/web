@@ -1165,8 +1165,3 @@ extension DateFormatter {
         return formatter
     }()
 }
-
-// MARK: - Notification 확장 (에러 처리용)
-extension Notification.Name {
-    static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
-}
