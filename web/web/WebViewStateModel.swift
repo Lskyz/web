@@ -56,7 +56,7 @@ struct WebViewSession: Codable {
 }
 
 // MARK: - 네비게이션 동기화 상태 관리
-private enum NavigationSyncState {
+private enum NavigationSyncState: Equatable {
     case idle                           // 평상시
     case buttonNavigation(target: Int)  // 버튼으로 시작된 네비게이션
     case gestureDetected(target: Int)   // 스와이프 제스처 감지
@@ -89,10 +89,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 알림 이름 확장
-extension Notification.Name {
-    static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
-}
+// MARK: - 알림 이름 (기존에 선언되어 있음 - 중복 방지)
 
 // MARK: - WebViewStateModel (스와이프-버튼 동기화 강화)
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
@@ -519,7 +516,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // MARK: - ✅ WKNavigationDelegate (강화된 동기화 처리)
     
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    @objc func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         isLoading = true
         
         let startURL = webView.url
@@ -572,7 +569,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     // ✅ didCommit에서 스와이프 제스처 확정
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    @objc func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         dbg("🌐 didCommit 호출")
         
         // ✅ 스와이프 제스처 확정 처리
@@ -602,7 +599,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    @objc func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isLoading = false
         self.webView = webView
         
@@ -737,7 +734,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     // ✨ 에러 처리 강화
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    @objc func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         isLoading = false
         resetSyncState()
         
@@ -759,7 +756,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         redirectionStartTime = nil
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    @objc func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         isLoading = false
         resetSyncState()
         
@@ -781,7 +778,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         redirectionStartTime = nil
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    @objc func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         
         if let httpResponse = navigationResponse.response as? HTTPURLResponse {
             let statusCode = httpResponse.statusCode
