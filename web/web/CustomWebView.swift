@@ -6,6 +6,7 @@
 //  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
 //  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
 //  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
+//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
 //
 
 import SwiftUI
@@ -14,6 +15,7 @@ import AVFoundation
 import UIKit
 import UniformTypeIdentifiers
 import Foundation
+import Security
 
 // MARK: - 다운로드 진행 알림 이름 정의
 extension Notification.Name {
@@ -294,9 +296,9 @@ struct CustomWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     // StateModel의 currentURL과 동기화 (무한 루프 방지)
                     if self.parent.stateModel.currentURL != url {
-                        self.parent.stateModel.isNavigatingFromWebView = true
+                        self.parent.stateModel.setNavigatingFromWebView(true)
                         self.parent.stateModel.currentURL = url
-                        self.parent.stateModel.isNavigatingFromWebView = false
+                        self.parent.stateModel.setNavigatingFromWebView(false)
                         TabPersistenceManager.debugMessages.append("🔄 CustomWebView URL 동기화: \(url.absoluteString)")
                     }
                 }
@@ -507,7 +509,7 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
-        // ✨ SSL 인증서 경고 처리 (신뢰하지 않는 인증서 무시하고 방문)
+        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             
             let host = challenge.protectionSpace.host
@@ -516,35 +518,46 @@ struct CustomWebView: UIViewRepresentable {
             // 서버 신뢰성 검증 (SSL/TLS)
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
                 
-                // ✨ 사용자에게 SSL 경고 알림 표시
+                // ✅ 먼저 시스템 기본 검증 시도
+                guard let serverTrust = challenge.protectionSpace.serverTrust else {
+                    completionHandler(.performDefaultHandling, nil)
+                    return
+                }
+                
+                // 시스템 기본 정책으로 검증
+                var secResult = SecTrustResultType.invalid
+                let status = SecTrustEvaluate(serverTrust, &secResult)
+                
+                if status == errSecSuccess && 
+                   (secResult == .unspecified || secResult == .proceed) {
+                    // ✅ 시스템이 신뢰하는 인증서 - 자동 허용
+                    let credential = URLCredential(trust: serverTrust)
+                    completionHandler(.useCredential, credential)
+                    TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 시스템 검증 통과: \(host)")
+                    return
+                }
+                
+                // ❌ 시스템 검증 실패 - 사용자에게 묻기
+                TabPersistenceManager.debugMessages.append("⚠️ SSL 인증서 시스템 검증 실패: \(host)")
+                
                 DispatchQueue.main.async {
                     guard let topVC = self.topMostViewController() else {
-                        // UI가 없으면 기본적으로 허용
-                        if let serverTrust = challenge.protectionSpace.serverTrust {
-                            let credential = URLCredential(trust: serverTrust)
-                            completionHandler(.useCredential, credential)
-                            TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 자동 허용: \(host)")
-                        } else {
-                            completionHandler(.performDefaultHandling, nil)
-                        }
+                        // UI가 없으면 기본 처리
+                        completionHandler(.performDefaultHandling, nil)
                         return
                     }
                     
                     let alert = UIAlertController(
                         title: "보안 연결 경고", 
-                        message: "\(host)의 보안 인증서를 신뢰할 수 없습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
+                        message: "\(host)의 보안 인증서에 문제가 있습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
                         preferredStyle: .alert
                     )
                     
                     // 무시하고 방문
                     alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
-                        if let serverTrust = challenge.protectionSpace.serverTrust {
-                            let credential = URLCredential(trust: serverTrust)
-                            completionHandler(.useCredential, credential)
-                            TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
-                        } else {
-                            completionHandler(.performDefaultHandling, nil)
-                        }
+                        let credential = URLCredential(trust: serverTrust)
+                        completionHandler(.useCredential, credential)
+                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
                     })
                     
                     // 취소 (안전한 선택)
@@ -552,7 +565,7 @@ struct CustomWebView: UIViewRepresentable {
                         completionHandler(.cancelAuthenticationChallenge, nil)
                         TabPersistenceManager.debugMessages.append("🚫 SSL 인증서 사용자 거부: \(host)")
                         
-                        // ✨ SSL 에러 알림 전송
+                        // SSL 에러 알림 전송
                         if let tabID = self.parent.stateModel.tabID {
                             NotificationCenter.default.post(
                                 name: .webViewDidFailLoad,
@@ -737,7 +750,7 @@ private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
 extension WebViewStateModel {
     /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
     func setNavigatingFromWebView(_ value: Bool) {
-        isNavigatingFromWebView = value
+        self.isNavigatingFromWebView = value
     }
 }
 
