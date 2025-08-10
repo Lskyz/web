@@ -352,14 +352,14 @@ struct ContentView: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, barVPadding)
                             
-                            // ✨ 로딩 진행률 바 (부드러운 애니메이션 + 조건 완화)
-                            if state.isLoading || state.loadingProgress > 0.05 {
-                                ProgressView(value: state.loadingProgress)
+                            // ✨ 로딩 진행률 바 (조건 개선 + 부드러운 애니메이션 + 완료 시 자동 사라짐)
+                            if state.isLoading {
+                                ProgressView(value: max(0.0, min(1.0, state.loadingProgress)))
                                     .progressViewStyle(LinearProgressViewStyle(tint: state.currentURL?.scheme == "https" ? .green : .secondary))
                                     .frame(height: 2)
                                     .padding(.horizontal, 14)
-                                    .animation(.easeInOut(duration: 0.6), value: state.loadingProgress)  // 0.6초로 부드럽게
-                                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))           // 나타남/사라짐도 부드럽게
+                                    .animation(.easeOut(duration: 0.3), value: state.loadingProgress)  // 더 빠르고 자연스럽게
+                                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))         // 나타남/사라짐 빠르게
                             }
                         }
                         // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
@@ -578,7 +578,7 @@ struct ContentView: View {
         
         // ✅ 이제 두 가지 경우만 처리하면 됨
         if nsError.code == NSURLErrorNotConnectedToInternet {
-            return ("인터넷 연결 없음", "인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
+            return ("인터넷 연결 없음", "와이파이는 연결되어 있지만 인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
         } else if nsError.code == NSURLErrorCannotFindHost {
             return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
         } else {
