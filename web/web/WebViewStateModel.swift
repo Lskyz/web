@@ -1,35 +1,8 @@
-// 현재 위치 이후의 forward 기록 제거
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            let removedCount = pageHistory.count - currentPageIndex - 1
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🧹 Forward 히스토리 정리: \(removedCount)개 제거, \(pageHistory.count)개 남음")
-        }
-        
-        let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
-        
-        // ✅ 새 페이지 추가 전에 이전 중복 기록 제거 (뒤로가기 최적화)
-        let newNormalizedURL = normalizeURL(url)
-        var removedIndices: [Int] = []
-        
-        // 뒤에서부터 앞으로 검색해서 중복된 URL을 찾아 제거
-        for i in (0..<pageHistory.count).reversed() {
-            let existingNormalizedURL = normalizeURL(pageHistory[i].url)
-            if existingNormalizedURL == newNormalizedURL {
-                removedIndices.append(i)
-                dbg("🔍 중복 발견: 인덱스 \(i) - \(pageHistory[i].title)")
-            }
-        }
-        
-        // 중복 기록들 제거 (뒤에서부터 제거해야 인덱스 변경 없음)
-        for index in removedIndices {
-            let removedRecord = pageHistory[index]
-            pageHistory.remove(at: index)
-            
-            // currentPageIndex 조//
+//
 //  WebViewStateModel.swift
 //  페이지 고유번호 기반 히스토리 시스템 (앱 재실행 후 forward 히스토리 복원 문제 해결)
 //  ✨ 에러 처리 및 로딩 상태 관리 추가
-//  ✅ 중복 저장 방지 강화
+//  ✅ 중복 저장 방지 강화 + 연속 중복 제거
 //
 
 import Foundation
@@ -366,7 +339,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return urlString
     }
 
-    // MARK: - ✅ 새로운 페이지 기록 시스템 (중복 저장 방지 강화)
+    // MARK: - ✅ 새로운 페이지 기록 시스템 (중복 저장 방지 강화 + 연속 중복 제거)
     
     private func addNewPage(url: URL, title: String = "") {
         dbg("📋 === addNewPage 호출 상세 분석 ===")
@@ -474,7 +447,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("🧹 Forward 히스토리 정리: \(removedCount)개 제거, \(pageHistory.count)개 남음")
         }
         
-        let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
         let newNormalizedURL = normalizeURL(url)
         
         // ✅ 연속된 중복 기록 제거 (뒤로가기 최적화)
@@ -497,6 +469,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
         
+        let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
@@ -598,7 +571,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("🔄 복원 타이머 없이 didFinish 대기")
     }
 
-    // MARK: - 네비게이션 메서드 (WebView 네이티브 메서드 사용 안함)
+    // MARK: - ✅ 네비게이션 메서드 (연속 중복 건너뛰기 적용)
     
     func goBack() {
         guard canGoBack, currentPageIndex > 0 else { 
@@ -607,9 +580,32 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         dbg("⬅️ === 뒤로가기 시작 ===")
-        dbg("⬅️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex - 1)")
+        dbg("⬅️ 현재 인덱스: \(currentPageIndex)")
         
-        currentPageIndex -= 1
+        let currentNormalizedURL = normalizeURL(pageHistory[currentPageIndex].url)
+        var targetIndex = currentPageIndex - 1
+        
+        // ✅ 연속된 중복 건너뛰기 - 다른 URL 나올 때까지 뒤로 이동
+        while targetIndex >= 0 {
+            let targetNormalizedURL = normalizeURL(pageHistory[targetIndex].url)
+            if targetNormalizedURL != currentNormalizedURL {
+                // 다른 URL 발견, 여기로 이동
+                break
+            } else {
+                // 같은 URL이면 더 뒤로
+                dbg("⬅️ 연속 중복 건너뛰기: 인덱스 \(targetIndex) - \(pageHistory[targetIndex].title)")
+                targetIndex -= 1
+            }
+        }
+        
+        // 유효한 인덱스인지 확인
+        if targetIndex < 0 {
+            dbg("⬅️ 뒤로가기 불가: 모든 이전 기록이 중복됨")
+            return
+        }
+        
+        dbg("⬅️ 최종 이동 인덱스: \(currentPageIndex) → \(targetIndex)")
+        currentPageIndex = targetIndex
         
         if let record = currentPageRecord {
             var mutableRecord = record
@@ -640,9 +636,32 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         dbg("➡️ === 앞으로가기 시작 ===")
-        dbg("➡️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex + 1)")
+        dbg("➡️ 현재 인덱스: \(currentPageIndex)")
         
-        currentPageIndex += 1
+        let currentNormalizedURL = normalizeURL(pageHistory[currentPageIndex].url)
+        var targetIndex = currentPageIndex + 1
+        
+        // ✅ 연속된 중복 건너뛰기 - 다른 URL 나올 때까지 앞으로 이동
+        while targetIndex < pageHistory.count {
+            let targetNormalizedURL = normalizeURL(pageHistory[targetIndex].url)
+            if targetNormalizedURL != currentNormalizedURL {
+                // 다른 URL 발견, 여기로 이동
+                break
+            } else {
+                // 같은 URL이면 더 앞으로
+                dbg("➡️ 연속 중복 건너뛰기: 인덱스 \(targetIndex) - \(pageHistory[targetIndex].title)")
+                targetIndex += 1
+            }
+        }
+        
+        // 유효한 인덱스인지 확인
+        if targetIndex >= pageHistory.count {
+            dbg("➡️ 앞으로가기 불가: 모든 다음 기록이 중복됨")
+            return
+        }
+        
+        dbg("➡️ 최종 이동 인덱스: \(currentPageIndex) → \(targetIndex)")
+        currentPageIndex = targetIndex
         
         if let record = currentPageRecord {
             var mutableRecord = record
@@ -701,15 +720,23 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
-    // MARK: - ✅ 전역 히스토리에서도 중복 체크 강화
+    // MARK: - ✅ 전역 히스토리에서도 중복 체크 강화 - 정규화된 URL로 비교 (시간 기반)
     private func addToGlobalHistoryIfNotDuplicate(url: URL, title: String) {
-        // 최근 10개 항목에서 중복 체크
-        let recentGlobalHistory = WebViewStateModel.globalHistory.suffix(10)
+        // 최근 5개 항목에서 중복 체크 (시간 기반)
+        let recentGlobalHistory = WebViewStateModel.globalHistory.suffix(5)
+        let newNormalizedURL = normalizeURL(url)
         
         for entry in recentGlobalHistory {
-            if entry.url.absoluteString == url.absoluteString {
-                dbg("🚫 전역 히스토리에서 중복 URL 발견, 추가하지 않음: \(url.absoluteString)")
-                return
+            let entryNormalizedURL = normalizeURL(entry.url)
+            if entryNormalizedURL == newNormalizedURL {
+                // 시간 차이 확인 (60초 이내면 중복으로 간주)
+                let timeDifference = Date().timeIntervalSince(entry.date)
+                if timeDifference < 60.0 {
+                    dbg("🚫 전역 히스토리에서 중복 URL 발견 (정규화됨, \(Int(timeDifference))초 전), 추가하지 않음: \(newNormalizedURL)")
+                    return
+                } else {
+                    dbg("✅ 같은 URL이지만 충분한 시간 경과 (\(Int(timeDifference))초) - 전역 히스토리에 새로 저장")
+                }
             }
         }
         
@@ -948,7 +975,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = normalizeURL(currentRecord.url)
-            let finalNormalizedURL = normalizeURL(finalURL)
             
             if currentNormalizedURL == finalNormalizedURL {
                 // 시간 차이 확인 (30초 이내면 중복으로 간주)
