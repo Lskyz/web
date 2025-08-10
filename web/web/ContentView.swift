@@ -123,10 +123,11 @@ struct ContentView: View {
                             } else {
                                 showAddressBar = true
                                 allowTopOverlap = false
-                                DispatchQueue.main.async {
-                                    isTextFieldFocused = true
-                                    ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                }
+                                // ✅ 수정: 자동 포커스 제거 - 주소창만 보여주고 키보드는 사용자가 직접 탭할 때만
+                                // DispatchQueue.main.async {
+                                //     isTextFieldFocused = true
+                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                // }
                             }
                         }
                     }
@@ -151,10 +152,11 @@ struct ContentView: View {
                             } else {
                                 showAddressBar = true
                                 allowTopOverlap = false
-                                DispatchQueue.main.async {
-                                    isTextFieldFocused = true
-                                    ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                }
+                                // ✅ 수정: 여기서도 자동 포커스 제거
+                                // DispatchQueue.main.async {
+                                //     isTextFieldFocused = true
+                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                // }
                             }
                         }
                     }
@@ -230,6 +232,11 @@ struct ContentView: View {
                                 .keyboardType(.URL)
                                 .focused($isTextFieldFocused)
                                 .onTapGesture {
+                                    // ✅ 수정: 텍스트필드를 직접 탭했을 때만 포커스 + 전체 선택
+                                    if !isTextFieldFocused {
+                                        isTextFieldFocused = true
+                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                    }
                                     if !textFieldSelectedAll {
                                         DispatchQueue.main.async {
                                             UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
@@ -346,6 +353,7 @@ struct ContentView: View {
                             withAnimation {
                                 showAddressBar = true
                                 allowTopOverlap = false       // 주소창 보일 땐 상단 보호
+                                // ✅ 수정: 여기서도 자동 포커스 제거 - 주소창만 보여주기
                             }
                         }
                     }
