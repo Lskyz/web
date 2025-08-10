@@ -104,12 +104,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                            !isNavigatingFromWebView &&
                            !isHistoryNavigationActive()  // ✅ 강화된 히스토리 네비게이션 체크
             
-            dbg("🤔 webView.load 여부 판단:")
-            dbg("🤔   url != oldValue: \(url != oldValue)")
-            dbg("🤔   !isRestoringSession: \(!isRestoringSession)")
-            dbg("🤔   !isNavigatingFromWebView: \(!isNavigatingFromWebView)")
-            dbg("🤔   !isHistoryNavigationActive(): \(!isHistoryNavigationActive())")
-            dbg("🤔   shouldLoad: \(shouldLoad)")
             
             if shouldLoad {
                 if let webView = webView {
