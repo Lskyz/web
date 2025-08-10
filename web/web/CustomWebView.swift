@@ -507,6 +507,84 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
+        // ✨ SSL 인증서 경고 처리 (신뢰하지 않는 인증서 무시하고 방문)
+        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            
+            let host = challenge.protectionSpace.host
+            TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 검증 요청: \(host)")
+            
+            // 서버 신뢰성 검증 (SSL/TLS)
+            if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
+                
+                // ✨ 사용자에게 SSL 경고 알림 표시
+                DispatchQueue.main.async {
+                    guard let topVC = self.topMostViewController() else {
+                        // UI가 없으면 기본적으로 허용
+                        if let serverTrust = challenge.protectionSpace.serverTrust {
+                            let credential = URLCredential(trust: serverTrust)
+                            completionHandler(.useCredential, credential)
+                            TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 자동 허용: \(host)")
+                        } else {
+                            completionHandler(.performDefaultHandling, nil)
+                        }
+                        return
+                    }
+                    
+                    let alert = UIAlertController(
+                        title: "보안 연결 경고", 
+                        message: "\(host)의 보안 인증서를 신뢰할 수 없습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
+                        preferredStyle: .alert
+                    )
+                    
+                    // 무시하고 방문
+                    alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
+                        if let serverTrust = challenge.protectionSpace.serverTrust {
+                            let credential = URLCredential(trust: serverTrust)
+                            completionHandler(.useCredential, credential)
+                            TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
+                        } else {
+                            completionHandler(.performDefaultHandling, nil)
+                        }
+                    })
+                    
+                    // 취소 (안전한 선택)
+                    alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
+                        completionHandler(.cancelAuthenticationChallenge, nil)
+                        TabPersistenceManager.debugMessages.append("🚫 SSL 인증서 사용자 거부: \(host)")
+                        
+                        // ✨ SSL 에러 알림 전송
+                        if let tabID = self.parent.stateModel.tabID {
+                            NotificationCenter.default.post(
+                                name: .webViewDidFailLoad,
+                                object: nil,
+                                userInfo: [
+                                    "tabID": tabID.uuidString,
+                                    "sslError": true,
+                                    "url": "https://\(host)"
+                                ]
+                            )
+                        }
+                    })
+                    
+                    topVC.present(alert, animated: true)
+                }
+                return
+            }
+            
+            // 다른 인증 방법은 기본 처리
+            completionHandler(.performDefaultHandling, nil)
+        }
+
+        // ✨ 최상위 뷰컨트롤러 찾기 (SSL 알림용)
+        private func topMostViewController() -> UIViewController? {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = windowScene.windows.first,
+                  let root = window.rootViewController else { return nil }
+            var top = root
+            while let presented = top.presentedViewController { top = presented }
+            return top
+        }
+
         // MARK: 팝업(새창) → 현재 탭에서 열기
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
@@ -654,6 +732,14 @@ enum CookieSyncManager {
 
 // MARK: - 전역 쿠키 동기화 추적
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
+
+// MARK: - WebViewStateModel 확장 (CustomWebView 연동용)
+extension WebViewStateModel {
+    /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
+    func setNavigatingFromWebView(_ value: Bool) {
+        isNavigatingFromWebView = value
+    }
+}
 
 // MARK: - WebViewStateModel 확장 (쿠키 세션 공유)
 extension WebViewStateModel {
