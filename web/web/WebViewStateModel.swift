@@ -124,7 +124,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     
 
     // ✅ 웹뷰 내부 네비게이션인지 구분하는 플래그 강화
-    private var isNavigatingFromWebView: Bool = false {
+    internal var isNavigatingFromWebView: Bool = false {
         didSet {
             if oldValue != isNavigatingFromWebView {
                 dbg("🏁 isNavigatingFromWebView: \(oldValue) → \(isNavigatingFromWebView)")
