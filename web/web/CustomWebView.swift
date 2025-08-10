@@ -451,7 +451,80 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.webView(webView, didFail: navigation, withError: error)
         }
 
-        // ✅ 명확한 에러 판단 로직 - 사용자에게 알려야 할 에러인지 판단 (엄격하게)
+        // ✅ HTTP 에러 필터링 - 메인 페이지와 내부 API/리소스 구분
+        private func shouldNotifyForHTTPError(statusCode: Int, responseURL: URL?, mainURL: URL?) -> Bool {
+            guard let responseURL = responseURL else { return false }
+            
+            // ✅ 메인 페이지 URL과 같은 도메인이면 알림 (사용자가 직접 접근한 페이지)
+            if let mainURL = mainURL, 
+               responseURL.host == mainURL.host {
+                TabPersistenceManager.debugMessages.append("🏠 메인 도메인 HTTP 에러: \(statusCode) - \(responseURL.host ?? "")")
+                return true
+            }
+            
+            // ✅ OAuth/로그인 관련 도메인은 무시 (정상적인 플로우)
+            let oauthDomains = [
+                "accounts.google.com",
+                "login.microsoftonline.com", 
+                "appleid.apple.com",
+                "www.facebook.com",
+                "api.twitter.com",
+                "github.com",
+                "oauth.googleusercontent.com"
+            ]
+            
+            if let host = responseURL.host?.lowercased(),
+               oauthDomains.contains(where: { host.contains($0) }) {
+                TabPersistenceManager.debugMessages.append("🔐 OAuth 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
+                return false
+            }
+            
+            // ✅ 광고/트래킹 관련 도메인 무시
+            let adDomains = [
+                "googleads", "doubleclick", "googlesyndication", "googletagmanager",
+                "facebook.com", "fbcdn", "amazon-adsystem", "adsystem.amazon",
+                "analytics", "gtag", "gtm", "pixel", "tracking", "metrics"
+            ]
+            
+            if let host = responseURL.host?.lowercased(),
+               adDomains.contains(where: { host.contains($0) }) {
+                TabPersistenceManager.debugMessages.append("📊 광고/트래킹 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
+                return false
+            }
+            
+            // ✅ API 엔드포인트 무시 (api., rest., graphql. 등)
+            if let host = responseURL.host?.lowercased(),
+               (host.hasPrefix("api.") || 
+                host.hasPrefix("rest.") || 
+                host.hasPrefix("graphql.") ||
+                host.contains("api")) {
+                TabPersistenceManager.debugMessages.append("🔌 API 엔드포인트 HTTP 에러 무시: \(statusCode) - \(host)")
+                return false
+            }
+            
+            // ✅ CDN/리소스 도메인 무시
+            let cdnDomains = [
+                "amazonaws.com", "cloudfront.net", "cdn", "static",
+                "gstatic.com", "googleapis.com", "bootstrapcdn.com"
+            ]
+            
+            if let host = responseURL.host?.lowercased(),
+               cdnDomains.contains(where: { host.contains($0) }) {
+                TabPersistenceManager.debugMessages.append("🌍 CDN/리소스 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
+                return false
+            }
+            
+            // ✅ 심각한 에러만 알림 (404, 500 등)
+            switch statusCode {
+            case 404, 500, 502, 503, 504:
+                TabPersistenceManager.debugMessages.append("🚨 심각한 HTTP 에러 알림: \(statusCode) - \(responseURL.host ?? "")")
+                return true
+            default:
+                // 403, 401 등은 대부분 내부 API/인증 관련이므로 무시
+                TabPersistenceManager.debugMessages.append("🔕 일반 HTTP 에러 무시: \(statusCode) - \(responseURL.host ?? "")")
+                return false
+            }
+        }
         private func shouldNotifyUserForError(_ error: NSError) -> Bool {
             // NSURLError가 아닌 경우는 무시 (내부 리소스 에러 등)
             guard error.domain == NSURLErrorDomain else { 
@@ -492,27 +565,36 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서)
+        // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서) - 필터링 강화
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
             
             // HTTP 응답 상태 코드 체크
             if let httpResponse = navigationResponse.response as? HTTPURLResponse {
                 let statusCode = httpResponse.statusCode
+                let responseURL = navigationResponse.response.url
+                let mainURL = parent.stateModel.currentURL
                 
-                // ✅ 4xx, 5xx만 에러로 처리 (3xx 리다이렉트는 정상)
+                // ✅ 4xx, 5xx 에러이지만 스마트 필터링 적용
                 if statusCode >= 400 {
-                    // ✨ HTTP 에러 알림 전송
-                    if let tabID = parent.stateModel.tabID {
+                    let shouldNotifyHTTPError = shouldNotifyForHTTPError(
+                        statusCode: statusCode, 
+                        responseURL: responseURL, 
+                        mainURL: mainURL
+                    )
+                    
+                    if shouldNotifyHTTPError, let tabID = parent.stateModel.tabID {
                         NotificationCenter.default.post(
                             name: .webViewDidFailLoad,
                             object: nil,
                             userInfo: [
                                 "tabID": tabID.uuidString,
                                 "statusCode": statusCode,
-                                "url": navigationResponse.response.url?.absoluteString ?? ""
+                                "url": responseURL?.absoluteString ?? ""
                             ]
                         )
-                        TabPersistenceManager.debugMessages.append("❌ HTTP 상태 코드 에러: \(statusCode)")
+                        TabPersistenceManager.debugMessages.append("❌ HTTP 에러 알림: \(statusCode) - \(responseURL?.host ?? "")")
+                    } else {
+                        TabPersistenceManager.debugMessages.append("🔕 HTTP 에러 무시: \(statusCode) - \(responseURL?.host ?? "") (내부 API/OAuth)")
                     }
                 }
             }
