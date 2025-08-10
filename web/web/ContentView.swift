@@ -398,14 +398,40 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
+    // MARK: - 로컬/사설 IP 주소 감지
+    private func isLocalOrPrivateIP(_ host: String) -> Bool {
+        // IPv4 패턴 체크
+        let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
+        guard host.range(of: ipPattern, options: .regularExpression) != nil else {
+            // localhost 도메인들
+            return host == "localhost" || host.hasSuffix(".local")
+        }
+        
+        let components = host.split(separator: ".").compactMap { Int($0) }
+        guard components.count == 4 else { return false }
+        
+        let (a, b, c, d) = (components[0], components[1], components[2], components[3])
+        
+        // 유효한 IP 범위 체크
+        guard (0...255).contains(a) && (0...255).contains(b) && 
+              (0...255).contains(c) && (0...255).contains(d) else { return false }
+        
+        // 사설 IP 대역 체크
+        return (a == 192 && b == 168) ||                    // 192.168.x.x
+               (a == 10) ||                                 // 10.x.x.x
+               (a == 172 && (16...31).contains(b)) ||       // 172.16.x.x ~ 172.31.x.x
+               (a == 127) ||                                // 127.x.x.x (localhost)
+               (a == 169 && b == 254)                       // 169.254.x.x (링크 로컬)
+    }
+    
     // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // 이미 완전한 URL인 경우
         if let url = URL(string: trimmed), url.scheme != nil {
-            // HTTP를 HTTPS로 자동 전환 (보안 강화 + 현대 웹 표준)
-            if url.scheme == "http" {
+            // 로컬/사설 IP가 아닌 경우에만 HTTP → HTTPS 자동 전환
+            if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 components?.scheme = "https"
                 if let httpsURL = components?.url {
@@ -418,10 +444,18 @@ struct ContentView: View {
         
         // 도메인처럼 보이는 경우 (점이 있고 공백이 없음)
         if trimmed.contains(".") && !trimmed.contains(" ") {
-            // 기본적으로 HTTPS 사용 (현대 웹 표준)
-            let httpsURL = URL(string: "https://\(trimmed)")
-            TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
-            return httpsURL
+            // 로컬/사설 IP인지 확인
+            if isLocalOrPrivateIP(trimmed) {
+                // 로컬 주소는 HTTP 사용
+                let httpURL = URL(string: "http://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("🏠 로컬 IP 감지, HTTP 적용: http://\(trimmed)")
+                return httpURL
+            } else {
+                // 공인 도메인은 HTTPS 사용 (현대 웹 표준)
+                let httpsURL = URL(string: "https://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
+                return httpsURL
+            }
         }
         
         // 검색어로 처리
