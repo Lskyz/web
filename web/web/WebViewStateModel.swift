@@ -78,7 +78,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("📡 로딩 상태 변경: \(oldValue) → \(isLoading)")
             }
         }
+    }// ✨ 로딩 상태 관리 추가
+@Published var isLoading: Bool = false {
+    didSet {
+        if oldValue != isLoading {
+            dbg("📡 로딩 상태 변경: \(oldValue) → \(isLoading)")
+        }
     }
+}
+
+// ✨ 로딩 진행률 추가 (별도 선언)
+@Published var loadingProgress: Double = 0.0
     
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
