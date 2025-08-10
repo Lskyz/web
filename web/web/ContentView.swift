@@ -589,17 +589,17 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - ✨ 네트워크 오류 메시지 처리 (간단하게)
-    private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String) {
+    // MARK: - ✨ 네트워크 오류 메시지 처리 (default 케이스 제거)
+    private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String)? {
         let domain = URL(string: url)?.host ?? "사이트"
         let nsError = error as NSError
         
-        // NSURLError가 아닌 경우 기본 처리
+        // NSURLError가 아닌 경우 nil 반환 (알림 표시 안함)
         guard nsError.domain == NSURLErrorDomain else {
-            return ("페이지 오류", "페이지를 불러올 수 없습니다.")
+            return nil
         }
         
-        // ✅ 간단한 네트워크 오류 처리
+        // ✅ 정의된 특정 에러만 처리, 나머지는 nil 반환
         switch nsError.code {
         case NSURLErrorCannotFindHost:
             return ("주소를 찾을 수 없음 (\(nsError.code))", "\(domain)을(를) 찾을 수 없습니다.")
@@ -618,7 +618,8 @@ struct ContentView: View {
         case NSURLErrorUnsupportedURL:
             return ("지원하지 않는 주소 (\(nsError.code))", "이 주소 형식은 지원하지 않습니다.")
         default:
-            return ("페이지 오류 (\(nsError.code))", "페이지를 불러올 수 없습니다.")
+            // ✅ default 케이스에서 nil 반환 - 알림 표시 안함, 기록도 안함
+            return nil
         }
     }
 }
