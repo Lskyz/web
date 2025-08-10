@@ -10,7 +10,7 @@ import SwiftUI
 import WebKit
 
 // MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
-struct PageRecord: Codable, Identifiable, Hashable {ㅁ
+struct PageRecord: Codable, Identifiable, Hashable {
     let id: UUID
     let url: URL
     var title: String
