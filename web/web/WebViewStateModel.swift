@@ -1,4 +1,31 @@
-//
+// 현재 위치 이후의 forward 기록 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🧹 Forward 히스토리 정리: \(removedCount)개 제거, \(pageHistory.count)개 남음")
+        }
+        
+        let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
+        
+        // ✅ 새 페이지 추가 전에 이전 중복 기록 제거 (뒤로가기 최적화)
+        let newNormalizedURL = normalizeURL(url)
+        var removedIndices: [Int] = []
+        
+        // 뒤에서부터 앞으로 검색해서 중복된 URL을 찾아 제거
+        for i in (0..<pageHistory.count).reversed() {
+            let existingNormalizedURL = normalizeURL(pageHistory[i].url)
+            if existingNormalizedURL == newNormalizedURL {
+                removedIndices.append(i)
+                dbg("🔍 중복 발견: 인덱스 \(i) - \(pageHistory[i].title)")
+            }
+        }
+        
+        // 중복 기록들 제거 (뒤에서부터 제거해야 인덱스 변경 없음)
+        for index in removedIndices {
+            let removedRecord = pageHistory[index]
+            pageHistory.remove(at: index)
+            
+            // currentPageIndex 조//
 //  WebViewStateModel.swift
 //  페이지 고유번호 기반 히스토리 시스템 (앱 재실행 후 forward 히스토리 복원 문제 해결)
 //  ✨ 에러 처리 및 로딩 상태 관리 추가
@@ -448,6 +475,28 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
+        let newNormalizedURL = normalizeURL(url)
+        
+        // ✅ 연속된 중복 기록 제거 (뒤로가기 최적화)
+        // 마지막 페이지와 같은 URL이면 연속 중복이므로 마지막 페이지 제거
+        while !pageHistory.isEmpty {
+            let lastRecord = pageHistory.last!
+            let lastNormalizedURL = normalizeURL(lastRecord.url)
+            
+            if lastNormalizedURL == newNormalizedURL {
+                let removedRecord = pageHistory.removeLast()
+                dbg("🔄 연속 중복 제거: '\(removedRecord.title)' [ID: \(String(removedRecord.id.uuidString.prefix(8)))]")
+                
+                // currentPageIndex 조정
+                if currentPageIndex >= pageHistory.count {
+                    currentPageIndex = pageHistory.count - 1
+                }
+            } else {
+                // 다른 URL이 나오면 연속 중복이 끝났으므로 중단
+                break
+            }
+        }
+        
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
