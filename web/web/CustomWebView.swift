@@ -254,9 +254,6 @@ struct CustomWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         var filePicker: FilePicker?
 
-        // ✅ 사용자가 허용한 도메인 목록 (SSL 경고 중복 방지)
-        private var allowedHosts: Set<String> = []
-
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
         private var overlayTitleLabel: UILabel?
@@ -293,6 +290,26 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
 
+            // ✅ 진행률 관찰 추가
+            progressObserver = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, change in
+                guard let self = self else { return }
+                let progress = change.newValue ?? 0.0
+                
+                DispatchQueue.main.async {
+                    // ✅ StateModel의 진행률 업데이트
+                    self.parent.stateModel.loadingProgress = progress
+                    
+                    let percentage = Int(progress * 100)
+                    TabPersistenceManager.debugMessages.append("📊 로딩 진행률: \(percentage)%")
+                    
+                    // 100% 완료 시 확실히 로딩 상태 해제
+                    if progress >= 1.0 && self.parent.stateModel.isLoading {
+                        self.parent.stateModel.isLoading = false
+                        TabPersistenceManager.debugMessages.append("✅ 진행률 100% - 로딩 완료")
+                    }
+                }
+            }
+
             // URL 변경 관찰
             urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
                 guard let self = self, let newURL = change.newValue, let url = newURL else { return }
@@ -317,17 +334,6 @@ struct CustomWebView: UIViewRepresentable {
                     TabPersistenceManager.debugMessages.append("📝 CustomWebView 제목 동기화: \(title)")
                 }
             }
-
-            // ✨ 진행률 관찰 (로딩 진행률 바용)
-            progressObserver = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let progress = change.newValue ?? 0.0
-                
-                DispatchQueue.main.async {
-                    self.parent.stateModel.loadingProgress = progress
-                    TabPersistenceManager.debugMessages.append("📊 로딩 진행률: \(Int(progress * 100))%")
-                }
-            }
         }
 
         func removeLoadingObservers(for webView: WKWebView?) {
@@ -350,6 +356,10 @@ struct CustomWebView: UIViewRepresentable {
                     self.parent.stateModel.isLoading = true
                     TabPersistenceManager.debugMessages.append("🌐 CustomWebView 로딩 시작")
                 }
+                
+                // ✅ 진행률 초기화
+                self.parent.stateModel.loadingProgress = 0.0
+                TabPersistenceManager.debugMessages.append("📊 로딩 시작 - 진행률 0%로 초기화")
             }
             
             // 기존 StateModel의 didStartProvisionalNavigation 호출
@@ -363,6 +373,10 @@ struct CustomWebView: UIViewRepresentable {
                     self.parent.stateModel.isLoading = false
                     TabPersistenceManager.debugMessages.append("✅ CustomWebView 로딩 완료")
                 }
+                
+                // ✅ 진행률을 확실히 100%로 설정
+                self.parent.stateModel.loadingProgress = 1.0
+                TabPersistenceManager.debugMessages.append("📊 로딩 완료 - 진행률 100%로 설정")
             }
             
             // 기존 StateModel의 didFinish 호출
@@ -376,10 +390,33 @@ struct CustomWebView: UIViewRepresentable {
                     self.parent.stateModel.isLoading = false
                     TabPersistenceManager.debugMessages.append("❌ CustomWebView 로딩 실패(Provisional)")
                 }
+                
+                // ✅ 진행률 리셋
+                self.parent.stateModel.loadingProgress = 0.0
+                TabPersistenceManager.debugMessages.append("📊 로딩 실패 - 진행률 0%로 리셋")
             }
             
-            // ✨ 에러 알림 전송 (StateModel의 tabID 사용)
-            if let tabID = parent.stateModel.tabID {
+            // ✅ 스와이프 제스처 뒤로가기나 일시적 에러는 알림 억제
+            let nsError = error as NSError
+            let isTemporaryError = nsError.domain == NSURLErrorDomain && [
+                NSURLErrorCancelled,           // 취소됨 (스와이프 제스처 시 자주 발생)
+                NSURLErrorNetworkConnectionLost, // 일시적 연결 끊김
+                NSURLErrorDataNotAllowed       // 데이터 허용 안됨 (일시적)
+            ].contains(nsError.code)
+            
+            // ✅ 실제 심각한 네트워크 에러만 알림
+            let isSeriousError = nsError.domain == NSURLErrorDomain && [
+                NSURLErrorNotConnectedToInternet,  // 인터넷 연결 없음
+                NSURLErrorTimedOut,                // 타임아웃
+                NSURLErrorCannotFindHost,          // 호스트 찾을 수 없음
+                NSURLErrorCannotConnectToHost,     // 호스트에 연결할 수 없음
+                NSURLErrorBadServerResponse,       // 서버 응답 오류
+                NSURLErrorSecureConnectionFailed   // SSL 연결 실패
+            ].contains(nsError.code)
+            
+            if isTemporaryError {
+                TabPersistenceManager.debugMessages.append("🔄 CustomWebView 일시적 에러 무시: \(error.localizedDescription)")
+            } else if isSeriousError, let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
                     name: .webViewDidFailLoad,
                     object: nil,
@@ -389,7 +426,9 @@ struct CustomWebView: UIViewRepresentable {
                         "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
                     ]
                 )
-                TabPersistenceManager.debugMessages.append("📡 CustomWebView 에러 알림 전송: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("📡 CustomWebView 심각한 에러 알림 전송: \(error.localizedDescription)")
+            } else {
+                TabPersistenceManager.debugMessages.append("ℹ️ CustomWebView 일반 에러 무시: \(error.localizedDescription)")
             }
             
             // 기존 StateModel의 didFailProvisionalNavigation 호출
@@ -403,6 +442,10 @@ struct CustomWebView: UIViewRepresentable {
                     self.parent.stateModel.isLoading = false
                     TabPersistenceManager.debugMessages.append("❌ CustomWebView 로딩 실패(Navigation)")
                 }
+                
+                // ✅ 진행률 리셋
+                self.parent.stateModel.loadingProgress = 0.0
+                TabPersistenceManager.debugMessages.append("📊 로딩 실패 - 진행률 0%로 리셋")
             }
             
             // ✨ 에러 알림 전송
@@ -431,7 +474,7 @@ struct CustomWebView: UIViewRepresentable {
                 let statusCode = httpResponse.statusCode
                 TabPersistenceManager.debugMessages.append("📡 CustomWebView HTTP 상태: \(statusCode)")
                 
-                // 4xx, 5xx 에러 상태 코드 감지
+                // ✅ 4xx, 5xx만 에러로 처리 (3xx 리다이렉트는 정상)
                 if statusCode >= 400 {
                     TabPersistenceManager.debugMessages.append("❌ CustomWebView HTTP 에러 감지: \(statusCode)")
                     
@@ -448,6 +491,9 @@ struct CustomWebView: UIViewRepresentable {
                         )
                         TabPersistenceManager.debugMessages.append("📡 CustomWebView HTTP 에러 알림 전송: \(statusCode)")
                     }
+                } else if statusCode >= 300 {
+                    // ✅ 3xx 리다이렉트는 정상으로 처리
+                    TabPersistenceManager.debugMessages.append("🔄 HTTP 리다이렉트: \(statusCode)")
                 }
             }
             
@@ -526,7 +572,7 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
-        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과, 허용된 도메인 기억)
+        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             
             let host = challenge.protectionSpace.host
@@ -535,16 +581,9 @@ struct CustomWebView: UIViewRepresentable {
             // 서버 신뢰성 검증 (SSL/TLS)
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
                 
+                // ✅ 먼저 시스템 기본 검증 시도
                 guard let serverTrust = challenge.protectionSpace.serverTrust else {
                     completionHandler(.performDefaultHandling, nil)
-                    return
-                }
-                
-                // ✅ 이미 사용자가 허용한 도메인인지 확인
-                if allowedHosts.contains(host) {
-                    let credential = URLCredential(trust: serverTrust)
-                    completionHandler(.useCredential, credential)
-                    TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 이미 허용된 도메인: \(host)")
                     return
                 }
                 
@@ -579,11 +618,9 @@ struct CustomWebView: UIViewRepresentable {
                     
                     // 무시하고 방문
                     alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
-                        // ✅ 도메인을 허용 목록에 추가하여 중복 알림 방지
-                        self.allowedHosts.insert(host)
                         let credential = URLCredential(trust: serverTrust)
                         completionHandler(.useCredential, credential)
-                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용 및 기억: \(host)")
+                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
                     })
                     
                     // 취소 (안전한 선택)
