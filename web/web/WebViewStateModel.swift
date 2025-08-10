@@ -267,6 +267,78 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         return false
     }
 
+    // MARK: - ✅ URL 정규화 (네이버 카페 등 동적 파라미터 제거)
+    
+    private func normalizeURL(_ url: URL) -> String {
+        let urlString = url.absoluteString
+        
+        // 네이버 카페 정규화
+        if urlString.contains("cafe.naver.com") {
+            // articleid와 clubid만 추출해서 정규화
+            if let articleRange = urlString.range(of: "articleid="),
+               let clubRange = urlString.range(of: "clubid=") {
+                
+                let articleStart = articleRange.upperBound
+                let clubStart = clubRange.upperBound
+                
+                // articleid 추출
+                let articleSubstring = urlString[articleStart...]
+                let articleEnd = articleSubstring.firstIndex(where: { $0 == "&" || $0 == "#" || $0 == "?" }) ?? articleSubstring.endIndex
+                let articleId = String(articleSubstring[..<articleEnd])
+                
+                // clubid 추출  
+                let clubSubstring = urlString[clubStart...]
+                let clubEnd = clubSubstring.firstIndex(where: { $0 == "&" || $0 == "#" || $0 == "?" }) ?? clubSubstring.endIndex
+                let clubId = String(clubSubstring[..<clubEnd])
+                
+                let normalizedUrl = "https://cafe.naver.com/normalized?clubid=\(clubId)&articleid=\(articleId)"
+                dbg("🔧 네이버 카페 URL 정규화: \(urlString) → \(normalizedUrl)")
+                return normalizedUrl
+            }
+        }
+        
+        // 다음 카페 정규화
+        if urlString.contains("cafe.daum.net") {
+            if let range = urlString.range(of: "v/") {
+                let afterV = urlString[range.upperBound...]
+                if let endRange = afterV.firstIndex(where: { $0 == "?" || $0 == "#" || $0 == "&" }) {
+                    let articleId = String(afterV[..<endRange])
+                    let normalizedUrl = "https://cafe.daum.net/normalized/\(articleId)"
+                    dbg("🔧 다음 카페 URL 정규화: \(urlString) → \(normalizedUrl)")
+                    return normalizedUrl
+                }
+            }
+        }
+        
+        // 일반적인 URL에서 불필요한 파라미터 제거
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            // 제거할 파라미터들 (추적용, 세션용 등)
+            let parametersToRemove = [
+                "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+                "fbclid", "gclid", "ref", "referrer", "timestamp", "t", "ts", 
+                "_", "sessionid", "sid", "s", "from", "channel"
+            ]
+            
+            if let queryItems = components.queryItems {
+                let filteredItems = queryItems.filter { item in
+                    !parametersToRemove.contains(item.name.lowercased())
+                }
+                components.queryItems = filteredItems.isEmpty ? nil : filteredItems
+            }
+            
+            // fragment(#) 제거 (해시 부분)
+            components.fragment = nil
+            
+            let normalizedUrl = components.url?.absoluteString ?? urlString
+            if normalizedUrl != urlString {
+                dbg("🔧 일반 URL 정규화: \(urlString) → \(normalizedUrl)")
+            }
+            return normalizedUrl
+        }
+        
+        return urlString
+    }
+
     // MARK: - ✅ 새로운 페이지 기록 시스템 (중복 저장 방지 강화)
     
     private func addNewPage(url: URL, title: String = "") {
@@ -302,11 +374,14 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return
         }
         
-        // ✅ 중복 URL 체크 강화 - 현재 페이지와 완전히 같은 URL이면 추가하지 않음
+        // ✅ 중복 URL 체크 강화 - 정규화된 URL로 비교
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
-            if currentRecord.url.absoluteString == url.absoluteString {
-                dbg("🚫 중복 URL 감지 - 현재 페이지와 동일: \(url.absoluteString)")
+            let currentNormalizedURL = normalizeURL(currentRecord.url)
+            let newNormalizedURL = normalizeURL(url)
+            
+            if currentNormalizedURL == newNormalizedURL {
+                dbg("🚫 중복 URL 감지 - 현재 페이지와 동일 (정규화됨): \(newNormalizedURL)")
                 
                 // 제목만 업데이트
                 var mutableRecord = currentRecord
@@ -320,14 +395,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             }
         }
         
-        // ✅ 히스토리 전체에서 중복 URL 체크 (최근 5개 페이지 내에서)
+        // ✅ 히스토리 전체에서 중복 URL 체크 (최근 5개 페이지 내에서) - 정규화된 URL로 비교
         let recentCheckCount = min(5, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
+        let newNormalizedURL = normalizeURL(url)
         
         for (index, record) in recentPages.enumerated() {
             let actualIndex = pageHistory.count - recentCheckCount + index
-            if record.url.absoluteString == url.absoluteString {
-                dbg("🚫 최근 히스토리에서 중복 URL 감지 [인덱스: \(actualIndex)]: \(url.absoluteString)")
+            let recordNormalizedURL = normalizeURL(record.url)
+            
+            if recordNormalizedURL == newNormalizedURL {
+                dbg("🚫 최근 히스토리에서 중복 URL 감지 [인덱스: \(actualIndex)] (정규화됨): \(newNormalizedURL)")
                 
                 // 해당 페이지로 이동하고 제목 업데이트
                 currentPageIndex = actualIndex
@@ -599,8 +677,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             dbg("👆 시작 URL: \(startURL.absoluteString)")
             dbg("👆 현재 URL: \(currentURL?.absoluteString ?? "nil")")
             
-            // 현재 커스텀 히스토리에서 URL 찾기 (완전한 URL로 비교)
-            if let foundIndex = pageHistory.firstIndex(where: { $0.url.absoluteString == startURL.absoluteString }) {
+            // 현재 커스텀 히스토리에서 URL 찾기 (정규화된 URL로 비교)
+            let startNormalizedURL = normalizeURL(startURL)
+            if let foundIndex = pageHistory.firstIndex(where: { normalizeURL($0.url) == startNormalizedURL }) {
                 let currentIndex = currentPageIndex
                 
                 dbg("👆 히스토리에서 발견: 인덱스 \(foundIndex), 현재 인덱스: \(currentIndex)")
@@ -706,14 +785,17 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 dbg("🔄 === 히스토리 네비게이션 처리 (버튼 또는 스와이프) ===")
                 updateCurrentPageTitle(title)
                 
-                // ✅ 스와이프 제스처든 버튼이든 currentURL 동기화
-                if currentURL?.absoluteString != finalURL.absoluteString {
-                    dbg("🔄 스와이프 제스처로 인한 주소창 동기화: \(currentURL?.absoluteString ?? "nil") → \(finalURL.absoluteString)")
+                // ✅ 스와이프 제스처든 버튼이든 currentURL 동기화 (정규화된 URL로 비교)
+                let currentNormalizedURL = currentURL != nil ? normalizeURL(currentURL!) : nil
+                let finalNormalizedURL = normalizeURL(finalURL)
+                
+                if currentNormalizedURL != finalNormalizedURL {
+                    dbg("🔄 스와이프 제스처로 인한 주소창 동기화 (정규화됨): \(currentNormalizedURL ?? "nil") → \(finalNormalizedURL)")
                     isNavigatingFromWebView = true
                     currentURL = finalURL
                     isNavigatingFromWebView = false
                 } else {
-                    dbg("🔄 주소창 이미 동기화됨")
+                    dbg("🔄 주소창 이미 동기화됨 (정규화됨)")
                 }
                 
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] - 새 페이지 추가 안함")
@@ -798,23 +880,28 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return true
         }
         
-        // ✅ 현재 페이지와 완전히 같은 URL인지 체크
+        // ✅ 현재 페이지와 완전히 같은 URL인지 체크 - 정규화된 URL로 비교
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
-            if currentRecord.url.absoluteString == finalURL.absoluteString {
-                dbg("🚫 현재 페이지와 동일한 URL - 제목만 업데이트")
+            let currentNormalizedURL = normalizeURL(currentRecord.url)
+            let finalNormalizedURL = normalizeURL(finalURL)
+            
+            if currentNormalizedURL == finalNormalizedURL {
+                dbg("🚫 현재 페이지와 동일한 URL (정규화됨) - 제목만 업데이트: \(finalNormalizedURL)")
                 dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
                 return false
             }
         }
         
-        // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서)
+        // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서) - 정규화된 URL로 비교
         let recentCheckCount = min(3, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
+        let finalNormalizedURL = normalizeURL(finalURL)
         
         for record in recentPages {
-            if record.url.absoluteString == finalURL.absoluteString {
-                dbg("🚫 최근 히스토리에서 중복 URL 발견: \(finalURL.absoluteString)")
+            let recordNormalizedURL = normalizeURL(record.url)
+            if recordNormalizedURL == finalNormalizedURL {
+                dbg("🚫 최근 히스토리에서 중복 URL 발견 (정규화됨): \(finalNormalizedURL)")
                 dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
                 return false
             }
@@ -828,9 +915,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         dbg("🤔 마지막 기록: \(lastRecord.url.absoluteString)")
-        dbg("🤔 URL 비교: \(lastRecord.url.absoluteString == finalURL.absoluteString)")
         
-        if lastRecord.url.absoluteString != finalURL.absoluteString {
+        let lastNormalizedURL = normalizeURL(lastRecord.url)
+        let finalNormalizedURL = normalizeURL(finalURL)
+        dbg("🤔 정규화된 URL 비교: \(lastNormalizedURL == finalNormalizedURL)")
+        
+        if lastNormalizedURL != finalNormalizedURL {
             // 리다이렉트 체인 분석
             if redirectionChain.count > 1 {
                 dbg("🤔 리다이렉트 체인 감지: \(redirectionChain.count)개")
@@ -840,9 +930,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 
                 dbg("🤔 리다이렉트 체인: \(firstURL.absoluteString) → \(lastURL.absoluteString)")
                 
-                // 시작 URL과 마지막 기록이 같고, 최종 URL이 다르면 리다이렉트로 판단
-                if lastRecord.url.absoluteString == firstURL.absoluteString && lastURL.absoluteString == finalURL.absoluteString {
-                    dbg("🔄 리다이렉트 감지: \(firstURL.absoluteString) → \(finalURL.absoluteString)")
+                // 시작 URL과 마지막 기록이 같고, 최종 URL이 다르면 리다이렉트로 판단 (정규화된 URL로 비교)
+                let firstNormalizedURL = normalizeURL(firstURL)
+                let lastChainNormalizedURL = normalizeURL(lastURL)
+                
+                if lastNormalizedURL == firstNormalizedURL && lastChainNormalizedURL == finalNormalizedURL {
+                    dbg("🔄 리다이렉트 감지 (정규화됨): \(firstNormalizedURL) → \(finalNormalizedURL)")
                     
                     // 도메인이 같은 리다이렉트면 기존 페이지 업데이트만
                     if firstURL.host == finalURL.host {
@@ -857,11 +950,11 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 }
             }
             
-            dbg("✅ 다른 URL이므로 새 페이지 추가: \(lastRecord.url.absoluteString) → \(finalURL.absoluteString)")
+            dbg("✅ 다른 URL이므로 새 페이지 추가 (정규화됨): \(lastNormalizedURL) → \(finalNormalizedURL)")
             dbg("🤔 === shouldAddPageToHistory 분석 끝 (true) ===")
             return true
         } else {
-            dbg("📝 같은 URL - 제목만 업데이트")
+            dbg("📝 같은 URL (정규화됨) - 제목만 업데이트")
             dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
             return false
         }
