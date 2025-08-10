@@ -269,87 +269,98 @@ struct ContentView: View {
                 VStack(spacing: 10) {
                     // 주소창
                     if showAddressBar {
-                        HStack {
-                            // ✨ 로딩 인디케이터 추가
-                            if state.isLoading {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .frame(width: 20, height: 20)
-                            } else {
-                                Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
-                                    .frame(width: 20, height: 20)
-                            }
-                            
-                            TextField("URL 또는 검색어", text: $inputURL)
-                                .textFieldStyle(.plain)
-                                .font(textFont)
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                                .keyboardType(.URL)
-                                .focused($isTextFieldFocused)
-                                .onTapGesture {
-                                    // ✅ 수정: 텍스트필드를 직접 탭했을 때만 포커스 + 전체 선택
-                                    if !isTextFieldFocused {
-                                        isTextFieldFocused = true
-                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                    }
-                                    if !textFieldSelectedAll {
-                                        DispatchQueue.main.async {
-                                            UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
-                                            textFieldSelectedAll = true
-                                            TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
-                                        }
-                                    }
-                                }
-                                .onChange(of: isTextFieldFocused) { focused in
-                                    if focused {
-                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                    } else {
-                                        textFieldSelectedAll = false
-                                        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
-                                    }
-                                }
-                                .onSubmit {
-                                    if let url = fixedURL(from: inputURL) {
-                                        state.currentURL = url
-                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
-                                    }
-                                    isTextFieldFocused = false
-                                }
-                                .overlay(
-                                    HStack {
-                                        Spacer()
-                                        if !inputURL.isEmpty && !state.isLoading {
-                                            Button(action: { inputURL = "" }) {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .font(.system(size: 16))
-                                                    .foregroundColor(.secondary)
-                                            }
-                                            .padding(.trailing, 8)
-                                        }
-                                    }
-                                )
-                            
-                            // ✨ 새로고침/중지 버튼
-                            Button(action: {
+                        VStack(spacing: 0) {
+                            HStack {
+                                // ✨ 로딩 인디케이터 및 자물쇠 아이콘 (녹색으로 변경)
                                 if state.isLoading {
-                                    state.stopLoading()
-                                    TabPersistenceManager.debugMessages.append("로딩 중지")
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                        .frame(width: 20, height: 20)
                                 } else {
-                                    state.reload()
-                                    TabPersistenceManager.debugMessages.append("페이지 새로고침")
+                                    Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
+                                        .frame(width: 20, height: 20)
                                 }
-                            }) {
-                                Image(systemName: state.isLoading ? "xmark" : "arrow.clockwise")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.primary)
+                                
+                                TextField("URL 또는 검색어", text: $inputURL)
+                                    .textFieldStyle(.plain)
+                                    .font(textFont)
+                                    .autocapitalization(.none)
+                                    .disableAutocorrection(true)
+                                    .keyboardType(.URL)
+                                    .focused($isTextFieldFocused)
+                                    .onTapGesture {
+                                        // ✅ 수정: 텍스트필드를 직접 탭했을 때만 포커스 + 전체 선택
+                                        if !isTextFieldFocused {
+                                            isTextFieldFocused = true
+                                            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                        }
+                                        if !textFieldSelectedAll {
+                                            DispatchQueue.main.async {
+                                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                                                textFieldSelectedAll = true
+                                                TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
+                                            }
+                                        }
+                                    }
+                                    .onChange(of: isTextFieldFocused) { focused in
+                                        if focused {
+                                            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                        } else {
+                                            textFieldSelectedAll = false
+                                            TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+                                        }
+                                    }
+                                    .onSubmit {
+                                        if let url = fixedURL(from: inputURL) {
+                                            state.currentURL = url
+                                            TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+                                        }
+                                        isTextFieldFocused = false
+                                    }
+                                    .overlay(
+                                        HStack {
+                                            Spacer()
+                                            if !inputURL.isEmpty && !state.isLoading {
+                                                Button(action: { inputURL = "" }) {
+                                                    Image(systemName: "xmark.circle.fill")
+                                                        .font(.system(size: 16))
+                                                        .foregroundColor(.secondary)
+                                                }
+                                                .padding(.trailing, 8)
+                                            }
+                                        }
+                                    )
+                                
+                                // ✨ 새로고침/중지 버튼
+                                Button(action: {
+                                    if state.isLoading {
+                                        state.stopLoading()
+                                        TabPersistenceManager.debugMessages.append("로딩 중지")
+                                    } else {
+                                        state.reload()
+                                        TabPersistenceManager.debugMessages.append("페이지 새로고침")
+                                    }
+                                }) {
+                                    Image(systemName: state.isLoading ? "xmark" : "arrow.clockwise")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.primary)
+                                }
+                                .frame(width: 24, height: 24)
                             }
-                            .frame(width: 24, height: 24)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, barVPadding)
+                            
+                            // ✨ 로딩 진행률 바 (자물쇠 아이콘과 같은 색상)
+                            if state.isLoading && state.loadingProgress > 0 {
+                                ProgressView(value: state.loadingProgress)
+                                    .progressViewStyle(LinearProgressViewStyle(tint: state.currentURL?.scheme == "https" ? .green : .secondary))
+                                    .frame(height: 2)
+                                    .padding(.horizontal, 14)
+                                    .animation(.easeInOut(duration: 0.2), value: state.loadingProgress)
+                            }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, barVPadding)
                         // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
                         .background(
                             ZStack {
