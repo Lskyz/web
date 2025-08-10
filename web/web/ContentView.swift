@@ -578,7 +578,7 @@ struct ContentView: View {
         
         // ✅ 이제 두 가지 경우만 처리하면 됨
         if nsError.code == NSURLErrorNotConnectedToInternet {
-            return ("인터넷 연결 없음", "와이파이는 연결되어 있지만 인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
+            return ("인터넷 연결 없음", "인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
         } else if nsError.code == NSURLErrorCannotFindHost {
             return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
         } else {
