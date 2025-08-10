@@ -1,6 +1,7 @@
 //
 //  WebViewStateModel.swift
 //  페이지 고유번호 기반 히스토리 시스템 (앱 재실행 후 forward 히스토리 복원 문제 해결)
+//  ✨ 에러 처리 및 로딩 상태 관리 추가
 //
 
 import Foundation
@@ -69,6 +70,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // 페이지 기록 기반 히스토리 (기존 복잡한 시스템 교체)
     @Published private var pageHistory: [PageRecord] = []
     @Published private var currentPageIndex: Int = -1
+    
+    // ✨ 로딩 상태 관리 추가
+    @Published var isLoading: Bool = false {
+        didSet {
+            if oldValue != isLoading {
+                dbg("📡 로딩 상태 변경: \(oldValue) → \(isLoading)")
+            }
+        }
+    }
     
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
@@ -194,6 +204,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
+    }
+
+    // ✨ 로딩 중지 메서드 추가
+    func stopLoading() {
+        webView?.stopLoading()
+        isLoading = false
+        dbg("⏹️ 로딩 중지")
     }
 
     func clearHistory() {
@@ -497,6 +514,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: - WKNavigationDelegate (복원 중 상태 업데이트 방지)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        // ✨ 로딩 시작
+        isLoading = true
+        
         let startURL = webView.url
         dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
         
@@ -574,6 +594,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     // 🔧 복원 중일 때 상태 업데이트 방지
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // ✨ 로딩 완료
+        isLoading = false
+        
         self.webView = webView
         
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
@@ -754,8 +777,25 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
+    // ✨ 에러 처리 강화 - 네트워크 오류 감지 및 알림 전송
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // ✨ 로딩 실패 시 상태 업데이트
+        isLoading = false
+        
         dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
+        
+        // ✨ 에러 알림 전송
+        if let tabID = tabID {
+            NotificationCenter.default.post(
+                name: .webViewDidFailLoad,
+                object: nil,
+                userInfo: [
+                    "tabID": tabID.uuidString,
+                    "error": error,
+                    "url": webView.url?.absoluteString ?? currentURL?.absoluteString ?? ""
+                ]
+            )
+        }
         
         // 리다이렉트 체인 정리
         redirectionChain.removeAll()
@@ -768,7 +808,23 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        // ✨ 로딩 실패 시 상태 업데이트
+        isLoading = false
+        
         dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
+        
+        // ✨ 에러 알림 전송
+        if let tabID = tabID {
+            NotificationCenter.default.post(
+                name: .webViewDidFailLoad,
+                object: nil,
+                userInfo: [
+                    "tabID": tabID.uuidString,
+                    "error": error,
+                    "url": webView.url?.absoluteString ?? currentURL?.absoluteString ?? ""
+                ]
+            )
+        }
         
         // 리다이렉트 체인 정리
         redirectionChain.removeAll()
@@ -778,6 +834,46 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         isRestoringSession = false
         isHistoryNavigation = false
         historyNavigationStartTime = nil
+    }
+
+    // ✨ HTTP 상태 코드 에러 감지 (응답 정책 결정 시)
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        
+        // HTTP 응답 상태 코드 체크
+        if let httpResponse = navigationResponse.response as? HTTPURLResponse {
+            let statusCode = httpResponse.statusCode
+            dbg("📡 HTTP 상태 코드: \(statusCode) - \(navigationResponse.response.url?.absoluteString ?? "")")
+            
+            // 4xx, 5xx 에러 상태 코드 감지
+            if statusCode >= 400 {
+                dbg("❌ HTTP 에러 상태 코드 감지: \(statusCode)")
+                
+                // ✨ HTTP 에러 알림 전송
+                if let tabID = tabID {
+                    NotificationCenter.default.post(
+                        name: .webViewDidFailLoad,
+                        object: nil,
+                        userInfo: [
+                            "tabID": tabID.uuidString,
+                            "statusCode": statusCode,
+                            "url": navigationResponse.response.url?.absoluteString ?? ""
+                        ]
+                    )
+                }
+            }
+        }
+        
+        // 기존 다운로드 처리 로직 (iOS 14+)
+        if #available(iOS 14.0, *) {
+            if let http = navigationResponse.response as? HTTPURLResponse,
+               let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
+               disp.contains("attachment") {
+                decisionHandler(.download)
+                return
+            }
+        }
+        
+        decisionHandler(.allow)
     }
 
     // MARK: - 디버그 로그
