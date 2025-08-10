@@ -1,1049 +1,1260 @@
 //
-//  CustomWebView.swift
-//
-//  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
-//  - WebViewStateModel isLoading 상태와 동기화 강화
-//  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
-//  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
-//  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
-//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
-//  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
-//  - ✅ 에러 처리 개선: 모든 중요한 에러를 ContentView로 전달
+//  WebViewStateModel.swift
+//  페이지 고유번호 기반 히스토리 시스템 (앱 재실행 후 forward 히스토리 복원 문제 해결)
+//  ✨ 에러 처리 및 로딩 상태 관리 추가
+//  ✅ 중복 저장 방지 강화
 //
 
+import Foundation
+import Combine
 import SwiftUI
 import WebKit
-import AVFoundation
-import UIKit
-import UniformTypeIdentifiers
-import Foundation
-import Security
 
-// MARK: - 다운로드 진행 알림 이름 정의
-extension Notification.Name {
-    static let WebViewDownloadStart    = Notification.Name("WebViewDownloadStart")
-    static let WebViewDownloadProgress = Notification.Name("WebViewDownloadProgress")
-    static let WebViewDownloadFinish   = Notification.Name("WebViewDownloadFinish")
-    static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
+// MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
+struct PageRecord: Codable, Identifiable, Hashable {
+    let id: UUID
+    let url: URL
+    var title: String
+    let timestamp: Date
+    var lastAccessed: Date
+    
+    init(url: URL, title: String = "") {
+        self.id = UUID()
+        self.url = url
+        self.title = title.isEmpty ? (url.host ?? "제목 없음") : title
+        self.timestamp = Date()
+        self.lastAccessed = Date()
+    }
+    
+    mutating func updateTitle(_ newTitle: String) {
+        if !newTitle.isEmpty {
+            title = newTitle
+        }
+        lastAccessed = Date()
+    }
+    
+    mutating func updateAccess() {
+        lastAccessed = Date()
+    }
 }
 
-// MARK: - CustomWebView (UIViewRepresentable)
-struct CustomWebView: UIViewRepresentable {
-    @ObservedObject var stateModel: WebViewStateModel
-    @Binding var playerURL: URL?
-    @Binding var showAVPlayer: Bool
-    var onScroll: ((CGFloat) -> Void)? = nil
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    // MARK: - makeUIView
-    func makeUIView(context: Context) -> WKWebView {
-        // ✅ 오디오 세션 활성화
-        configureAudioSessionForMixing()
-
-        // WKWebView 설정
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-        config.websiteDataStore = WKWebsiteDataStore.default()
-        config.processPool = WKProcessPool()
-
-        // 사용자 스크립트/메시지 핸들러
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
-
-        // ✨ 다운로드 지원 (iOS 14+)
-        if #available(iOS 14.0, *) {
-            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        }
-
-        // WKWebView 생성
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-        webView.scrollView.decelerationRate = .normal
-
-        // ✅ 하단 UI 겹치기를 위한 투명 처리
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isOpaque = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.scrollView.contentInset = .zero
-        webView.scrollView.scrollIndicatorInsets = .zero
-
-        // ✨ 강화된 Delegate 연결 (로딩 상태 동기화)
-        webView.navigationDelegate = context.coordinator  // ⚠️ 중요: Coordinator로 변경
-        webView.uiDelegate = context.coordinator
-        context.coordinator.webView = webView
-        stateModel.webView = webView
-
-        // Pull to Refresh
-        let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.handleRefresh(_:)),
-            for: .valueChanged
-        )
-        webView.scrollView.refreshControl = refreshControl
-        webView.scrollView.delegate = context.coordinator
-
-        // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
-        context.coordinator.setupLoadingObservers(for: webView)
-
-        // 초기 로드
-        if let url = stateModel.currentURL {
-            webView.load(URLRequest(url: url))
-        } else {
-            webView.load(URLRequest(url: URL(string: "about:blank")!))
-        }
-
-        // 외부 제어용 Notification 옵저버 등록
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.handleExternalOpenURL(_:)),
-            name: .init("ExternalOpenURL"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.reloadWebView),
-            name: .init("WebViewReload"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.goBack),
-            name: .init("WebViewGoBack"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.goForward),
-            name: .init("WebViewGoForward"),
-            object: nil
-        )
-
-        // 다운로드 진행률 UI 오버레이 구성
-        context.coordinator.installDownloadOverlay(on: webView)
-
-        // 다운로드 관련 이벤트 옵저버 등록
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
-                                               name: .WebViewDownloadStart,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
-                                               name: .WebViewDownloadProgress,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
-                                               name: .WebViewDownloadFinish,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
-                                               name: .WebViewDownloadFailed,
-                                               object: nil)
-
-        return webView
+// MARK: - 간단한 히스토리 세션 
+struct WebViewSession: Codable {
+    let pageRecords: [PageRecord]
+    let currentIndex: Int
+    let sessionId: UUID
+    let createdAt: Date
+    
+    init(pageRecords: [PageRecord], currentIndex: Int) {
+        self.pageRecords = pageRecords
+        self.currentIndex = currentIndex
+        self.sessionId = UUID()
+        self.createdAt = Date()
     }
+    
+    // 기존 시스템과의 호환성을 위한 computed properties
+    var urls: [URL] { pageRecords.map { $0.url } }
+}
 
-    // MARK: - updateUIView
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 연결 상태 확인 및 재연결
-        if uiView.uiDelegate !== context.coordinator {
-            uiView.uiDelegate = context.coordinator
-        }
-        if uiView.navigationDelegate !== context.coordinator {
-            uiView.navigationDelegate = context.coordinator
-        }
-        if context.coordinator.webView !== uiView {
-            context.coordinator.webView = uiView
-        }
+// MARK: - 타임스탬프 유틸
+fileprivate func ts() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss.SSS"
+    return f.string(from: Date())
+}
 
-        // ✅ 하단 UI 겹치기를 위한 투명 설정 유지
-        if uiView.isOpaque { uiView.isOpaque = false }
-        if uiView.backgroundColor != .clear { uiView.backgroundColor = .clear }
-        if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
-        uiView.scrollView.isOpaque = false
+// MARK: - WebViewStateModel (앱 재실행 후 forward 히스토리 복원 문제 해결)
+final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
+
+    var tabID: UUID?
+    
+    // 페이지 기록 기반 히스토리 (기존 복잡한 시스템 교체)
+    @Published private var pageHistory: [PageRecord] = []
+    @Published private var currentPageIndex: Int = -1
+    
+    // ✨ 로딩 상태 관리 추가
+    @Published var isLoading: Bool = false {
+        didSet {
+            if oldValue != isLoading {
+                dbg("📡 로딩 상태 변경: \(oldValue) → \(isLoading)")
+            }
+        }
     }
+// ✨ 로딩 진행률 추가 (별도 선언)
+@Published var loadingProgress: Double = 0.0
+    
+    let navigationDidFinish = PassthroughSubject<Void, Never>()
 
-    // MARK: - teardown
-    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        // KVO 옵저버 제거
-        coordinator.removeLoadingObservers(for: uiView)
-        
-        // 스크롤/델리게이트 해제
-        uiView.scrollView.delegate = nil
-        uiView.uiDelegate = nil
-        uiView.navigationDelegate = nil
-        coordinator.webView = nil
+    @Published var currentURL: URL? {
+        didSet {
+            guard let url = currentURL else { return }
 
-        // 오디오 세션 비활성화
-        coordinator.parent.deactivateAudioSession()
+            UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
+            dbg("🎯 currentURL 업데이트 → \(url.absoluteString) | 이전: \(oldValue?.absoluteString ?? "nil")")
 
-        // 메시지 핸들러 제거
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
-
-        // 모든 옵저버 제거
-        NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer)
-    private func makeVideoScript() -> WKUserScript {
-        let scriptSource = """
-        function processVideos(doc) {
-            [...doc.querySelectorAll('video')].forEach(video => {
-                // iOS 자동재생 제약 회피
-                video.muted = true;
-                video.volume = 0;
-                video.setAttribute('muted','true');
-
-                // AVPlayer로 넘기는 클릭 핸들러 1회만 부착
-                if (!video.hasAttribute('nativeAVPlayerListener')) {
-                    video.addEventListener('click', () => {
-                        window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                    });
-                    video.setAttribute('nativeAVPlayerListener', 'true');
-                }
-
-                // PiP 자동 진입 시도
-                if (document.pictureInPictureEnabled &&
-                    !video.disablePictureInPicture &&
-                    !document.pictureInPictureElement) {
-                    try { video.requestPictureInPicture().catch(() => {}); } catch (e) {}
-                }
-            });
-        }
-
-        processVideos(document);
-        setInterval(() => {
-            processVideos(document);
-            [...document.querySelectorAll('iframe')].forEach(iframe => {
-                try {
-                    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                    if (doc) processVideos(doc);
-                } catch (e) {}
-            });
-        }, 1000);
-        """
-        return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-    }
-
-    // MARK: - 오디오 세션
-    private func configureAudioSessionForMixing() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.mixWithOthers])
-        try? session.setActive(true)
-    }
-
-    private func deactivateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-    }
-
-    // MARK: - Coordinator
-    class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
-
-        var parent: CustomWebView
-        weak var webView: WKWebView?
-        var filePicker: FilePicker?
-
-        // ✅ 스와이프 뒤로가기 감지용 플래그
-        private var isSwipeBackNavigation: Bool = false
-
-        // 다운로드 진행률 UI 구성 요소들
-        private var overlayContainer: UIVisualEffectView?
-        private var overlayTitleLabel: UILabel?
-        private var overlayPercentLabel: UILabel?
-        private var overlayProgress: UIProgressView?
-
-        // ✨ KVO 옵저버들 (로딩 상태 동기화용)
-        private var loadingObserver: NSKeyValueObservation?
-        private var urlObserver: NSKeyValueObservation?
-        private var titleObserver: NSKeyValueObservation?
-        private var progressObserver: NSKeyValueObservation?
-
-        init(_ parent: CustomWebView) { 
-            self.parent = parent 
-        }
-
-        deinit {
-            removeLoadingObservers(for: webView)
-        }
-
-        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
-        func setupLoadingObservers(for webView: WKWebView) {
-            // isLoading 상태 관찰
-            loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let isLoading = change.newValue ?? false
-                
-                DispatchQueue.main.async {
-                    if self.parent.stateModel.isLoading != isLoading {
-                        self.parent.stateModel.isLoading = isLoading
-                    }
-                }
+            // ✅ 콜스택 추적 로그 강화 (더 많은 정보)
+            dbg("📞 === 호출 스택 추적 ===")
+            Thread.callStackSymbols.prefix(8).enumerated().forEach { index, symbol in
+                dbg("📞[\(index)] \(symbol)")
             }
+            dbg("📞 === 스택 추적 끝 ===")
 
-            // ✅ 진행률 관찰 추가 (단순화 - 모든 변화 반영)
-            progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let progress = change.newValue ?? 0.0
-                
-                DispatchQueue.main.async {
-                    // ✅ 모든 진행률 변화를 반영
-                    let newProgress = max(0.0, min(1.0, progress))
-                    self.parent.stateModel.loadingProgress = newProgress
-                }
-            }
-
-            // URL 변경 관찰
-            urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let newURL = change.newValue, let url = newURL else { return }
-                
-                DispatchQueue.main.async {
-                    if self.parent.stateModel.currentURL != url {
-                        self.parent.stateModel.setNavigatingFromWebView(true)
-                        self.parent.stateModel.currentURL = url
-                        self.parent.stateModel.setNavigatingFromWebView(false)
-                    }
-                }
-            }
-
-            // 제목 변경 관찰
-            titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
-                
-                DispatchQueue.main.async {
-                    self.parent.stateModel.updateCurrentPageTitle(title)
-                }
-            }
-        }
-
-        func removeLoadingObservers(for webView: WKWebView?) {
-            loadingObserver?.invalidate()
-            urlObserver?.invalidate()
-            titleObserver?.invalidate()
-            progressObserver?.invalidate()
-            loadingObserver = nil
-            urlObserver = nil
-            titleObserver = nil
-            progressObserver = nil
-        }
-
-        // MARK: - ✨ WKNavigationDelegate (에러 처리 강화)
-        
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            // ✅ 간단한 스와이프 뒤로가기 감지
-            isSwipeBackNavigation = webView.canGoBack && 
-                                  webView.backForwardList.backItem != nil
+            // 🔧 주소창에서 직접 입력한 경우 웹뷰 로드
+            let shouldLoad = url != oldValue && 
+                           !isRestoringSession && 
+                           !isNavigatingFromWebView &&
+                           !isHistoryNavigationActive()  // ✅ 강화된 히스토리 네비게이션 체크
             
-            // ✨ 로딩 시작을 StateModel에 전달
-            DispatchQueue.main.async {
-                if !self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = true
+            dbg("🤔 webView.load 여부 판단:")
+            dbg("🤔   url != oldValue: \(url != oldValue)")
+            dbg("🤔   !isRestoringSession: \(!isRestoringSession)")
+            dbg("🤔   !isNavigatingFromWebView: \(!isNavigatingFromWebView)")
+            dbg("🤔   !isHistoryNavigationActive(): \(!isHistoryNavigationActive())")
+            dbg("🤔   shouldLoad: \(shouldLoad)")
+            
+            if shouldLoad {
+                if let webView = webView {
+                    webView.load(URLRequest(url: url))
+                    dbg("🌐 주소창에서 웹뷰 로드: \(url.absoluteString)")
+                } else {
+                    dbg("⚠️ 웹뷰가 없어서 로드 불가")
                 }
-                
-                // ✅ 항상 0%로 시작 (KVO가 실제 진행률 업데이트)
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-            
-            // 기존 StateModel의 didStartProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didStartProvisionalNavigation: navigation)
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // ✨ 로딩 완료를 StateModel에 전달
-            DispatchQueue.main.async {
-                // ✅ 진행률을 먼저 확실히 100%로 설정
-                self.parent.stateModel.loadingProgress = 1.0
-                
-                // 잠깐 후 로딩 상태 해제 (100% 표시 시간 확보)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.parent.stateModel.isLoading = false
-                }
-                
-                // ✅ 스와이프 플래그 리셋
-                self.isSwipeBackNavigation = false
-            }
-            
-            // 기존 StateModel의 didFinish 호출
-            parent.stateModel.webView(webView, didFinish: navigation)
-        }
-
-        // ✅ 에러 처리 개선 - 로딩 시작 단계 에러 (didFailProvisionalNavigation)
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                }
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-            
-            let nsError = error as NSError
-            
-            // ✅ 스와이프 뒤로가기 중엔 모든 에러 무시
-            if isSwipeBackNavigation {
-                parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-                return
-            }
-            
-            // ✅ 사용자 취소는 무시 (새 URL 입력, 링크 클릭 등)
-            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
-                parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-                return
-            }
-            
-            // ✅ 명확한 에러 전달 - 모든 중요한 에러를 ContentView로 전달
-            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("❌ 로딩 시작 에러 알림: \(nsError.code)")
             } else {
-                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 시작 에러: \(nsError.code)")
+                dbg("⛔️ webView.load 생략됨 - 중복 또는 복원 중 또는 내부 네비게이션")
             }
-            
-            // 기존 StateModel의 didFailProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
         }
+    }
+    
 
-        // ✅ 에러 처리 개선 - 로딩 진행 중 에러 (didFail)
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                }
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-            
-            let nsError = error as NSError
-            
-            // ✅ 명확한 에러 전달 - 로딩 진행 중 에러도 ContentView로 전달
-            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("❌ 로딩 진행 에러 알림: \(nsError.code)")
-            } else {
-                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 진행 에러: \(nsError.code)")
-            }
-            
-            // 기존 StateModel의 didFail 호출
-            parent.stateModel.webView(webView, didFail: navigation, withError: error)
-        }
-
-        // ✅ HTTP 에러 필터링 - 메인 페이지와 내부 API/리소스 구분
-        private func shouldNotifyForHTTPError(statusCode: Int, responseURL: URL?, mainURL: URL?) -> Bool {
-            guard let responseURL = responseURL else { return false }
-            
-            // ✅ 메인 페이지 URL과 같은 도메인이면 알림 (사용자가 직접 접근한 페이지)
-            if let mainURL = mainURL, 
-               responseURL.host == mainURL.host {
-                TabPersistenceManager.debugMessages.append("🏠 메인 도메인 HTTP 에러: \(statusCode) - \(responseURL.host ?? "")")
-                return true
-            }
-            
-            // ✅ OAuth/로그인 관련 도메인은 무시 (정상적인 플로우)
-            let oauthDomains = [
-                "accounts.google.com",
-                "login.microsoftonline.com", 
-                "appleid.apple.com",
-                "www.facebook.com",
-                "api.twitter.com",
-                "github.com",
-                "oauth.googleusercontent.com"
-            ]
-            
-            if let host = responseURL.host?.lowercased(),
-               oauthDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("🔐 OAuth 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-            
-            // ✅ 광고/트래킹 관련 도메인 무시
-            let adDomains = [
-                "googleads", "doubleclick", "googlesyndication", "googletagmanager",
-                "facebook.com", "fbcdn", "amazon-adsystem", "adsystem.amazon",
-                "analytics", "gtag", "gtm", "pixel", "tracking", "metrics"
-            ]
-            
-            if let host = responseURL.host?.lowercased(),
-               adDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("📊 광고/트래킹 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-            
-            // ✅ API 엔드포인트 무시 (api., rest., graphql. 등)
-            if let host = responseURL.host?.lowercased(),
-               (host.hasPrefix("api.") || 
-                host.hasPrefix("rest.") || 
-                host.hasPrefix("graphql.") ||
-                host.contains("api")) {
-                TabPersistenceManager.debugMessages.append("🔌 API 엔드포인트 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-            
-            // ✅ CDN/리소스 도메인 무시
-            let cdnDomains = [
-                "amazonaws.com", "cloudfront.net", "cdn", "static",
-                "gstatic.com", "googleapis.com", "bootstrapcdn.com"
-            ]
-            
-            if let host = responseURL.host?.lowercased(),
-               cdnDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("🌍 CDN/리소스 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-            
-            // ✅ 심각한 에러만 알림 (404, 500 등)
-            switch statusCode {
-            case 404, 500, 502, 503, 504:
-                TabPersistenceManager.debugMessages.append("🚨 심각한 HTTP 에러 알림: \(statusCode) - \(responseURL.host ?? "")")
-                return true
-            default:
-                // 403, 401 등은 대부분 내부 API/인증 관련이므로 무시
-                TabPersistenceManager.debugMessages.append("🔕 일반 HTTP 에러 무시: \(statusCode) - \(responseURL.host ?? "")")
-                return false
+    // ✅ 웹뷰 내부 네비게이션인지 구분하는 플래그 강화
+    internal var isNavigatingFromWebView: Bool = false {
+        didSet {
+            if oldValue != isNavigatingFromWebView {
+                dbg("🏁 isNavigatingFromWebView: \(oldValue) → \(isNavigatingFromWebView)")
             }
         }
-        private func shouldNotifyUserForError(_ error: NSError) -> Bool {
-            // NSURLError가 아닌 경우는 무시 (내부 리소스 에러 등)
-            guard error.domain == NSURLErrorDomain else { 
-                TabPersistenceManager.debugMessages.append("🔕 비-NSURLError 도메인 무시: \(error.domain)")
-                return false 
-            }
-            
-            switch error.code {
-            // ✅ 메인 페이지 로딩 실패 - 반드시 알려야 할 중요한 에러들만
-            case NSURLErrorCannotFindHost:           // 잘못된 주소/도메인
-                TabPersistenceManager.debugMessages.append("📍 주소를 찾을 수 없음: \(error.code)")
-                return true
-            case NSURLErrorBadURL,                   // 잘못된 URL 형식
-                 NSURLErrorUnsupportedURL:           // 지원하지 않는 URL 형식
-                TabPersistenceManager.debugMessages.append("🔗 잘못된 URL 형식: \(error.code)")
-                return true
-            case NSURLErrorTimedOut:                 // 타임아웃
-                TabPersistenceManager.debugMessages.append("⏰ 연결 시간 초과: \(error.code)")
-                return true
-            case NSURLErrorNotConnectedToInternet:   // 인터넷 연결 없음
-                TabPersistenceManager.debugMessages.append("📶 인터넷 연결 없음: \(error.code)")
-                return true
-            case NSURLErrorCannotConnectToHost:      // 서버 연결 불가
-                TabPersistenceManager.debugMessages.append("🖥️ 서버 연결 실패: \(error.code)")
-                return true
-            case NSURLErrorNetworkConnectionLost:    // 네트워크 연결 끊김
-                TabPersistenceManager.debugMessages.append("📡 네트워크 연결 끊김: \(error.code)")
-                return true
-            case NSURLErrorDNSLookupFailed:          // DNS 조회 실패
-                TabPersistenceManager.debugMessages.append("🌐 DNS 조회 실패: \(error.code)")
-                return true
-                
-            // ✅ 무시할 에러들 (모든 기타 에러들)
-            default:
-                // ✅ 알 수 없는 에러는 무시 (내부 리소스, 광고, 이미지 등의 실패)
-                TabPersistenceManager.debugMessages.append("🔕 알 수 없는 에러 무시: \(error.code) - 내부 리소스 실패 추정")
-                return false
-            }
-        }
-
-        // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서) - 필터링 강화
-        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            
-            // HTTP 응답 상태 코드 체크
-            if let httpResponse = navigationResponse.response as? HTTPURLResponse {
-                let statusCode = httpResponse.statusCode
-                let responseURL = navigationResponse.response.url
-                let mainURL = parent.stateModel.currentURL
-                
-                // ✅ 4xx, 5xx 에러이지만 스마트 필터링 적용
-                if statusCode >= 400 {
-                    let shouldNotifyHTTPError = shouldNotifyForHTTPError(
-                        statusCode: statusCode, 
-                        responseURL: responseURL, 
-                        mainURL: mainURL
-                    )
-                    
-                    if shouldNotifyHTTPError, let tabID = parent.stateModel.tabID {
-                        NotificationCenter.default.post(
-                            name: .webViewDidFailLoad,
-                            object: nil,
-                            userInfo: [
-                                "tabID": tabID.uuidString,
-                                "statusCode": statusCode,
-                                "url": responseURL?.absoluteString ?? ""
-                            ]
-                        )
-                        TabPersistenceManager.debugMessages.append("❌ HTTP 에러 알림: \(statusCode) - \(responseURL?.host ?? "")")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("🔕 HTTP 에러 무시: \(statusCode) - \(responseURL?.host ?? "") (내부 API/OAuth)")
-                    }
+    }
+    
+    // 리다이렉트 감지용
+    private var redirectionChain: [URL] = []
+    private var redirectionStartTime: Date?
+    
+    // ✅ 🔧 히스토리 네비게이션 중인지 구분 (뒤로/앞으로 버튼) - 강화
+    private var isHistoryNavigation: Bool = false {
+        didSet {
+            if oldValue != isHistoryNavigation {
+                dbg("🏁 isHistoryNavigation: \(oldValue) → \(isHistoryNavigation)")
+                if isHistoryNavigation {
+                    historyNavigationStartTime = Date()
+                    dbg("⏰ 히스토리 네비게이션 시작 시간 기록")
+                } else {
+                    historyNavigationStartTime = nil
+                    dbg("⏰ 히스토리 네비게이션 시간 초기화")
                 }
             }
-            
-            // 다운로드 처리 (iOS 14+)
-            if #available(iOS 14.0, *) {
-                if let http = navigationResponse.response as? HTTPURLResponse,
-                   let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
-                   disp.contains("attachment") {
-                    decisionHandler(.download)
-                    return
-                }
+        }
+    }
+    
+    // ✅ 히스토리 네비게이션 시작 시간 추적
+    private var historyNavigationStartTime: Date?
+
+    @Published var canGoBack: Bool = false {
+        didSet {
+            if oldValue != canGoBack {
+                dbg("canGoBack 업데이트: \(oldValue) → \(canGoBack)")
             }
-            
-            decisionHandler(.allow)
         }
-
-        // ✨ 다운로드 지원 (iOS 14+)
-        @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-            download.delegate = parent.stateModel
+    }
+    @Published var canGoForward: Bool = false {
+        didSet {
+            if oldValue != canGoForward {
+                dbg("canGoForward 업데이트: \(oldValue) → \(canGoForward)")
+            }
         }
+    }
+    @Published var showAVPlayer = false
 
-        // MARK: JS → 네이티브 메시지 처리
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "playVideo" else { return }
-            if let urlString = message.body as? String, let url = URL(string: urlString) {
+    // 복원 상태 관리 (단순화)
+    private(set) var isRestoringSession: Bool = false {
+        didSet {
+            if oldValue != isRestoringSession {
+                dbg("🏁 isRestoringSession: \(oldValue) → \(isRestoringSession)")
+            }
+        }
+    }
+    
+    // 🔧 WebView 연결 시 네이티브 히스토리 상태 무시
+    weak var webView: WKWebView? {
+        didSet {
+            if webView != nil {
+                dbg("🔗 webView 연결됨")
+                // 네이티브 히스토리 상태 대신 커스텀 히스토리 상태만 사용
                 DispatchQueue.main.async {
-                    self.parent.playerURL = url
-                    self.parent.showAVPlayer = true
+                    self.updateNavigationState()
+                    self.dbg("🔧 WebView 연결 후 커스텀 상태 강제 적용: back=\(self.canGoBack), forward=\(self.canGoForward)")
                 }
             }
         }
-
-        // MARK: Pull to Refresh
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            webView?.reload()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                sender.endRefreshing()
-            }
-        }
-
-        // MARK: 외부 URL 오픈
-        @objc func handleExternalOpenURL(_ note: Notification) {
-            guard
-                let userInfo = note.userInfo,
-                let url = userInfo["url"] as? URL,
-                let webView = webView
-            else { return }
-            webView.load(URLRequest(url: url))
-        }
-
-        // MARK: 네비게이션 명령
-        @objc func reloadWebView() { 
-            webView?.reload()
-        }
-        @objc func goBack() { 
-            if webView?.canGoBack == true { 
-                webView?.goBack()
-            }
-        }
-        @objc func goForward() { 
-            if webView?.canGoForward == true { 
-                webView?.goForward()
-            }
-        }
-
-        // MARK: 스크롤 전달
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            parent.onScroll?(scrollView.contentOffset.y)
-        }
-
-        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
-        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            
-            let host = challenge.protectionSpace.host
-            
-            // 서버 신뢰성 검증 (SSL/TLS)
-            if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-                
-                // ✅ 먼저 시스템 기본 검증 시도
-                guard let serverTrust = challenge.protectionSpace.serverTrust else {
-                    completionHandler(.performDefaultHandling, nil)
-                    return
-                }
-                
-                // ✅ 최신 API 사용 (iOS 13+)
-                var error: CFError?
-                let isValid = SecTrustEvaluateWithError(serverTrust, &error)
-                
-                if isValid {
-                    // ✅ 시스템이 신뢰하는 인증서 - 자동 허용
-                    let credential = URLCredential(trust: serverTrust)
-                    completionHandler(.useCredential, credential)
-                    return
-                }
-                
-                // ❌ 시스템 검증 실패 - 사용자에게 묻기
-                TabPersistenceManager.debugMessages.append("⚠️ SSL 인증서 문제: \(host)")
-                
-                DispatchQueue.main.async {
-                    guard let topVC = self.topMostViewController() else {
-                        completionHandler(.performDefaultHandling, nil)
-                        return
-                    }
-                    
-                    let alert = UIAlertController(
-                        title: "보안 연결 경고", 
-                        message: "\(host)의 보안 인증서에 문제가 있습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
-                        preferredStyle: .alert
-                    )
-                    
-                    // 무시하고 방문
-                    alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
-                        let credential = URLCredential(trust: serverTrust)
-                        completionHandler(.useCredential, credential)
-                        TabPersistenceManager.debugMessages.append("🔓 SSL 경고 무시: \(host)")
-                    })
-                    
-                    // 취소 (안전한 선택)
-                    alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
-                        completionHandler(.cancelAuthenticationChallenge, nil)
-                        
-                        // SSL 에러 알림 전송
-                        if let tabID = self.parent.stateModel.tabID {
-                            NotificationCenter.default.post(
-                                name: .webViewDidFailLoad,
-                                object: nil,
-                                userInfo: [
-                                    "tabID": tabID.uuidString,
-                                    "sslError": true,
-                                    "url": "https://\(host)"
-                                ]
-                            )
-                        }
-                    })
-                    
-                    topVC.present(alert, animated: true)
-                }
-                return
-            }
-            
-            // 다른 인증 방법은 기본 처리
-            completionHandler(.performDefaultHandling, nil)
-        }
-
-        // ✨ 최상위 뷰컨트롤러 찾기 (SSL 알림용)
-        private func topMostViewController() -> UIViewController? {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = windowScene.windows.first,
-                  let root = window.rootViewController else { return nil }
-            var top = root
-            while let presented = top.presentedViewController { top = presented }
-            return top
-        }
-
-        // MARK: 팝업(새창) → 현재 탭에서 열기
-        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url {
-                webView.load(URLRequest(url: url))
-            }
-            return nil
-        }
-
-        // MARK: - 다운로드 진행률 오버레이
-
-        func installDownloadOverlay(on webView: WKWebView) {
-            guard overlayContainer == nil else { return }
-
-            let blur = UIBlurEffect(style: .systemThinMaterial)
-            let container = UIVisualEffectView(effect: blur)
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.alpha = 0.0
-            container.layer.cornerRadius = 10
-            container.clipsToBounds = true
-
-            let title = UILabel()
-            title.translatesAutoresizingMaskIntoConstraints = false
-            title.font = .preferredFont(forTextStyle: .caption1)
-            title.textColor = .label
-            title.text = "다운로드 준비 중..."
-
-            let percent = UILabel()
-            percent.translatesAutoresizingMaskIntoConstraints = false
-            percent.font = .preferredFont(forTextStyle: .caption1)
-            percent.textColor = .secondaryLabel
-            percent.text = "0%"
-
-            let progress = UIProgressView(progressViewStyle: .bar)
-            progress.translatesAutoresizingMaskIntoConstraints = false
-            progress.progress = 0.0
-
-            container.contentView.addSubview(title)
-            container.contentView.addSubview(percent)
-            container.contentView.addSubview(progress)
-
-            webView.addSubview(container)
-            NSLayoutConstraint.activate([
-                container.leadingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-                container.trailingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-                container.topAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.topAnchor, constant: 12),
-
-                title.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
-                title.topAnchor.constraint(equalTo: container.contentView.topAnchor, constant: 10),
-
-                percent.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
-                percent.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-
-                progress.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
-                progress.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
-                progress.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-                progress.bottomAnchor.constraint(equalTo: container.contentView.bottomAnchor, constant: -10),
-                progress.heightAnchor.constraint(equalToConstant: 3)
-            ])
-
-            overlayContainer = container
-            overlayTitleLabel = title
-            overlayPercentLabel = percent
-            overlayProgress = progress
-        }
-
-        private func showOverlay(filename: String?) {
-            overlayTitleLabel?.text = filename ?? "다운로드 중"
-            overlayPercentLabel?.text = "0%"
-            overlayProgress?.setProgress(0.0, animated: false)
-            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 1.0 }
-        }
-
-        private func updateOverlay(progress: Double) {
-            overlayProgress?.setProgress(Float(progress), animated: true)
-            let pct = max(0, min(100, Int(progress * 100)))
-            overlayPercentLabel?.text = "\(pct)%"
-        }
-
-        private func hideOverlay() {
-            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 0.0 }
-        }
-
-        // MARK: 다운로드 이벤트 핸들러
-        @objc func handleDownloadStart(_ note: Notification) {
-            let filename = note.userInfo?["filename"] as? String
-            showOverlay(filename: filename)
-        }
-
-        @objc func handleDownloadProgress(_ note: Notification) {
-            let progress = note.userInfo?["progress"] as? Double ?? 0
-            updateOverlay(progress: progress)
-        }
-
-        @objc func handleDownloadFinish(_ note: Notification) {
-            hideOverlay()
-        }
-
-        @objc func handleDownloadFailed(_ note: Notification) {
-            hideOverlay()
-        }
-    }
-}
-
-// MARK: - 파일 선택 헬퍼
-@available(iOS 14.0, *)
-class FilePicker: NSObject, UIDocumentPickerDelegate {
-    let completionHandler: ([URL]?) -> Void
-
-    init(completionHandler: @escaping ([URL]?) -> Void) {
-        self.completionHandler = completionHandler
     }
 
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        completionHandler(urls)
+    // 기존 방문기록 구조체 유지
+    struct HistoryEntry: Identifiable, Hashable, Codable {
+        var id = UUID()
+        let url: URL
+        let title: String
+        let date: Date
     }
 
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        completionHandler(nil)
-    }
-}
-
-// MARK: - CookieSyncManager (쿠키 세션 공유)
-enum CookieSyncManager {
-    static func syncAppToWebView(_ webView: WKWebView, completion: (() -> Void)? = nil) {
-        let appCookies = HTTPCookieStorage.shared.cookies ?? []
-        guard !appCookies.isEmpty else { completion?(); return }
-        let store = webView.configuration.websiteDataStore.httpCookieStore
-        let group = DispatchGroup()
-        appCookies.forEach { cookie in
-            group.enter()
-            store.setCookie(cookie) { group.leave() }
-        }
-        group.notify(queue: .main) { completion?() }
+    static var globalHistory: [HistoryEntry] = [] {
+        didSet { saveGlobalHistory() }
     }
 
-    static func syncWebToApp(_ store: WKHTTPCookieStore, completion: (() -> Void)? = nil) {
-        store.getAllCookies { cookies in
-            let appStorage = HTTPCookieStorage.shared
-            cookies.forEach { appStorage.setCookie($0) }
-            completion?()
-        }
-    }
-}
-
-// MARK: - 전역 쿠키 동기화 추적
-private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
-
-// MARK: - WebViewStateModel 확장 (CustomWebView 연동용)
-extension WebViewStateModel {
-    /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
-    func setNavigatingFromWebView(_ value: Bool) {
-        self.isNavigatingFromWebView = value
-    }
-}
-
-// MARK: - WebViewStateModel 확장 (쿠키 세션 공유)
-extension WebViewStateModel {
-    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        _installCookieSyncIfNeeded(for: webView)
-        CookieSyncManager.syncAppToWebView(webView, completion: nil)
+    // ✨ 로딩 중지 메서드 추가
+    func stopLoading() {
+        webView?.stopLoading()
+        isLoading = false
+        dbg("⏹️ 로딩 중지")
     }
 
-    private func _installCookieSyncIfNeeded(for webView: WKWebView) {
-        if _cookieSyncInstalledModels.contains(self) { return }
-        _cookieSyncInstalledModels.add(self)
+    func clearHistory() {
+        WebViewStateModel.globalHistory = []
+        WebViewStateModel.saveGlobalHistory()
+        pageHistory.removeAll()
+        currentPageIndex = -1
+        updateNavigationState()
+        dbg("🧹 전체 히스토리 삭제")
+    }
 
-        let store = webView.configuration.websiteDataStore.httpCookieStore
-        store.add(self)
-
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"),
-            object: HTTPCookieStorage.shared,
-            queue: .main
-        ) { [weak webView] _ in
-            guard let webView = webView else { return }
-            CookieSyncManager.syncAppToWebView(webView, completion: nil)
+    private static func saveGlobalHistory() {
+        if let data = try? JSONEncoder().encode(globalHistory) {
+            UserDefaults.standard.set(data, forKey: "globalHistory")
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(globalHistory.count)개")
         }
     }
-}
 
-extension WebViewStateModel: WKHTTPCookieStoreObserver {
-    public func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        CookieSyncManager.syncWebToApp(cookieStore) {
-            // 쿠키 동기화 완료
+    static func loadGlobalHistory() {
+        if let data = UserDefaults.standard.data(forKey: "globalHistory"),
+           let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+            globalHistory = loaded
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 로드: \(loaded.count)개")
         }
     }
-}
 
-// MARK: - 파일 다운로드 지원 (iOS 14+)
-private final class DownloadCoordinator {
-    static let shared = DownloadCoordinator()
-    private init() {}
-    private var map = [ObjectIdentifier: URL]()
-    func set(url: URL, for download: WKDownload) { map[ObjectIdentifier(download)] = url }
-    func url(for download: WKDownload) -> URL? { map[ObjectIdentifier(download)] }
-    func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
-}
-
-private func sanitizedFilename(_ name: String) -> String {
-    var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
-    result = result.components(separatedBy: forbidden).joined(separator: "_")
-    if result.count > 150 {
-        result = String(result.prefix(150))
-    }
-    return result.isEmpty ? "download" : result
-}
-
-private func topMostViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first,
-          let root = window.rootViewController else { return nil }
-    var top = root
-    while let presented = top.presentedViewController { top = presented }
-    return top
-}
-
-// MARK: - WebViewStateModel: WKDownloadDelegate
-extension WebViewStateModel: WKDownloadDelegate {
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         decideDestinationUsing response: URLResponse,
-                         suggestedFilename: String,
-                         completionHandler: @escaping (URL?) -> Void) {
-
-        NotificationCenter.default.post(name: .WebViewDownloadStart,
-                                        object: nil,
-                                        userInfo: ["filename": suggestedFilename])
-
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
-
-        let safeName = sanitizedFilename(suggestedFilename)
-        let dst = downloadsDir.appendingPathComponent(safeName)
-
-        if FileManager.default.fileExists(atPath: dst.path) {
-            try? FileManager.default.removeItem(at: dst)
+    // MARK: - ✅ 히스토리 네비게이션 상태 체크 강화
+    
+    private func isHistoryNavigationActive() -> Bool {
+        // 기본 플래그 체크
+        if isHistoryNavigation {
+            dbg("✅ 히스토리 네비게이션 활성: isHistoryNavigation = true")
+            return true
         }
-
-        DownloadCoordinator.shared.set(url: dst, for: download)
-        completionHandler(dst)
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didWriteData bytesWritten: Int64,
-                         totalBytesWritten: Int64,
-                         totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
         
-        NotificationCenter.default.post(name: .WebViewDownloadProgress,
-                                        object: nil,
-                                        userInfo: ["progress": progress])
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didFailWithError error: Error,
-                         resumeData: Data?) {
-        let filename = DownloadCoordinator.shared.url(for: download)?.lastPathComponent ?? "파일"
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFailed, object: nil)
-
-        DispatchQueue.main.async {
-            if let top = topMostViewController() {
-                let alert = UIAlertController(title: "다운로드 실패",
-                                              message: "\(filename) 다운로드 중 오류가 발생했습니다.\n\(error.localizedDescription)",
-                                              preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "확인", style: .default))
-                top.present(alert, animated: true)
+        // 시간 기반 체크 (최근 2초 내에 히스토리 네비게이션이 시작된 경우)
+        if let startTime = historyNavigationStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed < 2.0 {  // 2초 내
+                dbg("✅ 히스토리 네비게이션 활성: 시작 후 \(elapsed)초 경과")
+                return true
+            } else {
+                dbg("⏰ 히스토리 네비게이션 타임아웃: \(elapsed)초 경과, 플래그 자동 해제")
+                // 타임아웃으로 플래그 자동 해제
+                isHistoryNavigation = false
+                historyNavigationStartTime = nil
+                return false
             }
         }
+        
+        return false
     }
 
-    @available(iOS 14.0, *)
-    public func downloadDidFinish(_ download: WKDownload) {
-        guard let fileURL = DownloadCoordinator.shared.url(for: download) else {
-            TabPersistenceManager.debugMessages.append("⚠️ 다운로드 완료했지만 파일 경로를 찾을 수 없음")
-            NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
+    // MARK: - ✅ URL 정규화 (네이버 카페 등 동적 파라미터 제거)
+    
+    private func normalizeURL(_ url: URL) -> String {
+        let urlString = url.absoluteString
+        
+        // 네이버 카페 정규화
+        if urlString.contains("cafe.naver.com") {
+            // articleid와 clubid만 추출해서 정규화
+            if let articleRange = urlString.range(of: "articleid="),
+               let clubRange = urlString.range(of: "clubid=") {
+                
+                let articleStart = articleRange.upperBound
+                let clubStart = clubRange.upperBound
+                
+                // articleid 추출
+                let articleSubstring = urlString[articleStart...]
+                let articleEnd = articleSubstring.firstIndex(where: { $0 == "&" || $0 == "#" || $0 == "?" }) ?? articleSubstring.endIndex
+                let articleId = String(articleSubstring[..<articleEnd])
+                
+                // clubid 추출  
+                let clubSubstring = urlString[clubStart...]
+                let clubEnd = clubSubstring.firstIndex(where: { $0 == "&" || $0 == "#" || $0 == "?" }) ?? clubSubstring.endIndex
+                let clubId = String(clubSubstring[..<clubEnd])
+                
+                let normalizedUrl = "https://cafe.naver.com/normalized?clubid=\(clubId)&articleid=\(articleId)"
+                dbg("🔧 네이버 카페 URL 정규화: \(urlString) → \(normalizedUrl)")
+                return normalizedUrl
+            }
+        }
+        
+        // 다음 카페 정규화
+        if urlString.contains("cafe.daum.net") {
+            if let range = urlString.range(of: "v/") {
+                let afterV = urlString[range.upperBound...]
+                if let endRange = afterV.firstIndex(where: { $0 == "?" || $0 == "#" || $0 == "&" }) {
+                    let articleId = String(afterV[..<endRange])
+                    let normalizedUrl = "https://cafe.daum.net/normalized/\(articleId)"
+                    dbg("🔧 다음 카페 URL 정규화: \(urlString) → \(normalizedUrl)")
+                    return normalizedUrl
+                }
+            }
+        }
+        
+        // 일반적인 URL에서 불필요한 파라미터 제거
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            // 제거할 파라미터들 (추적용, 세션용 등)
+            let parametersToRemove = [
+                "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+                "fbclid", "gclid", "ref", "referrer", "timestamp", "t", "ts", 
+                "_", "sessionid", "sid", "s", "from", "channel"
+            ]
+            
+            if let queryItems = components.queryItems {
+                let filteredItems = queryItems.filter { item in
+                    !parametersToRemove.contains(item.name.lowercased())
+                }
+                components.queryItems = filteredItems.isEmpty ? nil : filteredItems
+            }
+            
+            // fragment(#) 제거 (해시 부분)
+            components.fragment = nil
+            
+            let normalizedUrl = components.url?.absoluteString ?? urlString
+            if normalizedUrl != urlString {
+                dbg("🔧 일반 URL 정규화: \(urlString) → \(normalizedUrl)")
+            }
+            return normalizedUrl
+        }
+        
+        return urlString
+    }
+
+    // MARK: - ✅ 새로운 페이지 기록 시스템 (중복 저장 방지 강화)
+    
+    private func addNewPage(url: URL, title: String = "") {
+        dbg("📋 === addNewPage 호출 상세 분석 ===")
+        dbg("📋 추가하려는 URL: \(url.absoluteString)")
+        dbg("📋 추가하려는 제목: \(title)")
+        dbg("📋 현재 히스토리 상태:")
+        dbg("📋   - 총 페이지 수: \(pageHistory.count)")
+        dbg("📋   - 현재 인덱스: \(currentPageIndex)")
+        
+        if !pageHistory.isEmpty {
+            for (index, record) in pageHistory.enumerated() {
+                let marker = index == currentPageIndex ? "👉" : "  "
+                dbg("📋\(marker) [\(index)] \(record.title) | \(record.url.absoluteString)")
+            }
+        }
+        
+        dbg("📋 현재 플래그 상태:")
+        dbg("📋   - isHistoryNavigation: \(isHistoryNavigation)")
+        dbg("📋   - isHistoryNavigationActive(): \(isHistoryNavigationActive())")
+        dbg("📋   - isRestoringSession: \(isRestoringSession)")
+        dbg("📋   - isNavigatingFromWebView: \(isNavigatingFromWebView)")
+        
+        if let startTime = historyNavigationStartTime {
+            let elapsed = Date().timeIntervalSince(startTime)
+            dbg("📋   - 히스토리 네비게이션 시작 후 경과 시간: \(elapsed)초")
+        }
+        
+        // ✅ 강화된 조건 체크
+        if isHistoryNavigationActive() {
+            dbg("🚫 히스토리 네비게이션 활성 중 - 새 페이지 추가 방지")
+            dbg("📋 === addNewPage 호출 분석 끝 (추가 안함) ===")
             return
         }
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
-
-        DispatchQueue.main.async {
-            guard let top = topMostViewController() else { return }
-            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-            activityVC.popoverPresentationController?.sourceView = top.view
-            top.present(activityVC, animated: true)
+        
+        // ✅ 중복 URL 체크 강화 - 정규화된 URL로 비교
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
+            let currentRecord = pageHistory[currentPageIndex]
+            let currentNormalizedURL = normalizeURL(currentRecord.url)
+            let newNormalizedURL = normalizeURL(url)
+            
+            if currentNormalizedURL == newNormalizedURL {
+                dbg("🚫 중복 URL 감지 - 현재 페이지와 동일 (정규화됨): \(newNormalizedURL)")
+                
+                // 제목만 업데이트
+                var mutableRecord = currentRecord
+                let oldTitle = mutableRecord.title
+                mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
+                pageHistory[currentPageIndex] = mutableRecord
+                
+                dbg("📝 제목만 업데이트: '\(oldTitle)' → '\(mutableRecord.title)'")
+                dbg("📋 === addNewPage 호출 분석 끝 (중복으로 추가 안함) ===")
+                return
+            }
+        }
+        
+        // ✅ 히스토리 전체에서 중복 URL 체크 (최근 5개 페이지 내에서) - 정규화된 URL로 비교
+        let recentCheckCount = min(5, pageHistory.count)
+        let recentPages = pageHistory.suffix(recentCheckCount)
+        let newNormalizedURL = normalizeURL(url)
+        
+        for (index, record) in recentPages.enumerated() {
+            let actualIndex = pageHistory.count - recentCheckCount + index
+            let recordNormalizedURL = normalizeURL(record.url)
+            
+            if recordNormalizedURL == newNormalizedURL {
+                dbg("🚫 최근 히스토리에서 중복 URL 감지 [인덱스: \(actualIndex)] (정규화됨): \(newNormalizedURL)")
+                
+                // 해당 페이지로 이동하고 제목 업데이트
+                currentPageIndex = actualIndex
+                var mutableRecord = record
+                mutableRecord.updateTitle(title.isEmpty ? (url.host ?? "제목 없음") : title)
+                mutableRecord.updateAccess()
+                pageHistory[actualIndex] = mutableRecord
+                
+                // 해당 인덱스 이후의 forward 기록 제거
+                if actualIndex < pageHistory.count - 1 {
+                    let removedCount = pageHistory.count - actualIndex - 1
+                    pageHistory.removeSubrange((actualIndex + 1)...)
+                    dbg("🧹 중복 발견으로 인한 Forward 히스토리 정리: \(removedCount)개 제거")
+                }
+                
+                updateNavigationState()
+                dbg("🔄 기존 중복 페이지로 이동: '\(mutableRecord.title)' [인덱스: \(currentPageIndex)]")
+                dbg("📋 === addNewPage 호출 분석 끝 (중복으로 이동) ===")
+                return
+            }
+        }
+        
+        // 현재 위치 이후의 forward 기록 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🧹 Forward 히스토리 정리: \(removedCount)개 제거, \(pageHistory.count)개 남음")
+        }
+        
+        let newRecord = PageRecord(url: url, title: title.isEmpty ? (url.host ?? "제목 없음") : title)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // 최대 50개 유지
+        if pageHistory.count > 50 {
+            pageHistory.removeFirst()
+            currentPageIndex -= 1
+            dbg("🧹 히스토리 크기 제한: 첫 페이지 제거")
+        }
+        
+        updateNavigationState()
+        dbg("📄 ✅ 새 페이지 추가 완료: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+        dbg("📋 === addNewPage 호출 분석 끝 (추가 완료) ===")
+    }
+    
+    // 🔧 완전히 커스텀 히스토리 기반으로 상태 업데이트
+    private func updateNavigationState() {
+        let oldBack = canGoBack
+        let oldForward = canGoForward
+        
+        // WebView 네이티브 히스토리 무시하고 커스텀 히스토리만 사용
+        canGoBack = currentPageIndex > 0
+        canGoForward = currentPageIndex < pageHistory.count - 1
+        
+        if oldBack != canGoBack || oldForward != canGoForward {
+            dbg("🔄 네비게이션 상태 업데이트 (커스텀): back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
         }
     }
+    
+    func updateCurrentPageTitle(_ title: String) {
+        guard currentPageIndex >= 0, 
+              currentPageIndex < pageHistory.count,
+              !title.isEmpty else { 
+            dbg("📝 제목 업데이트 실패: 인덱스=\(currentPageIndex), 총개수=\(pageHistory.count), 제목='\(title)'")
+            return 
+        }
+        
+        var updatedRecord = pageHistory[currentPageIndex]
+        let oldTitle = updatedRecord.title
+        updatedRecord.updateTitle(title)
+        pageHistory[currentPageIndex] = updatedRecord
+        
+        dbg("📝 페이지 제목 업데이트: '\(oldTitle)' → '\(title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+    }
+    
+    var currentPageRecord: PageRecord? {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return nil }
+        return pageHistory[currentPageIndex]
+    }
+
+    // MARK: - 세션 저장/복원 (단순화)
+    
+    func saveSession() -> WebViewSession? {
+        guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
+            dbg("💾 세션 저장 실패: 히스토리 없음")
+            return nil
+        }
+        
+        let session = WebViewSession(pageRecords: pageHistory, currentIndex: currentPageIndex)
+        dbg("💾 세션 저장: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
+        return session
+    }
+
+    // ✅ 🔧 복원 과정 개선 (didFinish에서 복원 완료 처리)
+    func restoreSession(_ session: WebViewSession) {
+        dbg("🔄 === 세션 복원 시작 ===")
+        isRestoringSession = true
+        
+        pageHistory = session.pageRecords
+        currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
+        
+        dbg("🔄 복원된 히스토리:")
+        for (index, record) in pageHistory.enumerated() {
+            let marker = index == currentPageIndex ? "👉" : "  "
+            dbg("🔄\(marker) [\(index)] \(record.title) | \(record.url.absoluteString)")
+        }
+        
+        if let currentRecord = currentPageRecord {
+            isNavigatingFromWebView = true
+            currentURL = currentRecord.url
+            isNavigatingFromWebView = false
+            
+            dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
+        } else {
+            currentURL = nil
+            dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
+        }
+        
+        // 복원 즉시 상태 업데이트
+        updateNavigationState()
+        dbg("🔧 복원 후 즉시 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
+        
+        if let webView = webView, let url = currentURL {
+            webView.load(URLRequest(url: url))
+            dbg("🌐 복원 시 웹뷰 로드: \(url.absoluteString)")
+        }
+        
+        // ✅ 타이머 제거 - didFinish에서 복원 완료 처리
+        dbg("🔄 복원 타이머 없이 didFinish 대기")
+    }
+
+    // MARK: - 네비게이션 메서드 (WebView 네이티브 메서드 사용 안함)
+    
+    func goBack() {
+        guard canGoBack, currentPageIndex > 0 else { 
+            dbg("⬅️ 뒤로가기 불가: canGoBack=\(canGoBack), index=\(currentPageIndex)")
+            return 
+        }
+        
+        dbg("⬅️ === 뒤로가기 시작 ===")
+        dbg("⬅️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex - 1)")
+        
+        currentPageIndex -= 1
+        
+        if let record = currentPageRecord {
+            var mutableRecord = record
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+            
+            // ✅ 🔧 히스토리 네비게이션 플래그 설정 강화
+            dbg("⬅️ 히스토리 네비게이션 플래그 설정")
+            isHistoryNavigation = true
+            isNavigatingFromWebView = true
+            currentURL = record.url
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: record.url))
+                dbg("🌐 뒤로가기 웹뷰 로드: \(record.url.absoluteString)")
+            }
+            
+            updateNavigationState()
+            dbg("⬅️ 뒤로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+        }
+        dbg("⬅️ === 뒤로가기 끝 ===")
+    }
+    
+    func goForward() {
+        guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
+            dbg("➡️ 앞으로가기 불가: canGoForward=\(canGoForward), index=\(currentPageIndex), total=\(pageHistory.count)")
+            return 
+        }
+        
+        dbg("➡️ === 앞으로가기 시작 ===")
+        dbg("➡️ 현재 인덱스: \(currentPageIndex) → \(currentPageIndex + 1)")
+        
+        currentPageIndex += 1
+        
+        if let record = currentPageRecord {
+            var mutableRecord = record
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+            
+            // ✅ 🔧 히스토리 네비게이션 플래그 설정 강화
+            dbg("➡️ 히스토리 네비게이션 플래그 설정")
+            isHistoryNavigation = true
+            isNavigatingFromWebView = true
+            currentURL = record.url
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: record.url))
+                dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
+            }
+            
+            updateNavigationState()
+            dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+        }
+        dbg("➡️ === 앞으로가기 끝 ===")
+    }
+    
+    func reload() { 
+        guard let webView = webView else { return }
+        webView.reload()
+        dbg("🔄 페이지 새로고침")
+    }
+
+    // MARK: - 기존 호환성 API (기존 코드가 계속 작동하도록)
+    
+    var historyURLs: [String] {
+        return pageHistory.map { $0.url.absoluteString }
+    }
+
+    var currentHistoryIndex: Int {
+        return max(0, currentPageIndex)
+    }
+
+    func historyStackIfAny() -> [URL] {
+        return pageHistory.map { $0.url }
+    }
+
+    func currentIndexInSafeBounds() -> Int {
+        return max(0, min(currentPageIndex, pageHistory.count - 1))
+    }
+    
+    // MARK: - 기존 호환성 메서드
+    
+    func loadURLIfReady() {
+        if let url = currentURL, let webView = webView {
+            webView.load(URLRequest(url: url))
+            dbg("URL 로드 시도: \(url.absoluteString)")
+        } else {
+            dbg("URL 로드 실패: WebView 또는 URL 없음")
+        }
+    }
+
+    // MARK: - ✅ 전역 히스토리에서도 중복 체크 강화
+    private func addToGlobalHistoryIfNotDuplicate(url: URL, title: String) {
+        // 최근 10개 항목에서 중복 체크
+        let recentGlobalHistory = WebViewStateModel.globalHistory.suffix(10)
+        
+        for entry in recentGlobalHistory {
+            if entry.url.absoluteString == url.absoluteString {
+                dbg("🚫 전역 히스토리에서 중복 URL 발견, 추가하지 않음: \(url.absoluteString)")
+                return
+            }
+        }
+        
+        // 중복이 없으면 추가
+        WebViewStateModel.globalHistory.append(.init(url: url, title: title, date: Date()))
+        WebViewStateModel.saveGlobalHistory()
+        dbg("✅ 전역 히스토리에 추가: \(title) (\(url.absoluteString))")
+    }
+
+    // MARK: - WKNavigationDelegate (복원 중 상태 업데이트 방지)
+    
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        // ✨ 로딩 시작
+        isLoading = true
+        
+        let startURL = webView.url
+        dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
+        
+        // ✅ 스와이프 제스처 뒤로가기/앞으로가기 감지 개선
+        if let startURL = startURL, 
+           !isRestoringSession, 
+           !isHistoryNavigationActive(),
+           currentURL != startURL {
+            
+            dbg("👆 === 스와이프 제스처 감지 분석 ===")
+            dbg("👆 시작 URL: \(startURL.absoluteString)")
+            dbg("👆 현재 URL: \(currentURL?.absoluteString ?? "nil")")
+            
+            // 현재 커스텀 히스토리에서 URL 찾기 (정규화된 URL로 비교)
+            let startNormalizedURL = normalizeURL(startURL)
+            if let foundIndex = pageHistory.firstIndex(where: { normalizeURL($0.url) == startNormalizedURL }) {
+                let currentIndex = currentPageIndex
+                
+                dbg("👆 히스토리에서 발견: 인덱스 \(foundIndex), 현재 인덱스: \(currentIndex)")
+                
+                if foundIndex < currentIndex {
+                    // 스와이프 뒤로가기 감지
+                    dbg("👆 ⬅️ 스와이프 뒤로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
+                    currentPageIndex = foundIndex
+                    isHistoryNavigation = true
+                    
+                } else if foundIndex > currentIndex {
+                    // 스와이프 앞으로가기 감지
+                    dbg("👆 ➡️ 스와이프 앞으로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
+                    currentPageIndex = foundIndex
+                    isHistoryNavigation = true
+                    
+                } else {
+                    dbg("👆 같은 인덱스 - 일반 네비게이션으로 처리")
+                }
+                
+                if isHistoryNavigation {
+                    // 히스토리 기록 접근 시간 업데이트
+                    var mutableRecord = pageHistory[foundIndex]
+                    mutableRecord.updateAccess()
+                    pageHistory[foundIndex] = mutableRecord
+                    
+                    updateNavigationState()
+                    dbg("👆 스와이프 제스처로 히스토리 인덱스 동기화: \(foundIndex)")
+                }
+            } else {
+                dbg("👆 히스토리에 없는 URL - 일반 네비게이션으로 처리")
+            }
+            
+            dbg("👆 === 스와이프 제스처 감지 분석 끝 ===")
+        }
+        
+        // 🔧 리다이렉트 체인 감지 시작
+        if let url = startURL {
+            let now = Date()
+            
+            // 리다이렉트 체인 초기화 또는 연장
+            if redirectionChain.isEmpty || redirectionStartTime == nil || 
+               now.timeIntervalSince(redirectionStartTime!) > 3.0 {
+                // 새로운 네비게이션 시작
+                redirectionChain = [url]
+                redirectionStartTime = now
+                dbg("🔗 새 네비게이션 체인 시작: \(url.absoluteString)")
+            } else {
+                // 기존 리다이렉트 체인에 추가
+                redirectionChain.append(url)
+                dbg("🔗 리다이렉트 체인 연장: \(url.absoluteString) (총 \(redirectionChain.count)개)")
+            }
+        }
+        
+        // 웹뷰 내부 네비게이션 감지
+        if let startURL = startURL, currentURL != startURL && !isRestoringSession {
+            dbg("🔄 웹뷰 내부 네비게이션 감지: \(startURL.absoluteString)")
+        }
+    }
+
+    // 🔧 복원 중일 때 상태 업데이트 방지
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // ✨ 로딩 완료
+        isLoading = false
+        
+        self.webView = webView
+        
+        let title = webView.title ?? webView.url?.host ?? "제목 없음"
+        
+        // ✅ didFinish 시작 시점의 복원 상태 기억
+        let wasRestoringSession = isRestoringSession
+        
+        if let finalURL = webView.url {
+            dbg("🌐 === didFinish 상세 분석 ===")
+            dbg("🌐 didFinish URL: \(finalURL.absoluteString)")
+            dbg("🌐 didFinish 제목: '\(title)'")
+            dbg("📊 현재 상태 - currentURL: \(currentURL?.absoluteString ?? "nil"), 히스토리: \(pageHistory.count)개, 인덱스: \(currentPageIndex)")
+            dbg("🏷️ 플래그 상태:")
+            dbg("🏷️   - 복원중: \(isRestoringSession)")
+            dbg("🏷️   - 히스토리네비: \(isHistoryNavigation)")
+            dbg("🏷️   - 히스토리네비활성: \(isHistoryNavigationActive())")
+            dbg("🏷️   - 웹뷰네비: \(isNavigatingFromWebView)")
+            
+            if let startTime = historyNavigationStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                dbg("🏷️   - 히스토리 네비게이션 경과시간: \(elapsed)초")
+            }
+            
+            // ✅ 복원 상태 우선 처리 (절대 새 페이지 추가하지 않음)
+            if isRestoringSession {
+                dbg("🔄 === 복원 중 처리 ===")
+                updateCurrentPageTitle(title)
+                
+                // ✅ 복원 완료 처리를 didFinish에서 수행
+                isRestoringSession = false
+                updateNavigationState()
+                dbg("🔄 복원 완료: '\(title)' - isRestoringSession = false")
+                dbg("🔄 최종 상태: back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
+                dbg("🔄 === 복원 중 처리 끝 ===")
+                dbg("🔄 === 세션 복원 끝 ===")
+                
+            } else if isHistoryNavigationActive() {
+                dbg("🔄 === 히스토리 네비게이션 처리 (버튼 또는 스와이프) ===")
+                updateCurrentPageTitle(title)
+                
+                // ✅ 스와이프 제스처든 버튼이든 currentURL 동기화 (정규화된 URL로 비교)
+                let currentNormalizedURL = currentURL != nil ? normalizeURL(currentURL!) : nil
+                let finalNormalizedURL = normalizeURL(finalURL)
+                
+                if currentNormalizedURL != finalNormalizedURL {
+                    dbg("🔄 스와이프 제스처로 인한 주소창 동기화 (정규화됨): \(currentNormalizedURL ?? "nil") → \(finalNormalizedURL)")
+                    isNavigatingFromWebView = true
+                    currentURL = finalURL
+                    isNavigatingFromWebView = false
+                } else {
+                    dbg("🔄 주소창 이미 동기화됨 (정규화됨)")
+                }
+                
+                dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] - 새 페이지 추가 안함")
+                
+                // ✅ 히스토리 네비게이션 플래그 지연 해제 (시간 기반으로 더 안전하게)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.isHistoryNavigation = false
+                    self.isNavigatingFromWebView = false
+                    self.dbg("🏁 히스토리 네비게이션 플래그 지연 해제 완료 (스와이프/버튼)")
+                }
+                
+                dbg("🔄 === 히스토리 네비게이션 처리 끝 ===")
+                dbg("🌐 === didFinish 분석 끝 (히스토리) ===")
+                return // ❗️이거 반드시 필요 (else 블록 실행 방지)
+                
+            } else {
+                dbg("🆕 === 일반 네비게이션 처리 ===")
+                // 일반 네비게이션: 페이지 추가 여부 판단
+                let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
+                
+                dbg("🤔 새 페이지 추가 여부: \(shouldAddNewPage)")
+                
+                if shouldAddNewPage {
+                    isNavigatingFromWebView = true
+                    
+                    addNewPage(url: finalURL, title: title)
+                    dbg("🆕 새 페이지 기록: '\(title)' (\(finalURL.absoluteString))")
+                    
+                    // ✅ 전역 방문 기록 추가 (중복 체크 포함)
+                    addToGlobalHistoryIfNotDuplicate(url: finalURL, title: title)
+                    
+                    // currentURL 동기화 (didSet 호출 방지)
+                    currentURL = finalURL
+                    isNavigatingFromWebView = false
+                } else {
+                    // 새 페이지 추가는 하지 않지만 제목과 currentURL은 업데이트
+                    updateCurrentPageTitle(title)
+                    currentURL = finalURL
+                    dbg("📝 기존 페이지 업데이트: '\(title)' (\(finalURL.absoluteString))")
+                }
+                dbg("🆕 === 일반 네비게이션 처리 끝 ===")
+            }
+            
+            // 리다이렉트 체인 정리
+            redirectionChain.removeAll()
+            redirectionStartTime = nil
+            
+            dbg("🌐 === didFinish 분석 끝 ===")
+        }
+        
+        // ✅ 복원 완료 후에만 상태 업데이트 (처음에 복원 중이었다면 위에서 이미 처리됨)
+        if !wasRestoringSession {
+            updateNavigationState()
+        } else {
+            dbg("🔧 원래 복원 중이었으므로 상태 업데이트 생략 (위에서 처리됨)")
+        }
+        
+        dbg("🌐 로드 완료 → '\(title)' | back=\(canGoBack) forward=\(canGoForward) | 히스토리: \(pageHistory.count)개")
+        
+        // ✅ 복원이 아닐 때만 navigationDidFinish 호출
+        if !wasRestoringSession {  // 원래 복원 상태를 기억해야 함
+            navigationDidFinish.send(())
+        }
+    }
+    
+    // ✅ 🔧 리다이렉트를 고려한 페이지 추가 판단 로직 (중복 체크 강화)
+    private func shouldAddPageToHistory(finalURL: URL) -> Bool {
+        dbg("🤔 === shouldAddPageToHistory 분석 ===")
+        dbg("🤔 검사할 URL: \(finalURL.absoluteString)")
+        
+        // ✅ 강화된 히스토리 네비게이션 체크
+        if isHistoryNavigationActive() {
+            dbg("🚫 히스토리 네비게이션 활성 중 - 새 페이지 추가 방지")
+            dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+            return false
+        }
+        
+        // 히스토리가 비어있으면 무조건 추가
+        if pageHistory.isEmpty {
+            dbg("✅ 첫 페이지이므로 추가")
+            dbg("🤔 === shouldAddPageToHistory 분석 끝 (true) ===")
+            return true
+        }
+        
+        // ✅ 정규화된 URL 미리 계산 (중복 선언 방지)
+        let finalNormalizedURL = normalizeURL(finalURL)
+        
+        // ✅ 현재 페이지와 완전히 같은 URL인지 체크 - 정규화된 URL로 비교
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
+            let currentRecord = pageHistory[currentPageIndex]
+            let currentNormalizedURL = normalizeURL(currentRecord.url)
+            
+            if currentNormalizedURL == finalNormalizedURL {
+                dbg("🚫 현재 페이지와 동일한 URL (정규화됨) - 제목만 업데이트: \(finalNormalizedURL)")
+                dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+                return false
+            }
+        }
+        
+        // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서) - 정규화된 URL로 비교
+        let recentCheckCount = min(3, pageHistory.count)
+        let recentPages = pageHistory.suffix(recentCheckCount)
+        
+        for record in recentPages {
+            let recordNormalizedURL = normalizeURL(record.url)
+            if recordNormalizedURL == finalNormalizedURL {
+                dbg("🚫 최근 히스토리에서 중복 URL 발견 (정규화됨): \(finalNormalizedURL)")
+                dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+                return false
+            }
+        }
+        
+        // 마지막 페이지와 URL이 완전히 다르면 추가
+        guard let lastRecord = pageHistory.last else {
+            dbg("✅ 마지막 기록이 없으므로 추가")
+            dbg("🤔 === shouldAddPageToHistory 분석 끝 (true) ===")
+            return true
+        }
+        
+        dbg("🤔 마지막 기록: \(lastRecord.url.absoluteString)")
+        
+        let lastNormalizedURL = normalizeURL(lastRecord.url)
+        dbg("🤔 정규화된 URL 비교: \(lastNormalizedURL == finalNormalizedURL)")
+        
+        if lastNormalizedURL != finalNormalizedURL {
+            // 리다이렉트 체인 분석
+            if redirectionChain.count > 1 {
+                dbg("🤔 리다이렉트 체인 감지: \(redirectionChain.count)개")
+                // 리다이렉트가 발생한 경우
+                let firstURL = redirectionChain.first!
+                let lastURL = redirectionChain.last!
+                
+                dbg("🤔 리다이렉트 체인: \(firstURL.absoluteString) → \(lastURL.absoluteString)")
+                
+                // 시작 URL과 마지막 기록이 같고, 최종 URL이 다르면 리다이렉트로 판단 (정규화된 URL로 비교)
+                let firstNormalizedURL = normalizeURL(firstURL)
+                let lastChainNormalizedURL = normalizeURL(lastURL)
+                
+                if lastNormalizedURL == firstNormalizedURL && lastChainNormalizedURL == finalNormalizedURL {
+                    dbg("🔄 리다이렉트 감지 (정규화됨): \(firstNormalizedURL) → \(finalNormalizedURL)")
+                    
+                    // 도메인이 같은 리다이렉트면 기존 페이지 업데이트만
+                    if firstURL.host == finalURL.host {
+                        dbg("🏠 같은 도메인 리다이렉트 - 기존 페이지 업데이트")
+                        dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+                        return false
+                    } else {
+                        dbg("🌍 다른 도메인 리다이렉트 - 새 페이지 추가")
+                        dbg("🤔 === shouldAddPageToHistory 분석 끝 (true) ===")
+                        return true
+                    }
+                }
+            }
+            
+            dbg("✅ 다른 URL이므로 새 페이지 추가 (정규화됨): \(lastNormalizedURL) → \(finalNormalizedURL)")
+            dbg("🤔 === shouldAddPageToHistory 분석 끝 (true) ===")
+            return true
+        } else {
+            dbg("📝 같은 URL (정규화됨) - 제목만 업데이트")
+            dbg("🤔 === shouldAddPageToHistory 분석 끝 (false) ===")
+            return false
+        }
+    }
+
+    // ✨ 에러 처리 강화 - 네트워크 오류 감지 및 알림 전송
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // ✨ 로딩 실패 시 상태 업데이트
+        isLoading = false
+        
+        dbg("❌ 로드 실패(Provisional): \(error.localizedDescription)")
+        
+        // ✨ 에러 알림 전송
+        if let tabID = tabID {
+            NotificationCenter.default.post(
+                name: .webViewDidFailLoad,
+                object: nil,
+                userInfo: [
+                    "tabID": tabID.uuidString,
+                    "error": error,
+                    "url": webView.url?.absoluteString ?? currentURL?.absoluteString ?? ""
+                ]
+            )
+        }
+        
+        // 리다이렉트 체인 정리
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
+        
+        // ✅ 플래그 정리
+        isRestoringSession = false
+        isHistoryNavigation = false
+        historyNavigationStartTime = nil
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        // ✨ 로딩 실패 시 상태 업데이트
+        isLoading = false
+        
+        dbg("❌ 로드 실패(Navigation): \(error.localizedDescription)")
+        
+        // ✨ 에러 알림 전송
+        if let tabID = tabID {
+            NotificationCenter.default.post(
+                name: .webViewDidFailLoad,
+                object: nil,
+                userInfo: [
+                    "tabID": tabID.uuidString,
+                    "error": error,
+                    "url": webView.url?.absoluteString ?? currentURL?.absoluteString ?? ""
+                ]
+            )
+        }
+        
+        // 리다이렉트 체인 정리
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
+        
+        // ✅ 플래그 정리
+        isRestoringSession = false
+        isHistoryNavigation = false
+        historyNavigationStartTime = nil
+    }
+
+    // ✨ HTTP 상태 코드 에러 감지 (응답 정책 결정 시)
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        
+        // HTTP 응답 상태 코드 체크
+        if let httpResponse = navigationResponse.response as? HTTPURLResponse {
+            let statusCode = httpResponse.statusCode
+            dbg("📡 HTTP 상태 코드: \(statusCode) - \(navigationResponse.response.url?.absoluteString ?? "")")
+            
+            // 4xx, 5xx 에러 상태 코드 감지
+            if statusCode >= 400 {
+                dbg("❌ HTTP 에러 상태 코드 감지: \(statusCode)")
+                
+                // ✨ HTTP 에러 알림 전송
+                if let tabID = tabID {
+                    NotificationCenter.default.post(
+                        name: .webViewDidFailLoad,
+                        object: nil,
+                        userInfo: [
+                            "tabID": tabID.uuidString,
+                            "statusCode": statusCode,
+                            "url": navigationResponse.response.url?.absoluteString ?? ""
+                        ]
+                    )
+                }
+            }
+        }
+        
+        // 기존 다운로드 처리 로직 (iOS 14+)
+        if #available(iOS 14.0, *) {
+            if let http = navigationResponse.response as? HTTPURLResponse,
+               let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
+               disp.contains("attachment") {
+                decisionHandler(.download)
+                return
+            }
+        }
+        
+        decisionHandler(.allow)
+    }
+
+    // MARK: - 디버그 로그
+    private func dbg(_ msg: String) {
+        let id: String
+        if let tabID = tabID {
+            id = String(tabID.uuidString.prefix(6))
+        } else {
+            id = "noTab"
+        }
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
+    }
+
+    // ✅ 디버그를 위한 히스토리 상태 출력 메서드
+    func printHistoryState(reason: String = "") {
+        if !reason.isEmpty {
+            dbg("📋 === 히스토리 상태 출력 (\(reason)) ===")
+        } else {
+            dbg("📋 === 현재 히스토리 상태 ===")
+        }
+        
+        dbg("📋 총 \(pageHistory.count)개 페이지, 현재 인덱스: \(currentPageIndex)")
+        
+        if pageHistory.isEmpty {
+            dbg("📋 (히스토리가 비어있음)")
+        } else {
+            for (index, record) in pageHistory.enumerated() {
+                let marker = index == currentPageIndex ? "👉" : "  "
+                dbg("📋\(marker) [\(index)] \(record.title) | \(record.url.absoluteString)")
+            }
+        }
+        
+        dbg("📋 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward)")
+        dbg("📋 === 히스토리 상태 출력 끝 ===")
+    }
+
+    // MARK: - 방문기록 페이지 (기존 UI 유지하면서 새 시스템 연동)
+    struct HistoryPage: View {
+        @ObservedObject var state: WebViewStateModel
+        @State private var searchQuery: String = ""
+        @Environment(\.dismiss) private var dismiss
+        
+        private var dateFormatter: DateFormatter = {
+            let df = DateFormatter()
+            df.dateStyle = .medium
+            df.timeStyle = .short
+            return df
+        }()
+
+        // 현재 세션 히스토리
+        private var sessionHistory: [PageRecord] {
+            return state.pageHistory.reversed()
+        }
+        
+        // 전역 히스토리 (검색 필터링)
+        private var filteredGlobalHistory: [HistoryEntry] {
+            let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if q.isEmpty { return WebViewStateModel.globalHistory.sorted { $0.date > $1.date } }
+            return WebViewStateModel.globalHistory
+                .filter { $0.url.absoluteString.lowercased().contains(q) || $0.title.lowercased().contains(q) }
+                .sorted { $0.date > $1.date }
+        }
+
+        init(state: WebViewStateModel) {
+            self._state = ObservedObject(wrappedValue: state)
+        }
+
+        var body: some View {
+            List {
+                // 현재 세션 히스토리
+                if !sessionHistory.isEmpty {
+                    Section("현재 세션") {
+                        ForEach(sessionHistory) { record in
+                            SessionHistoryRowView(
+                                record: record, 
+                                isCurrent: record.id == state.currentPageRecord?.id
+                            )
+                            .onTapGesture {
+                                // 특정 페이지로 직접 이동
+                                if let index = state.pageHistory.firstIndex(where: { $0.id == record.id }) {
+                                    state.currentPageIndex = index
+                                    state.currentURL = record.url
+                                    if let webView = state.webView {
+                                        webView.load(URLRequest(url: record.url))
+                                    }
+                                    state.updateNavigationState()
+                                    dismiss()
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 전역 히스토리
+                Section("전체 기록") {
+                    ForEach(filteredGlobalHistory) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "globe")
+                                    .frame(width: 16, height: 16)
+                                    .foregroundColor(.blue)
+                                
+                                Text(item.title)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                
+                                Spacer()
+                                
+                                Text(dateFormatter.string(from: item.date))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text(item.url.absoluteString)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                        }
+                        .padding(.vertical, 2)
+                        .onTapGesture {
+                            // 전역 히스토리에서 페이지 로드
+                            state.currentURL = item.url
+                            dismiss()
+                        }
+                    }
+                    .onDelete(perform: deleteGlobalHistory)
+                }
+            }
+            .navigationTitle("방문 기록")
+            .searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always))
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("모두 지우기") {
+                        state.clearHistory()
+                    }
+                }
+            }
+        }
+
+        func deleteGlobalHistory(at offsets: IndexSet) {
+            let items = filteredGlobalHistory
+            let targets = offsets.map { items[$0] }
+            WebViewStateModel.globalHistory.removeAll { targets.contains($0) }
+            WebViewStateModel.saveGlobalHistory()
+            TabPersistenceManager.debugMessages.append("[\(ts())] 🧹 방문 기록 삭제: \(targets.count)개")
+        }
+    }
+}
+
+// MARK: - 세션 히스토리 행 뷰
+struct SessionHistoryRowView: View {
+    let record: PageRecord
+    let isCurrent: Bool
+    
+    var body: some View {
+        HStack {
+            // 현재 페이지 표시
+            Image(systemName: isCurrent ? "arrow.right.circle.fill" : "circle")
+                .foregroundColor(isCurrent ? .blue : .gray)
+                .frame(width: 20)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.title)
+                    .font(isCurrent ? .headline : .body)
+                    .fontWeight(isCurrent ? .bold : .regular)
+                    .lineLimit(1)
+                
+                Text(record.url.absoluteString)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .lineLimit(1)
+                
+                HStack {
+                    Text("ID: \(String(record.id.uuidString.prefix(8)))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(DateFormatter.shortTime.string(from: record.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .background(isCurrent ? Color.blue.opacity(0.1) : Color.clear)
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - DateFormatter 확장
+extension DateFormatter {
+    static let shortTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
