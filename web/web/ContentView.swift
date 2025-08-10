@@ -1,906 +1,598 @@
-//
-//  CustomWebView.swift
-//
-//  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
-//  - WebViewStateModel isLoading 상태와 동기화 강화
-//  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
-//  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
-//  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
-//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
-//
-
 import SwiftUI
+import AVKit
 import WebKit
-import AVFoundation
-import UIKit
-import UniformTypeIdentifiers
-import Foundation
-import Security
 
-// MARK: - 다운로드 진행 알림 이름 정의
-extension Notification.Name {
-    static let WebViewDownloadStart    = Notification.Name("WebViewDownloadStart")
-    static let WebViewDownloadProgress = Notification.Name("WebViewDownloadProgress")
-    static let WebViewDownloadFinish   = Notification.Name("WebViewDownloadFinish")
-    static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
+// ============================================================
+// UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
+// - 배경은 .clear 유지 (흰 박스/여백 방지)
+// - 재질(blurStyle)은 호출부에서 지정
+// ============================================================
+struct VisualEffectBlur: UIViewRepresentable {
+    var blurStyle: UIBlurEffect.Style
+    var cornerRadius: CGFloat = 0
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let effect = UIBlurEffect(style: blurStyle)
+        let v = UIVisualEffectView(effect: effect)
+        v.clipsToBounds = true
+        v.layer.cornerRadius = cornerRadius
+        v.backgroundColor = .clear
+        return v
+    }
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
+        uiView.effect = UIBlurEffect(style: blurStyle)
+        uiView.layer.cornerRadius = cornerRadius
+        uiView.backgroundColor = .clear
+    }
 }
 
-// MARK: - CustomWebView (UIViewRepresentable)
-struct CustomWebView: UIViewRepresentable {
-    @ObservedObject var stateModel: WebViewStateModel
-    @Binding var playerURL: URL?
-    @Binding var showAVPlayer: Bool
-    var onScroll: ((CGFloat) -> Void)? = nil
+/// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
+struct ContentView: View {
+    // MARK: - 속성 정의
+    @Binding var tabs: [WebTab]
+    @Binding var selectedTabIndex: Int
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    @State private var inputURL: String = ""
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var textFieldSelectedAll = false
+    @State private var showHistorySheet = false
+    @State private var showTabManager = false
+    @State private var showDebugView = false
+    @State private var showAddressBar = false
+    @State private var scrollOffset: CGFloat = 0
+    @State private var previousOffset: CGFloat = 0
 
-    // MARK: - makeUIView
-    func makeUIView(context: Context) -> WKWebView {
-        // ✅ 오디오 세션 활성화
-        configureAudioSessionForMixing()
+    @State private var ignoreAutoHideUntil: Date = .distantPast
+    private let focusDebounceSeconds: TimeInterval = 0.5
 
-        // WKWebView 설정
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-        config.websiteDataStore = WKWebsiteDataStore.default()
-        config.processPool = WKProcessPool()
+    @State private var lastWebContentOffsetY: CGFloat = 0
 
-        // 사용자 스크립트/메시지 핸들러
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.add(context.coordinator, name: "playVideo")
-        config.userContentController = controller
+    // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
+    @State private var allowTopOverlap: Bool = false
+    
+    // ✨ 에러 처리 및 로딩 상태
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+    @State private var errorTitle = ""
 
-        // ✨ 다운로드 지원 (iOS 14+)
-        if #available(iOS 14.0, *) {
-            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        }
+    // ============================================================
+    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
+    // ============================================================
+    private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
+    private let barCornerRadius: CGFloat       = 22
+    private let barVPadding: CGFloat           = 12
+    private let iconSize: CGFloat              = 23
+    private let textFont: Font                 = .system(size: 18, weight: .semibold)
+    private let toolbarSpacing: CGFloat        = 22
 
-        // WKWebView 생성
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-        webView.scrollView.decelerationRate = .normal
+    // ✨ 핵심 수정: 가장 투명한 블러 + 흰색 틴트로 은은한 효과
+    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
+    private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
-        // ✅ 하단 UI 겹치기를 위한 투명 처리
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isOpaque = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.scrollView.contentInset = .zero
-        webView.scrollView.scrollIndicatorInsets = .zero
+    var body: some View {
+        if tabs.indices.contains(selectedTabIndex) {
+            let state = tabs[selectedTabIndex].stateModel
 
-        // ✨ 강화된 Delegate 연결 (로딩 상태 동기화)
-        webView.navigationDelegate = context.coordinator  // ⚠️ 중요: Coordinator로 변경
-        webView.uiDelegate = context.coordinator
-        context.coordinator.webView = webView
-        stateModel.webView = webView
-
-        // Pull to Refresh
-        let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(
-            context.coordinator,
-            action: #selector(Coordinator.handleRefresh(_:)),
-            for: .valueChanged
-        )
-        webView.scrollView.refreshControl = refreshControl
-        webView.scrollView.delegate = context.coordinator
-
-        // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
-        context.coordinator.setupLoadingObservers(for: webView)
-
-        // 초기 로드
-        if let url = stateModel.currentURL {
-            webView.load(URLRequest(url: url))
-            TabPersistenceManager.debugMessages.append("🌐 CustomWebView 초기 URL 로드: \(url.absoluteString)")
-        } else {
-            webView.load(URLRequest(url: URL(string: "about:blank")!))
-            TabPersistenceManager.debugMessages.append("🌐 CustomWebView 빈 페이지 로드")
-        }
-
-        // 외부 제어용 Notification 옵저버 등록
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.handleExternalOpenURL(_:)),
-            name: .init("ExternalOpenURL"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.reloadWebView),
-            name: .init("WebViewReload"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.goBack),
-            name: .init("WebViewGoBack"),
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            context.coordinator,
-            selector: #selector(Coordinator.goForward),
-            name: .init("WebViewGoForward"),
-            object: nil
-        )
-
-        // 다운로드 진행률 UI 오버레이 구성
-        context.coordinator.installDownloadOverlay(on: webView)
-
-        // 다운로드 관련 이벤트 옵저버 등록
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
-                                               name: .WebViewDownloadStart,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
-                                               name: .WebViewDownloadProgress,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
-                                               name: .WebViewDownloadFinish,
-                                               object: nil)
-        NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
-                                               name: .WebViewDownloadFailed,
-                                               object: nil)
-
-        return webView
-    }
-
-    // MARK: - updateUIView
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 연결 상태 확인 및 재연결
-        if uiView.uiDelegate !== context.coordinator {
-            uiView.uiDelegate = context.coordinator
-        }
-        if uiView.navigationDelegate !== context.coordinator {
-            uiView.navigationDelegate = context.coordinator
-        }
-        if context.coordinator.webView !== uiView {
-            context.coordinator.webView = uiView
-        }
-
-        // ✅ 하단 UI 겹치기를 위한 투명 설정 유지
-        if uiView.isOpaque { uiView.isOpaque = false }
-        if uiView.backgroundColor != .clear { uiView.backgroundColor = .clear }
-        if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
-        uiView.scrollView.isOpaque = false
-    }
-
-    // MARK: - teardown
-    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        // KVO 옵저버 제거
-        coordinator.removeLoadingObservers(for: uiView)
-        
-        // 스크롤/델리게이트 해제
-        uiView.scrollView.delegate = nil
-        uiView.uiDelegate = nil
-        uiView.navigationDelegate = nil
-        coordinator.webView = nil
-
-        // 오디오 세션 비활성화
-        coordinator.parent.deactivateAudioSession()
-
-        // 메시지 핸들러 제거
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
-
-        // 모든 옵저버 제거
-        NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer)
-    private func makeVideoScript() -> WKUserScript {
-        let scriptSource = """
-        function processVideos(doc) {
-            [...doc.querySelectorAll('video')].forEach(video => {
-                // iOS 자동재생 제약 회피
-                video.muted = true;
-                video.volume = 0;
-                video.setAttribute('muted','true');
-
-                // AVPlayer로 넘기는 클릭 핸들러 1회만 부착
-                if (!video.hasAttribute('nativeAVPlayerListener')) {
-                    video.addEventListener('click', () => {
-                        window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                    });
-                    video.setAttribute('nativeAVPlayerListener', 'true');
-                }
-
-                // PiP 자동 진입 시도
-                if (document.pictureInPictureEnabled &&
-                    !video.disablePictureInPicture &&
-                    !document.pictureInPictureElement) {
-                    try { video.requestPictureInPicture().catch(() => {}); } catch (e) {}
-                }
-            });
-        }
-
-        processVideos(document);
-        setInterval(() => {
-            processVideos(document);
-            [...document.querySelectorAll('iframe')].forEach(iframe => {
-                try {
-                    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                    if (doc) processVideos(doc);
-                } catch (e) {}
-            });
-        }, 1000);
-        """
-        return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-    }
-
-    // MARK: - 오디오 세션
-    private func configureAudioSessionForMixing() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, options: [.mixWithOthers])
-        try? session.setActive(true)
-        TabPersistenceManager.debugMessages.append("🔊 오디오 세션 활성화")
-    }
-
-    private func deactivateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-        TabPersistenceManager.debugMessages.append("🔇 오디오 세션 비활성화")
-    }
-
-    // MARK: - Coordinator
-    class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
-
-        var parent: CustomWebView
-        weak var webView: WKWebView?
-        var filePicker: FilePicker?
-
-        // 다운로드 진행률 UI 구성 요소들
-        private var overlayContainer: UIVisualEffectView?
-        private var overlayTitleLabel: UILabel?
-        private var overlayPercentLabel: UILabel?
-        private var overlayProgress: UIProgressView?
-
-        // ✨ KVO 옵저버들 (로딩 상태 동기화용)
-        private var loadingObserver: NSKeyValueObservation?
-        private var urlObserver: NSKeyValueObservation?
-        private var titleObserver: NSKeyValueObservation?
-
-        init(_ parent: CustomWebView) { 
-            self.parent = parent 
-        }
-
-        deinit {
-            removeLoadingObservers(for: webView)
-        }
-
-        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
-        func setupLoadingObservers(for webView: WKWebView) {
-            // isLoading 상태 관찰
-            loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let isLoading = change.newValue ?? false
-                
-                DispatchQueue.main.async {
-                    // ✨ StateModel의 isLoading과 동기화
-                    if self.parent.stateModel.isLoading != isLoading {
-                        self.parent.stateModel.isLoading = isLoading
-                        TabPersistenceManager.debugMessages.append("📡 CustomWebView 로딩 상태 동기화: \(isLoading)")
-                    }
-                }
-            }
-
-            // URL 변경 관찰
-            urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let newURL = change.newValue, let url = newURL else { return }
-                
-                DispatchQueue.main.async {
-                    // StateModel의 currentURL과 동기화 (무한 루프 방지)
-                    if self.parent.stateModel.currentURL != url {
-                        self.parent.stateModel.setNavigatingFromWebView(true)
-                        self.parent.stateModel.currentURL = url
-                        self.parent.stateModel.setNavigatingFromWebView(false)
-                        TabPersistenceManager.debugMessages.append("🔄 CustomWebView URL 동기화: \(url.absoluteString)")
-                    }
-                }
-            }
-
-            // 제목 변경 관찰
-            titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
-                
-                DispatchQueue.main.async {
-                    self.parent.stateModel.updateCurrentPageTitle(title)
-                    TabPersistenceManager.debugMessages.append("📝 CustomWebView 제목 동기화: \(title)")
-                }
-            }
-        }
-
-        func removeLoadingObservers(for webView: WKWebView?) {
-            loadingObserver?.invalidate()
-            urlObserver?.invalidate()
-            titleObserver?.invalidate()
-            loadingObserver = nil
-            urlObserver = nil
-            titleObserver = nil
-        }
-
-        // MARK: - ✨ WKNavigationDelegate (에러 처리 강화)
-        
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            // ✨ 로딩 시작을 StateModel에 전달 (이미 KVO로 동기화되지만 명시적으로도 설정)
-            DispatchQueue.main.async {
-                if !self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = true
-                    TabPersistenceManager.debugMessages.append("🌐 CustomWebView 로딩 시작")
-                }
-            }
-            
-            // 기존 StateModel의 didStartProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didStartProvisionalNavigation: navigation)
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // ✨ 로딩 완료를 StateModel에 전달
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                    TabPersistenceManager.debugMessages.append("✅ CustomWebView 로딩 완료")
-                }
-            }
-            
-            // 기존 StateModel의 didFinish 호출
-            parent.stateModel.webView(webView, didFinish: navigation)
-        }
-
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                    TabPersistenceManager.debugMessages.append("❌ CustomWebView 로딩 실패(Provisional)")
-                }
-            }
-            
-            // ✨ 에러 알림 전송 (StateModel의 tabID 사용)
-            if let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("📡 CustomWebView 에러 알림 전송: \(error.localizedDescription)")
-            }
-            
-            // 기존 StateModel의 didFailProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-        }
-
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                    TabPersistenceManager.debugMessages.append("❌ CustomWebView 로딩 실패(Navigation)")
-                }
-            }
-            
-            // ✨ 에러 알림 전송
-            if let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: .webViewDidFailLoad,
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("📡 CustomWebView 에러 알림 전송: \(error.localizedDescription)")
-            }
-            
-            // 기존 StateModel의 didFail 호출
-            parent.stateModel.webView(webView, didFail: navigation, withError: error)
-        }
-
-        // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서)
-        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            
-            // HTTP 응답 상태 코드 체크
-            if let httpResponse = navigationResponse.response as? HTTPURLResponse {
-                let statusCode = httpResponse.statusCode
-                TabPersistenceManager.debugMessages.append("📡 CustomWebView HTTP 상태: \(statusCode)")
-                
-                // 4xx, 5xx 에러 상태 코드 감지
-                if statusCode >= 400 {
-                    TabPersistenceManager.debugMessages.append("❌ CustomWebView HTTP 에러 감지: \(statusCode)")
-                    
-                    // ✨ HTTP 에러 알림 전송
-                    if let tabID = parent.stateModel.tabID {
-                        NotificationCenter.default.post(
-                            name: .webViewDidFailLoad,
-                            object: nil,
-                            userInfo: [
-                                "tabID": tabID.uuidString,
-                                "statusCode": statusCode,
-                                "url": navigationResponse.response.url?.absoluteString ?? ""
-                            ]
-                        )
-                        TabPersistenceManager.debugMessages.append("📡 CustomWebView HTTP 에러 알림 전송: \(statusCode)")
-                    }
-                }
-            }
-            
-            // 다운로드 처리 (iOS 14+)
-            if #available(iOS 14.0, *) {
-                if let http = navigationResponse.response as? HTTPURLResponse,
-                   let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
-                   disp.contains("attachment") {
-                    decisionHandler(.download)
-                    return
-                }
-            }
-            
-            decisionHandler(.allow)
-        }
-
-        // ✨ 다운로드 지원 (iOS 14+)
-        @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-            download.delegate = parent.stateModel
-            TabPersistenceManager.debugMessages.append("⬇️ CustomWebView 다운로드 시작")
-        }
-
-        // MARK: JS → 네이티브 메시지 처리
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "playVideo" else { return }
-            if let urlString = message.body as? String, let url = URL(string: urlString) {
-                DispatchQueue.main.async {
-                    self.parent.playerURL = url
-                    self.parent.showAVPlayer = true
-                    TabPersistenceManager.debugMessages.append("🎬 비디오 AVPlayer 재생: \(urlString)")
-                }
-            }
-        }
-
-        // MARK: Pull to Refresh
-        @objc func handleRefresh(_ sender: UIRefreshControl) {
-            webView?.reload()
-            TabPersistenceManager.debugMessages.append("🔄 Pull-to-Refresh 새로고침")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                sender.endRefreshing()
-            }
-        }
-
-        // MARK: 외부 URL 오픈
-        @objc func handleExternalOpenURL(_ note: Notification) {
-            guard
-                let userInfo = note.userInfo,
-                let url = userInfo["url"] as? URL,
-                let webView = webView
-            else { return }
-            webView.load(URLRequest(url: url))
-            TabPersistenceManager.debugMessages.append("🔗 외부 URL 오픈: \(url.absoluteString)")
-        }
-
-        // MARK: 네비게이션 명령
-        @objc func reloadWebView() { 
-            webView?.reload()
-            TabPersistenceManager.debugMessages.append("🔄 WebView 새로고침")
-        }
-        @objc func goBack() { 
-            if webView?.canGoBack == true { 
-                webView?.goBack()
-                TabPersistenceManager.debugMessages.append("⬅️ WebView 뒤로가기")
-            }
-        }
-        @objc func goForward() { 
-            if webView?.canGoForward == true { 
-                webView?.goForward()
-                TabPersistenceManager.debugMessages.append("➡️ WebView 앞으로가기")
-            }
-        }
-
-        // MARK: 스크롤 전달
-        func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            parent.onScroll?(scrollView.contentOffset.y)
-        }
-
-        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
-        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            
-            let host = challenge.protectionSpace.host
-            TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 검증 요청: \(host)")
-            
-            // 서버 신뢰성 검증 (SSL/TLS)
-            if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-                
-                // ✅ 먼저 시스템 기본 검증 시도
-                guard let serverTrust = challenge.protectionSpace.serverTrust else {
-                    completionHandler(.performDefaultHandling, nil)
-                    return
-                }
-                
-                // 시스템 기본 정책으로 검증
-                var secResult = SecTrustResultType.invalid
-                let status = SecTrustEvaluate(serverTrust, &secResult)
-                
-                if status == errSecSuccess && 
-                   (secResult == .unspecified || secResult == .proceed) {
-                    // ✅ 시스템이 신뢰하는 인증서 - 자동 허용
-                    let credential = URLCredential(trust: serverTrust)
-                    completionHandler(.useCredential, credential)
-                    TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 시스템 검증 통과: \(host)")
-                    return
-                }
-                
-                // ❌ 시스템 검증 실패 - 사용자에게 묻기
-                TabPersistenceManager.debugMessages.append("⚠️ SSL 인증서 시스템 검증 실패: \(host)")
-                
-                DispatchQueue.main.async {
-                    guard let topVC = self.topMostViewController() else {
-                        // UI가 없으면 기본 처리
-                        completionHandler(.performDefaultHandling, nil)
-                        return
-                    }
-                    
-                    let alert = UIAlertController(
-                        title: "보안 연결 경고", 
-                        message: "\(host)의 보안 인증서에 문제가 있습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
-                        preferredStyle: .alert
-                    )
-                    
-                    // 무시하고 방문
-                    alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
-                        let credential = URLCredential(trust: serverTrust)
-                        completionHandler(.useCredential, credential)
-                        TabPersistenceManager.debugMessages.append("🔓 SSL 인증서 사용자 허용: \(host)")
-                    })
-                    
-                    // 취소 (안전한 선택)
-                    alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
-                        completionHandler(.cancelAuthenticationChallenge, nil)
-                        TabPersistenceManager.debugMessages.append("🚫 SSL 인증서 사용자 거부: \(host)")
-                        
-                        // SSL 에러 알림 전송
-                        if let tabID = self.parent.stateModel.tabID {
-                            NotificationCenter.default.post(
-                                name: .webViewDidFailLoad,
-                                object: nil,
-                                userInfo: [
-                                    "tabID": tabID.uuidString,
-                                    "sslError": true,
-                                    "url": "https://\(host)"
-                                ]
-                            )
+            ZStack {
+                // MARK: 웹 콘텐츠 영역
+                if state.currentURL != nil {
+                    CustomWebView(
+                        stateModel: state,
+                        playerURL: Binding(
+                            get: { tabs[selectedTabIndex].playerURL },
+                            set: { tabs[selectedTabIndex].playerURL = $0 }
+                        ),
+                        showAVPlayer: Binding(
+                            get: { tabs[selectedTabIndex].showAVPlayer },
+                            set: { tabs[selectedTabIndex].showAVPlayer = $0 }
+                        ),
+                        onScroll: { y in
+                            handleWebViewScroll(yOffset: y)
                         }
-                    })
-                    
-                    topVC.present(alert, animated: true)
+                    )
+                    .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
+                    .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom]) // 하단 겹치기 + (주소창 숨김 시) 상단 겹치기
+
+                    // 스크롤 오프셋 트래킹 (기존 로직)
+                    .overlay(
+                        GeometryReader { geometry in
+                            Color.clear
+                                .preference(
+                                    key: ScrollOffsetPreferenceKey.self,
+                                    value: geometry.frame(in: .global).origin.y
+                                )
+                        }
+                    )
+                    .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+                        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
+                            previousOffset = offset; return
+                        }
+                        let delta = offset - previousOffset
+                        if delta < -30 && showAddressBar {
+                            withAnimation {
+                                showAddressBar = false
+                                isTextFieldFocused = false
+                            }
+                            allowTopOverlap = true
+                        }
+                        previousOffset = offset
+                    }
+
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation {
+                            if showAddressBar {
+                                showAddressBar = false
+                                isTextFieldFocused = false
+                                allowTopOverlap = true
+                            } else {
+                                showAddressBar = true
+                                allowTopOverlap = false
+                                // ✅ 수정: 자동 포커스 제거 - 주소창만 보여주고 키보드는 사용자가 직접 탭할 때만
+                                // DispatchQueue.main.async {
+                                //     isTextFieldFocused = true
+                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                // }
+                            }
+                        }
+                    }
+
+                } else {
+                    // ✅ 수정: DashboardView를 onNavigateToURL 단일 함수로 통합
+                    DashboardView(
+                        onNavigateToURL: { selectedURL in
+                            // 원자적 처리: URL 설정 + 로딩을 한번에
+                            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
+                            tabs[selectedTabIndex].stateModel.loadURLIfReady()
+                            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
+                        }
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation {
+                            if showAddressBar {
+                                showAddressBar = false
+                                isTextFieldFocused = false
+                                allowTopOverlap = true
+                            } else {
+                                showAddressBar = true
+                                allowTopOverlap = false
+                                // ✅ 수정: 여기서도 자동 포커스 제거
+                                // DispatchQueue.main.async {
+                                //     isTextFieldFocused = true
+                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                // }
+                            }
+                        }
+                    }
                 }
-                return
             }
-            
-            // 다른 인증 방법은 기본 처리
-            completionHandler(.performDefaultHandling, nil)
-        }
 
-        // ✨ 최상위 뷰컨트롤러 찾기 (SSL 알림용)
-        private func topMostViewController() -> UIViewController? {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let window = windowScene.windows.first,
-                  let root = window.rootViewController else { return nil }
-            var top = root
-            while let presented = top.presentedViewController { top = presented }
-            return top
-        }
-
-        // MARK: 팝업(새창) → 현재 탭에서 열기
-        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url {
-                webView.load(URLRequest(url: url))
-                TabPersistenceManager.debugMessages.append("🆕 팝업 → 현재 탭: \(url.absoluteString)")
+            // MARK: - 뷰 생명주기/이벤트 (기존)
+            .onAppear {
+                if let url = state.currentURL {
+                    inputURL = url.absoluteString
+                    TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
+                }
+                TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
             }
-            return nil
-        }
-
-        // MARK: - 다운로드 진행률 오버레이
-
-        func installDownloadOverlay(on webView: WKWebView) {
-            guard overlayContainer == nil else { return }
-
-            let blur = UIBlurEffect(style: .systemThinMaterial)
-            let container = UIVisualEffectView(effect: blur)
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.alpha = 0.0
-            container.layer.cornerRadius = 10
-            container.clipsToBounds = true
-
-            let title = UILabel()
-            title.translatesAutoresizingMaskIntoConstraints = false
-            title.font = .preferredFont(forTextStyle: .caption1)
-            title.textColor = .label
-            title.text = "다운로드 준비 중..."
-
-            let percent = UILabel()
-            percent.translatesAutoresizingMaskIntoConstraints = false
-            percent.font = .preferredFont(forTextStyle: .caption1)
-            percent.textColor = .secondaryLabel
-            percent.text = "0%"
-
-            let progress = UIProgressView(progressViewStyle: .bar)
-            progress.translatesAutoresizingMaskIntoConstraints = false
-            progress.progress = 0.0
-
-            container.contentView.addSubview(title)
-            container.contentView.addSubview(percent)
-            container.contentView.addSubview(progress)
-
-            webView.addSubview(container)
-            NSLayoutConstraint.activate([
-                container.leadingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-                container.trailingAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-                container.topAnchor.constraint(equalTo: webView.safeAreaLayoutGuide.topAnchor, constant: 12),
-
-                title.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
-                title.topAnchor.constraint(equalTo: container.contentView.topAnchor, constant: 10),
-
-                percent.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
-                percent.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-
-                progress.leadingAnchor.constraint(equalTo: container.contentView.leadingAnchor, constant: 12),
-                progress.trailingAnchor.constraint(equalTo: container.contentView.trailingAnchor, constant: -12),
-                progress.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-                progress.bottomAnchor.constraint(equalTo: container.contentView.bottomAnchor, constant: -10),
-                progress.heightAnchor.constraint(equalToConstant: 3)
-            ])
-
-            overlayContainer = container
-            overlayTitleLabel = title
-            overlayPercentLabel = percent
-            overlayProgress = progress
-        }
-
-        private func showOverlay(filename: String?) {
-            overlayTitleLabel?.text = filename ?? "다운로드 중"
-            overlayPercentLabel?.text = "0%"
-            overlayProgress?.setProgress(0.0, animated: false)
-            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 1.0 }
-        }
-
-        private func updateOverlay(progress: Double) {
-            overlayProgress?.setProgress(Float(progress), animated: true)
-            let pct = max(0, min(100, Int(progress * 100)))
-            overlayPercentLabel?.text = "\(pct)%"
-        }
-
-        private func hideOverlay() {
-            UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 0.0 }
-        }
-
-        // MARK: 다운로드 이벤트 핸들러
-        @objc func handleDownloadStart(_ note: Notification) {
-            let filename = note.userInfo?["filename"] as? String
-            showOverlay(filename: filename)
-        }
-
-        @objc func handleDownloadProgress(_ note: Notification) {
-            let progress = note.userInfo?["progress"] as? Double ?? 0
-            updateOverlay(progress: progress)
-        }
-
-        @objc func handleDownloadFinish(_ note: Notification) {
-            hideOverlay()
-        }
-
-        @objc func handleDownloadFailed(_ note: Notification) {
-            hideOverlay()
-        }
-    }
-}
-
-// MARK: - 파일 선택 헬퍼
-@available(iOS 14.0, *)
-class FilePicker: NSObject, UIDocumentPickerDelegate {
-    let completionHandler: ([URL]?) -> Void
-
-    init(completionHandler: @escaping ([URL]?) -> Void) {
-        self.completionHandler = completionHandler
-    }
-
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        completionHandler(urls)
-    }
-
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        completionHandler(nil)
-    }
-}
-
-// MARK: - CookieSyncManager (쿠키 세션 공유)
-enum CookieSyncManager {
-    static func syncAppToWebView(_ webView: WKWebView, completion: (() -> Void)? = nil) {
-        let appCookies = HTTPCookieStorage.shared.cookies ?? []
-        guard !appCookies.isEmpty else { completion?(); return }
-        let store = webView.configuration.websiteDataStore.httpCookieStore
-        let group = DispatchGroup()
-        appCookies.forEach { cookie in
-            group.enter()
-            store.setCookie(cookie) { group.leave() }
-        }
-        group.notify(queue: .main) { completion?() }
-    }
-
-    static func syncWebToApp(_ store: WKHTTPCookieStore, completion: (() -> Void)? = nil) {
-        store.getAllCookies { cookies in
-            let appStorage = HTTPCookieStorage.shared
-            cookies.forEach { appStorage.setCookie($0) }
-            completion?()
-        }
-    }
-}
-
-// MARK: - 전역 쿠키 동기화 추적
-private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
-
-// MARK: - WebViewStateModel 확장 (CustomWebView 연동용)
-extension WebViewStateModel {
-    /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
-    func setNavigatingFromWebView(_ value: Bool) {
-        self.isNavigatingFromWebView = value
-    }
-}
-
-// MARK: - WebViewStateModel 확장 (쿠키 세션 공유)
-extension WebViewStateModel {
-    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        _installCookieSyncIfNeeded(for: webView)
-        CookieSyncManager.syncAppToWebView(webView, completion: nil)
-    }
-
-    private func _installCookieSyncIfNeeded(for webView: WKWebView) {
-        if _cookieSyncInstalledModels.contains(self) { return }
-        _cookieSyncInstalledModels.add(self)
-
-        let store = webView.configuration.websiteDataStore.httpCookieStore
-        store.add(self)
-
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"),
-            object: HTTPCookieStorage.shared,
-            queue: .main
-        ) { [weak webView] _ in
-            guard let webView = webView else { return }
-            CookieSyncManager.syncAppToWebView(webView, completion: nil)
-            if let host = webView.url?.host {
-                TabPersistenceManager.debugMessages.append("🍪 App→Web 쿠키 동기화(\(host))")
+            .onReceive(state.$currentURL) { url in
+                if let url = url { inputURL = url.absoluteString }
             }
-        }
-        if let host = webView.url?.host {
-            TabPersistenceManager.debugMessages.append("🍪 쿠키 동기화 설치됨(\(host))")
-        }
-    }
-}
-
-extension WebViewStateModel: WKHTTPCookieStoreObserver {
-    public func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        CookieSyncManager.syncWebToApp(cookieStore) {
-            TabPersistenceManager.debugMessages.append("🍪 Web→App 쿠키 동기화 완료")
-        }
-    }
-}
-
-// MARK: - 파일 다운로드 지원 (iOS 14+)
-private final class DownloadCoordinator {
-    static let shared = DownloadCoordinator()
-    private init() {}
-    private var map = [ObjectIdentifier: URL]()
-    func set(url: URL, for download: WKDownload) { map[ObjectIdentifier(download)] = url }
-    func url(for download: WKDownload) -> URL? { map[ObjectIdentifier(download)] }
-    func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
-}
-
-private func sanitizedFilename(_ name: String) -> String {
-    var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
-    result = result.components(separatedBy: forbidden).joined(separator: "_")
-    if result.count > 150 {
-        result = String(result.prefix(150))
-    }
-    return result.isEmpty ? "download" : result
-}
-
-private func topMostViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first,
-          let root = window.rootViewController else { return nil }
-    var top = root
-    while let presented = top.presentedViewController { top = presented }
-    return top
-}
-
-// MARK: - WebViewStateModel: WKDownloadDelegate
-extension WebViewStateModel: WKDownloadDelegate {
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         decideDestinationUsing response: URLResponse,
-                         suggestedFilename: String,
-                         completionHandler: @escaping (URL?) -> Void) {
-
-        NotificationCenter.default.post(name: .WebViewDownloadStart,
-                                        object: nil,
-                                        userInfo: ["filename": suggestedFilename])
-
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
-
-        let safeName = sanitizedFilename(suggestedFilename)
-        let dst = downloadsDir.appendingPathComponent(safeName)
-
-        if FileManager.default.fileExists(atPath: dst.path) {
-            try? FileManager.default.removeItem(at: dst)
-        }
-
-        DownloadCoordinator.shared.set(url: dst, for: download)
-        completionHandler(dst)
-        TabPersistenceManager.debugMessages.append("⬇️ 다운로드 저장 경로: \(dst.lastPathComponent)")
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didWriteData bytesWritten: Int64,
-                         totalBytesWritten: Int64,
-                         totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        
-        NotificationCenter.default.post(name: .WebViewDownloadProgress,
-                                        object: nil,
-                                        userInfo: ["progress": progress])
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didFailWithError error: Error,
-                         resumeData: Data?) {
-        let filename = DownloadCoordinator.shared.url(for: download)?.lastPathComponent ?? "파일"
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFailed, object: nil)
-
-        DispatchQueue.main.async {
-            if let top = topMostViewController() {
-                let alert = UIAlertController(title: "다운로드 실패",
-                                              message: "\(filename) 다운로드 중 오류가 발생했습니다.\n\(error.localizedDescription)",
-                                              preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "확인", style: .default))
-                top.present(alert, animated: true)
+            .onReceive(state.navigationDidFinish) { _ in
+                if let currentRecord = state.currentPageRecord {
+                    let back = state.canGoBack ? "가능" : "불가"
+                    let fwd = state.canGoForward ? "가능" : "불가"
+                    let title = currentRecord.title
+                    let pageId = currentRecord.id.uuidString.prefix(8)
+                    TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
+                } else {
+                    TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
+                }
+                TabPersistenceManager.saveTabs(tabs)
+                TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
             }
+            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시 (UUID 타입 수정)
+            .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
+                guard let userInfo = notification.userInfo,
+                      let tabIDString = userInfo["tabID"] as? String,
+                      tabIDString == state.tabID?.uuidString else { return }  // ✅ UUID를 String으로 변환하여 비교
+                
+                if let statusCode = userInfo["statusCode"] as? Int,
+                   let url = userInfo["url"] as? String {
+                    let error = getErrorMessage(for: statusCode, url: url)
+                    errorTitle = error.title
+                    errorMessage = error.message
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
+                } else if let sslError = userInfo["sslError"] as? Bool, sslError,
+                          let url = userInfo["url"] as? String {
+                    // ✨ SSL 에러 처리 추가
+                    let domain = URL(string: url)?.host ?? "사이트"
+                    errorTitle = "보안 연결 취소됨"
+                    errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
+                } else if let error = userInfo["error"] as? Error,
+                          let url = userInfo["url"] as? String {
+                    let networkError = getNetworkErrorMessage(for: error, url: url)
+                    errorTitle = networkError.title
+                    errorMessage = networkError.message
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+                }
+            }
+            .sheet(isPresented: $showHistorySheet) {
+                NavigationView { WebViewStateModel.HistoryPage(state: state) }
+            }
+            .fullScreenCover(isPresented: $showTabManager) {
+                NavigationView {
+                    TabManager(
+                        tabs: $tabs,
+                        initialStateModel: state,
+                        onTabSelected: { index in
+                            selectedTabIndex = index
+                            let switched = tabs[index].stateModel
+                            if let r = switched.currentPageRecord {
+                                let back = switched.canGoBack ? "가능" : "불가"
+                                let fwd = switched.canGoForward ? "가능" : "불가"
+                                let pageId = r.id.uuidString.prefix(8)
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
+                            } else {
+                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
+                            }
+                        }
+                    )
+                }
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { tabs[selectedTabIndex].showAVPlayer },
+                set: { tabs[selectedTabIndex].showAVPlayer = $0 }
+            )) {
+                if let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
+            }
+            .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
+            // ✨ 에러 알림 표시 (SSL 에러 케이스 별도 처리)
+            .alert(errorTitle, isPresented: $showErrorAlert) {
+                Button("확인") { }
+                if !errorTitle.contains("보안 연결") {  // SSL 에러가 아닐 때만 다시 시도 버튼 표시
+                    Button("다시 시도") {
+                        state.reload()
+                    }
+                }
+            } message: {
+                Text(errorMessage)
+            }
+
+            // MARK: - 하단 UI (✨ 가장 투명한 블러 + 흰색 틴트)
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 10) {
+                    // 주소창
+                    if showAddressBar {
+                        HStack {
+                            // ✨ 로딩 인디케이터 추가
+                            if state.isLoading {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .frame(width: 20, height: 20)
+                            } else {
+                                Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
+                                    .frame(width: 20, height: 20)
+                            }
+                            
+                            TextField("URL 또는 검색어", text: $inputURL)
+                                .textFieldStyle(.plain)
+                                .font(textFont)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                .keyboardType(.URL)
+                                .focused($isTextFieldFocused)
+                                .onTapGesture {
+                                    // ✅ 수정: 텍스트필드를 직접 탭했을 때만 포커스 + 전체 선택
+                                    if !isTextFieldFocused {
+                                        isTextFieldFocused = true
+                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                    }
+                                    if !textFieldSelectedAll {
+                                        DispatchQueue.main.async {
+                                            UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                                            textFieldSelectedAll = true
+                                            TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
+                                        }
+                                    }
+                                }
+                                .onChange(of: isTextFieldFocused) { focused in
+                                    if focused {
+                                        ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+                                    } else {
+                                        textFieldSelectedAll = false
+                                        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+                                    }
+                                }
+                                .onSubmit {
+                                    if let url = fixedURL(from: inputURL) {
+                                        state.currentURL = url
+                                        TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+                                    }
+                                    isTextFieldFocused = false
+                                }
+                                .overlay(
+                                    HStack {
+                                        Spacer()
+                                        if !inputURL.isEmpty && !state.isLoading {
+                                            Button(action: { inputURL = "" }) {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .font(.system(size: 16))
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .padding(.trailing, 8)
+                                        }
+                                    }
+                                )
+                            
+                            // ✨ 새로고침/중지 버튼
+                            Button(action: {
+                                if state.isLoading {
+                                    state.stopLoading()
+                                    TabPersistenceManager.debugMessages.append("로딩 중지")
+                                } else {
+                                    state.reload()
+                                    TabPersistenceManager.debugMessages.append("페이지 새로고침")
+                                }
+                            }) {
+                                Image(systemName: state.isLoading ? "xmark" : "arrow.clockwise")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.primary)
+                            }
+                            .frame(width: 24, height: 24)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, barVPadding)
+                        // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
+                        .background(
+                            ZStack {
+                                VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                                RoundedRectangle(cornerRadius: barCornerRadius)
+                                    .fill(Color.white.opacity(glassTintOpacity))
+                            }
+                        )
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .transition(.opacity)
+                    }
+
+                    // 하단 통합 툴바
+                    HStack(spacing: 0) {
+                        HStack(spacing: toolbarSpacing) {
+                            Button(action: { state.goBack() }) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(state.canGoBack ? .primary : .secondary)
+                            }
+                            .disabled(!state.canGoBack)
+
+                            Button(action: { state.goForward() }) {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(state.canGoForward ? .primary : .secondary)
+                            }
+                            .disabled(!state.canGoForward)
+
+                            Button(action: { state.reload() }) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showHistorySheet = true }) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showTabManager = true }) {
+                                Image(systemName: "square.on.square")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Button(action: { showDebugView = true }) {
+                                Image(systemName: "ladybug")
+                                    .font(.system(size: iconSize))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, barVPadding)
+                    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
+                    .background(
+                        ZStack {
+                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color.white.opacity(glassTintOpacity))
+                        }
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
+                    .padding(.horizontal, outerHorizontalPadding)
+                    // ✨ 변경: "툴바의 빈공간"을 탭하면 주소창 열기 (버튼 영역 탭은 버튼이 소비하므로 충돌 X)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !showAddressBar {                  // 조건만 추가 (밖 말고 안에)
+                            withAnimation {
+                                showAddressBar = true
+                                allowTopOverlap = false       // 주소창 보일 땐 상단 보호
+                                // ✅ 수정: 여기서도 자동 포커스 제거 - 주소창만 보여주기
+                            }
+                        }
+                    }
+                }
+                .background(Color.clear)
+            }
+
+        } else {
+            // ✅ 수정: 탭이 비어있을 때도 onNavigateToURL 단일 함수로 통합
+            DashboardView(
+                onNavigateToURL: { url in
+                    // 원자적 처리: 새 탭 생성 + URL 설정 + 로딩을 한번에
+                    let newTab = WebTab(url: url)
+                    tabs.append(newTab)
+                    selectedTabIndex = tabs.count - 1
+                    newTab.stateModel.loadURLIfReady()
+                    TabPersistenceManager.saveTabs(tabs)
+                    TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(url.absoluteString)")
+                }
+            )
         }
-        TabPersistenceManager.debugMessages.append("❌ 다운로드 실패: \(error.localizedDescription)")
     }
 
-    @available(iOS 14.0, *)
-    public func downloadDidFinish(_ download: WKDownload) {
-        guard let fileURL = DownloadCoordinator.shared.url(for: download) else {
-            TabPersistenceManager.debugMessages.append("⚠️ 다운로드 완료했지만 파일 경로를 찾을 수 없음")
-            NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
+    // MARK: - WKWebView 스크롤 콜백 처리 (기존)
+    private func handleWebViewScroll(yOffset: CGFloat) {
+        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
+            lastWebContentOffsetY = yOffset
             return
         }
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
-
-        DispatchQueue.main.async {
-            guard let top = topMostViewController() else { return }
-            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-            activityVC.popoverPresentationController?.sourceView = top.view
-            top.present(activityVC, animated: true)
+        let delta = yOffset - lastWebContentOffsetY
+        if abs(delta) < 2 {
+            lastWebContentOffsetY = yOffset
+            return
         }
-        TabPersistenceManager.debugMessages.append("✅ 다운로드 완료: \(fileURL.lastPathComponent)")
+        if delta > 4 && showAddressBar {
+            withAnimation { showAddressBar = false; isTextFieldFocused = false }
+            allowTopOverlap = true
+        } else if delta < -12 && !showAddressBar {
+            withAnimation { showAddressBar = true }
+            allowTopOverlap = false
+        }
+        lastWebContentOffsetY = yOffset
     }
+
+    // MARK: - 로컬/사설 IP 주소 감지
+    private func isLocalOrPrivateIP(_ host: String) -> Bool {
+        // IPv4 패턴 체크
+        let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
+        guard host.range(of: ipPattern, options: .regularExpression) != nil else {
+            // localhost 도메인들
+            return host == "localhost" || host.hasSuffix(".local")
+        }
+        
+        let components = host.split(separator: ".").compactMap { Int($0) }
+        guard components.count == 4 else { return false }
+        
+        let (a, b, c, d) = (components[0], components[1], components[2], components[3])
+        
+        // 유효한 IP 범위 체크
+        guard (0...255).contains(a) && (0...255).contains(b) && 
+              (0...255).contains(c) && (0...255).contains(d) else { return false }
+        
+        // 사설 IP 대역 체크
+        return (a == 192 && b == 168) ||                    // 192.168.x.x
+               (a == 10) ||                                 // 10.x.x.x
+               (a == 172 && (16...31).contains(b)) ||       // 172.16.x.x ~ 172.31.x.x
+               (a == 127) ||                                // 127.x.x.x (localhost)
+               (a == 169 && b == 254)                       // 169.254.x.x (링크 로컬)
+    }
+    
+    // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
+    private func fixedURL(from input: String) -> URL? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 이미 완전한 URL인 경우
+        if let url = URL(string: trimmed), url.scheme != nil {
+            // 로컬/사설 IP가 아닌 경우에만 HTTP → HTTPS 자동 전환
+            if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
+                var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                components?.scheme = "https"
+                if let httpsURL = components?.url {
+                    TabPersistenceManager.debugMessages.append("🔒 HTTP → HTTPS 자동 전환: \(httpsURL.absoluteString)")
+                    return httpsURL
+                }
+            }
+            return url
+        }
+        
+        // 도메인처럼 보이는 경우 (점이 있고 공백이 없음)
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            // 로컬/사설 IP인지 확인
+            if isLocalOrPrivateIP(trimmed) {
+                // 로컬 주소는 HTTP 사용
+                let httpURL = URL(string: "http://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("🏠 로컬 IP 감지, HTTP 적용: http://\(trimmed)")
+                return httpURL
+            } else {
+                // 공인 도메인은 HTTPS 사용 (현대 웹 표준)
+                let httpsURL = URL(string: "https://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
+                return httpsURL
+            }
+        }
+        
+        // 검색어로 처리
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
+    }
+    
+    // MARK: - HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환
+    private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
+        let domain = URL(string: url)?.host ?? "사이트"
+        
+        switch statusCode {
+        case 400:
+            return ("잘못된 요청", "입력한 주소나 요청이 올바르지 않습니다.\n주소를 다시 확인해 주세요.")
+        case 401:
+            return ("로그인 필요", "\(domain)에 접근하려면 로그인이 필요합니다.\n사이트에서 로그인 후 다시 시도해 주세요.")
+        case 403:
+            return ("접근 금지", "\(domain)에 접근할 권한이 없습니다.\n관리자에게 문의하거나 다른 페이지를 이용해 주세요.")
+        case 404:
+            return ("페이지를 찾을 수 없음", "요청한 페이지가 존재하지 않습니다.\n주소를 확인하거나 사이트 홈페이지로 이동해 보세요.")
+        case 408:
+            return ("요청 시간 초과", "서버 응답 시간이 초과되었습니다.\n잠시 후 다시 시도해 주세요.")
+        case 429:
+            return ("너무 많은 요청", "짧은 시간에 너무 많은 요청을 보냈습니다.\n잠시 기다린 후 다시 시도해 주세요.")
+        case 500:
+            return ("서버 오류", "\(domain) 서버에서 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.")
+        case 502:
+            return ("서버 연결 오류", "\(domain) 서버가 일시적으로 불안정합니다.\n잠시 후 다시 시도해 주세요.")
+        case 503:
+            return ("서비스 이용 불가", "\(domain)이 점검 중이거나 서버가 과부하 상태입니다.\n잠시 후 다시 시도해 주세요.")
+        case 504:
+            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 늦습니다.\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+        default:
+            return ("연결 오류", "페이지를 불러올 수 없습니다. (오류 코드: \(statusCode))\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+        }
+    }
+    
+    // MARK: - 네트워크 오류 메시지 처리
+    private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String) {
+        let domain = URL(string: url)?.host ?? "사이트"
+        let errorDescription = error.localizedDescription.lowercased()
+        
+        if errorDescription.contains("internet") || errorDescription.contains("network") {
+            return ("인터넷 연결 없음", "인터넷 연결을 확인하고 다시 시도해 주세요.")
+        } else if errorDescription.contains("dns") || errorDescription.contains("host") {
+            return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
+        } else if errorDescription.contains("ssl") || errorDescription.contains("certificate") {
+            return ("보안 연결 오류", "\(domain)의 보안 인증서에 문제가 있습니다.\nHTTP로 접속하거나 다른 사이트를 이용해 주세요.")
+        } else if errorDescription.contains("timeout") {
+            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 느립니다.\n잠시 후 다시 시도해 주세요.")
+        } else {
+            return ("연결 실패", "\(domain)에 연결할 수 없습니다.\n주소를 확인하고 다시 시도해 주세요.")
+        }
+    }
+}
+
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// ✨ WebView 에러 처리를 위한 NotificationCenter 확장
+extension Notification.Name {
+    static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
 }
