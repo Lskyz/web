@@ -374,11 +374,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return
         }
         
+        // ✅ 정규화된 URL 미리 계산 (중복 선언 방지)
+        let newNormalizedURL = normalizeURL(url)
+        
         // ✅ 중복 URL 체크 강화 - 정규화된 URL로 비교 (시간 기반)
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = normalizeURL(currentRecord.url)
-            let newNormalizedURL = normalizeURL(url)
             
             if currentNormalizedURL == newNormalizedURL {
                 // 같은 URL이지만 시간이 충분히 지났는지 확인 (30초 이상 차이나면 새로 저장)
@@ -404,7 +406,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // ✅ 히스토리 전체에서 중복 URL 체크 (최근 3개 페이지 내에서, 시간 기반)
         let recentCheckCount = min(3, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
-        let newNormalizedURL = normalizeURL(url)
         
         for (index, record) in recentPages.enumerated() {
             let actualIndex = pageHistory.count - recentCheckCount + index
@@ -446,8 +447,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             pageHistory.removeSubrange((currentPageIndex + 1)...)
             dbg("🧹 Forward 히스토리 정리: \(removedCount)개 제거, \(pageHistory.count)개 남음")
         }
-        
-        let newNormalizedURL = normalizeURL(url)
         
         // ✅ 연속된 중복 기록 제거 (뒤로가기 최적화)
         // 마지막 페이지와 같은 URL이면 연속 중복이므로 마지막 페이지 제거
