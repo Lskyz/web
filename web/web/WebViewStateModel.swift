@@ -484,18 +484,54 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("📋 === addNewPage 호출 분석 끝 (추가 완료) ===")
     }
     
-    // 🔧 완전히 커스텀 히스토리 기반으로 상태 업데이트
+    // 🔧 완전히 커스텀 히스토리 기반으로 상태 업데이트 (연속 중복 고려)
     private func updateNavigationState() {
         let oldBack = canGoBack
         let oldForward = canGoForward
         
-        // WebView 네이티브 히스토리 무시하고 커스텀 히스토리만 사용
-        canGoBack = currentPageIndex > 0
-        canGoForward = currentPageIndex < pageHistory.count - 1
+        // ✅ 연속 중복을 고려한 뒤로가기 가능 여부 계산
+        canGoBack = canActuallyGoBack()
+        
+        // ✅ 연속 중복을 고려한 앞으로가기 가능 여부 계산
+        canGoForward = canActuallyGoForward()
         
         if oldBack != canGoBack || oldForward != canGoForward {
-            dbg("🔄 네비게이션 상태 업데이트 (커스텀): back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
+            dbg("🔄 네비게이션 상태 업데이트 (연속 중복 고려): back=\(canGoBack), forward=\(canGoForward), 인덱스=\(currentPageIndex)/\(pageHistory.count)")
         }
+    }
+    
+    // ✅ 연속 중복을 고려한 실제 뒤로가기 가능 여부
+    private func canActuallyGoBack() -> Bool {
+        guard currentPageIndex > 0, !pageHistory.isEmpty else { return false }
+        
+        let currentNormalizedURL = normalizeURL(pageHistory[currentPageIndex].url)
+        
+        // 현재 위치에서 뒤로 검색하여 다른 URL이 있는지 확인
+        for i in (0..<currentPageIndex).reversed() {
+            let targetNormalizedURL = normalizeURL(pageHistory[i].url)
+            if targetNormalizedURL != currentNormalizedURL {
+                return true // 다른 URL 발견
+            }
+        }
+        
+        return false // 모든 이전 기록이 같은 URL
+    }
+    
+    // ✅ 연속 중복을 고려한 실제 앞으로가기 가능 여부
+    private func canActuallyGoForward() -> Bool {
+        guard currentPageIndex < pageHistory.count - 1, !pageHistory.isEmpty else { return false }
+        
+        let currentNormalizedURL = normalizeURL(pageHistory[currentPageIndex].url)
+        
+        // 현재 위치에서 앞으로 검색하여 다른 URL이 있는지 확인
+        for i in (currentPageIndex + 1)..<pageHistory.count {
+            let targetNormalizedURL = normalizeURL(pageHistory[i].url)
+            if targetNormalizedURL != currentNormalizedURL {
+                return true // 다른 URL 발견
+            }
+        }
+        
+        return false // 모든 다음 기록이 같은 URL
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -573,8 +609,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     // MARK: - ✅ 네비게이션 메서드 (연속 중복 건너뛰기 적용)
     
     func goBack() {
-        guard canGoBack, currentPageIndex > 0 else { 
-            dbg("⬅️ 뒤로가기 불가: canGoBack=\(canGoBack), index=\(currentPageIndex)")
+        // ✅ 연속 중복을 고려한 실제 뒤로가기 가능 여부 체크
+        guard canActuallyGoBack(), currentPageIndex > 0 else { 
+            dbg("⬅️ 뒤로가기 불가: canActuallyGoBack=\(canActuallyGoBack()), index=\(currentPageIndex)")
             return 
         }
         
@@ -629,8 +666,9 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     
     func goForward() {
-        guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
-            dbg("➡️ 앞으로가기 불가: canGoForward=\(canGoForward), index=\(currentPageIndex), total=\(pageHistory.count)")
+        // ✅ 연속 중복을 고려한 실제 앞으로가기 가능 여부 체크
+        guard canActuallyGoForward(), currentPageIndex < pageHistory.count - 1 else { 
+            dbg("➡️ 앞으로가기 불가: canActuallyGoForward=\(canActuallyGoForward()), index=\(currentPageIndex), total=\(pageHistory.count)")
             return 
         }
         
@@ -669,6 +707,20 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             
             // ✅ 🔧 히스토리 네비게이션 플래그 설정 강화
             dbg("➡️ 히스토리 네비게이션 플래그 설정")
+            isHistoryNavigation = true
+            isNavigatingFromWebView = true
+            currentURL = record.url
+            
+            if let webView = webView {
+                webView.load(URLRequest(url: record.url))
+                dbg("🌐 앞으로가기 웹뷰 로드: \(record.url.absoluteString)")
+            }
+            
+            updateNavigationState()
+            dbg("➡️ 앞으로가기 성공: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))] | 인덱스: \(currentPageIndex)/\(pageHistory.count)")
+        }
+        dbg("➡️ === 앞으로가기 끝 ===")
+    }게이션 플래그 설정")
             isHistoryNavigation = true
             isNavigatingFromWebView = true
             currentURL = record.url
@@ -754,7 +806,7 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         let startURL = webView.url
         dbg("🌐 로드 시작 → \(startURL?.absoluteString ?? "(pending)")")
         
-        // ✅ 스와이프 제스처 뒤로가기/앞으로가기 감지 개선
+        // ✅ 스와이프 제스처 뒤로가기 감지 개선 (앞으로가기는 iOS에서 불안정하므로 제외)
         if let startURL = startURL, 
            !isRestoringSession, 
            !isHistoryNavigationActive(),
@@ -771,30 +823,30 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 
                 dbg("👆 히스토리에서 발견: 인덱스 \(foundIndex), 현재 인덱스: \(currentIndex)")
                 
+                // ✅ 뒤로가기만 감지 (앞으로가기 스와이프는 iOS에서 불안정)
                 if foundIndex < currentIndex {
                     // 스와이프 뒤로가기 감지
                     dbg("👆 ⬅️ 스와이프 뒤로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
-                    currentPageIndex = foundIndex
-                    isHistoryNavigation = true
                     
+                    // ✅ 연속 중복을 고려한 안전한 인덱스 계산
+                    let targetIndex = findValidBackwardIndex(from: currentIndex, to: foundIndex)
+                    if targetIndex >= 0 && targetIndex != currentIndex {
+                        currentPageIndex = targetIndex
+                        isHistoryNavigation = true
+                        
+                        // 히스토리 기록 접근 시간 업데이트
+                        var mutableRecord = pageHistory[targetIndex]
+                        mutableRecord.updateAccess()
+                        pageHistory[targetIndex] = mutableRecord
+                        
+                        updateNavigationState()
+                        dbg("👆 스와이프 제스처로 히스토리 인덱스 동기화: \(targetIndex)")
+                    }
                 } else if foundIndex > currentIndex {
-                    // 스와이프 앞으로가기 감지
-                    dbg("👆 ➡️ 스와이프 앞으로가기 감지: 인덱스 \(currentIndex) → \(foundIndex)")
-                    currentPageIndex = foundIndex
-                    isHistoryNavigation = true
-                    
+                    // 앞으로가기는 로그만 남기고 처리하지 않음 (불안정)
+                    dbg("👆 ➡️ 앞으로가기 스와이프 감지됨 (iOS 제한으로 무시): 인덱스 \(currentIndex) → \(foundIndex)")
                 } else {
                     dbg("👆 같은 인덱스 - 일반 네비게이션으로 처리")
-                }
-                
-                if isHistoryNavigation {
-                    // 히스토리 기록 접근 시간 업데이트
-                    var mutableRecord = pageHistory[foundIndex]
-                    mutableRecord.updateAccess()
-                    pageHistory[foundIndex] = mutableRecord
-                    
-                    updateNavigationState()
-                    dbg("👆 스와이프 제스처로 히스토리 인덱스 동기화: \(foundIndex)")
                 }
             } else {
                 dbg("👆 히스토리에 없는 URL - 일반 네비게이션으로 처리")
@@ -802,6 +854,30 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             
             dbg("👆 === 스와이프 제스처 감지 분석 끝 ===")
         }
+        
+    }
+    
+    // ✅ 연속 중복을 고려한 안전한 뒤로가기 인덱스 찾기
+    private func findValidBackwardIndex(from currentIndex: Int, to targetIndex: Int) -> Int {
+        guard targetIndex >= 0, targetIndex < currentIndex, targetIndex < pageHistory.count else {
+            return -1
+        }
+        
+        let currentNormalizedURL = normalizeURL(pageHistory[currentIndex].url)
+        
+        // targetIndex부터 뒤로 검색하여 다른 URL 찾기
+        for i in (0...targetIndex).reversed() {
+            let indexNormalizedURL = normalizeURL(pageHistory[i].url)
+            if indexNormalizedURL != currentNormalizedURL {
+                dbg("👆 연속 중복 고려하여 최종 타겟 인덱스: \(targetIndex) → \(i)")
+                return i
+            }
+        }
+        
+        }
+        
+        return targetIndex // 다른 URL을 못 찾으면 원래 타겟 인덱스 사용
+    }
         
         // 🔧 리다이렉트 체인 감지 시작
         if let url = startURL {
