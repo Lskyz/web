@@ -6,10 +6,6 @@
 //  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
 //  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
 //  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
-//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
-//  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
-//
-
 import SwiftUI
 import WebKit
 import AVFoundation
