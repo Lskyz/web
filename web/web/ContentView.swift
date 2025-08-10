@@ -49,6 +49,11 @@ struct ContentView: View {
 
     // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
     @State private var allowTopOverlap: Bool = false
+    
+    // ✨ 에러 처리 및 로딩 상태
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+    @State private var errorTitle = ""
 
     // ============================================================
     // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
@@ -187,6 +192,28 @@ struct ContentView: View {
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
             }
+            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시
+            .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
+                guard let userInfo = notification.userInfo,
+                      let tabID = userInfo["tabID"] as? String,
+                      tabID == state.tabID else { return }
+                
+                if let statusCode = userInfo["statusCode"] as? Int,
+                   let url = userInfo["url"] as? String {
+                    let error = getErrorMessage(for: statusCode, url: url)
+                    errorTitle = error.title
+                    errorMessage = error.message
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
+                } else if let error = userInfo["error"] as? Error,
+                          let url = userInfo["url"] as? String {
+                    let networkError = getNetworkErrorMessage(for: error, url: url)
+                    errorTitle = networkError.title
+                    errorMessage = networkError.message
+                    showErrorAlert = true
+                    TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+                }
+            }
             .sheet(isPresented: $showHistorySheet) {
                 NavigationView { WebViewStateModel.HistoryPage(state: state) }
             }
@@ -217,6 +244,15 @@ struct ContentView: View {
                 if let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
             }
             .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
+            // ✨ 에러 알림 표시
+            .alert(errorTitle, isPresented: $showErrorAlert) {
+                Button("확인") { }
+                Button("다시 시도") {
+                    state.reload()
+                }
+            } message: {
+                Text(errorMessage)
+            }
 
             // MARK: - 하단 UI (✨ 가장 투명한 블러 + 흰색 틴트)
             .safeAreaInset(edge: .bottom) {
@@ -224,6 +260,18 @@ struct ContentView: View {
                     // 주소창
                     if showAddressBar {
                         HStack {
+                            // ✨ 로딩 인디케이터 추가
+                            if state.isLoading {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .frame(width: 20, height: 20)
+                            } else {
+                                Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
+                                    .frame(width: 20, height: 20)
+                            }
+                            
                             TextField("URL 또는 검색어", text: $inputURL)
                                 .textFieldStyle(.plain)
                                 .font(textFont)
@@ -263,7 +311,7 @@ struct ContentView: View {
                                 .overlay(
                                     HStack {
                                         Spacer()
-                                        if !inputURL.isEmpty {
+                                        if !inputURL.isEmpty && !state.isLoading {
                                             Button(action: { inputURL = "" }) {
                                                 Image(systemName: "xmark.circle.fill")
                                                     .font(.system(size: 16))
@@ -273,6 +321,22 @@ struct ContentView: View {
                                         }
                                     }
                                 )
+                            
+                            // ✨ 새로고침/중지 버튼
+                            Button(action: {
+                                if state.isLoading {
+                                    state.stopLoading()
+                                    TabPersistenceManager.debugMessages.append("로딩 중지")
+                                } else {
+                                    state.reload()
+                                    TabPersistenceManager.debugMessages.append("페이지 새로고침")
+                                }
+                            }) {
+                                Image(systemName: state.isLoading ? "xmark" : "arrow.clockwise")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.primary)
+                            }
+                            .frame(width: 24, height: 24)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, barVPadding)
@@ -463,12 +527,52 @@ struct ContentView: View {
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
     
-    // MARK: - 사용자가 원래 HTTP를 원할 경우를 위한 대안 함수
-    private func getHTTPFallbackURL(from httpsURL: URL) -> URL? {
-        guard httpsURL.scheme == "https" else { return nil }
-        var components = URLComponents(url: httpsURL, resolvingAgainstBaseURL: false)
-        components?.scheme = "http"
-        return components?.url
+    // MARK: - HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환
+    private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
+        let domain = URL(string: url)?.host ?? "사이트"
+        
+        switch statusCode {
+        case 400:
+            return ("잘못된 요청", "입력한 주소나 요청이 올바르지 않습니다.\n주소를 다시 확인해 주세요.")
+        case 401:
+            return ("로그인 필요", "\(domain)에 접근하려면 로그인이 필요합니다.\n사이트에서 로그인 후 다시 시도해 주세요.")
+        case 403:
+            return ("접근 금지", "\(domain)에 접근할 권한이 없습니다.\n관리자에게 문의하거나 다른 페이지를 이용해 주세요.")
+        case 404:
+            return ("페이지를 찾을 수 없음", "요청한 페이지가 존재하지 않습니다.\n주소를 확인하거나 사이트 홈페이지로 이동해 보세요.")
+        case 408:
+            return ("요청 시간 초과", "서버 응답 시간이 초과되었습니다.\n잠시 후 다시 시도해 주세요.")
+        case 429:
+            return ("너무 많은 요청", "짧은 시간에 너무 많은 요청을 보냈습니다.\n잠시 기다린 후 다시 시도해 주세요.")
+        case 500:
+            return ("서버 오류", "\(domain) 서버에서 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.")
+        case 502:
+            return ("서버 연결 오류", "\(domain) 서버가 일시적으로 불안정합니다.\n잠시 후 다시 시도해 주세요.")
+        case 503:
+            return ("서비스 이용 불가", "\(domain)이 점검 중이거나 서버가 과부하 상태입니다.\n잠시 후 다시 시도해 주세요.")
+        case 504:
+            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 늦습니다.\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+        default:
+            return ("연결 오류", "페이지를 불러올 수 없습니다. (오류 코드: \(statusCode))\n인터넷 연결을 확인하고 다시 시도해 주세요.")
+        }
+    }
+    
+    // MARK: - 네트워크 오류 메시지 처리
+    private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String) {
+        let domain = URL(string: url)?.host ?? "사이트"
+        let errorDescription = error.localizedDescription.lowercased()
+        
+        if errorDescription.contains("internet") || errorDescription.contains("network") {
+            return ("인터넷 연결 없음", "인터넷 연결을 확인하고 다시 시도해 주세요.")
+        } else if errorDescription.contains("dns") || errorDescription.contains("host") {
+            return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
+        } else if errorDescription.contains("ssl") || errorDescription.contains("certificate") {
+            return ("보안 연결 오류", "\(domain)의 보안 인증서에 문제가 있습니다.\nHTTP로 접속하거나 다른 사이트를 이용해 주세요.")
+        } else if errorDescription.contains("timeout") {
+            return ("연결 시간 초과", "\(domain) 서버 응답이 너무 느립니다.\n잠시 후 다시 시도해 주세요.")
+        } else {
+            return ("연결 실패", "\(domain)에 연결할 수 없습니다.\n주소를 확인하고 다시 시도해 주세요.")
+        }
     }
 }
 
@@ -476,4 +580,9 @@ struct ContentView: View {
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// ✨ WebView 에러 처리를 위한 NotificationCenter 확장
+extension Notification.Name {
+    static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
 }
