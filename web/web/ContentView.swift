@@ -210,11 +210,11 @@ struct ContentView: View {
                     }
                 }
             }
-            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시 (UUID 타입 수정)
+            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시
             .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
                 guard let userInfo = notification.userInfo,
                       let tabIDString = userInfo["tabID"] as? String,
-                      tabIDString == state.tabID?.uuidString else { return }  // ✅ UUID를 String으로 변환하여 비교
+                      tabIDString == state.tabID?.uuidString else { return }
                 
                 if let statusCode = userInfo["statusCode"] as? Int,
                    let url = userInfo["url"] as? String {
@@ -233,11 +233,16 @@ struct ContentView: View {
                     TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
                 } else if let error = userInfo["error"] as? Error,
                           let url = userInfo["url"] as? String {
-                    let networkError = getNetworkErrorMessage(for: error, url: url)
-                    errorTitle = networkError.title
-                    errorMessage = networkError.message
-                    showErrorAlert = true
-                    TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+                    // ✅ 옵셔널 처리 - nil이면 알림 표시 안함
+                    if let networkError = getNetworkErrorMessage(for: error, url: url) {
+                        errorTitle = networkError.title
+                        errorMessage = networkError.message
+                        showErrorAlert = true
+                        TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+                    } else {
+                        // ✅ nil이면 조용히 무시 (내부 리소스 실패 등)
+                        TabPersistenceManager.debugMessages.append("🔕 정의되지 않은 에러 무시")
+                    }
                 }
             }
             .sheet(isPresented: $showHistorySheet) {
