@@ -191,6 +191,24 @@ struct ContentView: View {
                 }
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
+                
+                // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
+                if !showAddressBar {
+                    withAnimation {
+                        showAddressBar = true
+                        allowTopOverlap = false
+                    }
+                    
+                    // 3초 후 자동으로 숨기기
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
+                            withAnimation {
+                                showAddressBar = false
+                                allowTopOverlap = true
+                            }
+                        }
+                    }
+                }
             }
             // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시 (UUID 타입 수정)
             .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
@@ -571,20 +589,11 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - ✨ 네트워크 오류 메시지 처리 (단순화 - 핵심만)
+    // MARK: - ✨ 네트워크 오류 메시지 처리 (잘못된 주소만)
     private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
-        let nsError = error as NSError
-        
-        // ✅ 이제 두 가지 경우만 처리하면 됨
-        if nsError.code == NSURLErrorNotConnectedToInternet {
-            return ("인터넷 연결 없음", "와이파이는 연결되어 있지만 인터넷에 접속할 수 없습니다.\n네트워크 연결을 확인하고 다시 시도해 주세요.")
-        } else if nsError.code == NSURLErrorCannotFindHost {
-            return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하거나 다른 검색어를 사용해 보세요.")
-        } else {
-            // 혹시 모를 다른 에러 (실제로는 거의 오지 않을 것)
-            return ("연결 실패", "\(domain)에 연결할 수 없습니다.\n주소를 확인하고 다시 시도해 주세요.")
-        }
+        // ✅ 이제 잘못된 주소만 처리
+        return ("주소를 찾을 수 없음", "\(domain) 주소를 찾을 수 없습니다.\n주소를 확인하세요.")
     }
 }
 
