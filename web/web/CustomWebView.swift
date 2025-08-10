@@ -8,6 +8,7 @@
 //  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
 //  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
 //  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
+//  - ✅ 에러 처리 개선: 모든 중요한 에러를 ContentView로 전달
 //
 
 import SwiftUI
@@ -297,12 +298,6 @@ struct CustomWebView: UIViewRepresentable {
                     // ✅ 모든 진행률 변화를 반영
                     let newProgress = max(0.0, min(1.0, progress))
                     self.parent.stateModel.loadingProgress = newProgress
-                    
-                    // ✅ 100% 도달 시 즉시 해제하지 않음 (didFinish에서 처리)
-                    // if progress >= 1.0 && self.parent.stateModel.isLoading {
-                    //     self.parent.stateModel.isLoading = false
-                    //     TabPersistenceManager.debugMessages.append("✅ 로딩 완료 (100%)")
-                    // }
                 }
             }
 
@@ -380,13 +375,13 @@ struct CustomWebView: UIViewRepresentable {
             parent.stateModel.webView(webView, didFinish: navigation)
         }
 
+        // ✅ 에러 처리 개선 - 로딩 시작 단계 에러 (didFailProvisionalNavigation)
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             // ✨ 로딩 실패 처리
             DispatchQueue.main.async {
                 if self.parent.stateModel.isLoading {
                     self.parent.stateModel.isLoading = false
                 }
-                // ✅ 진행률 리셋
                 self.parent.stateModel.loadingProgress = 0.0
             }
             
@@ -394,23 +389,18 @@ struct CustomWebView: UIViewRepresentable {
             
             // ✅ 스와이프 뒤로가기 중엔 모든 에러 무시
             if isSwipeBackNavigation {
-                // 조용히 무시 - 로그도 없음
                 parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
                 return
             }
             
-            // ✅ 사용자 취소는 당연히 무시 (새 URL 입력, 링크 클릭 등)
+            // ✅ 사용자 취소는 무시 (새 URL 입력, 링크 클릭 등)
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
                 parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
                 return
             }
             
-            // ✅ 잘못된 주소만 알림 (연결 문제는 모두 무시)
-            let shouldNotify = nsError.domain == NSURLErrorDomain && 
-                               nsError.code == NSURLErrorCannotFindHost  // 잘못된 주소/도메인만
-            
-            // 잘못된 주소만 알림
-            if shouldNotify, let tabID = parent.stateModel.tabID {
+            // ✅ 명확한 에러 전달 - 모든 중요한 에러를 ContentView로 전달
+            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
                     name: .webViewDidFailLoad,
                     object: nil,
@@ -420,26 +410,29 @@ struct CustomWebView: UIViewRepresentable {
                         "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
                     ]
                 )
-                TabPersistenceManager.debugMessages.append("❌ 잘못된 주소: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 로딩 시작 에러 알림: \(nsError.code)")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 시작 에러: \(nsError.code)")
             }
-            // 연결 실패, 인터넷 문제 등은 모두 조용히 무시
             
             // 기존 StateModel의 didFailProvisionalNavigation 호출
             parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
         }
 
+        // ✅ 에러 처리 개선 - 로딩 진행 중 에러 (didFail)
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             // ✨ 로딩 실패 처리
             DispatchQueue.main.async {
                 if self.parent.stateModel.isLoading {
                     self.parent.stateModel.isLoading = false
                 }
-                // ✅ 진행률 리셋
                 self.parent.stateModel.loadingProgress = 0.0
             }
             
-            // ✨ 중요한 에러만 알림 전송
-            if let tabID = parent.stateModel.tabID {
+            let nsError = error as NSError
+            
+            // ✅ 명확한 에러 전달 - 로딩 진행 중 에러도 ContentView로 전달
+            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
                     name: .webViewDidFailLoad,
                     object: nil,
@@ -449,11 +442,69 @@ struct CustomWebView: UIViewRepresentable {
                         "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
                     ]
                 )
-                TabPersistenceManager.debugMessages.append("❌ 네비게이션 실패: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 로딩 진행 에러 알림: \(nsError.code)")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 진행 에러: \(nsError.code)")
             }
             
             // 기존 StateModel의 didFail 호출
             parent.stateModel.webView(webView, didFail: navigation, withError: error)
+        }
+
+        // ✅ 명확한 에러 판단 로직 - 사용자에게 알려야 할 에러인지 판단
+        private func shouldNotifyUserForError(_ error: NSError) -> Bool {
+            // NSURLError가 아닌 경우는 일단 알림
+            guard error.domain == NSURLErrorDomain else { 
+                TabPersistenceManager.debugMessages.append("⚠️ 비-NSURLError 도메인: \(error.domain)")
+                return true 
+            }
+            
+            switch error.code {
+            // ✅ 사용자에게 반드시 알려야 할 중요한 에러들
+            case NSURLErrorCannotFindHost:           // 잘못된 주소/도메인
+                TabPersistenceManager.debugMessages.append("📍 주소를 찾을 수 없음: \(error.code)")
+                return true
+            case NSURLErrorBadURL,                   // 잘못된 URL 형식
+                 NSURLErrorUnsupportedURL:           // 지원하지 않는 URL 형식
+                TabPersistenceManager.debugMessages.append("🔗 잘못된 URL 형식: \(error.code)")
+                return true
+            case NSURLErrorTimedOut:                 // 타임아웃
+                TabPersistenceManager.debugMessages.append("⏰ 연결 시간 초과: \(error.code)")
+                return true
+            case NSURLErrorNotConnectedToInternet:   // 인터넷 연결 없음
+                TabPersistenceManager.debugMessages.append("📶 인터넷 연결 없음: \(error.code)")
+                return true
+            case NSURLErrorCannotConnectToHost:      // 서버 연결 불가
+                TabPersistenceManager.debugMessages.append("🖥️ 서버 연결 실패: \(error.code)")
+                return true
+            case NSURLErrorNetworkConnectionLost:    // 네트워크 연결 끊김
+                TabPersistenceManager.debugMessages.append("📡 네트워크 연결 끊김: \(error.code)")
+                return true
+            case NSURLErrorDNSLookupFailed:          // DNS 조회 실패
+                TabPersistenceManager.debugMessages.append("🌐 DNS 조회 실패: \(error.code)")
+                return true
+            case NSURLErrorFileDoesNotExist:         // 파일이 존재하지 않음
+                TabPersistenceManager.debugMessages.append("📄 파일을 찾을 수 없음: \(error.code)")
+                return true
+                
+            // ✅ 무시할 에러들 (로그만 남기고 사용자에게 알리지 않음)
+            case NSURLErrorHTTPTooManyRedirects:     // 리다이렉트 너무 많음
+                TabPersistenceManager.debugMessages.append("🔄 리다이렉트 과다로 무시: \(error.code)")
+                return false
+            case NSURLErrorResourceUnavailable:      // 리소스 사용 불가
+                TabPersistenceManager.debugMessages.append("📦 리소스 사용 불가로 무시: \(error.code)")
+                return false
+            case NSURLErrorInternationalRoamingOff,  // 로밍 꺼짐
+                 NSURLErrorCallIsActive,             // 통화 중
+                 NSURLErrorDataNotAllowed:           // 데이터 사용 불가
+                TabPersistenceManager.debugMessages.append("📱 설정 관련 에러로 무시: \(error.code)")
+                return false
+                
+            default:
+                // ✅ 알 수 없는 에러는 일단 알림 (안전하게)
+                TabPersistenceManager.debugMessages.append("❓ 알 수 없는 에러로 알림: \(error.code)")
+                return true
+            }
         }
 
         // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서)
@@ -476,7 +527,7 @@ struct CustomWebView: UIViewRepresentable {
                                 "url": navigationResponse.response.url?.absoluteString ?? ""
                             ]
                         )
-                        TabPersistenceManager.debugMessages.append("❌ HTTP 에러 \(statusCode)")
+                        TabPersistenceManager.debugMessages.append("❌ HTTP 상태 코드 에러: \(statusCode)")
                     }
                 }
             }
