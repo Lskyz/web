@@ -1,4 +1,21 @@
-//
+func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            // ✅ 간단한 스와이프 뒤로가기 감지
+            isSwipeBackNavigation = webView.canGoBack && 
+                                  webView.backForwardList.backItem != nil
+            
+            // ✨ 로딩 시작을 StateModel에 전달
+            DispatchQueue.main.async {
+                if !self.parent.stateModel.isLoading {
+                    self.parent.stateModel.isLoading = true
+                }
+                
+                // ✅ 항상 0%로 시작 (KVO가 실제 진행률 업데이트)
+                self.parent.stateModel.loadingProgress = 0.0
+            }
+            
+            // 기존 StateModel의 didStartProvisionalNavigation 호출
+            parent.stateModel.webView(webView, didStartProvisionalNavigation: navigation)
+        }//
 //  CustomWebView.swift
 //
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
@@ -254,6 +271,9 @@ struct CustomWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         var filePicker: FilePicker?
 
+        // ✅ 스와이프 뒤로가기 감지용 플래그 추가
+        private var isSwipeBackNavigation: Bool = false
+
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
         private var overlayTitleLabel: UILabel?
@@ -289,14 +309,15 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
 
-            // ✅ 진행률 관찰 추가
-            progressObserver = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, change in
+            // ✅ 진행률 관찰 추가 (단순화 - 모든 변화 반영)
+            progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let progress = change.newValue ?? 0.0
                 
                 DispatchQueue.main.async {
-                    // ✅ StateModel의 진행률 업데이트 (로그 제거 - 너무 빈번함)
-                    self.parent.stateModel.loadingProgress = progress
+                    // ✅ 모든 진행률 변화를 반영 (조건 제거)
+                    let newProgress = max(0.0, min(1.0, progress))
+                    self.parent.stateModel.loadingProgress = newProgress
                     
                     // 100% 완료 시 확실히 로딩 상태 해제
                     if progress >= 1.0 && self.parent.stateModel.isLoading {
@@ -366,6 +387,9 @@ struct CustomWebView: UIViewRepresentable {
                 }
                 // ✅ 진행률을 확실히 100%로 설정
                 self.parent.stateModel.loadingProgress = 1.0
+                
+                // ✅ 스와이프 플래그 리셋
+                self.isSwipeBackNavigation = false
             }
             
             // 기존 StateModel의 didFinish 호출
