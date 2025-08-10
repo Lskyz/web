@@ -880,11 +880,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
             return true
         }
         
+        // ✅ 정규화된 URL 미리 계산 (중복 선언 방지)
+        let finalNormalizedURL = normalizeURL(finalURL)
+        
         // ✅ 현재 페이지와 완전히 같은 URL인지 체크 - 정규화된 URL로 비교
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = normalizeURL(currentRecord.url)
-            let finalNormalizedURL = normalizeURL(finalURL)
             
             if currentNormalizedURL == finalNormalizedURL {
                 dbg("🚫 현재 페이지와 동일한 URL (정규화됨) - 제목만 업데이트: \(finalNormalizedURL)")
@@ -896,7 +898,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         // ✅ 최근 히스토리에서 중복 URL 체크 (최근 3개 페이지 내에서) - 정규화된 URL로 비교
         let recentCheckCount = min(3, pageHistory.count)
         let recentPages = pageHistory.suffix(recentCheckCount)
-        let finalNormalizedURL = normalizeURL(finalURL)
         
         for record in recentPages {
             let recordNormalizedURL = normalizeURL(record.url)
@@ -917,7 +918,6 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("🤔 마지막 기록: \(lastRecord.url.absoluteString)")
         
         let lastNormalizedURL = normalizeURL(lastRecord.url)
-        let finalNormalizedURL = normalizeURL(finalURL)
         dbg("🤔 정규화된 URL 비교: \(lastNormalizedURL == finalNormalizedURL)")
         
         if lastNormalizedURL != finalNormalizedURL {
