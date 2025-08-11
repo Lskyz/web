@@ -78,7 +78,7 @@ func makeUIView(context: Context) -> WKWebView {
     webView.scrollView.scrollIndicatorInsets = .zero
 
     // ✨ 강화된 Delegate 연결 (로딩 상태 동기화)
-    webView.navigationDelegate = context.coordinator  // ⚠️ 중요: Coordinator로 변경
+    webView.navigationDelegate = context.coordinator
     webView.uiDelegate = context.coordinator
     context.coordinator.webView = webView
     stateModel.webView = webView
