@@ -35,7 +35,6 @@ struct CustomWebView: UIViewRepresentable {
 @Binding var showAVPlayer: Bool
 var onScroll: ((CGFloat) -> Void)? = nil
 
-```
 func makeCoordinator() -> Coordinator { Coordinator(self) }
 
 // MARK: - makeUIView
@@ -196,7 +195,7 @@ static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
 
 // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer)
 private func makeVideoScript() -> WKUserScript {
-    let scriptSource = """
+    let scriptSource = 
     function processVideos(doc) {
         [...doc.querySelectorAll('video')].forEach(video => {
             // iOS 자동재생 제약 회피
@@ -231,7 +230,7 @@ private func makeVideoScript() -> WKUserScript {
             } catch (e) {}
         });
     }, 1000);
-    """
+
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
 }
 
@@ -892,7 +891,7 @@ class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, UIScrollViewDel
         hideOverlay()
     }
 }
-```
+
 
 }
 
@@ -901,7 +900,7 @@ class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, UIScrollViewDel
 class FilePicker: NSObject, UIDocumentPickerDelegate {
 let completionHandler: ([URL]?) -> Void
 
-```
+
 init(completionHandler: @escaping ([URL]?) -> Void) {
     self.completionHandler = completionHandler
 }
@@ -913,7 +912,6 @@ func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumen
 func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
     completionHandler(nil)
 }
-```
 
 }
 
@@ -939,7 +937,6 @@ static func syncWebToApp(_ store: WKHTTPCookieStore, completion: (() -> Void)? =
         completion?()
     }
 }
-```
 
 }
 
@@ -976,7 +973,6 @@ private func _installCookieSyncIfNeeded(for webView: WKWebView) {
         CookieSyncManager.syncAppToWebView(webView, completion: nil)
     }
 }
-```
 
 }
 
