@@ -2,14 +2,7 @@
 //  CustomWebView.swift
 //
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
-//  - WebViewStateModel isLoading 상태와 동기화 강화
-//  - HTTP/네트워크 에러 감지 및 ContentView 알림 전달 보장
-//  - 새로고침/중지 기능과 웹뷰 로딩 상태 완벽 연동
-//  - 기존 기능 유지: 비디오 클릭 → AVPlayer, Pull-to-Refresh, 쿠키 동기화, 파일 다운로드
-//  - ✅ SSL 인증서 검증 로직 개선: 정상 사이트는 자동 통과, 문제 있는 사이트만 경고
-//  - ✅ 진행표시줄 완전 수정 및 스와이프 뒤로가기 에러 억제
-//  - ✅ 에러 처리 개선: 모든 중요한 에러를 ContentView로 전달
-//  - ✨ 스와이프-버튼 동기화 연동 추가
+//  ✅ 소셜 로그인 지원 추가 (네이버, 카카오톡 외부 앱 연결)
 //
 
 import SwiftUI
@@ -26,6 +19,79 @@ extension Notification.Name {
     static let WebViewDownloadProgress = Notification.Name("WebViewDownloadProgress")
     static let WebViewDownloadFinish   = Notification.Name("WebViewDownloadFinish")
     static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
+}
+
+// MARK: - 소셜 로그인 URL 감지 유틸리티
+enum SocialLoginHelper {
+    
+    // 소셜 로그인 관련 도메인 및 URL 패턴
+    static let socialDomains = [
+        "nid.naver.com",
+        "kauth.kakao.com", 
+        "accounts.kakao.com",
+        "kapi.kakao.com",
+        "auth.naver.com"
+    ]
+    
+    static let socialSchemes = [
+        "kakaotalk",
+        "kakaokompassauth", 
+        "kakaolink",
+        "naversearchapp",
+        "naversearchthirdlogin"
+    ]
+    
+    // URL이 소셜 로그인 관련인지 확인
+    static func isSocialLoginURL(_ url: URL) -> Bool {
+        // 커스텀 스키마 체크
+        if let scheme = url.scheme?.lowercased(),
+           socialSchemes.contains(scheme) {
+            return true
+        }
+        
+        // 도메인 체크
+        if let host = url.host?.lowercased(),
+           socialDomains.contains(where: { host.contains($0) }) {
+            return true
+        }
+        
+        return false
+    }
+    
+    // 외부 앱으로 열 수 있는지 확인하고 열기
+    static func openInExternalApp(_ url: URL) -> Bool {
+        guard UIApplication.shared.canOpenURL(url) else {
+            TabPersistenceManager.debugMessages.append("❌ 외부 앱으로 열 수 없는 URL: \(url.absoluteString)")
+            return false
+        }
+        
+        UIApplication.shared.open(url, options: [:]) { success in
+            if success {
+                TabPersistenceManager.debugMessages.append("✅ 외부 앱으로 열기 성공: \(url.absoluteString)")
+            } else {
+                TabPersistenceManager.debugMessages.append("❌ 외부 앱으로 열기 실패: \(url.absoluteString)")
+            }
+        }
+        
+        return true
+    }
+    
+    // 소셜 로그인 콜백 URL인지 확인 (앱에서 다시 돌아오는 URL)
+    static func isSocialLoginCallback(_ url: URL) -> Bool {
+        let urlString = url.absoluteString.lowercased()
+        
+        // 네이버 콜백 패턴
+        if urlString.contains("naver") && (urlString.contains("callback") || urlString.contains("redirect")) {
+            return true
+        }
+        
+        // 카카오 콜백 패턴  
+        if urlString.contains("kakao") && (urlString.contains("callback") || urlString.contains("redirect")) {
+            return true
+        }
+        
+        return false
+    }
 }
 
 // MARK: - CustomWebView (UIViewRepresentable)
@@ -77,7 +143,7 @@ struct CustomWebView: UIViewRepresentable {
         webView.scrollView.scrollIndicatorInsets = .zero
 
         // ✨ 강화된 Delegate 연결 (로딩 상태 동기화)
-        webView.navigationDelegate = context.coordinator  // ⚠️ 중요: Coordinator로 변경
+        webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
         stateModel.webView = webView
@@ -134,21 +200,21 @@ struct CustomWebView: UIViewRepresentable {
         // 다운로드 진행률 UI 오버레이 구성
         context.coordinator.installDownloadOverlay(on: webView)
 
-        // ✅ 다운로드 관련 이벤트 옵저버 등록 (수정됨)
+        // 다운로드 관련 이벤트 옵저버 등록
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
+                                               selector: #selector(Coordinator.handleDownloadStart(:)),
                                                name: .WebViewDownloadStart,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
+                                               selector: #selector(Coordinator.handleDownloadProgress(:)),
                                                name: .WebViewDownloadProgress,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
+                                               selector: #selector(Coordinator.handleDownloadFinish(:)),
                                                name: .WebViewDownloadFinish,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
+                                               selector: #selector(Coordinator.handleDownloadFailed(:)),
                                                name: .WebViewDownloadFailed,
                                                object: nil)
 
@@ -279,208 +345,15 @@ struct CustomWebView: UIViewRepresentable {
             removeLoadingObservers(for: webView)
         }
         
-        // ✨ 강화된 데스크탑 모드 설정
+        // ✨ 사용자 에이전트 업데이트 메서드
         func updateUserAgentIfNeeded() {
             guard let webView = webView else { return }
             
             if parent.stateModel.isDesktopMode {
-                // ✨ Windows Chrome 사용자 에이전트 (최신 버전)
-                let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
                 webView.customUserAgent = desktopUA
-                
-                // ✨ 데스크탑 뷰포트 강제 설정
-                injectDesktopViewportScript()
-                
-                // ✨ 터치 이벤트 비활성화로 마우스 호버 효과 활성화
-                injectDesktopBehaviorScript()
-                
-                TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드 활성화 (Windows Chrome)")
             } else {
                 webView.customUserAgent = nil
-                
-                // ✨ 모바일 뷰포트 복원
-                injectMobileViewportScript()
-                
-                TabPersistenceManager.debugMessages.append("📱 모바일 모드 복원")
-            }
-        }
-        
-        // ✨ 데스크탑 뷰포트 스크립트 주입
-        private func injectDesktopViewportScript() {
-            guard let webView = webView else { return }
-            
-            let desktopViewportScript = """
-            (function() {
-                // 기존 viewport 메타태그 제거
-                const existingViewport = document.querySelector('meta[name="viewport"]');
-                if (existingViewport) {
-                    existingViewport.remove();
-                }
-                
-                // 데스크탑 뷰포트 설정 (1920px 기준)
-                const viewportMeta = document.createElement('meta');
-                viewportMeta.name = 'viewport';
-                viewportMeta.content = 'width=1920, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
-                document.head.appendChild(viewportMeta);
-                
-                // 화면 크기 속성 덮어쓰기
-                Object.defineProperty(window.screen, 'width', {
-                    get: function() { return 1920; }
-                });
-                Object.defineProperty(window.screen, 'height', {
-                    get: function() { return 1080; }
-                });
-                Object.defineProperty(window.screen, 'availWidth', {
-                    get: function() { return 1920; }
-                });
-                Object.defineProperty(window.screen, 'availHeight', {
-                    get: function() { return 1040; }
-                });
-                
-                // 데스크탑 미디어 쿼리 강제 적용
-                window.matchMedia = function(query) {
-                    const result = {
-                        matches: false,
-                        media: query,
-                        addListener: function() {},
-                        removeListener: function() {},
-                        addEventListener: function() {},
-                        removeEventListener: function() {},
-                        dispatchEvent: function() {}
-                    };
-                    
-                    // 데스크탑 쿼리들을 true로 강제 설정
-                    if (query.includes('min-width: 768px') || 
-                        query.includes('min-width: 1024px') ||
-                        query.includes('min-width: 1200px') ||
-                        query.includes('(hover: hover)') ||
-                        query.includes('(pointer: fine)')) {
-                        result.matches = true;
-                    }
-                    
-                    return result;
-                };
-                
-                console.log('🖥️ 데스크탑 뷰포트 설정 완료');
-            })();
-            """
-            
-            webView.evaluateJavaScript(desktopViewportScript) { _, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("⚠️ 데스크탑 뷰포트 스크립트 오류: \(error.localizedDescription)")
-                }
-            }
-        }
-        
-        // ✨ 데스크탑 동작 스크립트 주입
-        private func injectDesktopBehaviorScript() {
-            guard let webView = webView else { return }
-            
-            let desktopBehaviorScript = """
-            (function() {
-                // 터치 이벤트 비활성화하여 마우스 호버 효과 활성화
-                const touchEvents = ['touchstart', 'touchmove', 'touchend', 'touchcancel'];
-                touchEvents.forEach(eventType => {
-                    document.addEventListener(eventType, function(e) {
-                        e.stopPropagation();
-                    }, { capture: true, passive: false });
-                });
-                
-                // 마우스 이벤트 활성화
-                Object.defineProperty(navigator, 'maxTouchPoints', {
-                    get: function() { return 0; }
-                });
-                
-                // 포인터 타입을 마우스로 설정
-                Object.defineProperty(navigator, 'pointerEnabled', {
-                    get: function() { return true; }
-                });
-                
-                // CSS 호버 상태 강제 활성화
-                const style = document.createElement('style');
-                style.textContent = `
-                    * {
-                        -webkit-touch-callout: none !important;
-                        -webkit-user-select: text !important;
-                        -webkit-tap-highlight-color: transparent !important;
-                    }
-                    
-                    /* 데스크탑 스크롤바 스타일 */
-                    ::-webkit-scrollbar {
-                        width: 12px !important;
-                        height: 12px !important;
-                    }
-                    
-                    ::-webkit-scrollbar-track {
-                        background: #f1f1f1 !important;
-                        border-radius: 6px !important;
-                    }
-                    
-                    ::-webkit-scrollbar-thumb {
-                        background: #c1c1c1 !important;
-                        border-radius: 6px !important;
-                    }
-                    
-                    ::-webkit-scrollbar-thumb:hover {
-                        background: #a1a1a1 !important;
-                    }
-                `;
-                document.head.appendChild(style);
-                
-                // window.innerWidth/Height 덮어쓰기
-                Object.defineProperty(window, 'innerWidth', {
-                    get: function() { return 1920; }
-                });
-                Object.defineProperty(window, 'innerHeight', {
-                    get: function() { return 1080; }
-                });
-                
-                console.log('🖥️ 데스크탑 동작 스크립트 설정 완료');
-            })();
-            """
-            
-            webView.evaluateJavaScript(desktopBehaviorScript) { _, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("⚠️ 데스크탑 동작 스크립트 오류: \(error.localizedDescription)")
-                }
-            }
-        }
-        
-        // ✨ 모바일 뷰포트 복원 스크립트
-        private func injectMobileViewportScript() {
-            guard let webView = webView else { return }
-            
-            let mobileViewportScript = """
-            (function() {
-                // 기존 viewport 메타태그 제거
-                const existingViewport = document.querySelector('meta[name="viewport"]');
-                if (existingViewport) {
-                    existingViewport.remove();
-                }
-                
-                // 모바일 뷰포트 복원
-                const viewportMeta = document.createElement('meta');
-                viewportMeta.name = 'viewport';
-                viewportMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
-                document.head.appendChild(viewportMeta);
-                
-                // 커스텀 스타일 제거
-                const customStyles = document.querySelectorAll('style');
-                customStyles.forEach(style => {
-                    if (style.textContent.includes('-webkit-touch-callout') || 
-                        style.textContent.includes('::-webkit-scrollbar')) {
-                        style.remove();
-                    }
-                });
-                
-                console.log('📱 모바일 뷰포트 복원 완료');
-            })();
-            """
-            
-            webView.evaluateJavaScript(mobileViewportScript) { _, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("⚠️ 모바일 뷰포트 복원 스크립트 오류: \(error.localizedDescription)")
-                }
             }
         }
 
@@ -833,6 +706,62 @@ struct CustomWebView: UIViewRepresentable {
             download.delegate = parent.stateModel
         }
 
+        // MARK: - ✨ 소셜 로그인을 위한 네비게이션 정책 결정
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+            
+            TabPersistenceManager.debugMessages.append("🔍 네비게이션 정책 확인: \(url.absoluteString)")
+            
+            // ✅ 소셜 로그인 URL 체크
+            if SocialLoginHelper.isSocialLoginURL(url) {
+                TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 URL 감지: \(url.absoluteString)")
+                
+                // 외부 앱으로 열기 시도
+                if SocialLoginHelper.openInExternalApp(url) {
+                    TabPersistenceManager.debugMessages.append("✅ 외부 앱으로 열기 성공: \(url.absoluteString)")
+                    decisionHandler(.cancel)
+                    return
+                } else {
+                    TabPersistenceManager.debugMessages.append("⚠️ 외부 앱으로 열기 실패, 웹뷰에서 계속: \(url.absoluteString)")
+                    // 외부 앱으로 열지 못하면 웹뷰에서 계속 진행
+                }
+            }
+            
+            // ✅ 소셜 로그인 콜백 URL 체크 (앱에서 돌아오는 경우)
+            if SocialLoginHelper.isSocialLoginCallback(url) {
+                TabPersistenceManager.debugMessages.append("🔄 소셜 로그인 콜백 URL 감지: \(url.absoluteString)")
+                // 콜백은 정상적으로 웹뷰에서 처리
+                decisionHandler(.allow)
+                return
+            }
+            
+            // ✅ 팝업에서 오는 요청 체크 (새 창)
+            if navigationAction.targetFrame == nil {
+                TabPersistenceManager.debugMessages.append("🪟 새 창 요청 감지: \(url.absoluteString)")
+                
+                // 소셜 로그인 관련 새 창이면 외부 앱으로 열기 시도
+                if SocialLoginHelper.isSocialLoginURL(url) {
+                    if SocialLoginHelper.openInExternalApp(url) {
+                        TabPersistenceManager.debugMessages.append("✅ 새 창 → 외부 앱으로 열기 성공")
+                        decisionHandler(.cancel)
+                        return
+                    }
+                }
+                
+                // 그 외의 경우는 현재 웹뷰에서 열기
+                webView.load(navigationAction.request)
+                decisionHandler(.cancel)
+                return
+            }
+            
+            // 일반적인 경우는 허용
+            decisionHandler(.allow)
+        }
+
         // MARK: JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == "playVideo" else { return }
@@ -966,11 +895,37 @@ struct CustomWebView: UIViewRepresentable {
             return top
         }
 
-        // MARK: 팝업(새창) → 현재 탭에서 열기
+        // MARK: - ✨ 소셜 로그인 팝업 처리 (새 창 → 외부 앱)
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url {
-                webView.load(URLRequest(url: url))
+            
+            guard let url = navigationAction.request.url else {
+                // URL이 없으면 현재 탭에서 열기
+                if let request = navigationAction.request.url {
+                    webView.load(URLRequest(url: request))
+                }
+                return nil
             }
+            
+            TabPersistenceManager.debugMessages.append("🪟 새 창 요청: \(url.absoluteString)")
+            
+            // ✅ 소셜 로그인 URL이면 외부 앱으로 열기 시도
+            if SocialLoginHelper.isSocialLoginURL(url) {
+                TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 새 창 감지: \(url.absoluteString)")
+                
+                if SocialLoginHelper.openInExternalApp(url) {
+                    TabPersistenceManager.debugMessages.append("✅ 소셜 로그인 → 외부 앱으로 열기 성공")
+                    return nil // 새 웹뷰 생성하지 않음
+                } else {
+                    TabPersistenceManager.debugMessages.append("⚠️ 외부 앱 열기 실패, 현재 탭에서 계속")
+                    // 외부 앱으로 열지 못하면 현재 탭에서 열기
+                    webView.load(navigationAction.request)
+                    return nil
+                }
+            }
+            
+            // ✅ 일반적인 새 창 요청은 현재 탭에서 열기 (기존 로직 유지)
+            webView.load(navigationAction.request)
+            TabPersistenceManager.debugMessages.append("🔄 일반 새 창 → 현재 탭에서 열기")
             return nil
         }
 
@@ -1048,7 +1003,7 @@ struct CustomWebView: UIViewRepresentable {
             UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 0.0 }
         }
 
-        // MARK: 다운로드 이벤트 핸들러 (✅ 수정됨)
+        // MARK: 다운로드 이벤트 핸들러
         @objc func handleDownloadStart(_ note: Notification) {
             let filename = note.userInfo?["filename"] as? String
             showOverlay(filename: filename)
@@ -1162,8 +1117,7 @@ private final class DownloadCoordinator {
     func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
 }
 
-// ✅ sanitizedFilename 함수 수정
-private func sanitizedFilename(name: String) -> String {
+private func sanitizedFilename( name: String) -> String {
     var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
     result = result.components(separatedBy: forbidden).joined(separator: "")
@@ -1198,8 +1152,7 @@ extension WebViewStateModel: WKDownloadDelegate {
         let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
 
-        // ✅ 수정된 부분: name 레이블 추가
-        let safeName = sanitizedFilename(name: suggestedFilename)
+        let safeName = sanitizedFilename(suggestedFilename)
         let dst = downloadsDir.appendingPathComponent(safeName)
 
         if FileManager.default.fileExists(atPath: dst.path) {
