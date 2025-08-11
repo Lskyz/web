@@ -279,15 +279,208 @@ struct CustomWebView: UIViewRepresentable {
             removeLoadingObservers(for: webView)
         }
         
-        // ✨ 사용자 에이전트 업데이트 메서드
+        // ✨ 강화된 데스크탑 모드 설정
         func updateUserAgentIfNeeded() {
             guard let webView = webView else { return }
             
             if parent.stateModel.isDesktopMode {
-                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+                // ✨ Windows Chrome 사용자 에이전트 (최신 버전)
+                let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 webView.customUserAgent = desktopUA
+                
+                // ✨ 데스크탑 뷰포트 강제 설정
+                injectDesktopViewportScript()
+                
+                // ✨ 터치 이벤트 비활성화로 마우스 호버 효과 활성화
+                injectDesktopBehaviorScript()
+                
+                TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드 활성화 (Windows Chrome)")
             } else {
                 webView.customUserAgent = nil
+                
+                // ✨ 모바일 뷰포트 복원
+                injectMobileViewportScript()
+                
+                TabPersistenceManager.debugMessages.append("📱 모바일 모드 복원")
+            }
+        }
+        
+        // ✨ 데스크탑 뷰포트 스크립트 주입
+        private func injectDesktopViewportScript() {
+            guard let webView = webView else { return }
+            
+            let desktopViewportScript = """
+            (function() {
+                // 기존 viewport 메타태그 제거
+                const existingViewport = document.querySelector('meta[name="viewport"]');
+                if (existingViewport) {
+                    existingViewport.remove();
+                }
+                
+                // 데스크탑 뷰포트 설정 (1920px 기준)
+                const viewportMeta = document.createElement('meta');
+                viewportMeta.name = 'viewport';
+                viewportMeta.content = 'width=1920, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+                document.head.appendChild(viewportMeta);
+                
+                // 화면 크기 속성 덮어쓰기
+                Object.defineProperty(window.screen, 'width', {
+                    get: function() { return 1920; }
+                });
+                Object.defineProperty(window.screen, 'height', {
+                    get: function() { return 1080; }
+                });
+                Object.defineProperty(window.screen, 'availWidth', {
+                    get: function() { return 1920; }
+                });
+                Object.defineProperty(window.screen, 'availHeight', {
+                    get: function() { return 1040; }
+                });
+                
+                // 데스크탑 미디어 쿼리 강제 적용
+                window.matchMedia = function(query) {
+                    const result = {
+                        matches: false,
+                        media: query,
+                        addListener: function() {},
+                        removeListener: function() {},
+                        addEventListener: function() {},
+                        removeEventListener: function() {},
+                        dispatchEvent: function() {}
+                    };
+                    
+                    // 데스크탑 쿼리들을 true로 강제 설정
+                    if (query.includes('min-width: 768px') || 
+                        query.includes('min-width: 1024px') ||
+                        query.includes('min-width: 1200px') ||
+                        query.includes('(hover: hover)') ||
+                        query.includes('(pointer: fine)')) {
+                        result.matches = true;
+                    }
+                    
+                    return result;
+                };
+                
+                console.log('🖥️ 데스크탑 뷰포트 설정 완료');
+            })();
+            """
+            
+            webView.evaluateJavaScript(desktopViewportScript) { _, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⚠️ 데스크탑 뷰포트 스크립트 오류: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        // ✨ 데스크탑 동작 스크립트 주입
+        private func injectDesktopBehaviorScript() {
+            guard let webView = webView else { return }
+            
+            let desktopBehaviorScript = """
+            (function() {
+                // 터치 이벤트 비활성화하여 마우스 호버 효과 활성화
+                const touchEvents = ['touchstart', 'touchmove', 'touchend', 'touchcancel'];
+                touchEvents.forEach(eventType => {
+                    document.addEventListener(eventType, function(e) {
+                        e.stopPropagation();
+                    }, { capture: true, passive: false });
+                });
+                
+                // 마우스 이벤트 활성화
+                Object.defineProperty(navigator, 'maxTouchPoints', {
+                    get: function() { return 0; }
+                });
+                
+                // 포인터 타입을 마우스로 설정
+                Object.defineProperty(navigator, 'pointerEnabled', {
+                    get: function() { return true; }
+                });
+                
+                // CSS 호버 상태 강제 활성화
+                const style = document.createElement('style');
+                style.textContent = `
+                    * {
+                        -webkit-touch-callout: none !important;
+                        -webkit-user-select: text !important;
+                        -webkit-tap-highlight-color: transparent !important;
+                    }
+                    
+                    /* 데스크탑 스크롤바 스타일 */
+                    ::-webkit-scrollbar {
+                        width: 12px !important;
+                        height: 12px !important;
+                    }
+                    
+                    ::-webkit-scrollbar-track {
+                        background: #f1f1f1 !important;
+                        border-radius: 6px !important;
+                    }
+                    
+                    ::-webkit-scrollbar-thumb {
+                        background: #c1c1c1 !important;
+                        border-radius: 6px !important;
+                    }
+                    
+                    ::-webkit-scrollbar-thumb:hover {
+                        background: #a1a1a1 !important;
+                    }
+                `;
+                document.head.appendChild(style);
+                
+                // window.innerWidth/Height 덮어쓰기
+                Object.defineProperty(window, 'innerWidth', {
+                    get: function() { return 1920; }
+                });
+                Object.defineProperty(window, 'innerHeight', {
+                    get: function() { return 1080; }
+                });
+                
+                console.log('🖥️ 데스크탑 동작 스크립트 설정 완료');
+            })();
+            """
+            
+            webView.evaluateJavaScript(desktopBehaviorScript) { _, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⚠️ 데스크탑 동작 스크립트 오류: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        // ✨ 모바일 뷰포트 복원 스크립트
+        private func injectMobileViewportScript() {
+            guard let webView = webView else { return }
+            
+            let mobileViewportScript = """
+            (function() {
+                // 기존 viewport 메타태그 제거
+                const existingViewport = document.querySelector('meta[name="viewport"]');
+                if (existingViewport) {
+                    existingViewport.remove();
+                }
+                
+                // 모바일 뷰포트 복원
+                const viewportMeta = document.createElement('meta');
+                viewportMeta.name = 'viewport';
+                viewportMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
+                document.head.appendChild(viewportMeta);
+                
+                // 커스텀 스타일 제거
+                const customStyles = document.querySelectorAll('style');
+                customStyles.forEach(style => {
+                    if (style.textContent.includes('-webkit-touch-callout') || 
+                        style.textContent.includes('::-webkit-scrollbar')) {
+                        style.remove();
+                    }
+                });
+                
+                console.log('📱 모바일 뷰포트 복원 완료');
+            })();
+            """
+            
+            webView.evaluateJavaScript(mobileViewportScript) { _, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⚠️ 모바일 뷰포트 복원 스크립트 오류: \(error.localizedDescription)")
+                }
             }
         }
 
