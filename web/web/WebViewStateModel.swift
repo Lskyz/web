@@ -2,6 +2,7 @@
 //  WebViewStateModel.swift
 //  페이지 고유번호 기반 히스토리 시스템 (기존 구조 유지하며 동기화 강화)
 //  ✨ CustomWebView와 호환되는 스와이프-버튼 동기화 개선
+//  🖥️ 강화된 데스크탑 모드 지원
 //
 
 import Foundation
@@ -175,16 +176,12 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
     }
     @Published var showAVPlayer = false
     
-    // ✨ 데스크탑 모드 상태
+    // ✨ 강화된 데스크탑 모드 상태
     @Published var isDesktopMode: Bool = false {
         didSet {
             if oldValue != isDesktopMode {
-                dbg("데스크탑 모드: \(oldValue) → \(isDesktopMode)")
-                // 사용자 에이전트 변경을 위해 페이지 새로고침
-                if let webView = webView {
-                    updateUserAgent()
-                    webView.reload()
-                }
+                dbg("🖥️ 데스크탑 모드 변경: \(oldValue) → \(isDesktopMode)")
+                applyDesktopModeChanges()
             }
         }
     }
@@ -205,6 +202,11 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
                 DispatchQueue.main.async {
                     self.updateNavigationState()
                     self.dbg("🔧 WebView 연결 후 상태 강제 적용: back=\(self.canGoBack), forward=\(self.canGoForward)")
+                    
+                    // ✨ 데스크탑 모드가 활성화되어 있다면 즉시 적용
+                    if self.isDesktopMode {
+                        self.applyDesktopModeChanges()
+                    }
                 }
             }
         }
@@ -482,21 +484,42 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         dbg("🔄 페이지 새로고침")
     }
     
-    // ✨ 데스크탑 모드 토글 메서드
+    // ✨ 강화된 데스크탑 모드 토글 메서드
     func toggleDesktopMode() {
         isDesktopMode.toggle()
         dbg("🖥️ 데스크탑 모드 토글: \(isDesktopMode)")
     }
     
-    // ✨ 사용자 에이전트 업데이트 메서드
+    // ✨ 강화된 데스크탑 모드 적용 메서드
+    private func applyDesktopModeChanges() {
+        guard let webView = webView else {
+            dbg("⚠️ WebView가 없어서 데스크탑 모드 적용 불가")
+            return
+        }
+        
+        // 사용자 에이전트 업데이트
+        updateUserAgent()
+        
+        // 페이지 새로고침으로 변경사항 적용
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            webView.reload()
+            self.dbg("🔄 데스크탑 모드 변경으로 인한 페이지 새로고침")
+        }
+    }
+    
+    // ✨ 강화된 사용자 에이전트 업데이트 메서드
     private func updateUserAgent() {
         guard let webView = webView else { return }
         
         if isDesktopMode {
-            // macOS Safari 사용자 에이전트 (데스크탑 모드)
-            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+            // ✨ 최신 Windows Chrome 사용자 에이전트 (더욱 강력한 데스크탑 인식)
+            let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
             webView.customUserAgent = desktopUA
-            dbg("🖥️ 데스크탑 사용자 에이전트 설정: \(desktopUA)")
+            dbg("🖥️ 강화된 데스크탑 사용자 에이전트 설정: Windows Chrome/Edge")
+            
+            // ✨ 추가 데스크탑 설정들을 CustomWebView의 Coordinator에 위임
+            // (실제 스크립트 주입은 CustomWebView의 updateUserAgentIfNeeded에서 처리)
+            
         } else {
             // 모바일 기본 사용자 에이전트로 복원
             webView.customUserAgent = nil
