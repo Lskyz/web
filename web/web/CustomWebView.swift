@@ -1052,3 +1052,4 @@ extension WebViewStateModel: WKDownloadDelegate {
         }
     }
 }
+
