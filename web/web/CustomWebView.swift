@@ -134,21 +134,21 @@ struct CustomWebView: UIViewRepresentable {
         // 다운로드 진행률 UI 오버레이 구성
         context.coordinator.installDownloadOverlay(on: webView)
 
-        // 다운로드 관련 이벤트 옵저버 등록
+        // ✅ 다운로드 관련 이벤트 옵저버 등록 (수정됨)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(:)),
+                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
                                                name: .WebViewDownloadStart,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(:)),
+                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
                                                name: .WebViewDownloadProgress,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(:)),
+                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
                                                name: .WebViewDownloadFinish,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(:)),
+                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
                                                name: .WebViewDownloadFailed,
                                                object: nil)
 
@@ -855,7 +855,7 @@ struct CustomWebView: UIViewRepresentable {
             UIView.animate(withDuration: 0.2) { self.overlayContainer?.alpha = 0.0 }
         }
 
-        // MARK: 다운로드 이벤트 핸들러
+        // MARK: 다운로드 이벤트 핸들러 (✅ 수정됨)
         @objc func handleDownloadStart(_ note: Notification) {
             let filename = note.userInfo?["filename"] as? String
             showOverlay(filename: filename)
@@ -969,7 +969,8 @@ private final class DownloadCoordinator {
     func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
 }
 
-private func sanitizedFilename( name: String) -> String {
+// ✅ sanitizedFilename 함수 수정
+private func sanitizedFilename(name: String) -> String {
     var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
     result = result.components(separatedBy: forbidden).joined(separator: "")
@@ -1004,7 +1005,8 @@ extension WebViewStateModel: WKDownloadDelegate {
         let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
 
-        let safeName = sanitizedFilename(suggestedFilename)
+        // ✅ 수정된 부분: name 레이블 추가
+        let safeName = sanitizedFilename(name: suggestedFilename)
         let dst = downloadsDir.appendingPathComponent(safeName)
 
         if FileManager.default.fileExists(atPath: dst.path) {
@@ -1067,4 +1069,3 @@ extension WebViewStateModel: WKDownloadDelegate {
         }
     }
 }
-
