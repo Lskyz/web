@@ -294,16 +294,26 @@ struct ContentView: View {
                     if showAddressBar {
                         VStack(spacing: 0) {
                             HStack {
-                                // ✨ 데스크탑 모드 버튼 (첫 번째)
+                                // ✨ 강화된 데스크탑 모드 버튼 (첫 번째)
                                 Button(action: {
                                     state.toggleDesktopMode()
-                                    TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드: \(state.isDesktopMode ? "ON" : "OFF")")
+                                    TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드: \(state.isDesktopMode ? "ON (Windows)" : "OFF")")
                                 }) {
-                                    Image(systemName: state.isDesktopMode ? "desktopcomputer" : "iphone")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(state.isDesktopMode ? .blue : .primary)
-                                        .frame(width: 20, height: 20)
+                                    HStack(spacing: 4) {
+                                        Image(systemName: state.isDesktopMode ? "display" : "iphone")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(state.isDesktopMode ? .blue : .primary)
+                                        
+                                        if state.isDesktopMode {
+                                            Text("PC")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(.blue)
+                                        }
+                                    }
+                                    .frame(width: 26, height: 20)
                                 }
+                                .scaleEffect(state.isDesktopMode ? 1.1 : 1.0)
+                                .animation(.easeInOut(duration: 0.2), value: state.isDesktopMode)
                                 
                                 // ✨ 로딩 인디케이터 및 자물쇠 아이콘 (두 번째)
                                 if state.isLoading {
