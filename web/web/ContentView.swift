@@ -306,6 +306,17 @@ struct ContentView: View {
                                         .frame(width: 20, height: 20)
                                 }
                                 
+                                // ✨ 데스크탑 모드 버튼 (자물쇠/글로브 아이콘 옆)
+                                Button(action: {
+                                    // 데스크탑 모드 토글 기능 (예시)
+                                    TabPersistenceManager.debugMessages.append("데스크탑 모드 토글")
+                                }) {
+                                    Image(systemName: "desktopcomputer")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.primary)
+                                        .frame(width: 20, height: 20)
+                                }
+                                
                                 TextField("URL 또는 검색어", text: $inputURL)
                                     .textFieldStyle(.plain)
                                     .font(textFont)
