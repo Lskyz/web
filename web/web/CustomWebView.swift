@@ -41,7 +41,13 @@ enum SocialLoginHelper {
         "naversearchthirdlogin"
     ]
     
-    // URL이 소셜 로그인 관련인지 확인
+    // ✅ 구글 로그인 도메인 (웹뷰에서 사용자 에이전트 변경 필요)
+    static let googleDomains = [
+        "accounts.google.com",
+        "oauth.googleusercontent.com"
+    ]
+    
+    // URL이 소셜 로그인 관련인지 확인 (네이버, 카카오만 - 외부 앱 연결용)
     static func isSocialLoginURL(_ url: URL) -> Bool {
         // 커스텀 스키마 체크
         if let scheme = url.scheme?.lowercased(),
@@ -49,12 +55,21 @@ enum SocialLoginHelper {
             return true
         }
         
-        // 도메인 체크
+        // 네이버, 카카오 도메인 체크
         if let host = url.host?.lowercased(),
            socialDomains.contains(where: { host.contains($0) }) {
             return true
         }
         
+        return false
+    }
+    
+    // ✅ 구글 로그인 URL 체크 (사용자 에이전트 변경용)
+    static func isGoogleLoginURL(_ url: URL) -> Bool {
+        if let host = url.host?.lowercased(),
+           googleDomains.contains(where: { host.contains($0) }) {
+            return true
+        }
         return false
     }
     
@@ -87,6 +102,16 @@ enum SocialLoginHelper {
         
         // 카카오 콜백 패턴  
         if urlString.contains("kakao") && (urlString.contains("callback") || urlString.contains("redirect")) {
+            return true
+        }
+        
+        // ✅ 구글 콜백 패턴 추가
+        if urlString.contains("google") && (urlString.contains("callback") || urlString.contains("redirect") || urlString.contains("code=")) {
+            return true
+        }
+        
+        // OAuth 일반 콜백 패턴 (code= 파라미터 포함)
+        if urlString.contains("code=") && (urlString.contains("oauth") || urlString.contains("auth")) {
             return true
         }
         
@@ -716,7 +741,20 @@ struct CustomWebView: UIViewRepresentable {
             
             TabPersistenceManager.debugMessages.append("🔍 네비게이션 정책 확인: \(url.absoluteString)")
             
-            // ✅ 소셜 로그인 URL 체크
+            // ✅ 구글 로그인 URL 체크 - 사용자 에이전트 변경
+            if SocialLoginHelper.isGoogleLoginURL(url) {
+                TabPersistenceManager.debugMessages.append("🔍 구글 로그인 감지: 사용자 에이전트를 데스크탑으로 변경")
+                
+                // 데스크탑 브라우저로 위장하여 구글 웹뷰 차단 우회
+                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                webView.customUserAgent = desktopUA
+                
+                // 구글 로그인은 웹뷰에서 계속 진행
+                decisionHandler(.allow)
+                return
+            }
+            
+            // ✅ 네이버, 카카오 소셜 로그인 URL 체크 - 외부 앱으로 연결
             if SocialLoginHelper.isSocialLoginURL(url) {
                 TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 URL 감지: \(url.absoluteString)")
                 
@@ -734,6 +772,10 @@ struct CustomWebView: UIViewRepresentable {
             // ✅ 소셜 로그인 콜백 URL 체크 (앱에서 돌아오는 경우)
             if SocialLoginHelper.isSocialLoginCallback(url) {
                 TabPersistenceManager.debugMessages.append("🔄 소셜 로그인 콜백 URL 감지: \(url.absoluteString)")
+                
+                // ✅ 콜백 완료 후 사용자 에이전트 원래대로 복원
+                updateUserAgentIfNeeded()
+                
                 // 콜백은 정상적으로 웹뷰에서 처리
                 decisionHandler(.allow)
                 return
@@ -743,7 +785,17 @@ struct CustomWebView: UIViewRepresentable {
             if navigationAction.targetFrame == nil {
                 TabPersistenceManager.debugMessages.append("🪟 새 창 요청 감지: \(url.absoluteString)")
                 
-                // 소셜 로그인 관련 새 창이면 외부 앱으로 열기 시도
+                // 구글 로그인 관련 새 창이면 사용자 에이전트 변경 후 현재 탭에서 열기
+                if SocialLoginHelper.isGoogleLoginURL(url) {
+                    let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    webView.customUserAgent = desktopUA
+                    webView.load(navigationAction.request)
+                    TabPersistenceManager.debugMessages.append("✅ 구글 로그인 새 창 → 현재 탭에서 열기 (UA 변경)")
+                    decisionHandler(.cancel)
+                    return
+                }
+                
+                // 네이버, 카카오 로그인 관련 새 창이면 외부 앱으로 열기 시도
                 if SocialLoginHelper.isSocialLoginURL(url) {
                     if SocialLoginHelper.openInExternalApp(url) {
                         TabPersistenceManager.debugMessages.append("✅ 새 창 → 외부 앱으로 열기 성공")
@@ -895,7 +947,7 @@ struct CustomWebView: UIViewRepresentable {
             return top
         }
 
-        // MARK: - ✨ 소셜 로그인 팝업 처리 (새 창 → 외부 앱)
+        // MARK: - ✨ 소셜 로그인 팝업 처리 (새 창 → 외부 앱 또는 현재 탭)
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             
             guard let url = navigationAction.request.url else {
@@ -908,7 +960,18 @@ struct CustomWebView: UIViewRepresentable {
             
             TabPersistenceManager.debugMessages.append("🪟 새 창 요청: \(url.absoluteString)")
             
-            // ✅ 소셜 로그인 URL이면 외부 앱으로 열기 시도
+            // ✅ 구글 로그인 URL이면 사용자 에이전트 변경 후 현재 탭에서 열기
+            if SocialLoginHelper.isGoogleLoginURL(url) {
+                TabPersistenceManager.debugMessages.append("🔍 구글 로그인 새 창 감지: \(url.absoluteString)")
+                
+                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                webView.customUserAgent = desktopUA
+                webView.load(navigationAction.request)
+                TabPersistenceManager.debugMessages.append("✅ 구글 로그인 → 현재 탭에서 열기 (UA 변경)")
+                return nil
+            }
+            
+            // ✅ 네이버, 카카오 소셜 로그인 URL이면 외부 앱으로 열기 시도
             if SocialLoginHelper.isSocialLoginURL(url) {
                 TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 새 창 감지: \(url.absoluteString)")
                 
