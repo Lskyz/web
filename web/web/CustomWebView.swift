@@ -1096,6 +1096,5 @@ public func downloadDidFinish(_ download: WKDownload) {
         top.present(activityVC, animated: true)
     }
 }
-```
 
 }
