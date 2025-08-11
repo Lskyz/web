@@ -81,6 +81,9 @@ struct CustomWebView: UIViewRepresentable {
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
         stateModel.webView = webView
+        
+        // ✨ 초기 사용자 에이전트 설정
+        context.coordinator.updateUserAgentIfNeeded()
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -133,19 +136,19 @@ struct CustomWebView: UIViewRepresentable {
 
         // 다운로드 관련 이벤트 옵저버 등록
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
+                                               selector: #selector(Coordinator.handleDownloadStart(:)),
                                                name: .WebViewDownloadStart,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
+                                               selector: #selector(Coordinator.handleDownloadProgress(:)),
                                                name: .WebViewDownloadProgress,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
+                                               selector: #selector(Coordinator.handleDownloadFinish(:)),
                                                name: .WebViewDownloadFinish,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
+                                               selector: #selector(Coordinator.handleDownloadFailed(:)),
                                                name: .WebViewDownloadFailed,
                                                object: nil)
 
@@ -176,7 +179,7 @@ struct CustomWebView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
-        
+
         // 스크롤/델리게이트 해제
         uiView.scrollView.delegate = nil
         uiView.uiDelegate = nil
@@ -275,6 +278,18 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             removeLoadingObservers(for: webView)
         }
+        
+        // ✨ 사용자 에이전트 업데이트 메서드
+        func updateUserAgentIfNeeded() {
+            guard let webView = webView else { return }
+            
+            if parent.stateModel.isDesktopMode {
+                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+                webView.customUserAgent = desktopUA
+            } else {
+                webView.customUserAgent = nil
+            }
+        }
 
         // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
         func setupLoadingObservers(for webView: WKWebView) {
@@ -282,7 +297,7 @@ struct CustomWebView: UIViewRepresentable {
             loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let isLoading = change.newValue ?? false
-                
+
                 DispatchQueue.main.async {
                     if self.parent.stateModel.isLoading != isLoading {
                         self.parent.stateModel.isLoading = isLoading
@@ -294,7 +309,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let progress = change.newValue ?? 0.0
-                
+
                 DispatchQueue.main.async {
                     // ✅ 모든 진행률 변화를 반영
                     let newProgress = max(0.0, min(1.0, progress))
@@ -305,7 +320,7 @@ struct CustomWebView: UIViewRepresentable {
             // URL 변경 관찰
             urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
                 guard let self = self, let newURL = change.newValue, let url = newURL else { return }
-                
+
                 DispatchQueue.main.async {
                     if self.parent.stateModel.currentURL != url {
                         self.parent.stateModel.setNavigatingFromWebView(true)
@@ -318,7 +333,7 @@ struct CustomWebView: UIViewRepresentable {
             // 제목 변경 관찰
             titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
                 guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
-                
+
                 DispatchQueue.main.async {
                     self.parent.stateModel.updateCurrentPageTitle(title)
                 }
@@ -337,27 +352,27 @@ struct CustomWebView: UIViewRepresentable {
         }
 
         // MARK: - ✨ WKNavigationDelegate (에러 처리 강화 + 스와이프 동기화)
-        
+
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             // ✅ 간단한 스와이프 뒤로가기 감지
             isSwipeBackNavigation = webView.canGoBack && 
                                   webView.backForwardList.backItem != nil
-            
+
             // ✨ 로딩 시작을 StateModel에 전달
             DispatchQueue.main.async {
                 if !self.parent.stateModel.isLoading {
                     self.parent.stateModel.isLoading = true
                 }
-                
+
                 // ✅ 항상 0%로 시작 (KVO가 실제 진행률 업데이트)
                 self.parent.stateModel.loadingProgress = 0.0
             }
-            
+
             // ✅ 스와이프 제스처 감지 추가 - WebViewStateModel과 동기화
             if let startURL = webView.url {
                 parent.stateModel.handleSwipeGestureDetected(to: startURL)
             }
-            
+
             // 기존 StateModel의 didStartProvisionalNavigation 호출
             parent.stateModel.webView(webView, didStartProvisionalNavigation: navigation)
         }
@@ -367,16 +382,16 @@ struct CustomWebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 // ✅ 진행률을 먼저 확실히 100%로 설정
                 self.parent.stateModel.loadingProgress = 1.0
-                
+
                 // 잠깐 후 로딩 상태 해제 (100% 표시 시간 확보)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.parent.stateModel.isLoading = false
                 }
-                
+
                 // ✅ 스와이프 플래그 리셋
                 self.isSwipeBackNavigation = false
             }
-            
+
             // 기존 StateModel의 didFinish 호출
             parent.stateModel.webView(webView, didFinish: navigation)
         }
@@ -390,21 +405,21 @@ struct CustomWebView: UIViewRepresentable {
                 }
                 self.parent.stateModel.loadingProgress = 0.0
             }
-            
+
             let nsError = error as NSError
-            
+
             // ✅ 스와이프 뒤로가기 중엔 모든 에러 무시
             if isSwipeBackNavigation {
                 parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
                 return
             }
-            
+
             // ✅ 사용자 취소는 무시 (새 URL 입력, 링크 클릭 등)
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
                 parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
                 return
             }
-            
+
             // ✅ 명확한 에러 전달 - 모든 중요한 에러를 ContentView로 전달
             if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
@@ -420,7 +435,7 @@ struct CustomWebView: UIViewRepresentable {
             } else {
                 TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 시작 에러: \(nsError.code)")
             }
-            
+
             // 기존 StateModel의 didFailProvisionalNavigation 호출
             parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
         }
@@ -434,9 +449,9 @@ struct CustomWebView: UIViewRepresentable {
                 }
                 self.parent.stateModel.loadingProgress = 0.0
             }
-            
+
             let nsError = error as NSError
-            
+
             // ✅ 명확한 에러 전달 - 로딩 진행 중 에러도 ContentView로 전달
             if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
                 NotificationCenter.default.post(
@@ -452,7 +467,7 @@ struct CustomWebView: UIViewRepresentable {
             } else {
                 TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 진행 에러: \(nsError.code)")
             }
-            
+
             // 기존 StateModel의 didFail 호출
             parent.stateModel.webView(webView, didFail: navigation, withError: error)
         }
@@ -460,14 +475,14 @@ struct CustomWebView: UIViewRepresentable {
         // ✅ HTTP 에러 필터링 - 메인 페이지와 내부 API/리소스 구분
         private func shouldNotifyForHTTPError(statusCode: Int, responseURL: URL?, mainURL: URL?) -> Bool {
             guard let responseURL = responseURL else { return false }
-            
+
             // ✅ 메인 페이지 URL과 같은 도메인이면 알림 (사용자가 직접 접근한 페이지)
             if let mainURL = mainURL, 
                responseURL.host == mainURL.host {
                 TabPersistenceManager.debugMessages.append("🏠 메인 도메인 HTTP 에러: \(statusCode) - \(responseURL.host ?? "")")
                 return true
             }
-            
+
             // ✅ OAuth/로그인 관련 도메인은 무시 (정상적인 플로우)
             let oauthDomains = [
                 "accounts.google.com",
@@ -478,26 +493,26 @@ struct CustomWebView: UIViewRepresentable {
                 "github.com",
                 "oauth.googleusercontent.com"
             ]
-            
+
             if let host = responseURL.host?.lowercased(),
                oauthDomains.contains(where: { host.contains($0) }) {
                 TabPersistenceManager.debugMessages.append("🔐 OAuth 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
                 return false
             }
-            
+
             // ✅ 광고/트래킹 관련 도메인 무시
             let adDomains = [
                 "googleads", "doubleclick", "googlesyndication", "googletagmanager",
                 "facebook.com", "fbcdn", "amazon-adsystem", "adsystem.amazon",
                 "analytics", "gtag", "gtm", "pixel", "tracking", "metrics"
             ]
-            
+
             if let host = responseURL.host?.lowercased(),
                adDomains.contains(where: { host.contains($0) }) {
                 TabPersistenceManager.debugMessages.append("📊 광고/트래킹 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
                 return false
             }
-            
+
             // ✅ API 엔드포인트 무시 (api., rest., graphql. 등)
             if let host = responseURL.host?.lowercased(),
                (host.hasPrefix("api.") || 
@@ -507,19 +522,19 @@ struct CustomWebView: UIViewRepresentable {
                 TabPersistenceManager.debugMessages.append("🔌 API 엔드포인트 HTTP 에러 무시: \(statusCode) - \(host)")
                 return false
             }
-            
+
             // ✅ CDN/리소스 도메인 무시
             let cdnDomains = [
                 "amazonaws.com", "cloudfront.net", "cdn", "static",
                 "gstatic.com", "googleapis.com", "bootstrapcdn.com"
             ]
-            
+
             if let host = responseURL.host?.lowercased(),
                cdnDomains.contains(where: { host.contains($0) }) {
                 TabPersistenceManager.debugMessages.append("🌍 CDN/리소스 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
                 return false
             }
-            
+
             // ✅ 심각한 에러만 알림 (404, 500 등)
             switch statusCode {
             case 404, 500, 502, 503, 504:
@@ -531,14 +546,14 @@ struct CustomWebView: UIViewRepresentable {
                 return false
             }
         }
-        
+
         private func shouldNotifyUserForError(_ error: NSError) -> Bool {
             // NSURLError가 아닌 경우는 무시 (내부 리소스 에러 등)
             guard error.domain == NSURLErrorDomain else { 
                 TabPersistenceManager.debugMessages.append("🔕 비-NSURLError 도메인 무시: \(error.domain)")
                 return false 
             }
-            
+
             switch error.code {
             // ✅ 메인 페이지 로딩 실패 - 반드시 알려야 할 중요한 에러들만
             case NSURLErrorCannotFindHost:           // 잘못된 주소/도메인
@@ -563,7 +578,7 @@ struct CustomWebView: UIViewRepresentable {
             case NSURLErrorDNSLookupFailed:          // DNS 조회 실패
                 TabPersistenceManager.debugMessages.append("🌐 DNS 조회 실패: \(error.code)")
                 return true
-                
+
             // ✅ 무시할 에러들 (모든 기타 에러들)
             default:
                 // ✅ 알 수 없는 에러는 무시 (내부 리소스, 광고, 이미지 등의 실패)
@@ -574,13 +589,13 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서) - 필터링 강화
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            
+
             // HTTP 응답 상태 코드 체크
             if let httpResponse = navigationResponse.response as? HTTPURLResponse {
                 let statusCode = httpResponse.statusCode
                 let responseURL = navigationResponse.response.url
                 let mainURL = parent.stateModel.currentURL
-                
+
                 // ✅ 4xx, 5xx 에러이지만 스마트 필터링 적용
                 if statusCode >= 400 {
                     let shouldNotifyHTTPError = shouldNotifyForHTTPError(
@@ -588,7 +603,7 @@ struct CustomWebView: UIViewRepresentable {
                         responseURL: responseURL, 
                         mainURL: mainURL
                     )
-                    
+
                     if shouldNotifyHTTPError, let tabID = parent.stateModel.tabID {
                         NotificationCenter.default.post(
                             name: Notification.Name("webViewDidFailLoad"),
@@ -605,7 +620,7 @@ struct CustomWebView: UIViewRepresentable {
                     }
                 }
             }
-            
+
             // 다운로드 처리 (iOS 14+)
             if #available(iOS 14.0, *) {
                 if let http = navigationResponse.response as? HTTPURLResponse,
@@ -615,7 +630,7 @@ struct CustomWebView: UIViewRepresentable {
                     return
                 }
             }
-            
+
             decisionHandler(.allow)
         }
 
@@ -676,55 +691,55 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            
+
             let host = challenge.protectionSpace.host
-            
+
             // 서버 신뢰성 검증 (SSL/TLS)
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
-                
+
                 // ✅ 먼저 시스템 기본 검증 시도
                 guard let serverTrust = challenge.protectionSpace.serverTrust else {
                     completionHandler(.performDefaultHandling, nil)
                     return
                 }
-                
+
                 // ✅ 최신 API 사용 (iOS 13+)
                 var error: CFError?
                 let isValid = SecTrustEvaluateWithError(serverTrust, &error)
-                
+
                 if isValid {
                     // ✅ 시스템이 신뢰하는 인증서 - 자동 허용
                     let credential = URLCredential(trust: serverTrust)
                     completionHandler(.useCredential, credential)
                     return
                 }
-                
+
                 // ❌ 시스템 검증 실패 - 사용자에게 묻기
                 TabPersistenceManager.debugMessages.append("⚠️ SSL 인증서 문제: \(host)")
-                
+
                 DispatchQueue.main.async {
                     guard let topVC = self.topMostViewController() else {
                         completionHandler(.performDefaultHandling, nil)
                         return
                     }
-                    
+
                     let alert = UIAlertController(
                         title: "보안 연결 경고", 
                         message: "\(host)의 보안 인증서에 문제가 있습니다.\n\n• 인증서가 만료되었거나\n• 자체 서명된 인증서이거나\n• 신뢰할 수 없는 기관에서 발급되었습니다.\n\n그래도 계속 방문하시겠습니까?",
                         preferredStyle: .alert
                     )
-                    
+
                     // 무시하고 방문
                     alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
                         let credential = URLCredential(trust: serverTrust)
                         completionHandler(.useCredential, credential)
                         TabPersistenceManager.debugMessages.append("🔓 SSL 경고 무시: \(host)")
                     })
-                    
+
                     // 취소 (안전한 선택)
                     alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
                         completionHandler(.cancelAuthenticationChallenge, nil)
-                        
+
                         // SSL 에러 알림 전송
                         if let tabID = self.parent.stateModel.tabID {
                             NotificationCenter.default.post(
@@ -738,12 +753,12 @@ struct CustomWebView: UIViewRepresentable {
                             )
                         }
                     })
-                    
+
                     topVC.present(alert, animated: true)
                 }
                 return
             }
-            
+
             // 다른 인증 방법은 기본 처리
             completionHandler(.performDefaultHandling, nil)
         }
@@ -907,13 +922,13 @@ private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
 
 // MARK: - WebViewStateModel 확장 (쿠키 세션 공유 + 스와이프 동기화)
 extension WebViewStateModel {
-    
+
     // ✅ 스와이프-버튼 동기화를 위한 didCommit 처리
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // 기존 쿠키 동기화 로직
         _installCookieSyncIfNeeded(for: webView)
         CookieSyncManager.syncAppToWebView(webView, completion: nil)
-        
+
         // ✅ 추가: 스와이프-버튼 동기화 연동
         handleDidCommitNavigation()
     }
@@ -954,10 +969,10 @@ private final class DownloadCoordinator {
     func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
 }
 
-private func sanitizedFilename(_ name: String) -> String {
+private func sanitizedFilename( name: String) -> String {
     var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
-    result = result.components(separatedBy: forbidden).joined(separator: "_")
+    result = result.components(separatedBy: forbidden).joined(separator: "")
     if result.count > 150 {
         result = String(result.prefix(150))
     }
@@ -1007,7 +1022,7 @@ extension WebViewStateModel: WKDownloadDelegate {
                          totalBytesExpectedToWrite: Int64) {
         guard totalBytesExpectedToWrite > 0 else { return }
         let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        
+
         NotificationCenter.default.post(name: .WebViewDownloadProgress,
                                         object: nil,
                                         userInfo: ["progress": progress])
@@ -1052,3 +1067,4 @@ extension WebViewStateModel: WKDownloadDelegate {
         }
     }
 }
+

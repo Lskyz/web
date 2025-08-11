@@ -294,7 +294,18 @@ struct ContentView: View {
                     if showAddressBar {
                         VStack(spacing: 0) {
                             HStack {
-                                // ✨ 로딩 인디케이터 및 자물쇠 아이콘 (녹색으로 변경)
+                                // ✨ 데스크탑 모드 버튼 (첫 번째)
+                                Button(action: {
+                                    state.toggleDesktopMode()
+                                    TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드: \(state.isDesktopMode ? "ON" : "OFF")")
+                                }) {
+                                    Image(systemName: state.isDesktopMode ? "desktopcomputer" : "iphone")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(state.isDesktopMode ? .blue : .primary)
+                                        .frame(width: 20, height: 20)
+                                }
+                                
+                                // ✨ 로딩 인디케이터 및 자물쇠 아이콘 (두 번째)
                                 if state.isLoading {
                                     ProgressView()
                                         .scaleEffect(0.8)
@@ -303,17 +314,6 @@ struct ContentView: View {
                                     Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
                                         .font(.system(size: 16))
                                         .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
-                                        .frame(width: 20, height: 20)
-                                }
-                                
-                                // ✨ 데스크탑 모드 버튼 (자물쇠/글로브 아이콘 옆)
-                                Button(action: {
-                                    // 데스크탑 모드 토글 기능 (예시)
-                                    TabPersistenceManager.debugMessages.append("데스크탑 모드 토글")
-                                }) {
-                                    Image(systemName: "desktopcomputer")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(.primary)
                                         .frame(width: 20, height: 20)
                                 }
                                 

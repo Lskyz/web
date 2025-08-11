@@ -174,6 +174,20 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
     @Published var showAVPlayer = false
+    
+    // ✨ 데스크탑 모드 상태
+    @Published var isDesktopMode: Bool = false {
+        didSet {
+            if oldValue != isDesktopMode {
+                dbg("데스크탑 모드: \(oldValue) → \(isDesktopMode)")
+                // 사용자 에이전트 변경을 위해 페이지 새로고침
+                if let webView = webView {
+                    updateUserAgent()
+                    webView.reload()
+                }
+            }
+        }
+    }
 
     // 복원 상태 관리
     private(set) var isRestoringSession: Bool = false {
@@ -466,6 +480,28 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         guard let webView = webView else { return }
         webView.reload()
         dbg("🔄 페이지 새로고침")
+    }
+    
+    // ✨ 데스크탑 모드 토글 메서드
+    func toggleDesktopMode() {
+        isDesktopMode.toggle()
+        dbg("🖥️ 데스크탑 모드 토글: \(isDesktopMode)")
+    }
+    
+    // ✨ 사용자 에이전트 업데이트 메서드
+    private func updateUserAgent() {
+        guard let webView = webView else { return }
+        
+        if isDesktopMode {
+            // macOS Safari 사용자 에이전트 (데스크탑 모드)
+            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+            webView.customUserAgent = desktopUA
+            dbg("🖥️ 데스크탑 사용자 에이전트 설정: \(desktopUA)")
+        } else {
+            // 모바일 기본 사용자 에이전트로 복원
+            webView.customUserAgent = nil
+            dbg("📱 모바일 사용자 에이전트로 복원")
+        }
     }
 
     // MARK: - ✅ CustomWebView와 연동을 위한 메서드들
