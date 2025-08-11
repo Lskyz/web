@@ -227,19 +227,19 @@ struct CustomWebView: UIViewRepresentable {
 
         // 다운로드 관련 이벤트 옵저버 등록
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadStart(:)),
+                                               selector: #selector(Coordinator.handleDownloadStart(_:)),
                                                name: .WebViewDownloadStart,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadProgress(:)),
+                                               selector: #selector(Coordinator.handleDownloadProgress(_:)),
                                                name: .WebViewDownloadProgress,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFinish(:)),
+                                               selector: #selector(Coordinator.handleDownloadFinish(_:)),
                                                name: .WebViewDownloadFinish,
                                                object: nil)
         NotificationCenter.default.addObserver(context.coordinator,
-                                               selector: #selector(Coordinator.handleDownloadFailed(:)),
+                                               selector: #selector(Coordinator.handleDownloadFailed(_:)),
                                                name: .WebViewDownloadFailed,
                                                object: nil)
 
@@ -1215,7 +1215,7 @@ extension WebViewStateModel: WKDownloadDelegate {
         let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
 
-        let safeName = sanitizedFilename(suggestedFilename)
+        let safeName = sanitizedFilename(name: suggestedFilename)
         let dst = downloadsDir.appendingPathComponent(safeName)
 
         if FileManager.default.fileExists(atPath: dst.path) {
