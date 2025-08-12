@@ -4,7 +4,7 @@
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
 //  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
 //  🔄 WKNavigationDelegate는 WebViewDataModel로 이동됨
-//  ✨ 제스처와 하단 버튼 완벽 동기화 추가
+//  ✨ 제스처와 하단 버튼 완벽 동기화 - 커스텀 제스처로 해결!
 //
 
 import SwiftUI
@@ -63,7 +63,10 @@ struct CustomWebView: UIViewRepresentable {
 
         // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
+        
+        // 🎯 네이티브 제스처 완전 비활성화 - 동기화 문제 해결의 핵심!
+        webView.allowsBackForwardNavigationGestures = false
+        
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.decelerationRate = .normal
 
@@ -83,6 +86,9 @@ struct CustomWebView: UIViewRepresentable {
         
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
+
+        // 🎯 커스텀 제스처 추가 - 완벽한 동기화!
+        context.coordinator.setupCustomGestures(for: webView)
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -187,6 +193,9 @@ struct CustomWebView: UIViewRepresentable {
         uiView.scrollView.delegate = nil
         uiView.uiDelegate = nil
         coordinator.webView = nil
+
+        // 🎯 커스텀 제스처 제거
+        coordinator.removeCustomGestures(from: uiView)
 
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
@@ -457,8 +466,8 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    // MARK: - Coordinator (WKNavigationDelegate 제거됨)
-    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
+    // MARK: - Coordinator (WKNavigationDelegate 제거됨, UIGestureRecognizerDelegate 추가)
+    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler, UIGestureRecognizerDelegate {
 
         var parent: CustomWebView
         weak var webView: WKWebView?
@@ -466,6 +475,10 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
+
+        // 🎯 커스텀 제스처 레퍼런스
+        private var backGesture: UIScreenEdgePanGestureRecognizer?
+        private var forwardGesture: UIScreenEdgePanGestureRecognizer?
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -491,6 +504,87 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             removeLoadingObservers(for: webView)
             removeNavigationObservers(for: webView)
+        }
+        
+        // MARK: - 🎯 커스텀 제스처 설정 (핵심!)
+        
+        func setupCustomGestures(for webView: WKWebView) {
+            // ✨ 커스텀 뒤로가기 제스처 (왼쪽 가장자리)
+            let backGesture = UIScreenEdgePanGestureRecognizer(
+                target: self, 
+                action: #selector(handleBackGesture(_:))
+            )
+            backGesture.edges = .left
+            backGesture.delegate = self  // 충돌 방지용
+            webView.addGestureRecognizer(backGesture)
+            self.backGesture = backGesture
+            
+            // ✨ 커스텀 앞으로가기 제스처 (오른쪽 가장자리)
+            let forwardGesture = UIScreenEdgePanGestureRecognizer(
+                target: self,
+                action: #selector(handleForwardGesture(_:))
+            )
+            forwardGesture.edges = .right
+            forwardGesture.delegate = self  // 충돌 방지용
+            webView.addGestureRecognizer(forwardGesture)
+            self.forwardGesture = forwardGesture
+            
+            TabPersistenceManager.debugMessages.append("🎯 커스텀 제스처 설정 완료 - 동기화 문제 해결!")
+        }
+        
+        func removeCustomGestures(from webView: WKWebView) {
+            if let backGesture = backGesture {
+                webView.removeGestureRecognizer(backGesture)
+                self.backGesture = nil
+            }
+            if let forwardGesture = forwardGesture {
+                webView.removeGestureRecognizer(forwardGesture)
+                self.forwardGesture = nil
+            }
+        }
+        
+        // MARK: - 🎯 커스텀 제스처 핸들러들 (동기화 문제 완전 해결!)
+        
+        @objc func handleBackGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            
+            // 최소 이동 거리 체크 (실수 방지)
+            let translation = gesture.translation(in: gesture.view)
+            guard translation.x > 50 else { return }
+            
+            // 🎯 우리 시스템으로 직접 처리 - 동기화 문제 완전 해결!
+            if parent.stateModel.canGoBack {
+                parent.stateModel.goBack()
+                TabPersistenceManager.debugMessages.append("👆 커스텀 뒤로가기 제스처 (동기화 완벽!)")
+            }
+        }
+        
+        @objc func handleForwardGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            
+            // 최소 이동 거리 체크
+            let translation = gesture.translation(in: gesture.view)
+            guard translation.x < -50 else { return }  // 오른쪽에서 왼쪽으로
+            
+            if parent.stateModel.canGoForward {
+                parent.stateModel.goForward()
+                TabPersistenceManager.debugMessages.append("👆 커스텀 앞으로가기 제스처 (동기화 완벽!)")
+            }
+        }
+        
+        // MARK: - UIGestureRecognizerDelegate (제스처 충돌 방지)
+        
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            // 스크롤과는 동시 인식 허용
+            if otherGestureRecognizer is UIPanGestureRecognizer && gestureRecognizer is UIScreenEdgePanGestureRecognizer {
+                return false  // 화면 가장자리 제스처는 우선권
+            }
+            return true
+        }
+        
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            // 우리 커스텀 제스처가 우선권
+            return gestureRecognizer is UIScreenEdgePanGestureRecognizer
         }
         
         // ✨ 사용자 에이전트 업데이트 메서드 (데스크탑 모드용)
@@ -674,19 +768,17 @@ struct CustomWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
 
-        // MARK: 네비게이션 명령
+        // MARK: 네비게이션 명령 (기존 방식도 유지)
         @objc func reloadWebView() { 
             webView?.reload()
         }
         @objc func goBack() { 
-            if webView?.canGoBack == true { 
-                webView?.goBack()
-            }
+            // 🎯 이제 이것도 우리 시스템을 통해 처리!
+            parent.stateModel.goBack()
         }
         @objc func goForward() { 
-            if webView?.canGoForward == true { 
-                webView?.goForward()
-            }
+            // 🎯 이제 이것도 우리 시스템을 통해 처리!
+            parent.stateModel.goForward()
         }
 
         // MARK: 스크롤 전달
