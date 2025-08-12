@@ -2,7 +2,7 @@
 //  WebViewStateModel.swift
 //  순수 UI 상태, 에러 알림, 다운로드, 데스크탑 모드만 담당
 //  ✨ 히스토리/세션 로직은 WebViewDataModel로 완전 분리됨
-//  ✨ 실시간 네비게이션 상태 동기화 강화
+//  🎯 **웹뷰 네이티브 상태 완전 무시 - 우리 시스템만으로 네비게이션 관리!**
 //
 
 import Foundation
@@ -56,7 +56,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
     
-    // ✨ 네비게이션 상태는 dataModel에서 실시간으로 가져옴 (computed properties)
+    // 🎯 **핵심 변경**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
         return dataModel.canGoBack
     }
@@ -95,8 +95,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
                 webView.navigationDelegate = dataModel
                 dataModel.stateModel = self
                 
-                // ✨ 네비게이션 상태 변경 감지를 위한 Publisher 구독
-                setupNavigationStateObservation()
+                // 🎯 네이티브 상태 관찰 완전 제거! 더 이상 웹뷰 상태를 신뢰하지 않음
+                // setupNavigationStateObservation() // ← 제거됨
             }
         }
     }
@@ -110,26 +110,26 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.tabID = tabID
         dataModel.stateModel = self
         
-        // ✨ DataModel의 네비게이션 상태 변경 감지
-        setupNavigationStateObservation()
+        // 🎯 **핵심**: DataModel의 상태 변경만 감지, 웹뷰 상태는 무시
+        setupDataModelObservation()
     }
     
-    // MARK: - ✨ 네비게이션 상태 실시간 관찰 설정
-    private func setupNavigationStateObservation() {
+    // MARK: - 🎯 **핵심 변경**: 데이터 모델만 관찰, 웹뷰 네이티브 상태 무시
+    private func setupDataModelObservation() {
         // DataModel의 canGoBack, canGoForward 변경을 감지하여 UI 업데이트
         dataModel.$canGoBack
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                // ✨ ObjectWillChange를 발생시켜 UI 강제 업데이트
+            .sink { [weak self] newValue in
                 self?.objectWillChange.send()
+                self?.dbg("🎯 DataModel canGoBack 변경: \(newValue)")
             }
             .store(in: &cancellables)
         
         dataModel.$canGoForward
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                // ✨ ObjectWillChange를 발생시켜 UI 강제 업데이트
+            .sink { [weak self] newValue in
                 self?.objectWillChange.send()
+                self?.dbg("🎯 DataModel canGoForward 변경: \(newValue)")
             }
             .store(in: &cancellables)
     }
@@ -307,10 +307,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - ✅ 강화된 네비게이션 메서드 (실시간 UI 업데이트 포함)
+    // MARK: - 🎯 **완전 독립형 네비게이션** (웹뷰 상태 무시)
     
     func goBack() {
-        guard canGoBack else { return }
+        guard canGoBack else { 
+            dbg("❌ goBack 실패: canGoBack=false (DataModel 기준)")
+            return 
+        }
         
         isNavigatingFromWebView = true
         
@@ -322,17 +325,22 @@ final class WebViewStateModel: NSObject, ObservableObject {
                 webView.load(URLRequest(url: record.url))
             }
             
-            // ✨ UI 강제 업데이트
+            // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
             DispatchQueue.main.async {
                 self.objectWillChange.send()
             }
             
-            dbg("⬅️ 뒤로가기: '\(record.title)' [인덱스: \(dataModel.currentHistoryIndex)/\(dataModel.pageHistory.count)]")
+            dbg("⬅️ 뒤로가기 성공: '\(record.title)' [DataModel 인덱스: \(dataModel.currentHistoryIndex)/\(dataModel.pageHistory.count)]")
+        } else {
+            dbg("❌ 뒤로가기 실패: DataModel에서 nil 반환")
         }
     }
     
     func goForward() {
-        guard canGoForward else { return }
+        guard canGoForward else { 
+            dbg("❌ goForward 실패: canGoForward=false (DataModel 기준)")
+            return 
+        }
         
         isNavigatingFromWebView = true
         
@@ -344,12 +352,14 @@ final class WebViewStateModel: NSObject, ObservableObject {
                 webView.load(URLRequest(url: record.url))
             }
             
-            // ✨ UI 강제 업데이트
+            // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
             DispatchQueue.main.async {
                 self.objectWillChange.send()
             }
             
-            dbg("➡️ 앞으로가기: '\(record.title)' [인덱스: \(dataModel.currentHistoryIndex)/\(dataModel.pageHistory.count)]")
+            dbg("➡️ 앞으로가기 성공: '\(record.title)' [DataModel 인덱스: \(dataModel.currentHistoryIndex)/\(dataModel.pageHistory.count)]")
+        } else {
+            dbg("❌ 앞으로가기 실패: DataModel에서 nil 반환")
         }
     }
     
@@ -365,8 +375,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
         self.isNavigatingFromWebView = value
     }
     
-    // CustomWebView에서 호출할 수 있는 스와이프 감지 메서드
+    // CustomWebView에서 호출할 수 있는 스와이프 감지 메서드 (단순화됨)
     func handleSwipeGestureDetected(to url: URL) {
+        // 이제 커스텀 제스처로 직접 처리하므로 단순화
         guard !dataModel.isHistoryNavigationActive() else {
             return
         }
@@ -413,7 +424,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 디버그 메서드 (간소화)
+    // MARK: - 🎯 강화된 디버그 메서드
     
     private func dbg(_ msg: String) {
         let id: String
@@ -422,7 +433,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
         } else {
             id = "noTab"
         }
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
+        
+        // 🎯 네비게이션 상태도 함께 로깅
+        let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)] \(msg)")
     }
     
     // MARK: - 메모리 정리
