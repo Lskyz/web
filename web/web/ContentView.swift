@@ -70,507 +70,574 @@ struct ContentView: View {
     private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
     var body: some View {
+        mainContentView
+            .onAppear(perform: onAppearHandler)
+            .onReceive(currentState.$currentURL, perform: onURLChange)
+            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+            .sheet(isPresented: $showHistorySheet, content: historySheet)
+            .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
+            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+            .fullScreenCover(isPresented: $showDebugView, content: debugView)
+            .safeAreaInset(edge: .bottom, content: bottomUIContent)
+    }
+    
+    // MARK: - 컴포넌트 분해
+    
+    private var currentState: WebViewStateModel {
+        if tabs.indices.contains(selectedTabIndex) {
+            return tabs[selectedTabIndex].stateModel
+        } else {
+            // 빈 상태 반환
+            return WebViewStateModel()
+        }
+    }
+    
+    @ViewBuilder
+    private var mainContentView: some View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
-
+            
             ZStack {
-                // MARK: 웹 콘텐츠 영역
                 if state.currentURL != nil {
-                    CustomWebView(
-                        stateModel: state,
-                        playerURL: Binding(
-                            get: { tabs[selectedTabIndex].playerURL },
-                            set: { tabs[selectedTabIndex].playerURL = $0 }
-                        ),
-                        showAVPlayer: Binding(
-                            get: { tabs[selectedTabIndex].showAVPlayer },
-                            set: { tabs[selectedTabIndex].showAVPlayer = $0 }
-                        ),
-                        onScroll: { y in
-                            handleWebViewScroll(yOffset: y)
-                        }
-                    )
-                    .id(state.tabID) // 탭별 WKWebView 인스턴스 분리 보장
-                    .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom]) // 하단 겹치기 + (주소창 숨김 시) 상단 겹치기
-
-                    // 스크롤 오프셋 트래킹 (기존 로직)
-                    .overlay(
-                        GeometryReader { geometry in
-                            Color.clear
-                                .preference(
-                                    key: ScrollOffsetPreferenceKey.self,
-                                    value: geometry.frame(in: .global).origin.y
-                                )
-                        }
-                    )
-                    .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-                        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
-                            previousOffset = offset; return
-                        }
-                        let delta = offset - previousOffset
-                        if delta < -30 && showAddressBar {
-                            withAnimation {
-                                showAddressBar = false
-                                isTextFieldFocused = false
-                            }
-                            allowTopOverlap = true
-                        }
-                        previousOffset = offset
-                    }
-
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation {
-                            if showAddressBar {
-                                showAddressBar = false
-                                isTextFieldFocused = false
-                                allowTopOverlap = true
-                            } else {
-                                showAddressBar = true
-                                allowTopOverlap = false
-                                // ✅ 수정: 자동 포커스 제거 - 주소창만 보여주고 키보드는 사용자가 직접 탭할 때만
-                            }
-                        }
-                    }
-
+                    webContentView(state: state)
                 } else {
-                    // ✅ 수정: DashboardView를 onNavigateToURL 단일 함수로 통합
-                    DashboardView(
-                        onNavigateToURL: { selectedURL in
-                            // 원자적 처리: URL 설정 + 로딩을 한번에
-                            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-                            tabs[selectedTabIndex].stateModel.loadURLIfReady()
-                            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
-                        }
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation {
-                            if showAddressBar {
-                                showAddressBar = false
-                                isTextFieldFocused = false
-                                allowTopOverlap = true
-                            } else {
-                                showAddressBar = true
-                                allowTopOverlap = false
-                                // ✅ 수정: 여기서도 자동 포커스 제거
-                            }
-                        }
-                    }
+                    dashboardView
                 }
             }
-
-            // MARK: - 뷰 생명주기/이벤트 (기존)
-            .onAppear {
-                if let url = state.currentURL {
-                    inputURL = url.absoluteString
-                    TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
-                }
-                TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
-            }
-            .onReceive(state.$currentURL) { url in
-                if let url = url { inputURL = url.absoluteString }
-            }
-            .onReceive(state.navigationDidFinish) { _ in
-                if let currentRecord = state.currentPageRecord {
-                    let back = state.canGoBack ? "가능" : "불가"
-                    let fwd = state.canGoForward ? "가능" : "불가"
-                    let title = currentRecord.title
-                    let pageId = currentRecord.id.uuidString.prefix(8)
-                    TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
-                } else {
-                    TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
-                }
-                TabPersistenceManager.saveTabs(tabs)
-                TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
-                
-                // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
-                if !showAddressBar {
-                    withAnimation {
-                        showAddressBar = true
-                        allowTopOverlap = false
-                    }
-                    
-                    // 3초 후 자동으로 숨기기
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                        if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
-                            withAnimation {
-                                showAddressBar = false
-                                allowTopOverlap = true
-                            }
-                        }
-                    }
-                }
-            }
-            // ✨ 에러 처리 - HTTP 상태 코드 및 네트워크 오류를 한글 알림으로 표시
-            .onReceive(NotificationCenter.default.publisher(for: .webViewDidFailLoad)) { notification in
-                guard let userInfo = notification.userInfo,
-                      let tabIDString = userInfo["tabID"] as? String,
-                      tabIDString == state.tabID?.uuidString else { return }
-                
-                if let statusCode = userInfo["statusCode"] as? Int,
-                   let url = userInfo["url"] as? String {
-                    let error = getErrorMessage(for: statusCode, url: url)
-                    errorTitle = error.title
-                    errorMessage = error.message
-                    showErrorAlert = true
-                    TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
-                } else if let sslError = userInfo["sslError"] as? Bool, sslError,
-                          let url = userInfo["url"] as? String {
-                    // ✨ SSL 에러 처리 추가
-                    let domain = URL(string: url)?.host ?? "사이트"
-                    errorTitle = "보안 연결 취소됨"
-                    errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
-                    showErrorAlert = true
-                    TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
-                } else if let error = userInfo["error"] as? Error,
-                          let url = userInfo["url"] as? String {
-                    // ✅ 옵셔널 처리 - nil이면 알림 표시 안함
-                    if let networkError = getNetworkErrorMessage(for: error, url: url) {
-                        errorTitle = networkError.title
-                        errorMessage = networkError.message
-                        showErrorAlert = true
-                        TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
-                    } else {
-                        // ✅ nil이면 조용히 무시 (내부 리소스 실패 등)
-                        TabPersistenceManager.debugMessages.append("🔕 정의되지 않은 에러 무시")
-                    }
-                }
-            }
-            .sheet(isPresented: $showHistorySheet) {
-                NavigationView { 
-                    WebViewDataModel.HistoryPage(
-                        dataModel: state.dataModel,
-                        onNavigateToPage: { record in
-                            if let index = state.dataModel.findPageIndex(for: record.url) {
-                                if let navigatedRecord = state.dataModel.navigateToIndex(index) {
-                                    state.currentURL = navigatedRecord.url
-                                    if let webView = state.webView {
-                                        webView.load(URLRequest(url: navigatedRecord.url))
-                                    }
-                                }
-                            }
-                        },
-                        onNavigateToURL: { url in
-                            state.currentURL = url
-                        }
-                    )
-                }
-            }
-            .fullScreenCover(isPresented: $showTabManager) {
-                NavigationView {
-                    TabManager(
-                        tabs: $tabs,
-                        initialStateModel: state,
-                        onTabSelected: { index in
-                            selectedTabIndex = index
-                            let switched = tabs[index].stateModel
-                            if let r = switched.currentPageRecord {
-                                let back = switched.canGoBack ? "가능" : "불가"
-                                let fwd = switched.canGoForward ? "가능" : "불가"
-                                let pageId = r.id.uuidString.prefix(8)
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
-                            } else {
-                                TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
-                            }
-                        }
-                    )
-                }
-            }
-            .fullScreenCover(isPresented: Binding(
+        } else {
+            dashboardView
+        }
+    }
+    
+    @ViewBuilder
+    private func webContentView(state: WebViewStateModel) -> some View {
+        CustomWebView(
+            stateModel: state,
+            playerURL: Binding(
+                get: { tabs[selectedTabIndex].playerURL },
+                set: { tabs[selectedTabIndex].playerURL = $0 }
+            ),
+            showAVPlayer: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
                 set: { tabs[selectedTabIndex].showAVPlayer = $0 }
-            )) {
-                if let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
+            ),
+            onScroll: { y in
+                handleWebViewScroll(yOffset: y)
             }
-            .fullScreenCover(isPresented: $showDebugView) { DebugLogView() }
-            // ✨ 에러 알림 표시 (SSL 에러 케이스 별도 처리)
-            .alert(errorTitle, isPresented: $showErrorAlert) {
-                Button("확인") { }
-                if !errorTitle.contains("보안 연결") {  // SSL 에러가 아닐 때만 다시 시도 버튼 표시
-                    Button("다시 시도") {
-                        state.reload()
-                    }
+        )
+        .id(state.tabID)
+        .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom])
+        .overlay(scrollOffsetOverlay)
+        .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onContentTap)
+    }
+    
+    private var dashboardView: some View {
+        DashboardView(
+            onNavigateToURL: { selectedURL in
+                handleDashboardNavigation(selectedURL)
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onContentTap)
+    }
+    
+    private var scrollOffsetOverlay: some View {
+        GeometryReader { geometry in
+            Color.clear
+                .preference(
+                    key: ScrollOffsetPreferenceKey.self,
+                    value: geometry.frame(in: .global).origin.y
+                )
+        }
+    }
+    
+    @ViewBuilder
+    private func bottomUIContent() -> some View {
+        VStack(spacing: 10) {
+            if showAddressBar {
+                addressBarView
+            }
+            
+            toolbarView
+        }
+        .background(Color.clear)
+    }
+    
+    private var addressBarView: some View {
+        VStack(spacing: 0) {
+            addressBarMainContent
+            
+            if currentState.isLoading {
+                progressBarView
+            }
+            
+            if currentState.isDesktopMode {
+                desktopModeControls
+            }
+        }
+        .background(glassBackground)
+        .overlay(glassOverlay)
+        .padding(.horizontal, outerHorizontalPadding)
+        .transition(.opacity)
+    }
+    
+    private var addressBarMainContent: some View {
+        HStack {
+            desktopModeButton
+            loadingOrSecurityIcon
+            urlTextField
+            refreshButton
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, barVPadding)
+    }
+    
+    private var desktopModeButton: some View {
+        Button(action: {
+            currentState.toggleDesktopMode()
+            TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드: \(currentState.isDesktopMode ? "ON (Windows)" : "OFF")")
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: currentState.isDesktopMode ? "display" : "iphone")
+                    .font(.system(size: 14))
+                    .foregroundColor(currentState.isDesktopMode ? .blue : .primary)
+                
+                if currentState.isDesktopMode {
+                    Text("PC")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.blue)
                 }
-            } message: {
-                Text(errorMessage)
             }
-
-            // MARK: - 하단 UI (✨ 가장 투명한 블러 + 흰색 틴트)
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 10) {
-                    // 주소창
-                    if showAddressBar {
-                        VStack(spacing: 0) {
-                            HStack {
-                                // ✨ 강화된 데스크탑 모드 버튼 (첫 번째)
-                                Button(action: {
-                                    state.toggleDesktopMode()
-                                    TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드: \(state.isDesktopMode ? "ON (Windows)" : "OFF")")
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: state.isDesktopMode ? "display" : "iphone")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(state.isDesktopMode ? .blue : .primary)
-                                        
-                                        if state.isDesktopMode {
-                                            Text("PC")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(.blue)
-                                        }
-                                    }
-                                    .frame(width: 26, height: 20)
-                                }
-                                .scaleEffect(state.isDesktopMode ? 1.1 : 1.0)
-                                .animation(.easeInOut(duration: 0.2), value: state.isDesktopMode)
-                                
-                                // ✨ 로딩 인디케이터 및 자물쇠 아이콘 (두 번째)
-                                if state.isLoading {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                        .frame(width: 20, height: 20)
-                                } else {
-                                    Image(systemName: state.currentURL?.scheme == "https" ? "lock.fill" : "globe")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(state.currentURL?.scheme == "https" ? .green : .secondary)
-                                        .frame(width: 20, height: 20)
-                                }
-                                
-                                TextField("URL 또는 검색어", text: $inputURL)
-                                    .textFieldStyle(.plain)
-                                    .font(textFont)
-                                    .autocapitalization(.none)
-                                    .disableAutocorrection(true)
-                                    .keyboardType(.URL)
-                                    .focused($isTextFieldFocused)
-                                    .onTapGesture {
-                                        // ✅ 수정: 텍스트필드를 직접 탭했을 때만 포커스 + 전체 선택
-                                        if !isTextFieldFocused {
-                                            isTextFieldFocused = true
-                                            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                        }
-                                        if !textFieldSelectedAll {
-                                            DispatchQueue.main.async {
-                                                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
-                                                textFieldSelectedAll = true
-                                                TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
-                                            }
-                                        }
-                                    }
-                                    .onChange(of: isTextFieldFocused) { focused in
-                                        if focused {
-                                            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                        } else {
-                                            textFieldSelectedAll = false
-                                            TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
-                                        }
-                                    }
-                                    .onSubmit {
-                                        if let url = fixedURL(from: inputURL) {
-                                            state.currentURL = url
-                                            TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
-                                        }
-                                        isTextFieldFocused = false
-                                    }
-                                    .overlay(
-                                        HStack {
-                                            Spacer()
-                                            if !inputURL.isEmpty && !state.isLoading {
-                                                Button(action: { inputURL = "" }) {
-                                                    Image(systemName: "xmark.circle.fill")
-                                                        .font(.system(size: 16))
-                                                        .foregroundColor(.secondary)
-                                                }
-                                                .padding(.trailing, 8)
-                                            }
-                                        }
-                                    )
-                                
-                                // ✨ 새로고침/중지 버튼
-                                Button(action: {
-                                    if state.isLoading {
-                                        state.stopLoading()
-                                        TabPersistenceManager.debugMessages.append("로딩 중지")
-                                    } else {
-                                        state.reload()
-                                        TabPersistenceManager.debugMessages.append("페이지 새로고침")
-                                    }
-                                }) {
-                                    Image(systemName: state.isLoading ? "xmark" : "arrow.clockwise")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(.primary)
-                                }
-                                .frame(width: 24, height: 24)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, barVPadding)
-                            
-                            // ✨ 로딩 진행률 바 (조건 개선 + 부드러운 애니메이션 + 완료 시 자동 사라짐)
-                            if state.isLoading {
-                                ProgressView(value: max(0.0, min(1.0, state.loadingProgress)))
-                                    .progressViewStyle(LinearProgressViewStyle(tint: state.currentURL?.scheme == "https" ? .green : .secondary))
-                                    .frame(height: 2)
-                                    .padding(.horizontal, 14)
-                                    .animation(.easeOut(duration: 0.3), value: state.loadingProgress)  // 더 빠르고 자연스럽게
-                                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))         // 나타남/사라짐 빠르게
-                            }
-                            
-                            // ✨ 데스크탑 모드 확대/축소 슬라이더
-                            if state.isDesktopMode {
-                                VStack(spacing: 8) {
-                                    HStack {
-                                        Image(systemName: "minus.magnifyingglass")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.blue)
-                                        
-                                        Slider(
-                                            value: Binding(
-                                                get: { state.currentZoomLevel },
-                                                set: { newValue in
-                                                    state.setZoomLevel(newValue)
-                                                    TabPersistenceManager.debugMessages.append("🔍 줌 변경: \(String(format: "%.1f", newValue))x")
-                                                }
-                                            ),
-                                            in: 0.3...3.0,
-                                            step: 0.1
-                                        )
-                                        .accentColor(.blue)
-                                        
-                                        Image(systemName: "plus.magnifyingglass")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.blue)
-                                        
-                                        Text("\(String(format: "%.1f", state.currentZoomLevel))x")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(.blue)
-                                            .frame(width: 35)
-                                    }
-                                    .padding(.horizontal, 14)
-                                    
-                                    // 줌 프리셋 버튼들
-                                    HStack(spacing: 12) {
-                                        ForEach([0.5, 0.75, 1.0, 1.5, 2.0], id: \.self) { preset in
-                                            Button(action: {
-                                                state.setZoomLevel(preset)
-                                                TabPersistenceManager.debugMessages.append("🎯 줌 프리셋: \(String(format: "%.1f", preset))x")
-                                            }) {
-                                                Text("\(String(format: "%.1f", preset))x")
-                                                    .font(.system(size: 10, weight: .medium))
-                                                    .foregroundColor(abs(state.currentZoomLevel - preset) < 0.05 ? .white : .blue)
-                                                    .padding(.horizontal, 8)
-                                                    .padding(.vertical, 4)
-                                                    .background(
-                                                        RoundedRectangle(cornerRadius: 6)
-                                                            .fill(abs(state.currentZoomLevel - preset) < 0.05 ? Color.blue : Color.blue.opacity(0.1))
-                                                    )
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.bottom, 4)
-                                }
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                                .animation(.easeInOut(duration: 0.3), value: state.isDesktopMode)
-                            }
-                        }
-                        // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
-                        .background(
-                            ZStack {
-                                VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
-                                RoundedRectangle(cornerRadius: barCornerRadius)
-                                    .fill(Color.white.opacity(glassTintOpacity))
-                            }
-                        )
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
-                        .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
-                        .padding(.horizontal, outerHorizontalPadding)
-                        .transition(.opacity)
-                    }
-
-                    // 하단 통합 툴바
-                    HStack(spacing: 0) {
-                        HStack(spacing: toolbarSpacing) {
-                            Button(action: { state.goBack() }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(state.canGoBack ? .primary : .secondary)
-                            }
-                            .disabled(!state.canGoBack)
-
-                            Button(action: { state.goForward() }) {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(state.canGoForward ? .primary : .secondary)
-                            }
-                            .disabled(!state.canGoForward)
-
-                            Button(action: { state.reload() }) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Button(action: { showHistorySheet = true }) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Button(action: { showTabManager = true }) {
-                                Image(systemName: "square.on.square")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Button(action: { showDebugView = true }) {
-                                Image(systemName: "ladybug")
-                                    .font(.system(size: iconSize))
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, barVPadding)
-                    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
-                    .background(
-                        ZStack {
-                            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
-                            RoundedRectangle(cornerRadius: barCornerRadius)
-                                .fill(Color.white.opacity(glassTintOpacity))
-                        }
-                    )
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
-                    .overlay(RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25))
-                    .padding(.horizontal, outerHorizontalPadding)
-                    // ✨ 변경: "툴바의 빈공간"을 탭하면 주소창 열기 (버튼 영역 탭은 버튼이 소비하므로 충돌 X)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if !showAddressBar {                  // 조건만 추가 (밖 말고 안에)
-                            withAnimation {
-                                showAddressBar = true
-                                allowTopOverlap = false       // 주소창 보일 땐 상단 보호
-                                // ✅ 수정: 여기서도 자동 포커스 제거 - 주소창만 보여주기
-                            }
-                        }
-                    }
-                }
-                .background(Color.clear)
-            }
-
+            .frame(width: 26, height: 20)
+        }
+        .scaleEffect(currentState.isDesktopMode ? 1.1 : 1.0)
+        .animation(.easeInOut(duration: 0.2), value: currentState.isDesktopMode)
+    }
+    
+    @ViewBuilder
+    private var loadingOrSecurityIcon: some View {
+        if currentState.isLoading {
+            ProgressView()
+                .scaleEffect(0.8)
+                .frame(width: 20, height: 20)
         } else {
-            // ✅ 수정: 탭이 비어있을 때도 onNavigateToURL 단일 함수로 통합
-            DashboardView(
+            Image(systemName: currentState.currentURL?.scheme == "https" ? "lock.fill" : "globe")
+                .font(.system(size: 16))
+                .foregroundColor(currentState.currentURL?.scheme == "https" ? .green : .secondary)
+                .frame(width: 20, height: 20)
+        }
+    }
+    
+    private var urlTextField: some View {
+        TextField("URL 또는 검색어", text: $inputURL)
+            .textFieldStyle(.plain)
+            .font(textFont)
+            .autocapitalization(.none)
+            .disableAutocorrection(true)
+            .keyboardType(.URL)
+            .focused($isTextFieldFocused)
+            .onTapGesture(perform: onTextFieldTap)
+            .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
+            .onSubmit(perform: onTextFieldSubmit)
+            .overlay(textFieldClearButton)
+    }
+    
+    @ViewBuilder
+    private var textFieldClearButton: some View {
+        HStack {
+            Spacer()
+            if !inputURL.isEmpty && !currentState.isLoading {
+                Button(action: { inputURL = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.trailing, 8)
+            }
+        }
+    }
+    
+    private var refreshButton: some View {
+        Button(action: {
+            if currentState.isLoading {
+                currentState.stopLoading()
+                TabPersistenceManager.debugMessages.append("로딩 중지")
+            } else {
+                currentState.reload()
+                TabPersistenceManager.debugMessages.append("페이지 새로고침")
+            }
+        }) {
+            Image(systemName: currentState.isLoading ? "xmark" : "arrow.clockwise")
+                .font(.system(size: 16))
+                .foregroundColor(.primary)
+        }
+        .frame(width: 24, height: 24)
+    }
+    
+    private var progressBarView: some View {
+        ProgressView(value: max(0.0, min(1.0, currentState.loadingProgress)))
+            .progressViewStyle(LinearProgressViewStyle(tint: currentState.currentURL?.scheme == "https" ? .green : .secondary))
+            .frame(height: 2)
+            .padding(.horizontal, 14)
+            .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
+            .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+    }
+    
+    private var desktopModeControls: some View {
+        VStack(spacing: 8) {
+            zoomSlider
+            zoomPresetButtons
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+        .animation(.easeInOut(duration: 0.3), value: currentState.isDesktopMode)
+    }
+    
+    private var zoomSlider: some View {
+        HStack {
+            Image(systemName: "minus.magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundColor(.blue)
+            
+            Slider(
+                value: Binding(
+                    get: { currentState.currentZoomLevel },
+                    set: { newValue in
+                        currentState.setZoomLevel(newValue)
+                        TabPersistenceManager.debugMessages.append("🔍 줌 변경: \(String(format: "%.1f", newValue))x")
+                    }
+                ),
+                in: 0.3...3.0,
+                step: 0.1
+            )
+            .accentColor(.blue)
+            
+            Image(systemName: "plus.magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundColor(.blue)
+            
+            Text("\(String(format: "%.1f", currentState.currentZoomLevel))x")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.blue)
+                .frame(width: 35)
+        }
+        .padding(.horizontal, 14)
+    }
+    
+    private var zoomPresetButtons: some View {
+        HStack(spacing: 12) {
+            ForEach([0.5, 0.75, 1.0, 1.5, 2.0], id: \.self) { preset in
+                Button(action: {
+                    currentState.setZoomLevel(preset)
+                    TabPersistenceManager.debugMessages.append("🎯 줌 프리셋: \(String(format: "%.1f", preset))x")
+                }) {
+                    Text("\(String(format: "%.1f", preset))x")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(abs(currentState.currentZoomLevel - preset) < 0.05 ? .white : .blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(abs(currentState.currentZoomLevel - preset) < 0.05 ? Color.blue : Color.blue.opacity(0.1))
+                        )
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+    }
+    
+    private var toolbarView: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: toolbarSpacing) {
+                toolbarButton("chevron.left", action: { currentState.goBack() }, enabled: currentState.canGoBack)
+                toolbarButton("chevron.right", action: { currentState.goForward() }, enabled: currentState.canGoForward)
+                toolbarButton("arrow.clockwise", action: { currentState.reload() }, enabled: true)
+                toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, barVPadding)
+        .background(glassBackground)
+        .overlay(glassOverlay)
+        .padding(.horizontal, outerHorizontalPadding)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onToolbarTap)
+    }
+    
+    private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: iconSize))
+                .foregroundColor(enabled ? color : .secondary)
+        }
+        .disabled(!enabled)
+    }
+    
+    private var glassBackground: some View {
+        ZStack {
+            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+            RoundedRectangle(cornerRadius: barCornerRadius)
+                .fill(Color.white.opacity(glassTintOpacity))
+        }
+    }
+    
+    private var glassOverlay: some View {
+        Group {
+            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25)
+        }
+    }
+    
+    // MARK: - 이벤트 핸들러들
+    
+    private func onAppearHandler() {
+        if let url = currentState.currentURL {
+            inputURL = url.absoluteString
+            TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
+        }
+        TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
+    }
+    
+    private func onURLChange(url: URL?) {
+        if let url = url { inputURL = url.absoluteString }
+    }
+    
+    private func onNavigationFinish(_: Void) {
+        if let currentRecord = currentState.currentPageRecord {
+            let back = currentState.canGoBack ? "가능" : "불가"
+            let fwd = currentState.canGoForward ? "가능" : "불가"
+            let title = currentRecord.title
+            let pageId = currentRecord.id.uuidString.prefix(8)
+            TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | '\(title)' [ID: \(pageId)]")
+        } else {
+            TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
+        }
+        TabPersistenceManager.saveTabs(tabs)
+        TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
+        
+        // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
+        if !showAddressBar {
+            withAnimation {
+                showAddressBar = true
+                allowTopOverlap = false
+            }
+            
+            // 3초 후 자동으로 숨기기
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
+                    withAnimation {
+                        showAddressBar = false
+                        allowTopOverlap = true
+                    }
+                }
+            }
+        }
+    }
+    
+    private var errorNotificationPublisher: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: .webViewDidFailLoad)
+    }
+    
+    private func onErrorReceived(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let tabIDString = userInfo["tabID"] as? String,
+              tabIDString == currentState.tabID?.uuidString else { return }
+        
+        if let statusCode = userInfo["statusCode"] as? Int,
+           let url = userInfo["url"] as? String {
+            let error = getErrorMessage(for: statusCode, url: url)
+            errorTitle = error.title
+            errorMessage = error.message
+            showErrorAlert = true
+            TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
+        } else if let sslError = userInfo["sslError"] as? Bool, sslError,
+                  let url = userInfo["url"] as? String {
+            let domain = URL(string: url)?.host ?? "사이트"
+            errorTitle = "보안 연결 취소됨"
+            errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
+            showErrorAlert = true
+            TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
+        } else if let error = userInfo["error"] as? Error,
+                  let url = userInfo["url"] as? String {
+            if let networkError = getNetworkErrorMessage(for: error, url: url) {
+                errorTitle = networkError.title
+                errorMessage = networkError.message
+                showErrorAlert = true
+                TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔕 정의되지 않은 에러 무시")
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func alertActions() -> some View {
+        Button("확인") { }
+        if !errorTitle.contains("보안 연결") {
+            Button("다시 시도") {
+                currentState.reload()
+            }
+        }
+    }
+    
+    private func alertMessage() -> some View {
+        Text(errorMessage)
+    }
+    
+    @ViewBuilder
+    private func historySheet() -> some View {
+        NavigationView { 
+            WebViewDataModel.HistoryPage(
+                dataModel: currentState.dataModel,
+                onNavigateToPage: { record in
+                    if let index = currentState.dataModel.findPageIndex(for: record.url) {
+                        if let navigatedRecord = currentState.dataModel.navigateToIndex(index) {
+                            currentState.currentURL = navigatedRecord.url
+                            if let webView = currentState.webView {
+                                webView.load(URLRequest(url: navigatedRecord.url))
+                            }
+                        }
+                    }
+                },
                 onNavigateToURL: { url in
-                    // 원자적 처리: 새 탭 생성 + URL 설정 + 로딩을 한번에
-                    let newTab = WebTab(url: url)
-                    tabs.append(newTab)
-                    selectedTabIndex = tabs.count - 1
-                    newTab.stateModel.loadURLIfReady()
-                    TabPersistenceManager.saveTabs(tabs)
-                    TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(url.absoluteString)")
+                    currentState.currentURL = url
                 }
             )
+        }
+    }
+    
+    @ViewBuilder
+    private func tabManagerView() -> some View {
+        NavigationView {
+            TabManager(
+                tabs: $tabs,
+                initialStateModel: currentState,
+                onTabSelected: { index in
+                    selectedTabIndex = index
+                    let switched = tabs[index].stateModel
+                    if let r = switched.currentPageRecord {
+                        let back = switched.canGoBack ? "가능" : "불가"
+                        let fwd = switched.canGoForward ? "가능" : "불가"
+                        let pageId = r.id.uuidString.prefix(8)
+                        TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(pageId)]")
+                    } else {
+                        TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
+                    }
+                }
+            )
+        }
+    }
+    
+    private var avPlayerBinding: Binding<Bool> {
+        Binding(
+            get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
+            set: { if tabs.indices.contains(selectedTabIndex) { tabs[selectedTabIndex].showAVPlayer = $0 } }
+        )
+    }
+    
+    @ViewBuilder
+    private func avPlayerView() -> some View {
+        if tabs.indices.contains(selectedTabIndex),
+           let url = tabs[selectedTabIndex].playerURL {
+            AVPlayerView(url: url)
+        }
+    }
+    
+    @ViewBuilder
+    private func debugView() -> some View {
+        DebugLogView()
+    }
+    
+    private func onScrollOffsetChange(offset: CGFloat) {
+        if isTextFieldFocused || Date() < ignoreAutoHideUntil {
+            previousOffset = offset
+            return
+        }
+        let delta = offset - previousOffset
+        if delta < -30 && showAddressBar {
+            withAnimation {
+                showAddressBar = false
+                isTextFieldFocused = false
+            }
+            allowTopOverlap = true
+        }
+        previousOffset = offset
+    }
+    
+    private func onContentTap() {
+        withAnimation {
+            if showAddressBar {
+                showAddressBar = false
+                isTextFieldFocused = false
+                allowTopOverlap = true
+            } else {
+                showAddressBar = true
+                allowTopOverlap = false
+            }
+        }
+    }
+    
+    private func onTextFieldTap() {
+        if !isTextFieldFocused {
+            isTextFieldFocused = true
+            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+        }
+        if !textFieldSelectedAll {
+            DispatchQueue.main.async {
+                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+                textFieldSelectedAll = true
+                TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
+            }
+        }
+    }
+    
+    private func onTextFieldFocusChange(focused: Bool) {
+        if focused {
+            ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+        } else {
+            textFieldSelectedAll = false
+            TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+        }
+    }
+    
+    private func onTextFieldSubmit() {
+        if let url = fixedURL(from: inputURL) {
+            currentState.currentURL = url
+            TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+        }
+        isTextFieldFocused = false
+    }
+    
+    private func onToolbarTap() {
+        if !showAddressBar {
+            withAnimation {
+                showAddressBar = true
+                allowTopOverlap = false
+            }
+        }
+    }
+    
+    private func handleDashboardNavigation(_ selectedURL: URL) {
+        if tabs.indices.contains(selectedTabIndex) {
+            // 기존 탭에 URL 설정
+            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
+            tabs[selectedTabIndex].stateModel.loadURLIfReady()
+            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
+        } else {
+            // 새 탭 생성
+            let newTab = WebTab(url: selectedURL)
+            tabs.append(newTab)
+            selectedTabIndex = tabs.count - 1
+            newTab.stateModel.loadURLIfReady()
+            TabPersistenceManager.saveTabs(tabs)
+            TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(selectedURL.absoluteString)")
         }
     }
 
