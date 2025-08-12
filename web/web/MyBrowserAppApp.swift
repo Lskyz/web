@@ -17,8 +17,8 @@ struct MyBrowserAppApp: App {
     init() {
         // AV 오디오 세션 미리 활성화
         _ = SilentAudioPlayer.shared
-        // 전역 방문 기록 로드
-        WebViewStateModel.loadGlobalHistory()
+        // ✅ 수정: WebViewDataModel로 변경 (전역 방문 기록 로드)
+        WebViewDataModel.loadGlobalHistory()
         TabPersistenceManager.debugMessages.append(
             "앱 초기화: 탭 \(tabs.count)개 로드, 선택된 탭 인덱스 \(selectedTabIndex)"
         )
