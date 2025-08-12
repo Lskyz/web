@@ -3,6 +3,7 @@
 //
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
 //  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
+//  🔄 WKNavigationDelegate는 WebViewDataModel로 이동됨
 //
 
 import SwiftUI
@@ -74,11 +75,10 @@ struct CustomWebView: UIViewRepresentable {
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
 
-        // ✨ 강화된 Delegate 연결 (로딩 상태 동기화)
-        webView.navigationDelegate = context.coordinator
+        // ✨ Delegate 연결 (NavigationDelegate는 DataModel이 담당)
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
-        stateModel.webView = webView
+        stateModel.webView = webView  // 이때 자동으로 dataModel.navigationDelegate 설정됨
         
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
@@ -155,12 +155,9 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - updateUIView
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 연결 상태 확인 및 재연결
+        // 연결 상태 확인 및 재연결 (NavigationDelegate는 DataModel이 담당하므로 제거)
         if uiView.uiDelegate !== context.coordinator {
             uiView.uiDelegate = context.coordinator
-        }
-        if uiView.navigationDelegate !== context.coordinator {
-            uiView.navigationDelegate = context.coordinator
         }
         if context.coordinator.webView !== uiView {
             context.coordinator.webView = uiView
@@ -181,10 +178,9 @@ struct CustomWebView: UIViewRepresentable {
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
 
-        // 스크롤/델리게이트 해제
+        // 스크롤/델리게이트 해제 (NavigationDelegate는 DataModel이 관리하므로 제거)
         uiView.scrollView.delegate = nil
         uiView.uiDelegate = nil
-        uiView.navigationDelegate = nil
         coordinator.webView = nil
 
         // 오디오 세션 비활성화
@@ -456,16 +452,13 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    // MARK: - Coordinator
-    class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
+    // MARK: - Coordinator (WKNavigationDelegate 제거됨)
+    class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler {
 
         var parent: CustomWebView
         weak var webView: WKWebView?
         var filePicker: FilePicker?
 
-        // ✅ 스와이프 뒤로가기 감지용 플래그
-        private var isSwipeBackNavigation: Bool = false
-        
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
@@ -590,322 +583,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
 
-        // MARK: - ✨ WKNavigationDelegate (에러 처리 강화 + 스와이프 동기화)
-
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            // ✅ 간단한 스와이프 뒤로가기 감지
-            isSwipeBackNavigation = webView.canGoBack && 
-                                  webView.backForwardList.backItem != nil
-
-            // ✨ 로딩 시작을 StateModel에 전달
-            DispatchQueue.main.async {
-                if !self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = true
-                }
-
-                // ✅ 항상 0%로 시작 (KVO가 실제 진행률 업데이트)
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-
-            // ✅ 스와이프 제스처 감지 추가 - WebViewStateModel과 동기화
-            if let startURL = webView.url {
-                parent.stateModel.handleSwipeGestureDetected(to: startURL)
-            }
-
-            // 기존 StateModel의 didStartProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didStartProvisionalNavigation: navigation)
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // ✨ 로딩 완료를 StateModel에 전달
-            DispatchQueue.main.async {
-                // ✅ 진행률을 먼저 확실히 100%로 설정
-                self.parent.stateModel.loadingProgress = 1.0
-
-                // 잠깐 후 로딩 상태 해제 (100% 표시 시간 확보)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.parent.stateModel.isLoading = false
-                }
-
-                // ✅ 스와이프 플래그 리셋
-                self.isSwipeBackNavigation = false
-            }
-            
-            // ✨ 페이지 로드 완료 후 데스크탑 모드 상태 동기화
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                let script = """
-                if (window.toggleDesktopMode) { 
-                    window.toggleDesktopMode(\(self.parent.stateModel.isDesktopMode)); 
-                    console.log('데스크탑 모드 동기화: \(self.parent.stateModel.isDesktopMode)');
-                }
-                """
-                webView.evaluateJavaScript(script, completionHandler: nil)
-            }
-
-            // 기존 StateModel의 didFinish 호출
-            parent.stateModel.webView(webView, didFinish: navigation)
-        }
-
-        // ✅ 에러 처리 개선 - 로딩 시작 단계 에러 (didFailProvisionalNavigation)
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                }
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-
-            let nsError = error as NSError
-
-            // ✅ 스와이프 뒤로가기 중엔 모든 에러 무시
-            if isSwipeBackNavigation {
-                parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-                return
-            }
-
-            // ✅ 사용자 취소는 무시 (새 URL 입력, 링크 클릭 등)
-            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
-                parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-                return
-            }
-
-            // ✅ 명확한 에러 전달 - 모든 중요한 에러를 ContentView로 전달
-            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: Notification.Name("webViewDidFailLoad"),
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("❌ 로딩 시작 에러 알림: \(nsError.code)")
-            } else {
-                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 시작 에러: \(nsError.code)")
-            }
-
-            // 기존 StateModel의 didFailProvisionalNavigation 호출
-            parent.stateModel.webView(webView, didFailProvisionalNavigation: navigation, withError: error)
-        }
-
-        // ✅ 에러 처리 개선 - 로딩 진행 중 에러 (didFail)
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            // ✨ 로딩 실패 처리
-            DispatchQueue.main.async {
-                if self.parent.stateModel.isLoading {
-                    self.parent.stateModel.isLoading = false
-                }
-                self.parent.stateModel.loadingProgress = 0.0
-            }
-
-            let nsError = error as NSError
-
-            // ✅ 명확한 에러 전달 - 로딩 진행 중 에러도 ContentView로 전달
-            if shouldNotifyUserForError(nsError), let tabID = parent.stateModel.tabID {
-                NotificationCenter.default.post(
-                    name: Notification.Name("webViewDidFailLoad"),
-                    object: nil,
-                    userInfo: [
-                        "tabID": tabID.uuidString,
-                        "error": error,
-                        "url": webView.url?.absoluteString ?? parent.stateModel.currentURL?.absoluteString ?? ""
-                    ]
-                )
-                TabPersistenceManager.debugMessages.append("❌ 로딩 진행 에러 알림: \(nsError.code)")
-            } else {
-                TabPersistenceManager.debugMessages.append("🔕 무시된 로딩 진행 에러: \(nsError.code)")
-            }
-
-            // 기존 StateModel의 didFail 호출
-            parent.stateModel.webView(webView, didFail: navigation, withError: error)
-        }
-
-        // ✅ HTTP 에러 필터링 - 메인 페이지와 내부 API/리소스 구분
-        private func shouldNotifyForHTTPError(statusCode: Int, responseURL: URL?, mainURL: URL?) -> Bool {
-            guard let responseURL = responseURL else { return false }
-
-            // ✅ 메인 페이지 URL과 같은 도메인이면 알림 (사용자가 직접 접근한 페이지)
-            if let mainURL = mainURL, 
-               responseURL.host == mainURL.host {
-                TabPersistenceManager.debugMessages.append("🏠 메인 도메인 HTTP 에러: \(statusCode) - \(responseURL.host ?? "")")
-                return true
-            }
-
-            // ✅ OAuth/로그인 관련 도메인은 무시 (정상적인 플로우)
-            let oauthDomains = [
-                "accounts.google.com",
-                "login.microsoftonline.com", 
-                "appleid.apple.com",
-                "www.facebook.com",
-                "api.twitter.com",
-                "github.com",
-                "oauth.googleusercontent.com"
-            ]
-
-            if let host = responseURL.host?.lowercased(),
-               oauthDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("🔐 OAuth 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-
-            // ✅ 광고/트래킹 관련 도메인 무시
-            let adDomains = [
-                "googleads", "doubleclick", "googlesyndication", "googletagmanager",
-                "facebook.com", "fbcdn", "amazon-adsystem", "adsystem.amazon",
-                "analytics", "gtag", "gtm", "pixel", "tracking", "metrics"
-            ]
-
-            if let host = responseURL.host?.lowercased(),
-               adDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("📊 광고/트래킹 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-
-            // ✅ API 엔드포인트 무시 (api., rest., graphql. 등)
-            if let host = responseURL.host?.lowercased(),
-               (host.hasPrefix("api.") || 
-                host.hasPrefix("rest.") || 
-                host.hasPrefix("graphql.") ||
-                host.contains("api")) {
-                TabPersistenceManager.debugMessages.append("🔌 API 엔드포인트 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-
-            // ✅ CDN/리소스 도메인 무시
-            let cdnDomains = [
-                "amazonaws.com", "cloudfront.net", "cdn", "static",
-                "gstatic.com", "googleapis.com", "bootstrapcdn.com"
-            ]
-
-            if let host = responseURL.host?.lowercased(),
-               cdnDomains.contains(where: { host.contains($0) }) {
-                TabPersistenceManager.debugMessages.append("🌍 CDN/리소스 도메인 HTTP 에러 무시: \(statusCode) - \(host)")
-                return false
-            }
-
-            // ✅ 심각한 에러만 알림 (404, 500 등)
-            switch statusCode {
-            case 404, 500, 502, 503, 504:
-                TabPersistenceManager.debugMessages.append("🚨 심각한 HTTP 에러 알림: \(statusCode) - \(responseURL.host ?? "")")
-                return true
-            default:
-                // 403, 401 등은 대부분 내부 API/인증 관련이므로 무시
-                TabPersistenceManager.debugMessages.append("🔕 일반 HTTP 에러 무시: \(statusCode) - \(responseURL.host ?? "")")
-                return false
-            }
-        }
-
-        private func shouldNotifyUserForError(_ error: NSError) -> Bool {
-            // NSURLError가 아닌 경우는 무시 (내부 리소스 에러 등)
-            guard error.domain == NSURLErrorDomain else { 
-                TabPersistenceManager.debugMessages.append("🔕 비-NSURLError 도메인 무시: \(error.domain)")
-                return false 
-            }
-
-            switch error.code {
-            // ✅ 메인 페이지 로딩 실패 - 반드시 알려야 할 중요한 에러들만
-            case NSURLErrorCannotFindHost:           // 잘못된 주소/도메인
-                TabPersistenceManager.debugMessages.append("📍 주소를 찾을 수 없음: \(error.code)")
-                return true
-            case NSURLErrorBadURL,                   // 잘못된 URL 형식
-                 NSURLErrorUnsupportedURL:           // 지원하지 않는 URL 형식
-                TabPersistenceManager.debugMessages.append("🔗 잘못된 URL 형식: \(error.code)")
-                return true
-            case NSURLErrorTimedOut:                 // 타임아웃
-                TabPersistenceManager.debugMessages.append("⏰ 연결 시간 초과: \(error.code)")
-                return true
-            case NSURLErrorNotConnectedToInternet:   // 인터넷 연결 없음
-                TabPersistenceManager.debugMessages.append("📶 인터넷 연결 없음: \(error.code)")
-                return true
-            case NSURLErrorCannotConnectToHost:      // 서버 연결 불가
-                TabPersistenceManager.debugMessages.append("🖥️ 서버 연결 실패: \(error.code)")
-                return true
-            case NSURLErrorNetworkConnectionLost:    // 네트워크 연결 끊김
-                TabPersistenceManager.debugMessages.append("📡 네트워크 연결 끊김: \(error.code)")
-                return true
-            case NSURLErrorDNSLookupFailed:          // DNS 조회 실패
-                TabPersistenceManager.debugMessages.append("🌐 DNS 조회 실패: \(error.code)")
-                return true
-
-            // ✅ 무시할 에러들 (모든 기타 에러들)
-            default:
-                // ✅ 알 수 없는 에러는 무시 (내부 리소스, 광고, 이미지 등의 실패)
-                TabPersistenceManager.debugMessages.append("🔕 알 수 없는 에러 무시: \(error.code) - 내부 리소스 실패 추정")
-                return false
-            }
-        }
-
-        // ✨ HTTP 상태 코드 에러 감지 (decidePolicyFor navigationResponse에서) - 필터링 강화
-        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-
-            // HTTP 응답 상태 코드 체크
-            if let httpResponse = navigationResponse.response as? HTTPURLResponse {
-                let statusCode = httpResponse.statusCode
-                let responseURL = navigationResponse.response.url
-                let mainURL = parent.stateModel.currentURL
-
-                // ✅ 4xx, 5xx 에러이지만 스마트 필터링 적용
-                if statusCode >= 400 {
-                    let shouldNotifyHTTPError = shouldNotifyForHTTPError(
-                        statusCode: statusCode, 
-                        responseURL: responseURL, 
-                        mainURL: mainURL
-                    )
-
-                    if shouldNotifyHTTPError, let tabID = parent.stateModel.tabID {
-                        NotificationCenter.default.post(
-                            name: Notification.Name("webViewDidFailLoad"),
-                            object: nil,
-                            userInfo: [
-                                "tabID": tabID.uuidString,
-                                "statusCode": statusCode,
-                                "url": responseURL?.absoluteString ?? ""
-                            ]
-                        )
-                        TabPersistenceManager.debugMessages.append("❌ HTTP 에러 알림: \(statusCode) - \(responseURL?.host ?? "")")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("🔕 HTTP 에러 무시: \(statusCode) - \(responseURL?.host ?? "") (내부 API/OAuth)")
-                    }
-                }
-            }
-
-            // 다운로드 처리 (iOS 14+)
-            if #available(iOS 14.0, *) {
-                if let http = navigationResponse.response as? HTTPURLResponse,
-                   let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
-                   disp.contains("attachment") {
-                    decisionHandler(.download)
-                    return
-                }
-            }
-
-            decisionHandler(.allow)
-        }
-
-        // ✨ 다운로드 지원 (iOS 14+)
-        @available(iOS 14.0, *)
-        func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-            download.delegate = parent.stateModel
-        }
-
-        // MARK: - 네비게이션 정책 결정
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            
-            // ✅ 팝업에서 오는 요청 체크 (새 창)
-            if navigationAction.targetFrame == nil {
-                // 새 창 요청은 현재 웹뷰에서 열기
-                webView.load(navigationAction.request)
-                decisionHandler(.cancel)
-                return
-            }
-            
-            // 일반적인 경우는 허용
-            decisionHandler(.allow)
-        }
-
-        // MARK: JS → 네이티브 메시지 처리
+        // MARK: - JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -1188,157 +866,6 @@ enum CookieSyncManager {
             let appStorage = HTTPCookieStorage.shared
             cookies.forEach { appStorage.setCookie($0) }
             completion?()
-        }
-    }
-}
-
-// MARK: - 전역 쿠키 동기화 추적
-private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
-
-// MARK: - WebViewStateModel 확장 (쿠키 세션 공유 + 스와이프 동기화)
-extension WebViewStateModel {
-
-    // ✅ 스와이프-버튼 동기화를 위한 didCommit 처리
-    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        // 기존 쿠키 동기화 로직
-        _installCookieSyncIfNeeded(for: webView)
-        CookieSyncManager.syncAppToWebView(webView, completion: nil)
-
-        // ✅ 추가: 스와이프-버튼 동기화 연동
-        handleDidCommitNavigation()
-    }
-
-    private func _installCookieSyncIfNeeded(for webView: WKWebView) {
-        if _cookieSyncInstalledModels.contains(self) { return }
-        _cookieSyncInstalledModels.add(self)
-
-        let store = webView.configuration.websiteDataStore.httpCookieStore
-        store.add(self)
-
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSHTTPCookieManagerCookiesChanged"),
-            object: HTTPCookieStorage.shared,
-            queue: .main
-        ) { [weak webView] _ in
-            guard let webView = webView else { return }
-            CookieSyncManager.syncAppToWebView(webView, completion: nil)
-        }
-    }
-}
-
-extension WebViewStateModel: WKHTTPCookieStoreObserver {
-    public func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        CookieSyncManager.syncWebToApp(cookieStore) {
-            // 쿠키 동기화 완료
-        }
-    }
-}
-
-// MARK: - 파일 다운로드 지원 (iOS 14+)
-private final class DownloadCoordinator {
-    static let shared = DownloadCoordinator()
-    private init() {}
-    private var map = [ObjectIdentifier: URL]()
-    func set(url: URL, for download: WKDownload) { map[ObjectIdentifier(download)] = url }
-    func url(for download: WKDownload) -> URL? { map[ObjectIdentifier(download)] }
-    func remove(_ download: WKDownload) { map.removeValue(forKey: ObjectIdentifier(download)) }
-}
-
-private func sanitizedFilename( name: String) -> String {
-    var result = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
-    result = result.components(separatedBy: forbidden).joined(separator: "")
-    if result.count > 150 {
-        result = String(result.prefix(150))
-    }
-    return result.isEmpty ? "download" : result
-}
-
-private func topMostViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first,
-          let root = window.rootViewController else { return nil }
-    var top = root
-    while let presented = top.presentedViewController { top = presented }
-    return top
-}
-
-// MARK: - WebViewStateModel: WKDownloadDelegate
-extension WebViewStateModel: WKDownloadDelegate {
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         decideDestinationUsing response: URLResponse,
-                         suggestedFilename: String,
-                         completionHandler: @escaping (URL?) -> Void) {
-
-        NotificationCenter.default.post(name: .WebViewDownloadStart,
-                                        object: nil,
-                                        userInfo: ["filename": suggestedFilename])
-
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let downloadsDir = docs.appendingPathComponent("Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
-
-        let safeName = sanitizedFilename(name: suggestedFilename)
-        let dst = downloadsDir.appendingPathComponent(safeName)
-
-        if FileManager.default.fileExists(atPath: dst.path) {
-            try? FileManager.default.removeItem(at: dst)
-        }
-
-        DownloadCoordinator.shared.set(url: dst, for: download)
-        completionHandler(dst)
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didWriteData bytesWritten: Int64,
-                         totalBytesWritten: Int64,
-                         totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-
-        NotificationCenter.default.post(name: .WebViewDownloadProgress,
-                                        object: nil,
-                                        userInfo: ["progress": progress])
-    }
-
-    @available(iOS 14.0, *)
-    public func download(_ download: WKDownload,
-                         didFailWithError error: Error,
-                         resumeData: Data?) {
-        let filename = DownloadCoordinator.shared.url(for: download)?.lastPathComponent ?? "파일"
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFailed, object: nil)
-
-        DispatchQueue.main.async {
-            if let top = topMostViewController() {
-                let alert = UIAlertController(title: "다운로드 실패",
-                                              message: "\(filename) 다운로드 중 오류가 발생했습니다.\n\(error.localizedDescription)",
-                                              preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "확인", style: .default))
-                top.present(alert, animated: true)
-            }
-        }
-    }
-
-    @available(iOS 14.0, *)
-    public func downloadDidFinish(_ download: WKDownload) {
-        guard let fileURL = DownloadCoordinator.shared.url(for: download) else {
-            TabPersistenceManager.debugMessages.append("⚠️ 다운로드 완료했지만 파일 경로를 찾을 수 없음")
-            NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
-            return
-        }
-        DownloadCoordinator.shared.remove(download)
-
-        NotificationCenter.default.post(name: .WebViewDownloadFinish, object: nil)
-
-        DispatchQueue.main.async {
-            guard let top = topMostViewController() else { return }
-            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-            activityVC.popoverPresentationController?.sourceView = top.view
-            top.present(activityVC, animated: true)
         }
     }
 }
