@@ -582,6 +582,17 @@ extension WebViewDataModel {
             return df
         }()
 
+        // ✅ public 초기화 메서드 추가
+        public init(
+            dataModel: WebViewDataModel,
+            onNavigateToPage: @escaping (PageRecord) -> Void,
+            onNavigateToURL: @escaping (URL) -> Void
+        ) {
+            self.dataModel = dataModel
+            self.onNavigateToPage = onNavigateToPage
+            self.onNavigateToURL = onNavigateToURL
+        }
+
         private var sessionHistory: [PageRecord] {
             return dataModel.pageHistory.reversed()
         }
