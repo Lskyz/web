@@ -405,6 +405,64 @@ struct ContentView: View {
                                     .animation(.easeOut(duration: 0.3), value: state.loadingProgress)  // 더 빠르고 자연스럽게
                                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))         // 나타남/사라짐 빠르게
                             }
+                            
+                            // ✨ 데스크탑 모드 확대/축소 슬라이더
+                            if state.isDesktopMode {
+                                VStack(spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "minus.magnifyingglass")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.blue)
+                                        
+                                        Slider(
+                                            value: Binding(
+                                                get: { state.currentZoomLevel },
+                                                set: { newValue in
+                                                    state.setZoomLevel(newValue)
+                                                    TabPersistenceManager.debugMessages.append("🔍 줌 변경: \(String(format: "%.1f", newValue))x")
+                                                }
+                                            ),
+                                            in: 0.3...3.0,
+                                            step: 0.1
+                                        )
+                                        .accentColor(.blue)
+                                        
+                                        Image(systemName: "plus.magnifyingglass")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.blue)
+                                        
+                                        Text("\(String(format: "%.1f", state.currentZoomLevel))x")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(.blue)
+                                            .frame(width: 35)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    
+                                    // 줌 프리셋 버튼들
+                                    HStack(spacing: 12) {
+                                        ForEach([0.5, 0.75, 1.0, 1.5, 2.0], id: \.self) { preset in
+                                            Button(action: {
+                                                state.setZoomLevel(preset)
+                                                TabPersistenceManager.debugMessages.append("🎯 줌 프리셋: \(String(format: "%.1f", preset))x")
+                                            }) {
+                                                Text("\(String(format: "%.1f", preset))x")
+                                                    .font(.system(size: 10, weight: .medium))
+                                                    .foregroundColor(abs(state.currentZoomLevel - preset) < 0.05 ? .white : .blue)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 6)
+                                                            .fill(abs(state.currentZoomLevel - preset) < 0.05 ? Color.blue : Color.blue.opacity(0.1))
+                                                    )
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.bottom, 4)
+                                }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                                .animation(.easeInOut(duration: 0.3), value: state.isDesktopMode)
+                            }
                         }
                         // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션)
                         .background(
