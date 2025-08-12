@@ -1,4 +1,3 @@
-
 //
 //  WebViewDataModel.swift
 //  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈 (건드리지 말 것!)
@@ -566,9 +565,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 }
 
-// MARK: - 방문기록 페이지 뷰
+// MARK: - 방문기록 페이지 뷰 (✅ public으로 변경)
 extension WebViewDataModel {
-    struct HistoryPage: View {
+    public struct HistoryPage: View {  // ✅ public 추가
         @ObservedObject var dataModel: WebViewDataModel
         let onNavigateToPage: (PageRecord) -> Void
         let onNavigateToURL: (URL) -> Void
@@ -595,7 +594,7 @@ extension WebViewDataModel {
                 .sorted { $0.date > $1.date }
         }
 
-        var body: some View {
+        public var body: some View {  // ✅ public 추가
             List {
                 if !sessionHistory.isEmpty {
                     Section("현재 세션") {
