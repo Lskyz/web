@@ -129,10 +129,6 @@ struct ContentView: View {
                                 showAddressBar = true
                                 allowTopOverlap = false
                                 // ✅ 수정: 자동 포커스 제거 - 주소창만 보여주고 키보드는 사용자가 직접 탭할 때만
-                                // DispatchQueue.main.async {
-                                //     isTextFieldFocused = true
-                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                // }
                             }
                         }
                     }
@@ -158,10 +154,6 @@ struct ContentView: View {
                                 showAddressBar = true
                                 allowTopOverlap = false
                                 // ✅ 수정: 여기서도 자동 포커스 제거
-                                // DispatchQueue.main.async {
-                                //     isTextFieldFocused = true
-                                //     ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
-                                // }
                             }
                         }
                     }
