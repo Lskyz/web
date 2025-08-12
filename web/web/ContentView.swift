@@ -242,7 +242,7 @@ struct ContentView: View {
             .focused($isTextFieldFocused)
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
-            .onSubmit(perform: onTextFieldSubmit)
+            .onSubmit(onTextFieldSubmit)  // ✅ 수정: perform: 레이블 제거
             .overlay(textFieldClearButton)
     }
     
