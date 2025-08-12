@@ -234,170 +234,195 @@ struct DashboardView: View {
     }
 
     var body: some View {
+        dashboardContent
+            .alert("북마크 추가", isPresented: $showAddBookmarkAlert, actions: addBookmarkActions, message: addBookmarkMessage)
+            .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert, actions: deleteBookmarkActions, message: deleteBookmarkMessage)
+            .onChange(of: bookmarks) { _ in
+                TabPersistenceManager.saveBookmarks(bookmarks)
+            }
+    }
+    
+    @ViewBuilder
+    private var dashboardContent: some View {
         ScrollView {
             VStack(spacing: 20) {
                 Text("새 탭")
                     .font(.largeTitle.bold())
                     .padding(.top)
 
-                // 최근 방문 페이지 섹션
                 if !recentPages.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .foregroundColor(.blue)
-                            Text("최근 방문")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(recentPages) { page in
-                                    RecentPageCard(page: page) {
-                                        // ✅ 단일 네비게이션: 원자적 처리
-                                        DispatchQueue.main.async {
-                                            onNavigateToURL(page.url)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
+                    recentPagesSection
                 }
 
-                // 북마크 섹션
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: "book.fill")
-                            .foregroundColor(.orange)
-                        Text("북마크")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                    
-                    LazyVGrid(columns: columns, spacing: 20) {
-                        ForEach(bookmarks) { bookmark in
-                            bookmarkIcon(bookmark: bookmark)
-                                .contentShape(Rectangle())
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
-                                        .onEnded { _ in
-                                            longPressedBookmarkID = bookmark.id
-                                            bookmarkToDelete = bookmark
-                                            showDeleteBookmarkAlert = true
-                                        }
-                                )
-                        }
-                        
-                        // 북마크 추가 버튼
-                        Button(action: {
-                            showAddBookmarkAlert = true
-                            newBookmarkTitle = ""
-                            inputURL = ""
-                        }) {
-                            VStack {
-                                Image(systemName: "plus.circle.fill")
-                                    .resizable()
-                                    .frame(width: 40, height: 40)
-                                    .foregroundColor(.blue)
-                                Text("추가")
-                                    .font(.subheadline)
-                                    .foregroundColor(.black)
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
+                bookmarksSection
 
-                // 시스템 상태 (개발용)
-                if !TabPersistenceManager.debugMessages.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .foregroundColor(.gray)
-                            Text("시스템 상태")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("히스토리: \(WebViewDataModel.globalHistory.count)개")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                            
-                            if let lastMessage = TabPersistenceManager.debugMessages.last {
-                                Text("최근: \(lastMessage)")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                                    .lineLimit(2)
-                            }
-                        }
-                        .padding(8)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(8)
-                    }
-                    .padding(.horizontal)
-                }
+                systemStatusSection
 
                 Spacer(minLength: 50)
             }
         }
-        
-        // 북마크 추가 알림
-        .alert("북마크 추가", isPresented: $showAddBookmarkAlert) {
-            TextField("제목", text: $newBookmarkTitle)
-            TextField("URL", text: $inputURL)
-            Button("저장") {
-                guard
-                    let normalized = normalizedURLString(from: inputURL),
-                    let url = URL(string: normalized)
-                else { return }
-
-                let faviconURL = faviconURLString(for: url)
-
-                let newBookmark = Bookmark(
-                    id: UUID(),
-                    title: newBookmarkTitle.isEmpty ? (url.host ?? "북마크") : newBookmarkTitle,
-                    url: normalized,
-                    faviconURL: faviconURL
-                )
-                bookmarks.append(newBookmark)
-                TabPersistenceManager.saveBookmarks(bookmarks)
+    }
+    
+    @ViewBuilder
+    private var recentPagesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundColor(.blue)
+                Text("최근 방문")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
             }
-            Button("취소", role: .cancel) { }
-        } message: {
-            Text("새로운 북마크의 제목과 URL을 입력하세요.\n예) naver.com → https://naver.com 자동 적용")
-        }
-        
-        // 북마크 삭제 알림
-        .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert) {
-            Button("삭제", role: .destructive) {
-                if let bookmark = bookmarkToDelete, 
-                   let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }) {
-                    bookmarks.remove(at: index)
-                    TabPersistenceManager.saveBookmarks(bookmarks)
+            .padding(.horizontal)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(recentPages) { page in
+                        RecentPageCard(page: page) {
+                            DispatchQueue.main.async {
+                                onNavigateToURL(page.url)
+                            }
+                        }
+                    }
                 }
-                bookmarkToDelete = nil
-                longPressedBookmarkID = nil
+                .padding(.horizontal)
             }
-            Button("취소", role: .cancel) {
-                bookmarkToDelete = nil
-                longPressedBookmarkID = nil
-            }
-        } message: {
-            Text("'\(bookmarkToDelete?.title ?? "")' 북마크를 삭제하시겠습니까?")
         }
-        
-        .onChange(of: bookmarks) { _ in
+    }
+    
+    @ViewBuilder
+    private var bookmarksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "book.fill")
+                    .foregroundColor(.orange)
+                Text("북마크")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+            .padding(.horizontal)
+            
+            LazyVGrid(columns: columns, spacing: 20) {
+                ForEach(bookmarks) { bookmark in
+                    bookmarkIcon(bookmark: bookmark)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.5, maximumDistance: 20)
+                                .onEnded { _ in
+                                    longPressedBookmarkID = bookmark.id
+                                    bookmarkToDelete = bookmark
+                                    showDeleteBookmarkAlert = true
+                                }
+                        )
+                }
+                
+                addBookmarkButton
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    @ViewBuilder
+    private var addBookmarkButton: some View {
+        Button(action: {
+            showAddBookmarkAlert = true
+            newBookmarkTitle = ""
+            inputURL = ""
+        }) {
+            VStack {
+                Image(systemName: "plus.circle.fill")
+                    .resizable()
+                    .frame(width: 40, height: 40)
+                    .foregroundColor(.blue)
+                Text("추가")
+                    .font(.subheadline)
+                    .foregroundColor(.black)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var systemStatusSection: some View {
+        if !TabPersistenceManager.debugMessages.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .foregroundColor(.gray)
+                    Text("시스템 상태")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("히스토리: \(WebViewDataModel.globalHistory.count)개")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    if let lastMessage = TabPersistenceManager.debugMessages.last {
+                        Text("최근: \(lastMessage)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(8)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(8)
+            }
+            .padding(.horizontal)
+        }
+    }
+    
+    @ViewBuilder
+    private func addBookmarkActions() -> some View {
+        TextField("제목", text: $newBookmarkTitle)
+        TextField("URL", text: $inputURL)
+        Button("저장") {
+            guard
+                let normalized = normalizedURLString(from: inputURL),
+                let url = URL(string: normalized)
+            else { return }
+
+            let faviconURL = faviconURLString(for: url)
+
+            let newBookmark = Bookmark(
+                id: UUID(),
+                title: newBookmarkTitle.isEmpty ? (url.host ?? "북마크") : newBookmarkTitle,
+                url: normalized,
+                faviconURL: faviconURL
+            )
+            bookmarks.append(newBookmark)
             TabPersistenceManager.saveBookmarks(bookmarks)
         }
+        Button("취소", role: .cancel) { }
+    }
+    
+    private func addBookmarkMessage() -> some View {
+        Text("새로운 북마크의 제목과 URL을 입력하세요.\n예) naver.com → https://naver.com 자동 적용")
+    }
+    
+    @ViewBuilder
+    private func deleteBookmarkActions() -> some View {
+        Button("삭제", role: .destructive) {
+            if let bookmark = bookmarkToDelete, 
+               let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }) {
+                bookmarks.remove(at: index)
+                TabPersistenceManager.saveBookmarks(bookmarks)
+            }
+            bookmarkToDelete = nil
+            longPressedBookmarkID = nil
+        }
+        Button("취소", role: .cancel) {
+            bookmarkToDelete = nil
+            longPressedBookmarkID = nil
+        }
+    }
+    
+    private func deleteBookmarkMessage() -> some View {
+        Text("'\(bookmarkToDelete?.title ?? "")' 북마크를 삭제하시겠습니까?")
     }
 
     /// 북마크 아이콘 뷰
@@ -409,7 +434,6 @@ struct DashboardView: View {
             }
 
             guard let url = URL(string: bookmark.url) else { return }
-            // ✅ 단일 네비게이션: 원자적 처리
             DispatchQueue.main.async {
                 onNavigateToURL(url)
             }
@@ -534,193 +558,249 @@ struct TabManager: View {
     private var currentTabID: UUID? { initialStateModel.tabID }
 
     var body: some View {
+        tabManagerContent
+            .onAppear(perform: onAppearHandler)
+            .onChange(of: tabs, perform: onTabsChange)
+            .fullScreenCover(isPresented: $showDebugView, content: debugView)
+            .sheet(isPresented: $showHistorySheet, content: historySheet)
+    }
+    
+    @ViewBuilder
+    private var tabManagerContent: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color.black.opacity(0.25), Color.black.opacity(0.05)],
-                startPoint: .top, endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            .background(.ultraThinMaterial)
-
+            backgroundGradient
+            
             VStack(spacing: 12) {
-                Text("탭 목록")
-                    .font(.title.bold())
-                    .padding(.top, 6)
-
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("시스템 상태").font(.headline)
-                        Spacer()
-                        Button("상세 로그") { showDebugView = true }
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(6)
-                        Button("방문기록") { showHistorySheet = true }
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.green)
-                            .foregroundColor(.white)
-                            .cornerRadius(6)
-                    }
-                    .padding(.top)
-                    
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(debugMessages.suffix(5).enumerated()), id: \.offset) { _, message in
-                                Text(message)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(.gray)
-                                    .lineLimit(2)
-                            }
-                            if debugMessages.count > 5 {
-                                Text("... 및 \(debugMessages.count - 5)개 더")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 100)
-                    .padding()
-                    .background(Color(UIColor.secondarySystemBackground).opacity(0.7))
-                    .cornerRadius(10)
-                }
-
-                ScrollView {
-                    ForEach(tabs) { tab in
-                        HStack(spacing: 12) {
-                            Button(action: {
-                                if let index = tabs.firstIndex(of: tab) {
-                                    onTabSelected(index)
-                                    DispatchQueue.main.async { dismiss() }
-                                    TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(String(tab.id.uuidString.prefix(8))))")
-                                    debugMessages = TabPersistenceManager.debugMessages
-                                }
-                            }) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text(tab.currentURL?.host ?? "대시보드")
-                                            .font(.headline)
-                                            .lineLimit(1)
-                                        if tab.id == currentTabID {
-                                            Text("현재")
-                                                .font(.caption2.bold())
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.blue.opacity(0.15))
-                                                .foregroundColor(.blue)
-                                                .cornerRadius(4)
-                                        }
-                                    }
-                                    
-                                    Text(tab.currentURL?.absoluteString ?? "")
-                                        .font(.caption)
-                                        .foregroundColor(.gray)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                    
-                                    HStack {
-                                        Text("\(tab.historyURLs.count)개 페이지")
-                                            .font(.caption2)
-                                            .foregroundColor(.blue)
-                                        Spacer()
-                                        Text("ID: \(String(tab.id.uuidString.prefix(8)))")
-                                            .font(.caption2)
-                                            .foregroundColor(.gray)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color(UIColor.secondarySystemBackground).opacity(tab.id == currentTabID ? 0.9 : 0.6))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(tab.id == currentTabID ? Color.blue.opacity(0.6) : Color.clear, lineWidth: 1.5)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            
-                            Button(action: { closeTab(tab) }) {
-                                Image(systemName: "xmark")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(width: 32, height: 32)
-                                    .background(Circle().fill(Color.red))
-                            }
-                            .accessibilityLabel("탭 닫기")
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 4)
-                    }
-                    .padding(.bottom, 100)
-                }
+                titleSection
+                statusSection
+                tabScrollView
             }
-
-            VStack {
-                Spacer()
-                HStack(spacing: 18) {
-                    FloatingCircleButton(symbol: "plus") { addNewTabAndExit() }
-                    FloatingCircleButton(symbol: "chevron.down") {
-                        dismiss()
-                        TabPersistenceManager.debugMessages.append("목록 닫기")
-                        debugMessages = TabPersistenceManager.debugMessages
-                    }
-                }
-                .padding(.bottom, 24)
-            }
-            .ignoresSafeArea(edges: .bottom)
-
+            
+            floatingButtons
+            
             if showToast {
-                ToastView(message: toastMessage)
-                    .transition(.opacity)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                            withAnimation { showToast = false }
-                        }
+                toastView
+            }
+        }
+    }
+    
+    private var backgroundGradient: some View {
+        LinearGradient(
+            colors: [Color.black.opacity(0.25), Color.black.opacity(0.05)],
+            startPoint: .top, endPoint: .bottom
+        )
+        .ignoresSafeArea()
+        .background(.ultraThinMaterial)
+    }
+    
+    private var titleSection: some View {
+        Text("탭 목록")
+            .font(.title.bold())
+            .padding(.top, 6)
+    }
+    
+    @ViewBuilder
+    private var statusSection: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("시스템 상태").font(.headline)
+                Spacer()
+                Button("상세 로그") { showDebugView = true }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+                Button("방문기록") { showHistorySheet = true }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.green)
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+            }
+            .padding(.top)
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(debugMessages.suffix(5).enumerated()), id: \.offset) { _, message in
+                        Text(message)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.gray)
+                            .lineLimit(2)
                     }
+                    if debugMessages.count > 5 {
+                        Text("... 및 \(debugMessages.count - 5)개 더")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
+            .frame(maxHeight: 100)
+            .padding()
+            .background(Color(UIColor.secondarySystemBackground).opacity(0.7))
+            .cornerRadius(10)
         }
-        .onAppear {
-            debugMessages = TabPersistenceManager.debugMessages
-            if let last = debugMessages.last {
-                toastMessage = last
-                showToast = true
+    }
+    
+    @ViewBuilder
+    private var tabScrollView: some View {
+        ScrollView {
+            ForEach(tabs) { tab in
+                tabRow(tab: tab)
             }
+            .padding(.bottom, 100)
         }
-        .onChange(of: tabs) { _ in
-            TabPersistenceManager.saveTabs(tabs)
-            debugMessages = TabPersistenceManager.debugMessages
+    }
+    
+    @ViewBuilder
+    private func tabRow(tab: WebTab) -> some View {
+        HStack(spacing: 12) {
+            tabContentButton(tab: tab)
+            tabCloseButton(tab: tab)
         }
-        .fullScreenCover(isPresented: $showDebugView) {
-            DebugLogView()
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+    }
+    
+    @ViewBuilder
+    private func tabContentButton(tab: WebTab) -> some View {
+        Button(action: {
+            if let index = tabs.firstIndex(of: tab) {
+                onTabSelected(index)
+                DispatchQueue.main.async { dismiss() }
+                TabPersistenceManager.debugMessages.append("탭 선택: 인덱스 \(index) (ID \(String(tab.id.uuidString.prefix(8))))")
+                debugMessages = TabPersistenceManager.debugMessages
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(tab.currentURL?.host ?? "대시보드")
+                        .font(.headline)
+                        .lineLimit(1)
+                    if tab.id == currentTabID {
+                        Text("현재")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.15))
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                    }
+                }
+                
+                Text(tab.currentURL?.absoluteString ?? "")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                
+                HStack {
+                    Text("\(tab.historyURLs.count)개 페이지")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                    Spacer()
+                    Text("ID: \(String(tab.id.uuidString.prefix(8)))")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(UIColor.secondarySystemBackground).opacity(tab.id == currentTabID ? 0.9 : 0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(tab.id == currentTabID ? Color.blue.opacity(0.6) : Color.clear, lineWidth: 1.5)
+            )
         }
-        .sheet(isPresented: $showHistorySheet) {
-            NavigationView { 
-                WebViewDataModel.HistoryPage(
-                    dataModel: initialStateModel.dataModel,
-                    onNavigateToPage: { record in
-                        if let index = initialStateModel.dataModel.findPageIndex(for: record.url) {
-                            if let navigatedRecord = initialStateModel.dataModel.navigateToIndex(index) {
-                                initialStateModel.currentURL = navigatedRecord.url
-                                if let webView = initialStateModel.webView {
-                                    webView.load(URLRequest(url: navigatedRecord.url))
-                                }
+        .buttonStyle(.plain)
+    }
+    
+    @ViewBuilder
+    private func tabCloseButton(tab: WebTab) -> some View {
+        Button(action: { closeTab(tab) }) {
+            Image(systemName: "xmark")
+                .font(.headline)
+                .foregroundColor(.white)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color.red))
+        }
+        .accessibilityLabel("탭 닫기")
+    }
+    
+    @ViewBuilder
+    private var floatingButtons: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 18) {
+                FloatingCircleButton(symbol: "plus") { addNewTabAndExit() }
+                FloatingCircleButton(symbol: "chevron.down") {
+                    dismiss()
+                    TabPersistenceManager.debugMessages.append("목록 닫기")
+                    debugMessages = TabPersistenceManager.debugMessages
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+    
+    @ViewBuilder
+    private var toastView: some View {
+        ToastView(message: toastMessage)
+            .transition(.opacity)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    withAnimation { showToast = false }
+                }
+            }
+    }
+    
+    @ViewBuilder
+    private func debugView() -> some View {
+        DebugLogView()
+    }
+    
+    @ViewBuilder
+    private func historySheet() -> some View {
+        NavigationView { 
+            WebViewDataModel.HistoryPage(
+                dataModel: initialStateModel.dataModel,
+                onNavigateToPage: { record in
+                    if let index = initialStateModel.dataModel.findPageIndex(for: record.url) {
+                        if let navigatedRecord = initialStateModel.dataModel.navigateToIndex(index) {
+                            initialStateModel.currentURL = navigatedRecord.url
+                            if let webView = initialStateModel.webView {
+                                webView.load(URLRequest(url: navigatedRecord.url))
                             }
                         }
-                    },
-                    onNavigateToURL: { url in
-                        initialStateModel.currentURL = url
-                        // 탭 매니저 닫기
-                        dismiss()
                     }
-                )
-            }
+                },
+                onNavigateToURL: { url in
+                    initialStateModel.currentURL = url
+                    dismiss()
+                }
+            )
         }
+    }
+    
+    // MARK: - 이벤트 핸들러들
+    
+    private func onAppearHandler() {
+        debugMessages = TabPersistenceManager.debugMessages
+        if let last = debugMessages.last {
+            toastMessage = last
+            showToast = true
+        }
+    }
+    
+    private func onTabsChange(_: [WebTab]) {
+        TabPersistenceManager.saveTabs(tabs)
+        debugMessages = TabPersistenceManager.debugMessages
     }
 
     // MARK: - 동작들
@@ -830,69 +910,87 @@ struct DebugLogView: View {
     
     var body: some View {
         NavigationView {
-            VStack {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundColor(.gray)
-                    TextField("로그 검색...", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                    if !searchText.isEmpty {
-                        Button("지우기") { searchText = "" }.font(.caption)
+            debugContent
+                .navigationTitle("디버그 로그")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("닫기") { dismiss() }
                     }
                 }
-                .padding(.horizontal)
-                
-                ScrollView {
-                    ScrollViewReader { proxy in
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(filteredMessages.enumerated()), id: \.offset) { index, message in
-                                DebugLogRowView(message: message, index: index, onCopy: { copyToClipboard($0) })
-                                .id(index)
-                            }
-                        }
-                        .padding(.horizontal)
-                        .onAppear { if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) } }
-                        .onChange(of: debugMessages.count) { _ in
-                            if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) }
-                        }
-                    }
-                }
-                
-                HStack {
-                    Button("전체 복사") {
-                        let allText = debugMessages.joined(separator: "\n")
-                        copyToClipboard(allText)
-                    }
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                    
-                    Button("로그 지우기") {
-                        TabPersistenceManager.debugMessages.removeAll()
-                        debugMessages.removeAll()
-                    }
-                    .padding()
-                    .background(Color.red)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                    
-                    Spacer()
-                    Text("\(debugMessages.count)개").font(.caption).foregroundColor(.gray)
-                }
-                .padding()
-            }
-            .navigationTitle("디버그 로그")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("닫기") { dismiss() }
-                }
-            }
         }
         .onAppear { debugMessages = TabPersistenceManager.debugMessages }
         .alert("복사 완료", isPresented: $showCopyAlert) {
             Button("확인", role: .cancel) { }
         } message: { Text(copyMessage) }
+    }
+    
+    @ViewBuilder
+    private var debugContent: some View {
+        VStack {
+            searchSection
+            messagesScrollView
+            bottomControls
+        }
+    }
+    
+    @ViewBuilder
+    private var searchSection: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundColor(.gray)
+            TextField("로그 검색...", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+            if !searchText.isEmpty {
+                Button("지우기") { searchText = "" }.font(.caption)
+            }
+        }
+        .padding(.horizontal)
+    }
+    
+    @ViewBuilder
+    private var messagesScrollView: some View {
+        ScrollView {
+            ScrollViewReader { proxy in
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(filteredMessages.enumerated()), id: \.offset) { index, message in
+                        DebugLogRowView(message: message, index: index, onCopy: { copyToClipboard($0) })
+                        .id(index)
+                    }
+                }
+                .padding(.horizontal)
+                .onAppear { if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) } }
+                .onChange(of: debugMessages.count) { _ in
+                    if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) }
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var bottomControls: some View {
+        HStack {
+            Button("전체 복사") {
+                let allText = debugMessages.joined(separator: "\n")
+                copyToClipboard(allText)
+            }
+            .padding()
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            
+            Button("로그 지우기") {
+                TabPersistenceManager.debugMessages.removeAll()
+                debugMessages.removeAll()
+            }
+            .padding()
+            .background(Color.red)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+            
+            Spacer()
+            Text("\(debugMessages.count)개").font(.caption).foregroundColor(.gray)
+        }
+        .padding()
     }
     
     private func copyToClipboard(_ text: String) {
@@ -966,20 +1064,3 @@ struct DebugLogRowView: View {
         .cornerRadius(6)
     }
 }
-
-// MARK: - ✅ 상위 뷰에서 사용하는 예시 (DashboardView 호출 방법)
-/*
-상위 뷰에서 다음과 같이 사용하세요:
-
-DashboardView(
-    onNavigateToURL: { url in
-        // ✅ 원자적 처리: URL 설정 + 로딩을 한번에
-        currentStateModel.currentURL = url
-        currentStateModel.triggerReload() // 또는 해당하는 로드 메서드
-        TabPersistenceManager.debugMessages.append("🌐 네비게이션: \(url.absoluteString)")
-    }
-)
-
-기존의 onSelectURL + triggerLoad 분리 방식 대신, 
-단일 onNavigateToURL 클로저로 이중 네비게이션을 완전히 방지합니다.
-*/
