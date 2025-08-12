@@ -1,8 +1,6 @@
 //
 //  WebViewStateModel.swift
-//  순수 UI 상태, 에러 알림, 다운로드, 데스크탑 모드만 담당
-//  ✨ 히스토리/세션 로직은 WebViewDataModel로 완전 분리됨
-//  🎯 **웹뷰 네이티브 상태 완전 무시 - 우리 시스템만으로 네비게이션 관리!**
+//  🎯 **웹뷰 네이티브 히스토리 완전 제어 - 네이티브 네비게이션 강제 비활성화!**
 //
 
 import Foundation
@@ -45,6 +43,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             
             if shouldLoad {
                 if let webView = webView {
+                    // 🎯 핵심: 새 URLRequest로 완전히 새로 로드 (네이티브 히스토리 무시)
                     webView.load(URLRequest(url: url))
                 } else {
                     dbg("⚠️ 웹뷰가 없어서 로드 불가")
@@ -56,7 +55,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
     
-    // 🎯 **핵심 변경**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
+    // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
         return dataModel.canGoBack
     }
@@ -95,8 +94,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
                 webView.navigationDelegate = dataModel
                 dataModel.stateModel = self
                 
-                // 🎯 네이티브 상태 관찰 완전 제거! 더 이상 웹뷰 상태를 신뢰하지 않음
-                // setupNavigationStateObservation() // ← 제거됨
+                // 🎯 **핵심**: 웹뷰 네이티브 네비게이션 완전 비활성화
+                setupWebViewNavigation(webView)
             }
         }
     }
@@ -114,7 +113,17 @@ final class WebViewStateModel: NSObject, ObservableObject {
         setupDataModelObservation()
     }
     
-    // MARK: - 🎯 **핵심 변경**: 데이터 모델만 관찰, 웹뷰 네이티브 상태 무시
+    // MARK: - 🎯 **핵심 추가**: 웹뷰 네이티브 네비게이션 완전 제어
+    
+    private func setupWebViewNavigation(_ webView: WKWebView) {
+        // 🚫 네이티브 제스처 비활성화 (이미 CustomWebView에서 설정됨)
+        webView.allowsBackForwardNavigationGestures = false
+        
+        // 🎯 네이티브 히스토리 조작 방지를 위한 추가 설정
+        dbg("🎯 웹뷰 네이티브 네비게이션 완전 제어 설정")
+    }
+    
+    // MARK: - 🎯 **핵심**: 데이터 모델만 관찰, 웹뷰 네이티브 상태 무시
     private func setupDataModelObservation() {
         // DataModel의 canGoBack, canGoForward 변경을 감지하여 UI 업데이트
         dataModel.$canGoBack
@@ -301,13 +310,14 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
         
         if let webView = webView, let url = currentURL {
+            // 🎯 새 URLRequest로 완전히 새로 로드
             webView.load(URLRequest(url: url))
         }
         
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - 🎯 **완전 독립형 네비게이션** (웹뷰 상태 무시)
+    // MARK: - 🎯 **완전 독립형 네비게이션** (웹뷰 네이티브 히스토리 완전 무시)
     
     func goBack() {
         guard canGoBack else { 
@@ -315,6 +325,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
+        // 🎯 **핵심 수정**: 웹뷰 네이티브 goBack() 사용 금지!
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateBack() {
@@ -322,7 +333,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             currentURL = record.url
             
             if let webView = webView {
+                // 🎯 **핵심**: webView.goBack() 사용 금지! 새 URLRequest로 로드
                 webView.load(URLRequest(url: record.url))
+                dbg("🎯 뒤로가기: 네이티브 goBack() 대신 새 URLRequest 로드")
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
@@ -342,6 +355,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
+        // 🎯 **핵심 수정**: 웹뷰 네이티브 goForward() 사용 금지!
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateForward() {
@@ -349,7 +363,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             currentURL = record.url
             
             if let webView = webView {
+                // 🎯 **핵심**: webView.goForward() 사용 금지! 새 URLRequest로 로드
                 webView.load(URLRequest(url: record.url))
+                dbg("🎯 앞으로가기: 네이티브 goForward() 대신 새 URLRequest 로드")
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
