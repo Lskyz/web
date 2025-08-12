@@ -1,3 +1,4 @@
+
 //
 //  WebViewDataModel.swift
 //  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈 (건드리지 말 것!)
@@ -333,10 +334,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             if foundIndex != currentPageIndex {
                 swipeDetectedTargetIndex = foundIndex
                 
-                // ✅ 스와이프 확정 타이머
+                // ✅ 스와이프 확정 타이머 (수정: 반환값 무시)
                 swipeConfirmationTimer?.invalidate()
                 swipeConfirmationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-                    self?.confirmSwipeGesture()
+                    _ = self?.confirmSwipeGesture()
                 }
             }
         }
