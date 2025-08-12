@@ -80,10 +80,8 @@ struct CustomWebView: UIViewRepresentable {
         context.coordinator.webView = webView
         stateModel.webView = webView
         
-        // ✨ 초기 사용자 에이전트 설정 (필요시에만)
-        if stateModel.isDesktopMode {
-            context.coordinator.updateUserAgentIfNeeded()
-        }
+        // ✨ 초기 사용자 에이전트 설정
+        context.coordinator.updateUserAgentIfNeeded()
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -174,13 +172,8 @@ struct CustomWebView: UIViewRepresentable {
         if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
         uiView.scrollView.isOpaque = false
         
-        // ✨ 데스크탑 모드 변경 감지
+        // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용
         context.coordinator.updateDesktopModeIfNeeded()
-        
-        // ✨ 줌 레벨 변경 감지 및 즉시 적용
-        if stateModel.isDesktopMode {
-            context.coordinator.applyZoomIfDesktopMode()
-        }
     }
 
     // MARK: - teardown
@@ -205,136 +198,143 @@ struct CustomWebView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - ✨ 데스크탑 모드 관리 JS 스크립트 (봇 감지 방지)
+    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (조건부 실행)
     private func makeDesktopModeScript() -> WKUserScript {
         let scriptSource = """
-        // ✨ 데스크탑 모드 관리 스크립트 (자연스러운 전환)
+        // ✨ 데스크탑 모드 관리 스크립트
         (function() {
             'use strict';
             
             // 전역 변수로 상태 관리
             window.desktopModeEnabled = false;
             window.desktopModeApplied = false;
-            window.desktopModeSynced = false;
             
-            // 데스크탑 모드 토글 함수 (부드러운 전환)
+            // 데스크탑 모드 토글 함수
             window.toggleDesktopMode = function(enabled) {
-                if (window.desktopModeEnabled === enabled) return; // 중복 실행 방지
-                
                 window.desktopModeEnabled = enabled;
-                window.desktopModeSynced = false; // 새 상태로 리셋
                 
                 if (enabled && !window.desktopModeApplied) {
-                    setTimeout(() => applyDesktopMode(), 50); // 약간의 지연으로 자연스럽게
+                    applyDesktopMode();
                 } else if (!enabled && window.desktopModeApplied) {
                     removeDesktopMode();
                 }
             };
             
-            // 데스크탑 모드 적용 (한 번만 실행)
+            // 데스크탑 모드 적용
             function applyDesktopMode() {
                 if (window.desktopModeApplied) return;
                 window.desktopModeApplied = true;
                 
-                // ✨ 네이티브에 상태 변경 알림
-                if (window.webkit?.messageHandlers?.setZoom) {
-                    window.webkit.messageHandlers.setZoom.postMessage({
-                        action: 'desktopModeChanged',
-                        enabled: true
+                // 1. 화면 크기를 데스크탑으로 속이기
+                Object.defineProperty(screen, 'width', { 
+                    get: function() { return 1920; },
+                    configurable: false
+                });
+                Object.defineProperty(screen, 'height', { 
+                    get: function() { return 1080; },
+                    configurable: false
+                });
+                Object.defineProperty(screen, 'availWidth', { 
+                    get: function() { return 1920; },
+                    configurable: false
+                });
+                Object.defineProperty(screen, 'availHeight', { 
+                    get: function() { return 1040; },
+                    configurable: false
+                });
+                
+                // 2. 윈도우 크기를 데스크탑으로 속이기
+                Object.defineProperty(window, 'innerWidth', { 
+                    get: function() { return 1920; },
+                    configurable: false
+                });
+                Object.defineProperty(window, 'innerHeight', { 
+                    get: function() { return 1080; },
+                    configurable: false
+                });
+                Object.defineProperty(window, 'outerWidth', { 
+                    get: function() { return 1920; },
+                    configurable: false
+                });
+                Object.defineProperty(window, 'outerHeight', { 
+                    get: function() { return 1080; },
+                    configurable: false
+                });
+                
+                // 3. 터치 이벤트 비활성화
+                Object.defineProperty(window, 'ontouchstart', { 
+                    get: function() { return undefined; },
+                    configurable: false
+                });
+                Object.defineProperty(window, 'ontouchmove', { 
+                    get: function() { return undefined; },
+                    configurable: false
+                });
+                Object.defineProperty(window, 'ontouchend', { 
+                    get: function() { return undefined; },
+                    configurable: false
+                });
+                
+                // 4. maxTouchPoints를 0으로 설정
+                if (navigator.maxTouchPoints !== undefined) {
+                    Object.defineProperty(navigator, 'maxTouchPoints', { 
+                        get: function() { return 0; },
+                        configurable: false
                     });
                 }
                 
-                // 1. 화면 크기 속이기 (읽기 전용 프로퍼티 재정의)
-                try {
-                    Object.defineProperty(screen, 'width', { get: () => 1920 });
-                    Object.defineProperty(screen, 'height', { get: () => 1080 });
-                    Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-                    Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
-                    
-                    Object.defineProperty(window, 'innerWidth', { get: () => 1920 });
-                    Object.defineProperty(window, 'innerHeight', { get: () => 1080 });
-                    Object.defineProperty(window, 'outerWidth', { get: () => 1920 });
-                    Object.defineProperty(window, 'outerHeight', { get: () => 1080 });
-                } catch (e) {
-                    console.log('화면 크기 속이기 실패 (일부 사이트에서 정상)');
-                }
-                
-                // 2. 터치 이벤트 비활성화
-                try {
-                    Object.defineProperty(window, 'ontouchstart', { get: () => undefined });
-                    Object.defineProperty(window, 'ontouchmove', { get: () => undefined });
-                    Object.defineProperty(window, 'ontouchend', { get: () => undefined });
-                    
-                    if (navigator.maxTouchPoints !== undefined) {
-                        Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
-                    }
-                } catch (e) {
-                    console.log('터치 이벤트 비활성화 실패 (일부 사이트에서 정상)');
-                }
-                
-                // 3. CSS 미디어 쿼리 속이기 (신중하게)
+                // 5. CSS 미디어 쿼리 속이기
                 const originalMatchMedia = window.matchMedia;
                 window.matchMedia = function(query) {
-                    if (query.includes('hover: none') || query.includes('pointer: coarse')) {
-                        return { matches: false, media: query, addListener: () => {}, removeListener: () => {} };
+                    if (query.includes('hover: none') || 
+                        query.includes('pointer: coarse') ||
+                        query.includes('max-width: 768px') ||
+                        query.includes('max-width: 1024px') ||
+                        query.includes('orientation: portrait')) {
+                        return { matches: false, media: query, addListener: function(){}, removeListener: function(){} };
                     }
-                    if (query.includes('hover: hover') || query.includes('pointer: fine')) {
-                        return { matches: true, media: query, addListener: () => {}, removeListener: () => {} };
+                    
+                    if (query.includes('hover: hover') || 
+                        query.includes('pointer: fine') ||
+                        query.includes('min-width: 1200px')) {
+                        return { matches: true, media: query, addListener: function(){}, removeListener: function(){} };
                     }
+                    
                     return originalMatchMedia.call(this, query);
                 };
                 
-                // 4. Device 이벤트 비활성화
+                // 6. DeviceMotionEvent와 DeviceOrientationEvent 비활성화
                 window.DeviceMotionEvent = undefined;
                 window.DeviceOrientationEvent = undefined;
                 
-                // 5. Viewport 조작 (자연스럽게)
+                // 7. Viewport 메타태그 조작
+                fixViewport();
+                
+                // 8. 줌 기능 구현
+                setupZoomFunction();
+                
+                // 9. 초기 줌 설정
                 setTimeout(() => {
-                    fixViewport();
-                    setupZoomFunction();
-                    
-                    // 초기 줌 설정 (부드럽게)
-                    setTimeout(() => {
-                        if (window.setPageZoom) {
-                            window.setPageZoom(0.5);
-                        }
-                    }, 100);
-                }, 100);
+                    if (window.setPageZoom) {
+                        window.setPageZoom(0.5);
+                    }
+                }, 200);
                 
                 console.log('✅ 데스크탑 모드 적용 완료');
             }
             
-            // 모바일 모드로 복원
+            // 데스크탑 모드 해제 (페이지 새로고침 필요)
             function removeDesktopMode() {
                 window.desktopModeApplied = false;
-                
-                // ✨ 네이티브에 상태 변경 알림
-                if (window.webkit?.messageHandlers?.setZoom) {
-                    window.webkit.messageHandlers.setZoom.postMessage({
-                        action: 'desktopModeChanged',
-                        enabled: false
-                    });
-                }
-                
-                // 줌 리셋
-                if (document.body.style.transform) {
-                    document.body.style.transform = '';
-                    document.body.style.transformOrigin = '';
-                    document.body.style.width = '';
-                    document.body.style.height = '';
-                }
-                
-                console.log('📱 모바일 모드로 복원');
+                // 모바일 모드로 돌아가려면 페이지 새로고침이 필요
+                console.log('📱 모바일 모드로 전환 (새로고침 필요)');
             }
             
-            // Viewport 조작 (부드럽게)
+            // Viewport 메타태그 조작
             function fixViewport() {
                 const viewports = document.querySelectorAll('meta[name="viewport"]');
                 viewports.forEach(viewport => {
-                    const content = 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes';
-                    if (viewport.getAttribute('content') !== content) {
-                        viewport.setAttribute('content', content);
-                    }
+                    viewport.setAttribute('content', 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes');
                 });
                 
                 if (viewports.length === 0) {
@@ -345,44 +345,59 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
             
-            // 줌 기능 (안정적으로)
+            // 줌 기능 구현
             function setupZoomFunction() {
                 window.setPageZoom = function(scale) {
                     scale = Math.max(0.3, Math.min(3.0, scale));
                     
-                    // 부드러운 전환을 위한 지연
+                    // 기존 스타일 정리
+                    if (document.body.style.transform) {
+                        document.body.style.transform = '';
+                        document.body.style.transformOrigin = '';
+                        document.body.style.width = '';
+                        document.body.style.height = '';
+                    }
+                    
+                    // 새 스타일 적용
                     requestAnimationFrame(() => {
-                        if (document.body) {
-                            // 기존 스타일 정리
-                            document.body.style.transform = '';
-                            document.body.style.transformOrigin = '';
-                            document.body.style.width = '';
-                            document.body.style.height = '';
-                            
-                            // 새 스타일 적용
-                            requestAnimationFrame(() => {
-                                document.body.style.transform = `scale(${scale})`;
-                                document.body.style.transformOrigin = '0 0';
-                                document.body.style.width = `${100/scale}%`;
-                                document.body.style.height = `${100/scale}%`;
-                                document.body.style.overflow = 'visible';
-                                
-                                window.currentZoomLevel = scale;
-                                
-                                // 네이티브로 줌 레벨 전달
-                                if (window.webkit?.messageHandlers?.setZoom) {
-                                    window.webkit.messageHandlers.setZoom.postMessage({
-                                        zoom: scale,
-                                        action: 'update'
-                                    });
-                                }
+                        document.body.style.transform = `scale(${scale})`;
+                        document.body.style.transformOrigin = '0 0';
+                        document.body.style.width = `${100/scale}%`;
+                        document.body.style.height = `${100/scale}%`;
+                        document.body.style.overflow = 'visible';
+                        
+                        window.currentZoomLevel = scale;
+                        
+                        // 네이티브로 줌 레벨 전달
+                        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.setZoom) {
+                            window.webkit.messageHandlers.setZoom.postMessage({
+                                zoom: scale,
+                                action: 'update'
                             });
                         }
                     });
                 };
             }
             
-            console.log('✅ 데스크탑 모드 스크립트 준비됨');
+            // 동적 viewport 감시
+            if (window.MutationObserver) {
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList') {
+                            mutation.addedNodes.forEach(function(node) {
+                                if (node.nodeType === 1 && node.tagName === 'META' && node.name === 'viewport') {
+                                    if (window.desktopModeEnabled) {
+                                        fixViewport();
+                                    }
+                                }
+                            });
+                        }
+                    });
+                });
+                observer.observe(document.head || document.documentElement, { childList: true, subtree: true });
+            }
+            
+            console.log('✅ 데스크탑 모드 스크립트 로드됨');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -453,9 +468,6 @@ struct CustomWebView: UIViewRepresentable {
         
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
-        
-        // ✨ 줌 레벨 추적용 (슬라이더 반응성 개선)
-        private var lastZoomLevel: Double = 0.5
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -472,52 +484,45 @@ struct CustomWebView: UIViewRepresentable {
         init(_ parent: CustomWebView) { 
             self.parent = parent 
             self.lastDesktopMode = parent.stateModel.isDesktopMode  // 초기값 설정
-            self.lastZoomLevel = parent.stateModel.currentZoomLevel  // 줌 레벨 초기값
         }
 
         deinit {
             removeLoadingObservers(for: webView)
         }
         
-        // ✨ 사용자 에이전트 업데이트 메서드 (신중한 적용)
+        // ✨ 사용자 에이전트 업데이트 메서드 (데스크탑 모드용)
         func updateUserAgentIfNeeded() {
             guard let webView = webView else { return }
             
-            let currentUA = webView.customUserAgent
-            let targetUA: String?
-            
             if parent.stateModel.isDesktopMode {
-                // ✨ 자연스러운 데스크탑 사용자 에이전트 (Chrome 기준)
-                targetUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                // ✨ 강력한 데스크탑 사용자 에이전트 (Windows Chrome)
+                let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                webView.customUserAgent = desktopUA
             } else {
-                // 기본 모바일 사용자 에이전트 (nil = 시스템 기본값)
-                targetUA = nil
-            }
-            
-            // 실제로 변경이 필요할 때만 적용 (불필요한 변경 방지)
-            if currentUA != targetUA {
-                webView.customUserAgent = targetUA
-                print("🔄 사용자 에이전트 변경: \(parent.stateModel.isDesktopMode ? "데스크탑" : "모바일")")
+                webView.customUserAgent = nil
             }
         }
         
-        // ✨ 데스크탑 모드 변경 감지 및 적용 (새로고침 최소화)
+        // ✨ 데스크탑 모드 변경 감지 및 적용
         func updateDesktopModeIfNeeded() {
             guard let webView = webView else { return }
             
-            // ✨ 데스크탑 모드 변경 시 JavaScript로만 처리 (새로고침 제거)
+            // 사용자 에이전트 업데이트
+            updateUserAgentIfNeeded()
+            
+            // ✨ 데스크탑 모드 변경 시 JavaScript로 즉시 토글
             if parent.stateModel.isDesktopMode != lastDesktopMode {
                 lastDesktopMode = parent.stateModel.isDesktopMode
                 
-                // 사용자 에이전트 업데이트 (조용히)
-                updateUserAgentIfNeeded()
-                
-                // JavaScript 함수 호출로 즉시 적용 (새로고침 없음)
+                // JavaScript 함수 호출로 즉시 적용
                 let script = "if (window.toggleDesktopMode) { window.toggleDesktopMode(\(parent.stateModel.isDesktopMode)); }"
                 webView.evaluateJavaScript(script) { result, error in
                     if let error = error {
-                        print("⚠️ 데스크탑 모드 토글 실패: \(error)")
-                        // 에러가 있어도 새로고침하지 않음 (봇 감지 방지)
+                        print("데스크탑 모드 토글 실패: \(error)")
+                        // 실패 시 페이지 새로고침으로 폴백
+                        if let currentURL = self.parent.stateModel.currentURL {
+                            webView.load(URLRequest(url: currentURL))
+                        }
                     } else {
                         print("✅ 데스크탑 모드 토글 성공: \(self.parent.stateModel.isDesktopMode)")
                     }
@@ -626,13 +631,12 @@ struct CustomWebView: UIViewRepresentable {
                 self.isSwipeBackNavigation = false
             }
             
-            // ✨ 새 페이지에서만 데스크탑 모드 설정 (기존 페이지에서는 스킵)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            // ✨ 페이지 로드 완료 후 데스크탑 모드 상태 동기화
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 let script = """
-                if (window.toggleDesktopMode && typeof window.desktopModeSynced === 'undefined') { 
+                if (window.toggleDesktopMode) { 
                     window.toggleDesktopMode(\(self.parent.stateModel.isDesktopMode)); 
-                    window.desktopModeSynced = true;
-                    console.log('📄 새 페이지 초기화: 데스크탑모드=\(self.parent.stateModel.isDesktopMode)');
+                    console.log('데스크탑 모드 동기화: \(self.parent.stateModel.isDesktopMode)');
                 }
                 """
                 webView.evaluateJavaScript(script, completionHandler: nil)
@@ -901,7 +905,7 @@ struct CustomWebView: UIViewRepresentable {
             decisionHandler(.allow)
         }
 
-        // MARK: JS → 네이티브 메시지 처리 (완벽 동기화)
+        // MARK: JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -911,30 +915,12 @@ struct CustomWebView: UIViewRepresentable {
                     }
                 }
             } else if message.name == "setZoom" {
+                // ✨ 줌 레벨 업데이트 메시지 처리
                 if let data = message.body as? [String: Any],
-                   let action = data["action"] as? String {
-                    
+                   let zoom = data["zoom"] as? Double {
                     DispatchQueue.main.async {
-                        switch action {
-                        case "update":
-                            // ✨ 줌 레벨 업데이트 (JavaScript → 네이티브)
-                            if let zoom = data["zoom"] as? Double {
-                                self.parent.stateModel.currentZoomLevel = zoom
-                                print("🔍 JS → 네이티브 줌 동기화: \(zoom)x")
-                            }
-                            
-                        case "desktopModeChanged":
-                            // ✨ 데스크탑 모드 상태 동기화 (JavaScript → 네이티브)
-                            if let enabled = data["enabled"] as? Bool {
-                                if self.parent.stateModel.isDesktopMode != enabled {
-                                    self.parent.stateModel.isDesktopMode = enabled
-                                    print("🖥️ JS → 네이티브 모드 동기화: \(enabled ? "데스크탑" : "모바일")")
-                                }
-                            }
-                            
-                        default:
-                            break
-                        }
+                        // 줌 레벨을 StateModel에 전달 (UI 슬라이더 업데이트용)
+                        self.parent.stateModel.currentZoomLevel = zoom
                     }
                 }
             }
