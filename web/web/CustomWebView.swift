@@ -2,7 +2,6 @@
 //  CustomWebView.swift
 //
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
-//  ✅ 소셜 로그인 지원 추가 (네이버, 카카오톡 외부 앱 연결)
 //  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
 //
 
@@ -443,12 +442,12 @@ struct CustomWebView: UIViewRepresentable {
             removeLoadingObservers(for: webView)
         }
         
-        // ✨ 사용자 에이전트 업데이트 메서드
+        // ✨ 사용자 에이전트 업데이트 메서드 (데스크탑 모드용)
         func updateUserAgentIfNeeded() {
             guard let webView = webView else { return }
             
             if parent.stateModel.isDesktopMode {
-                // ✨ 더 강력한 데스크탑 사용자 에이전트 (Windows Chrome)
+                // ✨ 강력한 데스크탑 사용자 에이전트 (Windows Chrome)
                 let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 webView.customUserAgent = desktopUA
             } else {
@@ -828,80 +827,12 @@ struct CustomWebView: UIViewRepresentable {
             download.delegate = parent.stateModel
         }
 
-        // MARK: - ✨ 소셜 로그인을 위한 네비게이션 정책 결정
+        // MARK: - 네비게이션 정책 결정
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            
-            guard let url = navigationAction.request.url else {
-                decisionHandler(.allow)
-                return
-            }
-            
-            TabPersistenceManager.debugMessages.append("🔍 네비게이션 정책 확인: \(url.absoluteString)")
-            
-            // ✅ 구글 로그인 URL 체크 - 사용자 에이전트 변경
-            if SocialLoginHelper.isGoogleLoginURL(url) {
-                TabPersistenceManager.debugMessages.append("🔍 구글 로그인 감지: 사용자 에이전트를 데스크탑으로 변경")
-                
-                // 데스크탑 브라우저로 위장하여 구글 웹뷰 차단 우회
-                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                webView.customUserAgent = desktopUA
-                
-                // 구글 로그인은 웹뷰에서 계속 진행
-                decisionHandler(.allow)
-                return
-            }
-            
-            // ✅ 네이버, 카카오 소셜 로그인 URL 체크 - 외부 앱으로 연결
-            if SocialLoginHelper.isSocialLoginURL(url) {
-                TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 URL 감지: \(url.absoluteString)")
-                
-                // 외부 앱으로 열기 시도
-                if SocialLoginHelper.openInExternalApp(url) {
-                    TabPersistenceManager.debugMessages.append("✅ 외부 앱으로 열기 성공: \(url.absoluteString)")
-                    decisionHandler(.cancel)
-                    return
-                } else {
-                    TabPersistenceManager.debugMessages.append("⚠️ 외부 앱으로 열기 실패, 웹뷰에서 계속: \(url.absoluteString)")
-                    // 외부 앱으로 열지 못하면 웹뷰에서 계속 진행
-                }
-            }
-            
-            // ✅ 소셜 로그인 콜백 URL 체크 (앱에서 돌아오는 경우)
-            if SocialLoginHelper.isSocialLoginCallback(url) {
-                TabPersistenceManager.debugMessages.append("🔄 소셜 로그인 콜백 URL 감지: \(url.absoluteString)")
-                
-                // ✅ 콜백 완료 후 사용자 에이전트 원래대로 복원
-                updateUserAgentIfNeeded()
-                
-                // 콜백은 정상적으로 웹뷰에서 처리
-                decisionHandler(.allow)
-                return
-            }
             
             // ✅ 팝업에서 오는 요청 체크 (새 창)
             if navigationAction.targetFrame == nil {
-                TabPersistenceManager.debugMessages.append("🪟 새 창 요청 감지: \(url.absoluteString)")
-                
-                // 구글 로그인 관련 새 창이면 사용자 에이전트 변경 후 현재 탭에서 열기
-                if SocialLoginHelper.isGoogleLoginURL(url) {
-                    let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    webView.customUserAgent = desktopUA
-                    webView.load(navigationAction.request)
-                    TabPersistenceManager.debugMessages.append("✅ 구글 로그인 새 창 → 현재 탭에서 열기 (UA 변경)")
-                    decisionHandler(.cancel)
-                    return
-                }
-                
-                // 네이버, 카카오 로그인 관련 새 창이면 외부 앱으로 열기 시도
-                if SocialLoginHelper.isSocialLoginURL(url) {
-                    if SocialLoginHelper.openInExternalApp(url) {
-                        TabPersistenceManager.debugMessages.append("✅ 새 창 → 외부 앱으로 열기 성공")
-                        decisionHandler(.cancel)
-                        return
-                    }
-                }
-                
-                // 그 외의 경우는 현재 웹뷰에서 열기
+                // 새 창 요청은 현재 웹뷰에서 열기
                 webView.load(navigationAction.request)
                 decisionHandler(.cancel)
                 return
@@ -1054,48 +985,11 @@ struct CustomWebView: UIViewRepresentable {
             return top
         }
 
-        // MARK: - ✨ 소셜 로그인 팝업 처리 (새 창 → 외부 앱 또는 현재 탭)
+        // MARK: - 새 창 요청 처리
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             
-            guard let url = navigationAction.request.url else {
-                // URL이 없으면 현재 탭에서 열기
-                if let request = navigationAction.request.url {
-                    webView.load(URLRequest(url: request))
-                }
-                return nil
-            }
-            
-            TabPersistenceManager.debugMessages.append("🪟 새 창 요청: \(url.absoluteString)")
-            
-            // ✅ 구글 로그인 URL이면 사용자 에이전트 변경 후 현재 탭에서 열기
-            if SocialLoginHelper.isGoogleLoginURL(url) {
-                TabPersistenceManager.debugMessages.append("🔍 구글 로그인 새 창 감지: \(url.absoluteString)")
-                
-                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                webView.customUserAgent = desktopUA
-                webView.load(navigationAction.request)
-                TabPersistenceManager.debugMessages.append("✅ 구글 로그인 → 현재 탭에서 열기 (UA 변경)")
-                return nil
-            }
-            
-            // ✅ 네이버, 카카오 소셜 로그인 URL이면 외부 앱으로 열기 시도
-            if SocialLoginHelper.isSocialLoginURL(url) {
-                TabPersistenceManager.debugMessages.append("🔐 소셜 로그인 새 창 감지: \(url.absoluteString)")
-                
-                if SocialLoginHelper.openInExternalApp(url) {
-                    TabPersistenceManager.debugMessages.append("✅ 소셜 로그인 → 외부 앱으로 열기 성공")
-                    return nil // 새 웹뷰 생성하지 않음
-                } else {
-                    TabPersistenceManager.debugMessages.append("⚠️ 외부 앱 열기 실패, 현재 탭에서 계속")
-                    // 외부 앱으로 열지 못하면 현재 탭에서 열기
-                    webView.load(navigationAction.request)
-                    return nil
-                }
-            }
-            
-            // ✅ 일반적인 새 창 요청은 현재 탭에서 열기 (기존 로직 유지)
+            // ✅ 모든 새 창 요청은 현재 탭에서 열기
             webView.load(navigationAction.request)
-            TabPersistenceManager.debugMessages.append("🔄 일반 새 창 → 현재 탭에서 열기")
             return nil
         }
 
