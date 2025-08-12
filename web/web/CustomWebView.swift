@@ -4,6 +4,7 @@
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
 //  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
 //  🔄 WKNavigationDelegate는 WebViewDataModel로 이동됨
+//  ✨ 제스처와 하단 버튼 완벽 동기화 추가
 //
 
 import SwiftUI
@@ -95,6 +96,9 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
         context.coordinator.setupLoadingObservers(for: webView)
+        
+        // ✨ 네비게이션 상태 동기화를 위한 KVO 옵저버 추가
+        context.coordinator.setupNavigationObservers(for: webView)
 
         // 초기 로드
         if let url = stateModel.currentURL {
@@ -177,6 +181,7 @@ struct CustomWebView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
+        coordinator.removeNavigationObservers(for: uiView)
 
         // 스크롤/델리게이트 해제 (NavigationDelegate는 DataModel이 관리하므로 제거)
         uiView.scrollView.delegate = nil
@@ -473,6 +478,10 @@ struct CustomWebView: UIViewRepresentable {
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
         private var progressObserver: NSKeyValueObservation?
+        
+        // ✨ 네비게이션 상태 동기화용 KVO 옵저버들
+        private var canGoBackObserver: NSKeyValueObservation?
+        private var canGoForwardObserver: NSKeyValueObservation?
 
         init(_ parent: CustomWebView) { 
             self.parent = parent 
@@ -481,6 +490,7 @@ struct CustomWebView: UIViewRepresentable {
 
         deinit {
             removeLoadingObservers(for: webView)
+            removeNavigationObservers(for: webView)
         }
         
         // ✨ 사용자 에이전트 업데이트 메서드 (데스크탑 모드용)
@@ -581,6 +591,48 @@ struct CustomWebView: UIViewRepresentable {
             urlObserver = nil
             titleObserver = nil
             progressObserver = nil
+        }
+        
+        // MARK: - ✨ 네비게이션 상태 동기화를 위한 KVO 설정
+        func setupNavigationObservers(for webView: WKWebView) {
+            // ✨ 웹뷰의 canGoBack 상태 관찰
+            canGoBackObserver = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] webView, change in
+                guard let self = self else { return }
+                let canGoBack = change.newValue ?? false
+                
+                DispatchQueue.main.async {
+                    // ✨ 즉시 DataModel 동기화
+                    self.parent.stateModel.dataModel.syncWebViewNavigationState(
+                        canGoBack: canGoBack,
+                        canGoForward: webView.canGoForward
+                    )
+                    
+                    TabPersistenceManager.debugMessages.append("🔄 웹뷰 canGoBack 동기화: \(canGoBack)")
+                }
+            }
+            
+            // ✨ 웹뷰의 canGoForward 상태 관찰
+            canGoForwardObserver = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] webView, change in
+                guard let self = self else { return }
+                let canGoForward = change.newValue ?? false
+                
+                DispatchQueue.main.async {
+                    // ✨ 즉시 DataModel 동기화
+                    self.parent.stateModel.dataModel.syncWebViewNavigationState(
+                        canGoBack: webView.canGoBack,
+                        canGoForward: canGoForward
+                    )
+                    
+                    TabPersistenceManager.debugMessages.append("🔄 웹뷰 canGoForward 동기화: \(canGoForward)")
+                }
+            }
+        }
+        
+        func removeNavigationObservers(for webView: WKWebView?) {
+            canGoBackObserver?.invalidate()
+            canGoForwardObserver?.invalidate()
+            canGoBackObserver = nil
+            canGoForwardObserver = nil
         }
 
         // MARK: - JS → 네이티브 메시지 처리
