@@ -3,6 +3,7 @@
 //
 //  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
 //  ✅ 소셜 로그인 지원 추가 (네이버, 카카오톡 외부 앱 연결)
+//  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
 //
 
 import SwiftUI
@@ -21,103 +22,6 @@ extension Notification.Name {
     static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
 }
 
-// MARK: - 소셜 로그인 URL 감지 유틸리티
-enum SocialLoginHelper {
-    
-    // 소셜 로그인 관련 도메인 및 URL 패턴
-    static let socialDomains = [
-        "nid.naver.com",
-        "kauth.kakao.com", 
-        "accounts.kakao.com",
-        "kapi.kakao.com",
-        "auth.naver.com"
-    ]
-    
-    static let socialSchemes = [
-        "kakaotalk",
-        "kakaokompassauth", 
-        "kakaolink",
-        "naversearchapp",
-        "naversearchthirdlogin"
-    ]
-    
-    // ✅ 구글 로그인 도메인 (웹뷰에서 사용자 에이전트 변경 필요)
-    static let googleDomains = [
-        "accounts.google.com",
-        "oauth.googleusercontent.com"
-    ]
-    
-    // URL이 소셜 로그인 관련인지 확인 (네이버, 카카오만 - 외부 앱 연결용)
-    static func isSocialLoginURL(_ url: URL) -> Bool {
-        // 커스텀 스키마 체크
-        if let scheme = url.scheme?.lowercased(),
-           socialSchemes.contains(scheme) {
-            return true
-        }
-        
-        // 네이버, 카카오 도메인 체크
-        if let host = url.host?.lowercased(),
-           socialDomains.contains(where: { host.contains($0) }) {
-            return true
-        }
-        
-        return false
-    }
-    
-    // ✅ 구글 로그인 URL 체크 (사용자 에이전트 변경용)
-    static func isGoogleLoginURL(_ url: URL) -> Bool {
-        if let host = url.host?.lowercased(),
-           googleDomains.contains(where: { host.contains($0) }) {
-            return true
-        }
-        return false
-    }
-    
-    // 외부 앱으로 열 수 있는지 확인하고 열기
-    static func openInExternalApp(_ url: URL) -> Bool {
-        guard UIApplication.shared.canOpenURL(url) else {
-            TabPersistenceManager.debugMessages.append("❌ 외부 앱으로 열 수 없는 URL: \(url.absoluteString)")
-            return false
-        }
-        
-        UIApplication.shared.open(url, options: [:]) { success in
-            if success {
-                TabPersistenceManager.debugMessages.append("✅ 외부 앱으로 열기 성공: \(url.absoluteString)")
-            } else {
-                TabPersistenceManager.debugMessages.append("❌ 외부 앱으로 열기 실패: \(url.absoluteString)")
-            }
-        }
-        
-        return true
-    }
-    
-    // 소셜 로그인 콜백 URL인지 확인 (앱에서 다시 돌아오는 URL)
-    static func isSocialLoginCallback(_ url: URL) -> Bool {
-        let urlString = url.absoluteString.lowercased()
-        
-        // 네이버 콜백 패턴
-        if urlString.contains("naver") && (urlString.contains("callback") || urlString.contains("redirect")) {
-            return true
-        }
-        
-        // 카카오 콜백 패턴  
-        if urlString.contains("kakao") && (urlString.contains("callback") || urlString.contains("redirect")) {
-            return true
-        }
-        
-        // ✅ 구글 콜백 패턴 추가
-        if urlString.contains("google") && (urlString.contains("callback") || urlString.contains("redirect") || urlString.contains("code=")) {
-            return true
-        }
-        
-        // OAuth 일반 콜백 패턴 (code= 파라미터 포함)
-        if urlString.contains("code=") && (urlString.contains("oauth") || urlString.contains("auth")) {
-            return true
-        }
-        
-        return false
-    }
-}
 
 // MARK: - CustomWebView (UIViewRepresentable)
 struct CustomWebView: UIViewRepresentable {
@@ -144,7 +48,11 @@ struct CustomWebView: UIViewRepresentable {
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
+        // ✨ 데스크탑 모드 강제 JS 추가
+        controller.addUserScript(makeDesktopModeScript())
         controller.add(context.coordinator, name: "playVideo")
+        // ✨ 확대/축소 메시지 핸들러 추가
+        controller.add(context.coordinator, name: "setZoom")
         config.userContentController = controller
 
         // ✨ 다운로드 지원 (iOS 14+)
@@ -264,6 +172,9 @@ struct CustomWebView: UIViewRepresentable {
         if uiView.backgroundColor != .clear { uiView.backgroundColor = .clear }
         if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
         uiView.scrollView.isOpaque = false
+        
+        // ✨ 데스크탑 모드 변경 시 JS 재주입
+        context.coordinator.updateDesktopModeScripts()
     }
 
     // MARK: - teardown
@@ -282,9 +193,171 @@ struct CustomWebView: UIViewRepresentable {
 
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
+    }
+
+    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트
+    private func makeDesktopModeScript() -> WKUserScript {
+        let scriptSource = """
+        // ✨ 데스크탑 모드 강제 적용 스크립트
+        (function() {
+            'use strict';
+            
+            // 1. 화면 크기를 데스크탑으로 속이기
+            Object.defineProperty(screen, 'width', { 
+                get: function() { return 1920; },
+                configurable: false
+            });
+            Object.defineProperty(screen, 'height', { 
+                get: function() { return 1080; },
+                configurable: false
+            });
+            Object.defineProperty(screen, 'availWidth', { 
+                get: function() { return 1920; },
+                configurable: false
+            });
+            Object.defineProperty(screen, 'availHeight', { 
+                get: function() { return 1040; },
+                configurable: false
+            });
+            
+            // 2. 윈도우 크기를 데스크탑으로 속이기
+            Object.defineProperty(window, 'innerWidth', { 
+                get: function() { return 1920; },
+                configurable: false
+            });
+            Object.defineProperty(window, 'innerHeight', { 
+                get: function() { return 1080; },
+                configurable: false
+            });
+            Object.defineProperty(window, 'outerWidth', { 
+                get: function() { return 1920; },
+                configurable: false
+            });
+            Object.defineProperty(window, 'outerHeight', { 
+                get: function() { return 1080; },
+                configurable: false
+            });
+            
+            // 3. 터치 이벤트 비활성화 (데스크탑은 터치 없음)
+            Object.defineProperty(window, 'ontouchstart', { 
+                get: function() { return undefined; },
+                configurable: false
+            });
+            Object.defineProperty(window, 'ontouchmove', { 
+                get: function() { return undefined; },
+                configurable: false
+            });
+            Object.defineProperty(window, 'ontouchend', { 
+                get: function() { return undefined; },
+                configurable: false
+            });
+            
+            // 4. maxTouchPoints를 0으로 설정 (터치 미지원)
+            if (navigator.maxTouchPoints !== undefined) {
+                Object.defineProperty(navigator, 'maxTouchPoints', { 
+                    get: function() { return 0; },
+                    configurable: false
+                });
+            }
+            
+            // 5. CSS 미디어 쿼리 속이기
+            const originalMatchMedia = window.matchMedia;
+            window.matchMedia = function(query) {
+                // 모바일 감지 쿼리들을 false로 만들기
+                if (query.includes('hover: none') || 
+                    query.includes('pointer: coarse') ||
+                    query.includes('max-width: 768px') ||
+                    query.includes('max-width: 1024px') ||
+                    query.includes('orientation: portrait')) {
+                    return { matches: false, media: query, addListener: function(){}, removeListener: function(){} };
+                }
+                
+                // 데스크탑 감지 쿼리들을 true로 만들기
+                if (query.includes('hover: hover') || 
+                    query.includes('pointer: fine') ||
+                    query.includes('min-width: 1200px')) {
+                    return { matches: true, media: query, addListener: function(){}, removeListener: function(){} };
+                }
+                
+                return originalMatchMedia.call(this, query);
+            };
+            
+            // 6. DeviceMotionEvent와 DeviceOrientationEvent 비활성화
+            window.DeviceMotionEvent = undefined;
+            window.DeviceOrientationEvent = undefined;
+            
+            // 7. Viewport 메타태그 조작
+            function fixViewport() {
+                const viewports = document.querySelectorAll('meta[name="viewport"]');
+                viewports.forEach(viewport => {
+                    viewport.setAttribute('content', 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes');
+                });
+                
+                // viewport가 없으면 생성
+                if (viewports.length === 0) {
+                    const meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    meta.content = 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes';
+                    document.head?.appendChild(meta);
+                }
+            }
+            
+            // 8. 줌 기능 구현
+            window.setPageZoom = function(scale) {
+                scale = Math.max(0.3, Math.min(3.0, scale));
+                document.body.style.transform = `scale(${scale})`;
+                document.body.style.transformOrigin = '0 0';
+                document.body.style.width = `${100/scale}%`;
+                document.body.style.height = `${100/scale}%`;
+                
+                // 현재 줌 레벨을 저장
+                window.currentZoomLevel = scale;
+                
+                // 네이티브로 줌 레벨 전달
+                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.setZoom) {
+                    window.webkit.messageHandlers.setZoom.postMessage({
+                        zoom: scale,
+                        action: 'update'
+                    });
+                }
+            };
+            
+            // 9. 페이지 로드 시 viewport 수정 및 초기 줌 설정
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() {
+                    fixViewport();
+                    // 초기 줌을 50%로 설정 (1920px 화면을 모바일에 맞게)
+                    setTimeout(() => window.setPageZoom(0.5), 100);
+                });
+            } else {
+                fixViewport();
+                setTimeout(() => window.setPageZoom(0.5), 100);
+            }
+            
+            // 10. 동적으로 추가되는 viewport 메타태그 감시
+            if (window.MutationObserver) {
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList') {
+                            mutation.addedNodes.forEach(function(node) {
+                                if (node.nodeType === 1 && node.tagName === 'META' && node.name === 'viewport') {
+                                    fixViewport();
+                                }
+                            });
+                        }
+                    });
+                });
+                observer.observe(document.head || document.documentElement, { childList: true, subtree: true });
+            }
+            
+            console.log('✅ 데스크탑 모드 강제 적용 완료');
+        })();
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
     // MARK: - 사용자 스크립트 (비디오 클릭 → AVPlayer)
@@ -375,10 +448,27 @@ struct CustomWebView: UIViewRepresentable {
             guard let webView = webView else { return }
             
             if parent.stateModel.isDesktopMode {
-                let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+                // ✨ 더 강력한 데스크탑 사용자 에이전트 (Windows Chrome)
+                let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 webView.customUserAgent = desktopUA
             } else {
                 webView.customUserAgent = nil
+            }
+        }
+        
+        // ✨ 데스크탑 모드 스크립트 업데이트
+        func updateDesktopModeScripts() {
+            guard let webView = webView else { return }
+            
+            if parent.stateModel.isDesktopMode {
+                // 데스크탑 모드일 때 강제 스크립트 재실행
+                let script = """
+                if (window.setPageZoom && window.currentZoomLevel) {
+                    // 현재 줌 레벨 유지하면서 데스크탑 모드 재적용
+                    window.setPageZoom(window.currentZoomLevel || 0.5);
+                }
+                """
+                webView.evaluateJavaScript(script, completionHandler: nil)
             }
         }
 
@@ -481,6 +571,13 @@ struct CustomWebView: UIViewRepresentable {
 
                 // ✅ 스와이프 플래그 리셋
                 self.isSwipeBackNavigation = false
+            }
+            
+            // ✨ 데스크탑 모드일 때 강제 스크립트 재실행
+            if parent.stateModel.isDesktopMode {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.updateDesktopModeScripts()
+                }
             }
 
             // 기존 StateModel의 didFinish 호출
@@ -816,11 +913,21 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "playVideo" else { return }
-            if let urlString = message.body as? String, let url = URL(string: urlString) {
-                DispatchQueue.main.async {
-                    self.parent.playerURL = url
-                    self.parent.showAVPlayer = true
+            if message.name == "playVideo" {
+                if let urlString = message.body as? String, let url = URL(string: urlString) {
+                    DispatchQueue.main.async {
+                        self.parent.playerURL = url
+                        self.parent.showAVPlayer = true
+                    }
+                }
+            } else if message.name == "setZoom" {
+                // ✨ 줌 레벨 업데이트 메시지 처리
+                if let data = message.body as? [String: Any],
+                   let zoom = data["zoom"] as? Double {
+                    DispatchQueue.main.async {
+                        // 줌 레벨을 StateModel에 전달 (UI 슬라이더 업데이트용)
+                        self.parent.stateModel.currentZoomLevel = zoom
+                    }
                 }
             }
         }
