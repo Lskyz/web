@@ -103,8 +103,7 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
         context.coordinator.setupLoadingObservers(for: webView)
         
-        // ✨ 네비게이션 상태 동기화를 위한 KVO 옵저버 추가
-        context.coordinator.setupNavigationObservers(for: webView)
+        // 🎯 네비게이션 상태 KVO 제거됨 - 이제 완전히 우리 시스템만으로 관리!
 
         // 초기 로드
         if let url = stateModel.currentURL {
@@ -187,7 +186,7 @@ struct CustomWebView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
-        coordinator.removeNavigationObservers(for: uiView)
+        // 🎯 네비게이션 옵저버 제거됨 - 이제 웹뷰 상태 무시
 
         // 스크롤/델리게이트 해제 (NavigationDelegate는 DataModel이 관리하므로 제거)
         uiView.scrollView.delegate = nil
@@ -486,15 +485,13 @@ struct CustomWebView: UIViewRepresentable {
         private var overlayPercentLabel: UILabel?
         private var overlayProgress: UIProgressView?
 
-        // ✨ KVO 옵저버들 (로딩 상태 동기화용)
+        // ✨ KVO 옵저버들 (로딩 상태 동기화용만)
         private var loadingObserver: NSKeyValueObservation?
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
         private var progressObserver: NSKeyValueObservation?
         
-        // ✨ 네비게이션 상태 동기화용 KVO 옵저버들
-        private var canGoBackObserver: NSKeyValueObservation?
-        private var canGoForwardObserver: NSKeyValueObservation?
+        // 🎯 네비게이션 상태 KVO 제거됨 - 이제 웹뷰 상태 무시!
 
         init(_ parent: CustomWebView) { 
             self.parent = parent 
@@ -503,7 +500,7 @@ struct CustomWebView: UIViewRepresentable {
 
         deinit {
             removeLoadingObservers(for: webView)
-            removeNavigationObservers(for: webView)
+            // 🎯 네비게이션 옵저버 제거됨 - 이제 웹뷰 상태 무시
         }
         
         // MARK: - 🎯 커스텀 제스처 설정 (핵심!)
@@ -687,47 +684,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
         
-        // MARK: - ✨ 네비게이션 상태 동기화를 위한 KVO 설정
-        func setupNavigationObservers(for webView: WKWebView) {
-            // ✨ 웹뷰의 canGoBack 상태 관찰
-            canGoBackObserver = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let canGoBack = change.newValue ?? false
-                
-                DispatchQueue.main.async {
-                    // ✨ 즉시 DataModel 동기화
-                    self.parent.stateModel.dataModel.syncWebViewNavigationState(
-                        canGoBack: canGoBack,
-                        canGoForward: webView.canGoForward
-                    )
-                    
-                    TabPersistenceManager.debugMessages.append("🔄 웹뷰 canGoBack 동기화: \(canGoBack)")
-                }
-            }
-            
-            // ✨ 웹뷰의 canGoForward 상태 관찰
-            canGoForwardObserver = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let canGoForward = change.newValue ?? false
-                
-                DispatchQueue.main.async {
-                    // ✨ 즉시 DataModel 동기화
-                    self.parent.stateModel.dataModel.syncWebViewNavigationState(
-                        canGoBack: webView.canGoBack,
-                        canGoForward: canGoForward
-                    )
-                    
-                    TabPersistenceManager.debugMessages.append("🔄 웹뷰 canGoForward 동기화: \(canGoForward)")
-                }
-            }
-        }
-        
-        func removeNavigationObservers(for webView: WKWebView?) {
-            canGoBackObserver?.invalidate()
-            canGoForwardObserver?.invalidate()
-            canGoBackObserver = nil
-            canGoForwardObserver = nil
-        }
+        // 🎯 네비게이션 상태 KVO 메서드들 제거됨 - 이제 웹뷰 상태 완전 무시!
 
         // MARK: - JS → 네이티브 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -768,7 +725,7 @@ struct CustomWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
 
-        // MARK: 네비게이션 명령 (기존 방식도 유지)
+        // MARK: 네비게이션 명령 (🎯 완전히 우리 시스템으로 통합!)
         @objc func reloadWebView() { 
             webView?.reload()
         }
