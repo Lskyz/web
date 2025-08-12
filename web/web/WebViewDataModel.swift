@@ -118,7 +118,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         Self.loadGlobalHistory()
     }
     
-    // MARK: - 🎯 **완전 독립형 네비게이션 상태 관리** (핵심!)
+    // 🎯 **완전 독립형 네비게이션 상태 관리** (핵심!)
     
     private func updateNavigationState() {
         let newCanGoBack = currentPageIndex > 0
