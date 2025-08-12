@@ -227,8 +227,8 @@ struct DashboardView: View {
     ]
     
     // 최근 방문 페이지 (전역 히스토리에서 최신 5개)
-    private var recentPages: [WebViewStateModel.HistoryEntry] {
-        Array(WebViewStateModel.globalHistory
+    private var recentPages: [HistoryEntry] {
+        Array(WebViewDataModel.globalHistory
             .sorted { $0.date > $1.date }
             .prefix(5))
     }
@@ -328,7 +328,7 @@ struct DashboardView: View {
                         }
                         
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("히스토리: \(WebViewStateModel.globalHistory.count)개")
+                            Text("히스토리: \(WebViewDataModel.globalHistory.count)개")
                                 .font(.caption)
                                 .foregroundColor(.gray)
                             
@@ -475,7 +475,7 @@ struct DashboardView: View {
 
 // MARK: - 최근 방문 페이지 카드
 struct RecentPageCard: View {
-    let page: WebViewStateModel.HistoryEntry
+    let page: HistoryEntry
     let onTap: () -> Void
     
     var body: some View {
@@ -529,6 +529,7 @@ struct TabManager: View {
     @State private var showToast = false
     @State private var toastMessage = ""
     @State private var showDebugView = false
+    @State private var showHistorySheet = false
     
     private var currentTabID: UUID? { initialStateModel.tabID }
 
@@ -555,6 +556,13 @@ struct TabManager: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                        Button("방문기록") { showHistorySheet = true }
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.green)
                             .foregroundColor(.white)
                             .cornerRadius(6)
                     }
@@ -690,6 +698,28 @@ struct TabManager: View {
         }
         .fullScreenCover(isPresented: $showDebugView) {
             DebugLogView()
+        }
+        .sheet(isPresented: $showHistorySheet) {
+            NavigationView { 
+                WebViewDataModel.HistoryPage(
+                    dataModel: initialStateModel.dataModel,
+                    onNavigateToPage: { record in
+                        if let index = initialStateModel.dataModel.findPageIndex(for: record.url) {
+                            if let navigatedRecord = initialStateModel.dataModel.navigateToIndex(index) {
+                                initialStateModel.currentURL = navigatedRecord.url
+                                if let webView = initialStateModel.webView {
+                                    webView.load(URLRequest(url: navigatedRecord.url))
+                                }
+                            }
+                        }
+                    },
+                    onNavigateToURL: { url in
+                        initialStateModel.currentURL = url
+                        // 탭 매니저 닫기
+                        dismiss()
+                    }
+                )
+            }
         }
     }
 
