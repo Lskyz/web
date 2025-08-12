@@ -1,6 +1,6 @@
 //
 //  WebViewDataModel.swift
-//  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈 (건드리지 말 것!)
+//  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈 + 웹뷰 네비게이션 동기화
 //
 
 import Foundation
@@ -117,6 +117,22 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         Self.loadGlobalHistory()
     }
     
+    // MARK: - ✨ 웹뷰 네비게이션 상태 동기화 (새로 추가)
+    func syncWebViewNavigationState(canGoBack: Bool, canGoForward: Bool) {
+        // ✨ 즉시 상태 업데이트 (메인 쓰레드에서 실행)
+        DispatchQueue.main.async {
+            if self.canGoBack != canGoBack || self.canGoForward != canGoForward {
+                self.canGoBack = canGoBack
+                self.canGoForward = canGoForward
+                
+                // ObjectWillChange 이벤트 발생으로 UI 즉시 갱신
+                self.objectWillChange.send()
+                
+                self.dbg("🔄 네비게이션 상태 동기화: back=\(canGoBack), forward=\(canGoForward)")
+            }
+        }
+    }
+    
     // MARK: - 새로운 페이지 기록 시스템
     
     func addNewPage(url: URL, title: String = "") {
@@ -148,8 +164,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     private func updateNavigationState() {
-        canGoBack = currentPageIndex > 0
-        canGoForward = currentPageIndex < pageHistory.count - 1
+        let newCanGoBack = currentPageIndex > 0
+        let newCanGoForward = currentPageIndex < pageHistory.count - 1
+        
+        // ✨ 상태가 변경되었을 때만 업데이트
+        if canGoBack != newCanGoBack || canGoForward != newCanGoForward {
+            canGoBack = newCanGoBack
+            canGoForward = newCanGoForward
+            
+            // ObjectWillChange 이벤트 발생으로 UI 즉시 갱신
+            objectWillChange.send()
+            
+            dbg("📍 네비게이션 상태 업데이트: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
+        }
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -462,6 +489,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     updateCurrentPageTitle(title)
                     stateModel?.syncCurrentURL(finalURL)
                 }
+            }
+            
+            // ✨ 웹뷰의 네이티브 네비게이션 상태와 강제 동기화
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.syncWebViewNavigationState(
+                    canGoBack: webView.canGoBack,
+                    canGoForward: webView.canGoForward
+                )
             }
             
             // 리다이렉트 체인 정리
