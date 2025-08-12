@@ -47,8 +47,10 @@ struct CustomWebView: UIViewRepresentable {
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
-        // ✨ 데스크탑 모드 강제 JS 추가
-        controller.addUserScript(makeDesktopModeScript())
+        // ✨ 데스크탑 모드일 때만 JS 주입
+        if stateModel.isDesktopMode {
+            controller.addUserScript(makeDesktopModeScript())
+        }
         controller.add(context.coordinator, name: "playVideo")
         // ✨ 확대/축소 메시지 핸들러 추가
         controller.add(context.coordinator, name: "setZoom")
@@ -172,8 +174,8 @@ struct CustomWebView: UIViewRepresentable {
         if uiView.scrollView.backgroundColor != .clear { uiView.scrollView.backgroundColor = .clear }
         uiView.scrollView.isOpaque = false
         
-        // ✨ 데스크탑 모드 변경 시 JS 재주입
-        context.coordinator.updateDesktopModeScripts()
+        // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용
+        context.coordinator.updateDesktopModeIfNeeded()
     }
 
     // MARK: - teardown
@@ -198,12 +200,16 @@ struct CustomWebView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트
+    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (안정화)
     private func makeDesktopModeScript() -> WKUserScript {
         let scriptSource = """
-        // ✨ 데스크탑 모드 강제 적용 스크립트
+        // ✨ 데스크탑 모드 강제 적용 스크립트 (안정화 버전)
         (function() {
             'use strict';
+            
+            // 이미 적용되었는지 확인
+            if (window.desktopModeApplied) return;
+            window.desktopModeApplied = true;
             
             // 1. 화면 크기를 데스크탑으로 속이기
             Object.defineProperty(screen, 'width', { 
@@ -241,7 +247,7 @@ struct CustomWebView: UIViewRepresentable {
                 configurable: false
             });
             
-            // 3. 터치 이벤트 비활성화 (데스크탑은 터치 없음)
+            // 3. 터치 이벤트 비활성화
             Object.defineProperty(window, 'ontouchstart', { 
                 get: function() { return undefined; },
                 configurable: false
@@ -255,7 +261,7 @@ struct CustomWebView: UIViewRepresentable {
                 configurable: false
             });
             
-            // 4. maxTouchPoints를 0으로 설정 (터치 미지원)
+            // 4. maxTouchPoints를 0으로 설정
             if (navigator.maxTouchPoints !== undefined) {
                 Object.defineProperty(navigator, 'maxTouchPoints', { 
                     get: function() { return 0; },
@@ -266,7 +272,6 @@ struct CustomWebView: UIViewRepresentable {
             // 5. CSS 미디어 쿼리 속이기
             const originalMatchMedia = window.matchMedia;
             window.matchMedia = function(query) {
-                // 모바일 감지 쿼리들을 false로 만들기
                 if (query.includes('hover: none') || 
                     query.includes('pointer: coarse') ||
                     query.includes('max-width: 768px') ||
@@ -275,7 +280,6 @@ struct CustomWebView: UIViewRepresentable {
                     return { matches: false, media: query, addListener: function(){}, removeListener: function(){} };
                 }
                 
-                // 데스크탑 감지 쿼리들을 true로 만들기
                 if (query.includes('hover: hover') || 
                     query.includes('pointer: fine') ||
                     query.includes('min-width: 1200px')) {
@@ -289,14 +293,13 @@ struct CustomWebView: UIViewRepresentable {
             window.DeviceMotionEvent = undefined;
             window.DeviceOrientationEvent = undefined;
             
-            // 7. Viewport 메타태그 조작
+            // 7. ✨ 안정적인 Viewport 메타태그 조작
             function fixViewport() {
                 const viewports = document.querySelectorAll('meta[name="viewport"]');
                 viewports.forEach(viewport => {
                     viewport.setAttribute('content', 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes');
                 });
                 
-                // viewport가 없으면 생성
                 if (viewports.length === 0) {
                     const meta = document.createElement('meta');
                     meta.name = 'viewport';
@@ -305,39 +308,57 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
             
-            // 8. 줌 기능 구현
+            // 8. ✨ 안정적인 줌 기능 구현 (requestAnimationFrame 사용)
             window.setPageZoom = function(scale) {
                 scale = Math.max(0.3, Math.min(3.0, scale));
-                document.body.style.transform = `scale(${scale})`;
-                document.body.style.transformOrigin = '0 0';
-                document.body.style.width = `${100/scale}%`;
-                document.body.style.height = `${100/scale}%`;
                 
-                // 현재 줌 레벨을 저장
-                window.currentZoomLevel = scale;
-                
-                // 네이티브로 줌 레벨 전달
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.setZoom) {
-                    window.webkit.messageHandlers.setZoom.postMessage({
-                        zoom: scale,
-                        action: 'update'
-                    });
+                // 기존 스타일 정리
+                if (document.body.style.transform) {
+                    document.body.style.transform = '';
+                    document.body.style.transformOrigin = '';
+                    document.body.style.width = '';
+                    document.body.style.height = '';
                 }
+                
+                // 새 스타일 적용 (requestAnimationFrame으로 안정화)
+                requestAnimationFrame(() => {
+                    document.body.style.transform = `scale(${scale})`;
+                    document.body.style.transformOrigin = '0 0';
+                    document.body.style.width = `${100/scale}%`;
+                    document.body.style.height = `${100/scale}%`;
+                    document.body.style.overflow = 'visible';
+                    
+                    // 현재 줌 레벨을 저장
+                    window.currentZoomLevel = scale;
+                    
+                    // 네이티브로 줌 레벨 전달
+                    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.setZoom) {
+                        window.webkit.messageHandlers.setZoom.postMessage({
+                            zoom: scale,
+                            action: 'update'
+                        });
+                    }
+                });
             };
             
-            // 9. 페이지 로드 시 viewport 수정 및 초기 줌 설정
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', function() {
-                    fixViewport();
-                    // 초기 줌을 50%로 설정 (1920px 화면을 모바일에 맞게)
-                    setTimeout(() => window.setPageZoom(0.5), 100);
-                });
-            } else {
+            // 9. 페이지 로드 시 초기화
+            function initialize() {
                 fixViewport();
-                setTimeout(() => window.setPageZoom(0.5), 100);
+                // 초기 줌을 50%로 설정
+                setTimeout(() => {
+                    if (window.setPageZoom) {
+                        window.setPageZoom(0.5);
+                    }
+                }, 200);
             }
             
-            // 10. 동적으로 추가되는 viewport 메타태그 감시
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initialize);
+            } else {
+                initialize();
+            }
+            
+            // 10. 동적 viewport 감시
             if (window.MutationObserver) {
                 const observer = new MutationObserver(function(mutations) {
                     mutations.forEach(function(mutation) {
@@ -353,7 +374,7 @@ struct CustomWebView: UIViewRepresentable {
                 observer.observe(document.head || document.documentElement, { childList: true, subtree: true });
             }
             
-            console.log('✅ 데스크탑 모드 강제 적용 완료');
+            console.log('✅ 데스크탑 모드 강제 적용 완료 (안정화)');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -455,20 +476,36 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // ✨ 데스크탑 모드 스크립트 업데이트
-        func updateDesktopModeScripts() {
+        // ✨ 데스크탑 모드 변경 감지 및 적용
+        func updateDesktopModeIfNeeded() {
             guard let webView = webView else { return }
             
-            if parent.stateModel.isDesktopMode {
-                // 데스크탑 모드일 때 강제 스크립트 재실행
-                let script = """
-                if (window.setPageZoom && window.currentZoomLevel) {
-                    // 현재 줌 레벨 유지하면서 데스크탑 모드 재적용
-                    window.setPageZoom(window.currentZoomLevel || 0.5);
+            // 사용자 에이전트 업데이트
+            updateUserAgentIfNeeded()
+            
+            // ✨ 데스크탑 모드 변경 시에만 페이지 새로고침
+            // (스크립트가 조건부로 주입되므로 새로고침 필요)
+            static var lastDesktopMode: Bool = false
+            if parent.stateModel.isDesktopMode != lastDesktopMode {
+                lastDesktopMode = parent.stateModel.isDesktopMode
+                
+                // 현재 URL이 있으면 새로고침
+                if let currentURL = parent.stateModel.currentURL {
+                    webView.load(URLRequest(url: currentURL))
                 }
-                """
-                webView.evaluateJavaScript(script, completionHandler: nil)
             }
+        }
+        
+        // ✨ 데스크탑 모드일 때만 줌 적용
+        func applyZoomIfDesktopMode() {
+            guard let webView = webView, parent.stateModel.isDesktopMode else { return }
+            
+            let script = """
+            if (window.setPageZoom && window.currentZoomLevel) {
+                window.setPageZoom(\(parent.stateModel.currentZoomLevel));
+            }
+            """
+            webView.evaluateJavaScript(script, completionHandler: nil)
         }
 
         // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
@@ -572,10 +609,10 @@ struct CustomWebView: UIViewRepresentable {
                 self.isSwipeBackNavigation = false
             }
             
-            // ✨ 데스크탑 모드일 때 강제 스크립트 재실행
+            // ✨ 데스크탑 모드일 때만 줌 적용
             if parent.stateModel.isDesktopMode {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.updateDesktopModeScripts()
+                    self.applyZoomIfDesktopMode()
                 }
             }
 
