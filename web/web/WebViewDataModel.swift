@@ -1,6 +1,7 @@
 //
 //  WebViewDataModel.swift
-//  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈 + 웹뷰 네비게이션 동기화
+//  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈
+//  🎯 **웹뷰 네이티브 상태 완전 독립 - 오직 우리 데이터만으로 네비게이션 관리!**
 //
 
 import Foundation
@@ -76,7 +77,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     @Published private(set) var pageHistory: [PageRecord] = []
     @Published private(set) var currentPageIndex: Int = -1
     
-    // 네비게이션 상태
+    // 🎯 **완전 독립형 네비게이션 상태** (웹뷰와 무관)
     @Published private(set) var canGoBack: Bool = false
     @Published private(set) var canGoForward: Bool = false
     
@@ -96,7 +97,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     private var historyNavigationStartTime: Date?
     
-    // ✅ 스와이프 제스처 관련 추가 플래그
+    // ✅ 스와이프 제스처 관련 (이제 단순화 가능)
     private var swipeDetectedTargetIndex: Int? = nil
     private var swipeConfirmationTimer: Timer?
     
@@ -117,19 +118,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         Self.loadGlobalHistory()
     }
     
-    // MARK: - ✨ 웹뷰 네비게이션 상태 동기화 (새로 추가)
-    func syncWebViewNavigationState(canGoBack: Bool, canGoForward: Bool) {
-        // ✨ 즉시 상태 업데이트 (메인 쓰레드에서 실행)
-        DispatchQueue.main.async {
-            if self.canGoBack != canGoBack || self.canGoForward != canGoForward {
-                self.canGoBack = canGoBack
-                self.canGoForward = canGoForward
-                
-                // ObjectWillChange 이벤트 발생으로 UI 즉시 갱신
-                self.objectWillChange.send()
-                
-                self.dbg("🔄 네비게이션 상태 동기화: back=\(canGoBack), forward=\(canGoForward)")
-            }
+    // MARK: - 🎯 **완전 독립형 네비게이션 상태 관리** (핵심!)
+    
+    private func updateNavigationState() {
+        let newCanGoBack = currentPageIndex > 0
+        let newCanGoForward = currentPageIndex < pageHistory.count - 1
+        
+        // ✨ 상태가 변경되었을 때만 업데이트
+        if canGoBack != newCanGoBack || canGoForward != newCanGoForward {
+            canGoBack = newCanGoBack
+            canGoForward = newCanGoForward
+            
+            // ObjectWillChange 이벤트 발생으로 UI 즉시 갱신
+            objectWillChange.send()
+            
+            dbg("🎯 독립형 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
         }
     }
     
@@ -161,22 +164,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // 전역 히스토리에도 추가
         Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
-    }
-    
-    private func updateNavigationState() {
-        let newCanGoBack = currentPageIndex > 0
-        let newCanGoForward = currentPageIndex < pageHistory.count - 1
-        
-        // ✨ 상태가 변경되었을 때만 업데이트
-        if canGoBack != newCanGoBack || canGoForward != newCanGoForward {
-            canGoBack = newCanGoBack
-            canGoForward = newCanGoForward
-            
-            // ObjectWillChange 이벤트 발생으로 UI 즉시 갱신
-            objectWillChange.send()
-            
-            dbg("📍 네비게이션 상태 업데이트: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
-        }
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -235,10 +222,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         isRestoringSession = false
     }
 
-    // MARK: - ✅ 강화된 네비게이션 메서드
+    // MARK: - 🎯 **완전 독립형 네비게이션 메서드** (웹뷰 상태 무시)
     
     func navigateBack() -> PageRecord? {
         guard canGoBack, currentPageIndex > 0 else { 
+            dbg("❌ navigateBack 실패: canGoBack=\(canGoBack), currentIndex=\(currentPageIndex)")
             return nil
         }
         
@@ -262,6 +250,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     func navigateForward() -> PageRecord? {
         guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
+            dbg("❌ navigateForward 실패: canGoForward=\(canGoForward), currentIndex=\(currentPageIndex), count=\(pageHistory.count)")
             return nil
         }
         
@@ -345,7 +334,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return false
     }
     
-    // MARK: - 스와이프 제스처 처리
+    // MARK: - 스와이프 제스처 처리 (단순화)
     
     func findPageIndex(for url: URL) -> Int? {
         return pageHistory.firstIndex { $0.url == url }
@@ -425,7 +414,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         let startURL = webView.url
         
-        // ✅ 자동 스와이프 감지
+        // ✅ 자동 스와이프 감지 (단순화됨)
         if let startURL = startURL, 
            !isRestoringSession, 
            !isHistoryNavigationActive(),
@@ -491,13 +480,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 }
             }
             
-            // ✨ 웹뷰의 네이티브 네비게이션 상태와 강제 동기화
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.syncWebViewNavigationState(
-                    canGoBack: webView.canGoBack,
-                    canGoForward: webView.canGoForward
-                )
-            }
+            // 🎯 **핵심**: 웹뷰 네이티브 상태 동기화 제거됨!
+            // 이제 우리 데이터 모델만으로 네비게이션 상태 관리
             
             // 리다이렉트 체인 정리
             redirectionChain.removeAll()
@@ -591,7 +575,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         } else {
             id = "noTab"
         }
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)] \(msg)")
+        
+        // 🎯 네비게이션 상태도 함께 로깅
+        let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)] \(msg)")
     }
 
     // MARK: - 메모리 정리
