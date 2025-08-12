@@ -901,7 +901,7 @@ struct CustomWebView: UIViewRepresentable {
             decisionHandler(.allow)
         }
 
-        // MARK: JS → 네이티브 메시지 처리 (상태 완전 동기화)
+        // MARK: JS → 네이티브 메시지 처리 (완벽 동기화)
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -919,27 +919,16 @@ struct CustomWebView: UIViewRepresentable {
                         case "update":
                             // ✨ 줌 레벨 업데이트 (JavaScript → 네이티브)
                             if let zoom = data["zoom"] as? Double {
-                                // 무한 루프 방지: 작은 차이는 무시
-                                if abs(self.parent.stateModel.currentZoomLevel - zoom) > 0.01 {
-                                    self.parent.stateModel.currentZoomLevel = zoom
-                                    self.lastZoomLevel = zoom  // 추적값도 업데이트
-                                    print("🔍 JS → 네이티브 줌 동기화: \(zoom)x")
-                                }
+                                self.parent.stateModel.currentZoomLevel = zoom
+                                print("🔍 JS → 네이티브 줌 동기화: \(zoom)x")
                             }
                             
                         case "desktopModeChanged":
-                            // ✨ 데스크탑 모드 상태 강제 동기화
+                            // ✨ 데스크탑 모드 상태 동기화 (JavaScript → 네이티브)
                             if let enabled = data["enabled"] as? Bool {
-                                print("📨 JS에서 모드 변경 요청: \(enabled ? "데스크탑" : "모바일")")
-                                
-                                // 강제로 SwiftUI 상태 업데이트
-                                self.parent.stateModel.isDesktopMode = enabled
-                                self.lastDesktopMode = enabled  // 추적값도 업데이트
-                                
-                                // UI 강제 새로고침을 위한 추가 처리
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                    self.parent.stateModel.objectWillChange.send()
-                                    print("🖥️ SwiftUI 상태 강제 업데이트: \(enabled ? "데스크탑" : "모바일")")
+                                if self.parent.stateModel.isDesktopMode != enabled {
+                                    self.parent.stateModel.isDesktopMode = enabled
+                                    print("🖥️ JS → 네이티브 모드 동기화: \(enabled ? "데스크탑" : "모바일")")
                                 }
                             }
                             
