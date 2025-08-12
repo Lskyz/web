@@ -2,6 +2,7 @@
 //  WebViewStateModel.swift
 //  페이지 고유번호 기반 히스토리 시스템 (디버그 정리)
 //  ✨ 세션 관련 로그는 유지, 불필요한 디버그 구문 정리
+//  ✨ 데스크탑 모드 줌 레벨 관리 추가
 //
 
 import Foundation
@@ -62,7 +63,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewStateModel (디버그 정리)
+// MARK: - WebViewStateModel (디버그 정리 + 줌 기능 추가)
 final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     var tabID: UUID?
@@ -140,6 +141,15 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
     }
 
+    // ✨ 줌 레벨 관리 (데스크탑 모드용)
+    @Published var currentZoomLevel: Double = 0.5 {
+        didSet {
+            if oldValue != currentZoomLevel {
+                applyZoomLevel()
+            }
+        }
+    }
+
     // 복원 상태 관리
     private(set) var isRestoringSession: Bool = false
     
@@ -163,6 +173,31 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
 
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
+    }
+
+    // ✨ 줌 레벨 적용 메서드
+    private func applyZoomLevel() {
+        guard let webView = webView, isDesktopMode else { return }
+        
+        let jsScript = """
+        if (window.setPageZoom) {
+            window.setPageZoom(\(currentZoomLevel));
+        }
+        """
+        
+        webView.evaluateJavaScript(jsScript) { [weak self] result, error in
+            if let error = error {
+                self?.dbg("❌ 줌 적용 실패: \(error.localizedDescription)")
+            } else {
+                self?.dbg("🔍 줌 레벨 적용: \(String(format: "%.1f", self?.currentZoomLevel ?? 0.5))x")
+            }
+        }
+    }
+
+    // ✨ 줌 레벨 설정 메서드 (외부에서 호출용)
+    func setZoomLevel(_ level: Double) {
+        let clampedLevel = max(0.3, min(3.0, level))
+        currentZoomLevel = clampedLevel
     }
 
     // ✨ 로딩 중지 메서드
@@ -394,8 +429,8 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         guard let webView = webView else { return }
         
         if isDesktopMode {
-            // macOS Safari 사용자 에이전트 (데스크탑 모드)
-            let desktopUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+            // ✨ 더 강력한 Windows Chrome 사용자 에이전트 (데스크탑 모드)
+            let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             webView.customUserAgent = desktopUA
         } else {
             // 모바일 기본 사용자 에이전트로 복원
@@ -570,6 +605,13 @@ final class WebViewStateModel: NSObject, ObservableObject, WKNavigationDelegate 
         }
         
         updateNavigationState()
+        
+        // ✨ 데스크탑 모드일 때 줌 레벨 재적용
+        if isDesktopMode {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.applyZoomLevel()
+            }
+        }
         
         if !wasRestoringSession {
             navigationDidFinish.send(())
