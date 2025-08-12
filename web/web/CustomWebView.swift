@@ -442,6 +442,9 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✅ 스와이프 뒤로가기 감지용 플래그
         private var isSwipeBackNavigation: Bool = false
+        
+        // ✨ 데스크탑 모드 변경 감지용 플래그
+        private var lastDesktopMode: Bool = false
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -457,6 +460,7 @@ struct CustomWebView: UIViewRepresentable {
 
         init(_ parent: CustomWebView) { 
             self.parent = parent 
+            self.lastDesktopMode = parent.stateModel.isDesktopMode  // 초기값 설정
         }
 
         deinit {
@@ -485,7 +489,6 @@ struct CustomWebView: UIViewRepresentable {
             
             // ✨ 데스크탑 모드 변경 시에만 페이지 새로고침
             // (스크립트가 조건부로 주입되므로 새로고침 필요)
-            static var lastDesktopMode: Bool = false
             if parent.stateModel.isDesktopMode != lastDesktopMode {
                 lastDesktopMode = parent.stateModel.isDesktopMode
                 
