@@ -238,7 +238,24 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showHistorySheet) {
-                NavigationView { WebViewStateModel.HistoryPage(state: state) }
+                NavigationView { 
+                    WebViewDataModel.HistoryPage(
+                        dataModel: state.dataModel,
+                        onNavigateToPage: { record in
+                            if let index = state.dataModel.findPageIndex(for: record.url) {
+                                if let navigatedRecord = state.dataModel.navigateToIndex(index) {
+                                    state.currentURL = navigatedRecord.url
+                                    if let webView = state.webView {
+                                        webView.load(URLRequest(url: navigatedRecord.url))
+                                    }
+                                }
+                            }
+                        },
+                        onNavigateToURL: { url in
+                            state.currentURL = url
+                        }
+                    )
+                }
             }
             .fullScreenCover(isPresented: $showTabManager) {
                 NavigationView {
