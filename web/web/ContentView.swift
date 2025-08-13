@@ -24,7 +24,7 @@ func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
     uiView.layer.cornerRadius = cornerRadius
     uiView.backgroundColor = .clear
 }
-```
+
 
 }
 
@@ -34,7 +34,7 @@ struct ContentView: View {
 @Binding var tabs: [WebTab]
 @Binding var selectedTabIndex: Int
 
-```
+
 @State private var inputURL: String = ""
 @FocusState private var isTextFieldFocused: Bool
 @State private var textFieldSelectedAll = false
