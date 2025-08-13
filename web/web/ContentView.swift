@@ -124,7 +124,7 @@ struct ContentView: View {
 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
     keyboardHeight = 0
 }
-    
+}    
     // MARK: - 컴포넌트 분해
     
     private var currentState: WebViewStateModel {
