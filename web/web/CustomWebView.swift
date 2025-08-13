@@ -4,7 +4,7 @@
 //  🌐 통합된 SPA 네비게이션 + 로그인 리다이렉트 필터링
 //  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
-//  🏄‍♂️ 사파리 스타일 제스처 네비게이션 (UIScreenEdgePan으로 완전 수정)
+//  🏄‍♂️ 사파리 스타일 페이지 캐싱 + 밀어내기 전환 효과
 //
 
 import SwiftUI
@@ -14,6 +14,79 @@ import UIKit
 import UniformTypeIdentifiers
 import Foundation
 import Security
+
+// MARK: - 히스토리 페이지 캐시 관리
+class HistoryPageCache: ObservableObject {
+    private var backPageView: WKWebView?
+    private var forwardPageView: WKWebView?
+    private var backPageSnapshot: UIView?
+    private var forwardPageSnapshot: UIView?
+    
+    private var lastBackURL: URL?
+    private var lastForwardURL: URL?
+    
+    func updateCache(backURL: URL?, forwardURL: URL?, config: WKWebViewConfiguration) {
+        // 뒤로가기 페이지 캐싱
+        if let backURL = backURL, backURL != lastBackURL {
+            backPageView?.removeFromSuperview()
+            backPageView = createCacheWebView(url: backURL, config: config)
+            lastBackURL = backURL
+        } else if backURL == nil {
+            backPageView?.removeFromSuperview()
+            backPageView = nil
+            lastBackURL = nil
+        }
+        
+        // 앞으로가기 페이지 캐싱
+        if let forwardURL = forwardURL, forwardURL != lastForwardURL {
+            forwardPageView?.removeFromSuperview()
+            forwardPageView = createCacheWebView(url: forwardURL, config: config)
+            lastForwardURL = forwardURL
+        } else if forwardURL == nil {
+            forwardPageView?.removeFromSuperview()
+            forwardPageView = nil
+            lastForwardURL = nil
+        }
+    }
+    
+    private func createCacheWebView(url: URL, config: WKWebViewConfiguration) -> WKWebView {
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.isHidden = true
+        webView.alpha = 0.0
+        webView.load(URLRequest(url: url))
+        return webView
+    }
+    
+    func getBackPageView() -> WKWebView? {
+        return backPageView
+    }
+    
+    func getForwardPageView() -> WKWebView? {
+        return forwardPageView
+    }
+    
+    func createSnapshot(for webView: WKWebView, completion: @escaping (UIView?) -> Void) {
+        let targetSize = CGSize(width: 375, height: 667) // iPhone 기본 크기
+        
+        webView.takeSnapshot(with: nil) { image, error in
+            DispatchQueue.main.async {
+                if let image = image {
+                    let imageView = UIImageView(image: image)
+                    imageView.contentMode = .scaleAspectFit
+                    imageView.backgroundColor = .systemBackground
+                    completion(imageView)
+                } else {
+                    completion(nil)
+                }
+            }
+        }
+    }
+    
+    deinit {
+        backPageView?.removeFromSuperview()
+        forwardPageView?.removeFromSuperview()
+    }
+}
 
 // MARK: - 다운로드 진행 알림 이름 정의
 extension Notification.Name {
@@ -49,11 +122,9 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
-        // 🌐 통합된 SPA 네비게이션 스크립트 (네이버 로직을 범용으로)
         controller.addUserScript(makeUnifiedSPANavigationScript())
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
-        // 🌐 단일 통합 SPA 메시지 핸들러
         controller.add(context.coordinator, name: "spaNavigation")
         config.userContentController = controller
 
@@ -65,7 +136,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         
-        // 🎯 네이티브 제스처 완전 비활성화 (우리가 사파리 스타일로 대체)
+        // 🎯 네이티브 제스처 완전 비활성화
         webView.allowsBackForwardNavigationGestures = false
         
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -89,7 +160,7 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
 
-        // 🏄‍♂️ 사파리 스타일 제스처 설정 (완전 수정)
+        // 🏄‍♂️ 사파리 스타일 캐시 제스처 설정
         context.coordinator.setupSafariStyleGestures(for: webView)
 
         // Pull to Refresh
@@ -180,6 +251,9 @@ struct CustomWebView: UIViewRepresentable {
         
         // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용
         context.coordinator.updateDesktopModeIfNeeded()
+        
+        // 🏄‍♂️ 히스토리 캐시 업데이트
+        context.coordinator.updateHistoryCache()
     }
 
     // MARK: - teardown
@@ -207,7 +281,7 @@ struct CustomWebView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 🌐 통합된 SPA 네비게이션 스크립트 (네이버 로직을 범용으로 사용)
+    // MARK: - 🌐 통합된 SPA 네비게이션 스크립트
     private func makeUnifiedSPANavigationScript() -> WKUserScript {
         let scriptSource = """
         // 🌐 통합된 SPA 네비게이션 감지 (네이버 특화 로직을 범용으로 사용)
@@ -257,7 +331,7 @@ struct CustomWebView: UIViewRepresentable {
                 const host = urlObj.hostname.toLowerCase();
                 const path = urlObj.pathname.toLowerCase();
                 
-                // 패턴 분석 (백슬래시 이스케이프 수정)
+                // 패턴 분석
                 let pattern = 'unknown';
                 if (path.match(/\\/[^/]+\\/\\d+\\/\\d+/)) {
                     pattern = '3level_numeric';
@@ -390,101 +464,13 @@ struct CustomWebView: UIViewRepresentable {
                 }
             });
             
-            // 🌐 iframe 감지 (범용 처리)
-            function setupIframeDetection() {
-                // iframe 내부 네비게이션 감지
-                const checkIframes = () => {
-                    document.querySelectorAll('iframe').forEach(iframe => {
-                        try {
-                            if (iframe.contentWindow && iframe.contentWindow.location) {
-                                const iframeURL = iframe.contentWindow.location.href;
-                                
-                                // iframe 내부의 pushState/replaceState도 후킹
-                                if (iframe.contentWindow.history && !iframe.contentWindow.__spa_hooked) {
-                                    iframe.contentWindow.__spa_hooked = true;
-                                    
-                                    const iframeOriginalPushState = iframe.contentWindow.history.pushState;
-                                    iframe.contentWindow.history.pushState = function(state, title, url) {
-                                        console.log('🌐 iframe pushState:', url);
-                                        const result = iframeOriginalPushState.call(this, state, title, url);
-                                        
-                                        setTimeout(() => {
-                                            const fullURL = new URL(url || iframe.contentWindow.location.href, iframe.contentWindow.location.origin).href;
-                                            notifyNavigation('iframe_push', fullURL, iframe.contentDocument?.title || title, state);
-                                        }, 200);
-                                        
-                                        return result;
-                                    };
-                                }
-                            }
-                        } catch (e) {
-                            // Cross-origin iframe은 접근 불가 (정상)
-                        }
-                    });
-                };
-                
-                // 주기적으로 iframe 체크
-                setInterval(checkIframes, 2000);
-                
-                // DOM 변화 감지로 새 iframe 체크
-                if (window.MutationObserver) {
-                    const observer = new MutationObserver(() => {
-                        setTimeout(checkIframes, 500);
-                    });
-                    observer.observe(document.body, { childList: true, subtree: true });
-                }
-            }
-            
-            // 제목 변경 감지
-            if (window.MutationObserver) {
-                const titleObserver = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(mutation) {
-                        if (mutation.type === 'childList' && document.title !== currentSPAState.title) {
-                            console.log('🌐 제목 변경 감지:', document.title);
-                            currentSPAState.title = document.title;
-                            
-                            // 제목만 변경된 경우
-                            if (!shouldExcludeFromHistory(window.location.href)) {
-                                const message = {
-                                    type: 'title',
-                                    url: window.location.href,
-                                    title: document.title,
-                                    state: history.state,
-                                    timestamp: Date.now(),
-                                    siteType: detectSiteType(window.location.href),
-                                    shouldExclude: false
-                                };
-                                
-                                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
-                                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
-                                }
-                            }
-                        }
-                    });
-                });
-                
-                // title 태그와 body 변경 모두 감지
-                const titleElement = document.querySelector('title');
-                if (titleElement) {
-                    titleObserver.observe(titleElement, { childList: true, subtree: true });
-                }
-                titleObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
-            }
-            
-            // 페이지 로드 완료 후 iframe 처리 시작
-            if (document.readyState === 'complete') {
-                setupIframeDetection();
-            } else {
-                window.addEventListener('load', setupIframeDetection);
-            }
-            
             console.log('✅ 통합된 SPA 네비게이션 훅 설정 완료');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
-    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (기존 유지)
+    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트
     private func makeDesktopModeScript() -> WKUserScript {
         let scriptSource = """
         // ✨ 데스크탑 모드 관리 스크립트
@@ -511,7 +497,7 @@ struct CustomWebView: UIViewRepresentable {
                 if (window.desktopModeApplied) return;
                 window.desktopModeApplied = true;
                 
-                // 1. 화면 크기를 데스크탑으로 속이기
+                // 화면 크기를 데스크탑으로 속이기
                 Object.defineProperty(screen, 'width', { 
                     get: function() { return 1920; },
                     configurable: false
@@ -520,16 +506,8 @@ struct CustomWebView: UIViewRepresentable {
                     get: function() { return 1080; },
                     configurable: false
                 });
-                Object.defineProperty(screen, 'availWidth', { 
-                    get: function() { return 1920; },
-                    configurable: false
-                });
-                Object.defineProperty(screen, 'availHeight', { 
-                    get: function() { return 1040; },
-                    configurable: false
-                });
                 
-                // 2. 윈도우 크기를 데스크탑으로 속이기
+                // 윈도우 크기를 데스크탑으로 속이기
                 Object.defineProperty(window, 'innerWidth', { 
                     get: function() { return 1920; },
                     configurable: false
@@ -538,96 +516,17 @@ struct CustomWebView: UIViewRepresentable {
                     get: function() { return 1080; },
                     configurable: false
                 });
-                Object.defineProperty(window, 'outerWidth', { 
-                    get: function() { return 1920; },
-                    configurable: false
-                });
-                Object.defineProperty(window, 'outerHeight', { 
-                    get: function() { return 1080; },
-                    configurable: false
-                });
                 
-                // 3. 터치 이벤트 비활성화
+                // 터치 이벤트 비활성화
                 Object.defineProperty(window, 'ontouchstart', { 
                     get: function() { return undefined; },
                     configurable: false
                 });
-                Object.defineProperty(window, 'ontouchmove', { 
-                    get: function() { return undefined; },
-                    configurable: false
-                });
-                Object.defineProperty(window, 'ontouchend', { 
-                    get: function() { return undefined; },
-                    configurable: false
-                });
                 
-                // 4. maxTouchPoints를 0으로 설정
-                if (navigator.maxTouchPoints !== undefined) {
-                    Object.defineProperty(navigator, 'maxTouchPoints', { 
-                        get: function() { return 0; },
-                        configurable: false
-                    });
-                }
-                
-                // 5. CSS 미디어 쿼리 속이기
-                const originalMatchMedia = window.matchMedia;
-                window.matchMedia = function(query) {
-                    if (query.includes('hover: none') || 
-                        query.includes('pointer: coarse') ||
-                        query.includes('max-width: 768px') ||
-                        query.includes('max-width: 1024px') ||
-                        query.includes('orientation: portrait')) {
-                        return { matches: false, media: query, addListener: function(){}, removeListener: function(){} };
-                    }
-                    
-                    if (query.includes('hover: hover') || 
-                        query.includes('pointer: fine') ||
-                        query.includes('min-width: 1200px')) {
-                        return { matches: true, media: query, addListener: function(){}, removeListener: function(){} };
-                    }
-                    
-                    return originalMatchMedia.call(this, query);
-                };
-                
-                // 6. DeviceMotionEvent와 DeviceOrientationEvent 비활성화
-                window.DeviceMotionEvent = undefined;
-                window.DeviceOrientationEvent = undefined;
-                
-                // 7. Viewport 메타태그 조작
-                fixViewport();
-                
-                // 8. 줌 기능 구현
+                // 줌 기능 구현
                 setupZoomFunction();
                 
-                // 9. 초기 줌 설정
-                setTimeout(() => {
-                    if (window.setPageZoom) {
-                        window.setPageZoom(0.5);
-                    }
-                }, 200);
-                
                 console.log('✅ 데스크탑 모드 적용 완료');
-            }
-            
-            // 데스크탑 모드 해제 (페이지 새로고침 필요)
-            function removeDesktopMode() {
-                window.desktopModeApplied = false;
-                console.log('📱 모바일 모드로 전환 (새로고침 필요)');
-            }
-            
-            // Viewport 메타태그 조작
-            function fixViewport() {
-                const viewports = document.querySelectorAll('meta[name="viewport"]');
-                viewports.forEach(viewport => {
-                    viewport.setAttribute('content', 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes');
-                });
-                
-                if (viewports.length === 0) {
-                    const meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    meta.content = 'width=1920, initial-scale=0.5, maximum-scale=3.0, minimum-scale=0.3, user-scalable=yes';
-                    document.head?.appendChild(meta);
-                }
             }
             
             // 줌 기능 구현
@@ -635,21 +534,11 @@ struct CustomWebView: UIViewRepresentable {
                 window.setPageZoom = function(scale) {
                     scale = Math.max(0.3, Math.min(3.0, scale));
                     
-                    // 기존 스타일 정리
-                    if (document.body.style.transform) {
-                        document.body.style.transform = '';
-                        document.body.style.transformOrigin = '';
-                        document.body.style.width = '';
-                        document.body.style.height = '';
-                    }
-                    
-                    // 새 스타일 적용
                     requestAnimationFrame(() => {
                         document.body.style.transform = `scale(${scale})`;
                         document.body.style.transformOrigin = '0 0';
                         document.body.style.width = `${100/scale}%`;
                         document.body.style.height = `${100/scale}%`;
-                        document.body.style.overflow = 'visible';
                         
                         window.currentZoomLevel = scale;
                         
@@ -662,24 +551,6 @@ struct CustomWebView: UIViewRepresentable {
                         }
                     });
                 };
-            }
-            
-            // 동적 viewport 감시
-            if (window.MutationObserver) {
-                const observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(mutation) {
-                        if (mutation.type === 'childList') {
-                            mutation.addedNodes.forEach(function(node) {
-                                if (node.nodeType === 1 && node.tagName === 'META' && node.name === 'viewport') {
-                                    if (window.desktopModeEnabled) {
-                                        fixViewport();
-                                    }
-                                }
-                            });
-                        }
-                    });
-                });
-                observer.observe(document.head || document.documentElement, { childList: true, subtree: true });
             }
             
             console.log('✅ 데스크탑 모드 스크립트 로드됨');
@@ -751,9 +622,15 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 🏄‍♂️ 사파리 스타일 제스처 관련 (완전 수정)
+        // 🏄‍♂️ 사파리 스타일 제스처 + 페이지 캐싱
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
+        private var historyCache = HistoryPageCache()
+        
+        // 제스처 진행 중 오버레이
+        private var gestureOverlayContainer: UIView?
+        private var currentPageSnapshot: UIView?
+        private var nextPageSnapshot: UIView?
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -761,7 +638,7 @@ struct CustomWebView: UIViewRepresentable {
         private var overlayPercentLabel: UILabel?
         private var overlayProgress: UIProgressView?
 
-        // ✨ KVO 옵저버들 (로딩 상태 동기화용만)
+        // ✨ KVO 옵저버들
         private var loadingObserver: NSKeyValueObservation?
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
@@ -771,38 +648,62 @@ struct CustomWebView: UIViewRepresentable {
             self.parent = parent
             self.lastDesktopMode = parent.stateModel.isDesktopMode
             super.init()
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleKeyboardChange(_:)),
-                name: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil
-            )
         }
 
         deinit {
             removeLoadingObservers(for: webView)
             NotificationCenter.default.removeObserver(self)
         }
-
-        @objc private func handleKeyboardChange(_ n: Notification) {
-            guard let wv = webView,
-                  let end = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-            else { return }
-
-            let screenH = wv.window?.bounds.height ?? UIScreen.main.bounds.height
-            let visibleH = max(0, screenH - end.origin.y)
-
-            // ✅ 키보드가 완전히 사라진 순간, 남아 있는 하단 인셋 제거
-            if visibleH == 0 {
-                wv.scrollView.contentInset = .zero
-                wv.scrollView.scrollIndicatorInsets = .zero
+        
+        // MARK: - 🏄‍♂️ 히스토리 캐시 업데이트
+        func updateHistoryCache() {
+            guard let webView = webView else { return }
+            
+            let dataModel = parent.stateModel.dataModel
+            var backURL: URL?
+            var forwardURL: URL?
+            
+            // 뒤로가기 가능한 페이지 URL
+            if dataModel.canGoBack, dataModel.currentPageIndex > 0 {
+                let backIndex = dataModel.currentPageIndex - 1
+                if backIndex < dataModel.pageHistory.count {
+                    backURL = dataModel.pageHistory[backIndex].url
+                }
             }
+            
+            // 앞으로가기 가능한 페이지 URL  
+            if dataModel.canGoForward, dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
+                let forwardIndex = dataModel.currentPageIndex + 1
+                if forwardIndex < dataModel.pageHistory.count {
+                    forwardURL = dataModel.pageHistory[forwardIndex].url
+                }
+            }
+            
+            // 캐시 업데이트
+            historyCache.updateCache(backURL: backURL, forwardURL: forwardURL, config: webView.configuration)
+            
+            print("🏄‍♂️ 히스토리 캐시 업데이트: 뒤로=\(backURL?.absoluteString ?? "없음"), 앞으로=\(forwardURL?.absoluteString ?? "없음")")
         }
-        
-        // MARK: - 🏄‍♂️ 사파리 스타일 제스처 설정 (완전 수정 - UIScreenEdgePanGestureRecognizer 사용)
-        
+
+        // MARK: - 🏄‍♂️ 사파리 스타일 제스처 설정
         func setupSafariStyleGestures(for webView: WKWebView) {
-            // 🎯 좌측 에지 제스처 (뒤로가기)
+            // 제스처 오버레이 컨테이너 생성
+            let overlayContainer = UIView()
+            overlayContainer.backgroundColor = .clear
+            overlayContainer.isUserInteractionEnabled = false
+            overlayContainer.translatesAutoresizingMaskIntoConstraints = false
+            webView.addSubview(overlayContainer)
+            
+            NSLayoutConstraint.activate([
+                overlayContainer.topAnchor.constraint(equalTo: webView.topAnchor),
+                overlayContainer.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+                overlayContainer.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+                overlayContainer.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
+            ])
+            
+            self.gestureOverlayContainer = overlayContainer
+            
+            // 좌측 에지 제스처 (뒤로가기)
             let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
             leftEdge.edges = .left
             leftEdge.delegate = self
@@ -810,7 +711,7 @@ struct CustomWebView: UIViewRepresentable {
             webView.addGestureRecognizer(leftEdge)
             self.leftEdgeGesture = leftEdge
             
-            // 🎯 우측 에지 제스처 (앞으로가기)
+            // 우측 에지 제스처 (앞으로가기)
             let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
             rightEdge.edges = .right
             rightEdge.delegate = self
@@ -818,12 +719,12 @@ struct CustomWebView: UIViewRepresentable {
             webView.addGestureRecognizer(rightEdge)
             self.rightEdgeGesture = rightEdge
             
-            // 🎯 우선순위 설정: 에지 제스처가 스크롤 제스처보다 우선
+            // 우선순위 설정
             let scrollPan = webView.scrollView.panGestureRecognizer
             scrollPan.require(toFail: leftEdge)
             scrollPan.require(toFail: rightEdge)
             
-            print("🏄‍♂️ 사파리 스타일 에지 제스처 설정 완료")
+            print("🏄‍♂️ 사파리 스타일 캐시 제스처 설정 완료")
         }
         
         func removeSafariStyleGestures(from webView: WKWebView) {
@@ -835,12 +736,14 @@ struct CustomWebView: UIViewRepresentable {
                 webView.removeGestureRecognizer(gesture)
                 self.rightEdgeGesture = nil
             }
+            gestureOverlayContainer?.removeFromSuperview()
+            gestureOverlayContainer = nil
         }
         
-        // MARK: - 🏄‍♂️ 에지 제스처 핸들러 (완전 수정)
-        
+        // MARK: - 🏄‍♂️ 에지 제스처 핸들러 (페이지 캐시 + 전환 효과)
         @objc private func handleEdgePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard let webView = gesture.view as? WKWebView else { return }
+            guard let webView = gesture.view as? WKWebView,
+                  let overlayContainer = gestureOverlayContainer else { return }
             
             let translation = gesture.translation(in: webView)
             let velocity = gesture.velocity(in: webView)
@@ -848,86 +751,258 @@ struct CustomWebView: UIViewRepresentable {
             
             switch gesture.state {
             case .began:
-                // 시작 시 현재 상태 확인
                 let canNavigate = isLeftEdge ? parent.stateModel.canGoBack : parent.stateModel.canGoForward
-                print("🏄‍♂️ 에지 제스처 시작: \(isLeftEdge ? "뒤로" : "앞으로"), 가능: \(canNavigate)")
+                
+                if canNavigate {
+                    print("🏄‍♂️ 제스처 시작: \(isLeftEdge ? "뒤로" : "앞으로")")
+                    prepareGestureTransition(isBack: isLeftEdge, webView: webView, overlayContainer: overlayContainer)
+                } else {
+                    print("🏄‍♂️ 제스처 불가: \(isLeftEdge ? "뒤로" : "앞으로")")
+                    gesture.isEnabled = false
+                    gesture.isEnabled = true
+                }
                 
             case .changed:
-                // 좌측 에지에서 오른쪽으로 당기기 or 우측 에지에서 왼쪽으로 당기기만 허용
                 let validMovement = isLeftEdge ? translation.x > 0 : translation.x < 0
-                guard validMovement else { return }
+                guard validMovement, 
+                      currentPageSnapshot != nil,
+                      nextPageSnapshot != nil else { return }
                 
-                let progress = min(abs(translation.x) / 120, 1.0)
-                let scale = 1.0 - (progress * 0.08)
-                let translateX = translation.x * 0.6
+                let progress = min(abs(translation.x) / UIScreen.main.bounds.width, 1.0)
+                updateGestureTransition(progress: progress, translation: translation, isBack: isLeftEdge)
                 
-                webView.transform = CGAffineTransform(scaleX: scale, y: scale)
-                    .concatenating(CGAffineTransform(translationX: translateX, y: 0))
-                
-                // 중간 지점에서 약한 햅틱
-                if progress > 0.5 && progress < 0.6 {
+                // 중간 지점 햅틱
+                if progress > 0.3 && progress < 0.35 {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
                 
             case .ended:
-                // 복원 애니메이션
-                UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.3) {
-                    webView.transform = .identity
-                }
+                let threshold: CGFloat = UIScreen.main.bounds.width * 0.3 // 30% 드래그
+                let velocityThreshold: CGFloat = 500
+                let progress = abs(translation.x) / UIScreen.main.bounds.width
                 
-                let threshold: CGFloat = 80
-                let velocityThreshold: CGFloat = 400
+                let shouldComplete = progress > 0.3 || abs(velocity.x) > velocityThreshold
                 
-                if isLeftEdge {
-                    // 뒤로가기 트리거 조건
-                    let shouldGoBack = (translation.x > threshold) || (translation.x > 40 && velocity.x > velocityThreshold)
-                    
-                    if shouldGoBack && parent.stateModel.canGoBack {
-                        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-                        print("🏄‍♂️ 뒤로가기 실행!")
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            self.parent.stateModel.safariStyleGoBack()
-                        }
-                    } else {
-                        print("🏄‍♂️ 뒤로가기 조건 미충족: translation=\(translation.x), canGoBack=\(parent.stateModel.canGoBack)")
-                    }
+                if shouldComplete {
+                    completeGestureTransition(isBack: isLeftEdge)
                 } else {
-                    // 앞으로가기 트리거 조건
-                    let shouldGoForward = (translation.x < -threshold) || (translation.x < -40 && velocity.x < -velocityThreshold)
-                    
-                    if shouldGoForward && parent.stateModel.canGoForward {
-                        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-                        print("🏄‍♂️ 앞으로가기 실행!")
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            self.parent.stateModel.safariStyleGoForward()
-                        }
-                    } else {
-                        print("🏄‍♂️ 앞으로가기 조건 미충족: translation=\(translation.x), canGoForward=\(parent.stateModel.canGoForward)")
-                    }
+                    cancelGestureTransition()
                 }
                 
             case .cancelled, .failed:
-                UIView.animate(withDuration: 0.25) {
-                    webView.transform = .identity
-                }
-                print("🏄‍♂️ 에지 제스처 취소됨")
+                cancelGestureTransition()
                 
             default:
                 break
             }
         }
         
-        // MARK: - UIGestureRecognizerDelegate (완전 수정)
+        // MARK: - 제스처 전환 준비
+        private func prepareGestureTransition(isBack: Bool, webView: WKWebView, overlayContainer: UIView) {
+            // 현재 페이지 스냅샷 생성
+            webView.takeSnapshot(with: nil) { [weak self] currentImage, error in
+                guard let self = self, let image = currentImage else { return }
+                
+                DispatchQueue.main.async {
+                    // 현재 페이지 스냅샷
+                    let currentSnapshot = UIImageView(image: image)
+                    currentSnapshot.contentMode = .scaleAspectFill
+                    currentSnapshot.clipsToBounds = true
+                    currentSnapshot.translatesAutoresizingMaskIntoConstraints = false
+                    overlayContainer.addSubview(currentSnapshot)
+                    
+                    NSLayoutConstraint.activate([
+                        currentSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
+                        currentSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.leadingAnchor),
+                        currentSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.trailingAnchor),
+                        currentSnapshot.bottomAnchor.constraint(equalTo: overlayContainer.bottomAnchor)
+                    ])
+                    
+                    self.currentPageSnapshot = currentSnapshot
+                    
+                    // 다음 페이지 스냅샷 생성
+                    self.prepareNextPageSnapshot(isBack: isBack, overlayContainer: overlayContainer)
+                }
+            }
+        }
         
+        private func prepareNextPageSnapshot(isBack: Bool, overlayContainer: UIView) {
+            let targetWebView = isBack ? historyCache.getBackPageView() : historyCache.getForwardPageView()
+            
+            guard let webView = targetWebView else {
+                // 캐시된 페이지가 없으면 기본 배경 생성
+                createDefaultNextPageSnapshot(isBack: isBack, overlayContainer: overlayContainer)
+                return
+            }
+            
+            // 캐시된 페이지 로드 완료까지 잠시 대기 후 스냅샷
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                webView.takeSnapshot(with: nil) { [weak self] nextImage, error in
+                    guard let self = self else { return }
+                    
+                    DispatchQueue.main.async {
+                        let nextSnapshot: UIImageView
+                        
+                        if let image = nextImage {
+                            nextSnapshot = UIImageView(image: image)
+                        } else {
+                            // 스냅샷 실패 시 기본 배경
+                            nextSnapshot = UIImageView()
+                            nextSnapshot.backgroundColor = .systemBackground
+                        }
+                        
+                        nextSnapshot.contentMode = .scaleAspectFill
+                        nextSnapshot.clipsToBounds = true
+                        nextSnapshot.translatesAutoresizingMaskIntoConstraints = false
+                        
+                        // 초기 위치 설정 (화면 밖)
+                        overlayContainer.addSubview(nextSnapshot)
+                        
+                        NSLayoutConstraint.activate([
+                            nextSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
+                            nextSnapshot.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
+                            nextSnapshot.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
+                            isBack ? 
+                                nextSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
+                                nextSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor)
+                        ])
+                        
+                        self.nextPageSnapshot = nextSnapshot
+                        overlayContainer.layoutIfNeeded()
+                    }
+                }
+            }
+        }
+        
+        private func createDefaultNextPageSnapshot(isBack: Bool, overlayContainer: UIView) {
+            let nextSnapshot = UIImageView()
+            nextSnapshot.backgroundColor = .systemBackground
+            nextSnapshot.contentMode = .scaleAspectFill
+            nextSnapshot.clipsToBounds = true
+            nextSnapshot.translatesAutoresizingMaskIntoConstraints = false
+            
+            overlayContainer.addSubview(nextSnapshot)
+            
+            NSLayoutConstraint.activate([
+                nextSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
+                nextSnapshot.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
+                nextSnapshot.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
+                isBack ? 
+                    nextSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
+                    nextSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor)
+            ])
+            
+            self.nextPageSnapshot = nextSnapshot
+            overlayContainer.layoutIfNeeded()
+        }
+        
+        // MARK: - 제스처 전환 업데이트
+        private func updateGestureTransition(progress: CGFloat, translation: CGPoint, isBack: Bool) {
+            guard let currentSnapshot = currentPageSnapshot,
+                  let nextSnapshot = nextPageSnapshot else { return }
+            
+            let screenWidth = UIScreen.main.bounds.width
+            let currentTransform: CGAffineTransform
+            let nextTransform: CGAffineTransform
+            
+            if isBack {
+                // 뒤로가기: 현재 페이지는 오른쪽으로, 이전 페이지는 따라옴
+                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
+                nextTransform = CGAffineTransform(translationX: -screenWidth + translation.x, y: 0)
+            } else {
+                // 앞으로가기: 현재 페이지는 왼쪽으로, 다음 페이지는 따라옴
+                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
+                nextTransform = CGAffineTransform(translationX: screenWidth + translation.x, y: 0)
+            }
+            
+            // 스케일 효과 추가 (사파리 스타일)
+            let scale = 1.0 - (progress * 0.05)
+            let scaledCurrentTransform = currentTransform.scaledBy(x: scale, y: scale)
+            
+            currentSnapshot.transform = scaledCurrentTransform
+            nextSnapshot.transform = nextTransform
+            
+            // 그림자 효과
+            currentSnapshot.layer.shadowOpacity = Float(progress * 0.3)
+            currentSnapshot.layer.shadowOffset = CGSize(width: isBack ? 5 : -5, height: 0)
+            currentSnapshot.layer.shadowRadius = 10
+        }
+        
+        // MARK: - 제스처 완료
+        private func completeGestureTransition(isBack: Bool) {
+            guard let currentSnapshot = currentPageSnapshot,
+                  let nextSnapshot = nextPageSnapshot else { return }
+            
+            // 완료 애니메이션
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) {
+                let screenWidth = UIScreen.main.bounds.width
+                
+                if isBack {
+                    currentSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                    nextSnapshot.transform = .identity
+                } else {
+                    currentSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                    nextSnapshot.transform = .identity
+                }
+                
+                currentSnapshot.layer.shadowOpacity = 0
+                
+            } completion: { _ in
+                // 햅틱 피드백
+                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                
+                // 실제 히스토리 네비게이션 실행
+                if isBack {
+                    self.parent.stateModel.goBack()
+                } else {
+                    self.parent.stateModel.goForward()
+                }
+                
+                // 정리
+                self.cleanupGestureTransition()
+                
+                print("🏄‍♂️ 제스처 완료: \(isBack ? "뒤로" : "앞으로")")
+            }
+        }
+        
+        // MARK: - 제스처 취소
+        private func cancelGestureTransition() {
+            guard let currentSnapshot = currentPageSnapshot,
+                  let nextSnapshot = nextPageSnapshot else { return }
+            
+            // 취소 애니메이션
+            UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.3) {
+                currentSnapshot.transform = .identity
+                
+                let screenWidth = UIScreen.main.bounds.width
+                if let leftGesture = self.leftEdgeGesture, leftGesture.edges == .left {
+                    nextSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                } else {
+                    nextSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                }
+                
+                currentSnapshot.layer.shadowOpacity = 0
+                
+            } completion: { _ in
+                self.cleanupGestureTransition()
+                print("🏄‍♂️ 제스처 취소")
+            }
+        }
+        
+        // MARK: - 제스처 정리
+        private func cleanupGestureTransition() {
+            currentPageSnapshot?.removeFromSuperview()
+            nextPageSnapshot?.removeFromSuperview()
+            currentPageSnapshot = nil
+            nextPageSnapshot = nil
+        }
+        
+        // MARK: - UIGestureRecognizerDelegate
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 에지 제스처는 다른 제스처와 동시 인식하지 않음 (우선권 확보)
             return false
         }
         
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 에지 제스처는 항상 시작 허용 (우선권은 require(toFail:)로 보장됨)
             if gestureRecognizer === leftEdgeGesture || gestureRecognizer === rightEdgeGesture {
                 return true
             }
@@ -959,11 +1034,6 @@ struct CustomWebView: UIViewRepresentable {
                 webView.evaluateJavaScript(script) { result, error in
                     if let error = error {
                         print("데스크탑 모드 토글 실패: \(error)")
-                        if let currentURL = self.parent.stateModel.currentURL {
-                            webView.load(URLRequest(url: currentURL))
-                        }
-                    } else {
-                        print("✅ 데스크탑 모드 토글 성공: \(self.parent.stateModel.isDesktopMode)")
                     }
                 }
             }
@@ -978,6 +1048,13 @@ struct CustomWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     if self.parent.stateModel.isLoading != isLoading {
                         self.parent.stateModel.isLoading = isLoading
+                    }
+                    
+                    // 로딩 완료 시 히스토리 캐시 업데이트
+                    if !isLoading {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self.updateHistoryCache()
+                        }
                     }
                 }
             }
@@ -1024,7 +1101,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
 
-        // MARK: - 🌐 통합된 JS 메시지 처리 (단일 핸들러)
+        // MARK: - 🌐 통합된 JS 메시지 처리
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -1041,7 +1118,6 @@ struct CustomWebView: UIViewRepresentable {
                     }
                 }
             } else if message.name == "spaNavigation" {
-                // 🌐 통합된 SPA 네비게이션 처리
                 if let data = message.body as? [String: Any],
                    let type = data["type"] as? String,
                    let urlString = data["url"] as? String,
@@ -1053,12 +1129,10 @@ struct CustomWebView: UIViewRepresentable {
                     let siteType = data["siteType"] as? String ?? "unknown"
                     
                     DispatchQueue.main.async {
-                        // 🔒 제외 대상이면 처리하지 않음
                         if shouldExclude {
                             return
                         }
                         
-                        // ✅ 하나의 통합된 함수로 처리
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
                             url: url,
@@ -1183,7 +1257,6 @@ struct CustomWebView: UIViewRepresentable {
         }
 
         // MARK: - 다운로드 진행률 오버레이
-
         func installDownloadOverlay(on webView: WKWebView) {
             guard overlayContainer == nil else { return }
 
