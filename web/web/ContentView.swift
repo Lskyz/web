@@ -71,6 +71,7 @@ struct ContentView: View {
 
     var body: some View {
         mainContentView
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             .onAppear(perform: onAppearHandler)
             .onReceive(currentState.$currentURL, perform: onURLChange)
             .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
