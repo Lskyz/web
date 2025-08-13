@@ -255,17 +255,17 @@ struct CustomWebView: UIViewRepresentable {
                 const host = urlObj.hostname.toLowerCase();
                 const path = urlObj.pathname.toLowerCase();
                 
-                // 패턴 분석
+                // 패턴 분석 (백슬래시 이스케이프 수정)
                 let pattern = 'unknown';
-                if (path.match(/\/[^/]+\/\d+\/\d+/)) {
+                if (path.match(/\\/[^/]+\\/\\d+\\/\\d+/)) {
                     pattern = '3level_numeric';
-                } else if (path.match(/\/[^/]+\/\d+$/)) {
+                } else if (path.match(/\\/[^/]+\\/\\d+$/)) {
                     pattern = '2level_numeric';
-                } else if (path.match(/\/[^/]+\/[^/]+\/\d+/)) {
+                } else if (path.match(/\\/[^/]+\\/[^/]+\\/\\d+/)) {
                     pattern = '3level_mixed';
-                } else if (path.match(/\/[^/]+\/[^/]+$/)) {
+                } else if (path.match(/\\/[^/]+\\/[^/]+$/)) {
                     pattern = '2level_text';
-                } else if (path.match(/\/[^/]+$/)) {
+                } else if (path.match(/\\/[^/]+$/)) {
                     pattern = '1level';
                 }
                 
