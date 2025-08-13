@@ -794,4 +794,4 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
 extension Notification.Name {
     static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
 }
- 이코드에 키보드 내려갔을때 키보드만없어지고 그자리에 흰여백생기는이유있어? 주소창은그렇고 게시판검색창은 잘안그러던데
+ 
