@@ -4,6 +4,7 @@
 //  🌐 통합된 SPA 네비게이션 + 로그인 리다이렉트 필터링
 //  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
+//  🏄‍♂️ 사파리 스타일 제스처 네비게이션
 //
 
 import SwiftUI
@@ -64,7 +65,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         
-        // 🎯 네이티브 제스처 완전 비활성화
+        // 🎯 네이티브 제스처 완전 비활성화 (우리가 사파리 스타일로 대체)
         webView.allowsBackForwardNavigationGestures = false
         
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -88,8 +89,8 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
 
-        // 🎯 커스텀 제스처 추가
-        context.coordinator.setupCustomGestures(for: webView)
+        // 🏄‍♂️ 사파리 스타일 제스처 설정
+        context.coordinator.setupSafariStyleGestures(for: webView)
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -191,8 +192,8 @@ struct CustomWebView: UIViewRepresentable {
         uiView.uiDelegate = nil
         coordinator.webView = nil
 
-        // 🎯 커스텀 제스처 제거
-        coordinator.removeCustomGestures(from: uiView)
+        // 🏄‍♂️ 사파리 스타일 제스처 제거
+        coordinator.removeSafariStyleGestures(from: uiView)
 
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
@@ -750,9 +751,17 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 🎯 커스텀 제스처 레퍼런스
-        private var backGesture: UIScreenEdgePanGestureRecognizer?
-        private var forwardGesture: UIScreenEdgePanGestureRecognizer?
+        // 🏄‍♂️ 사파리 스타일 제스처 관련
+        private var backGesture: UIPanGestureRecognizer?
+        private var forwardGesture: UIPanGestureRecognizer?
+        private var gestureStartPoint: CGPoint = .zero
+        private var isGestureActive: Bool = false
+        private var gestureDirection: GestureDirection = .none
+        
+        // 제스처 방향 열거형
+        enum GestureDirection {
+            case none, back, forward
+        }
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -767,109 +776,176 @@ struct CustomWebView: UIViewRepresentable {
         private var progressObserver: NSKeyValueObservation?
 
         init(_ parent: CustomWebView) {
-    self.parent = parent
-    self.lastDesktopMode = parent.stateModel.isDesktopMode
-    super.init()
-    NotificationCenter.default.addObserver(
-        self,
-        selector: #selector(handleKeyboardChange(_:)),
-        name: UIResponder.keyboardWillChangeFrameNotification,
-        object: nil
-    )
-}
-
-        // ✅ 2) deinit 교체
-deinit {
-    removeLoadingObservers(for: webView)
-    NotificationCenter.default.removeObserver(self)
-}
-@objc private func handleKeyboardChange(_ n: Notification) {
-    guard let wv = webView,
-          let end = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-    else { return }
-
-    let screenH = wv.window?.bounds.height ?? UIScreen.main.bounds.height
-    let visibleH = max(0, screenH - end.origin.y)
-
-    // ✅ 키보드가 완전히 사라진 순간, 남아 있는 하단 인셋 제거
-    if visibleH == 0 {
-        wv.scrollView.contentInset = .zero
-        wv.scrollView.scrollIndicatorInsets = .zero
-    }
-}
-        
-        // MARK: - 🎯 커스텀 제스처 설정
-        
-        func setupCustomGestures(for webView: WKWebView) {
-            let backGesture = UIScreenEdgePanGestureRecognizer(
-                target: self, 
-                action: #selector(handleBackGesture(_:))
+            self.parent = parent
+            self.lastDesktopMode = parent.stateModel.isDesktopMode
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleKeyboardChange(_:)),
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil
             )
-            backGesture.edges = .left
-            backGesture.delegate = self
-            webView.addGestureRecognizer(backGesture)
-            self.backGesture = backGesture
-            
-            let forwardGesture = UIScreenEdgePanGestureRecognizer(
-                target: self,
-                action: #selector(handleForwardGesture(_:))
-            )
-            forwardGesture.edges = .right
-            forwardGesture.delegate = self
-            webView.addGestureRecognizer(forwardGesture)
-            self.forwardGesture = forwardGesture
-            
-            TabPersistenceManager.debugMessages.append("🎯 강화된 커스텀 제스처 설정 완료")
+        }
+
+        deinit {
+            removeLoadingObservers(for: webView)
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        @objc private func handleKeyboardChange(_ n: Notification) {
+            guard let wv = webView,
+                  let end = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            else { return }
+
+            let screenH = wv.window?.bounds.height ?? UIScreen.main.bounds.height
+            let visibleH = max(0, screenH - end.origin.y)
+
+            // ✅ 키보드가 완전히 사라진 순간, 남아 있는 하단 인셋 제거
+            if visibleH == 0 {
+                wv.scrollView.contentInset = .zero
+                wv.scrollView.scrollIndicatorInsets = .zero
+            }
         }
         
-        func removeCustomGestures(from webView: WKWebView) {
+        // MARK: - 🏄‍♂️ 사파리 스타일 제스처 설정
+        
+        func setupSafariStyleGestures(for webView: WKWebView) {
+            // 화면 전체에서 제스처 감지 (사파리처럼)
+            let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSafariStylePan(_:)))
+            panGesture.delegate = self
+            webView.addGestureRecognizer(panGesture)
+            self.backGesture = panGesture
+            
+            TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 스타일 제스처 설정 완료")
+        }
+        
+        func removeSafariStyleGestures(from webView: WKWebView) {
             if let backGesture = backGesture {
                 webView.removeGestureRecognizer(backGesture)
                 self.backGesture = nil
             }
-            if let forwardGesture = forwardGesture {
-                webView.removeGestureRecognizer(forwardGesture)
-                self.forwardGesture = nil
-            }
         }
         
-        // MARK: - 🎯 커스텀 제스처 핸들러들
+        // MARK: - 🏄‍♂️ 사파리 스타일 팬 제스처 핸들러
         
-        @objc func handleBackGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard gesture.state == .ended else { return }
+        @objc func handleSafariStylePan(_ gesture: UIPanGestureRecognizer) {
+            guard let webView = gesture.view else { return }
             
-            let translation = gesture.translation(in: gesture.view)
-            guard translation.x > 50 else { return }
+            let translation = gesture.translation(in: webView)
+            let velocity = gesture.velocity(in: webView)
+            let location = gesture.location(in: webView)
             
-            if parent.stateModel.canGoBack {
-                parent.stateModel.goBack()
-                TabPersistenceManager.debugMessages.append("👆 강화된 뒤로가기 제스처")
-            }
-        }
-        
-        @objc func handleForwardGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
-            guard gesture.state == .ended else { return }
-            
-            let translation = gesture.translation(in: gesture.view)
-            guard translation.x < -50 else { return }
-            
-            if parent.stateModel.canGoForward {
-                parent.stateModel.goForward()
-                TabPersistenceManager.debugMessages.append("👆 강화된 앞으로가기 제스처")
+            switch gesture.state {
+            case .began:
+                gestureStartPoint = location
+                isGestureActive = false
+                gestureDirection = .none
+                
+                // 화면 가장자리에서 시작하는지 확인 (사파리처럼)
+                let edgeThreshold: CGFloat = 20
+                if location.x < edgeThreshold {
+                    // 왼쪽 가장자리 - 뒤로가기
+                    if parent.stateModel.canGoBack {
+                        gestureDirection = .back
+                        isGestureActive = true
+                        
+                        // 가벼운 햅틱 피드백 (시작)
+                        let feedback = UISelectionFeedbackGenerator()
+                        feedback.selectionChanged()
+                    }
+                } else if location.x > webView.bounds.width - edgeThreshold {
+                    // 오른쪽 가장자리 - 앞으로가기
+                    if parent.stateModel.canGoForward {
+                        gestureDirection = .forward
+                        isGestureActive = true
+                        
+                        // 가벼운 햅틱 피드백 (시작)
+                        let feedback = UISelectionFeedbackGenerator()
+                        feedback.selectionChanged()
+                    }
+                }
+                
+            case .changed:
+                guard isGestureActive else { return }
+                
+                let progress = abs(translation.x) / (webView.bounds.width * 0.3) // 30% 당기면 완료
+                let clampedProgress = min(max(progress, 0.0), 1.0)
+                
+                // 사파리처럼 시각적 피드백 (webView transform)
+                if gestureDirection == .back && translation.x > 0 {
+                    // 오른쪽으로 당기기 (뒤로가기)
+                    let scale = 1.0 - (clampedProgress * 0.05) // 살짝 축소
+                    let translate = translation.x * 0.3 // 부드러운 이동
+                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                        .concatenating(CGAffineTransform(translationX: translate, y: 0))
+                    
+                    // 50% 진행 시 중간 햅틱
+                    if clampedProgress > 0.5 && clampedProgress < 0.6 {
+                        let feedback = UIImpactFeedbackGenerator(style: .light)
+                        feedback.impactOccurred()
+                    }
+                    
+                } else if gestureDirection == .forward && translation.x < 0 {
+                    // 왼쪽으로 당기기 (앞으로가기)
+                    let scale = 1.0 - (clampedProgress * 0.05)
+                    let translate = translation.x * 0.3
+                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                        .concatenating(CGAffineTransform(translationX: translate, y: 0))
+                    
+                    // 50% 진행 시 중간 햅틱
+                    if clampedProgress > 0.5 && clampedProgress < 0.6 {
+                        let feedback = UIImpactFeedbackGenerator(style: .light)
+                        feedback.impactOccurred()
+                    }
+                }
+                
+            case .ended, .cancelled:
+                guard isGestureActive else { return }
+                
+                let progress = abs(translation.x) / (webView.bounds.width * 0.3)
+                let velocityThreshold: CGFloat = 300
+                
+                // 복원 애니메이션
+                UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) {
+                    webView.transform = .identity
+                }
+                
+                // 네비게이션 실행 조건
+                let shouldNavigate = progress > 1.0 || abs(velocity.x) > velocityThreshold
+                
+                if shouldNavigate {
+                    if gestureDirection == .back && translation.x > 0 {
+                        parent.stateModel.safariStyleGoBack()
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 제스처 뒤로가기")
+                    } else if gestureDirection == .forward && translation.x < 0 {
+                        parent.stateModel.safariStyleGoForward()
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 제스처 앞으로가기")
+                    }
+                }
+                
+                // 상태 리셋
+                isGestureActive = false
+                gestureDirection = .none
+                
+            default:
+                break
             }
         }
         
         // MARK: - UIGestureRecognizerDelegate
         
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            if otherGestureRecognizer is UIPanGestureRecognizer && gestureRecognizer is UIScreenEdgePanGestureRecognizer {
-                return false
-            }
+            // 스크롤과 동시 인식 허용
             return true
         }
         
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            return gestureRecognizer is UIScreenEdgePanGestureRecognizer
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let panGesture = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+            
+            let velocity = panGesture.velocity(in: gestureRecognizer.view)
+            
+            // 수평 이동이 수직 이동보다 큰 경우만 허용 (사파리처럼)
+            return abs(velocity.x) > abs(velocity.y)
         }
         
         // ✨ 사용자 에이전트 업데이트 메서드
