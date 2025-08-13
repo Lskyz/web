@@ -1,8 +1,8 @@
 //
 //  CustomWebView.swift
 //
-//  ✅ 네이버 카페 특화 SPA 네비게이션 + 로그인 리다이렉트 필터링
-//  🎯 네이버 카페의 복잡한 SPA 구조 완벽 대응
+//  🌐 통합된 SPA 네비게이션 + 로그인 리다이렉트 필터링
+//  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
 //
 
@@ -48,13 +48,12 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
-        // 🎯 강화된 SPA 네비게이션 스크립트 (네이버 카페 특화)
-        controller.addUserScript(makeEnhancedSPANavigationScript())
+        // 🌐 통합된 SPA 네비게이션 스크립트 (네이버 로직을 범용으로)
+        controller.addUserScript(makeUnifiedSPANavigationScript())
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
+        // 🌐 단일 통합 SPA 메시지 핸들러
         controller.add(context.coordinator, name: "spaNavigation")
-        // 🎯 네이버 카페 전용 메시지 핸들러 추가
-        controller.add(context.coordinator, name: "naverCafeNavigation")
         config.userContentController = controller
 
         // ✨ 다운로드 지원 (iOS 14+)
@@ -201,20 +200,19 @@ struct CustomWebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "naverCafeNavigation")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 🎯 강화된 SPA 네비게이션 스크립트 (네이버 카페 특화)
-    private func makeEnhancedSPANavigationScript() -> WKUserScript {
+    // MARK: - 🌐 통합된 SPA 네비게이션 스크립트 (네이버 로직을 범용으로 사용)
+    private func makeUnifiedSPANavigationScript() -> WKUserScript {
         let scriptSource = """
-        // 🎯 강화된 SPA 네비게이션 감지 (네이버 카페 특화)
+        // 🌐 통합된 SPA 네비게이션 감지 (네이버 특화 로직을 범용으로 사용)
         (function() {
             'use strict';
             
-            console.log('🎯 강화된 SPA 네비게이션 훅 초기화 (네이버 카페 특화)');
+            console.log('🌐 통합된 SPA 네비게이션 훅 초기화');
             
             // 원본 History API 메서드들 백업
             const originalPushState = history.pushState;
@@ -246,61 +244,43 @@ struct CustomWebView: UIViewRepresentable {
                 /continue=/i
             ];
             
-            // 🎯 네이버 카페 특수 URL 패턴
-            const NAVER_CAFE_PATTERNS = {
-                // 카페 홈: https://cafe.naver.com/cafename
-                cafeHome: /\\/cafe\\.naver\\.com\\/[^/]+\\/?$/,
-                
-                // 게시판 목록: https://cafe.naver.com/cafename/MenuId/BoardType
-                boardList: /\\/cafe\\.naver\\.com\\/[^/]+\\/\\d+\\/\\d+/,
-                
-                // 게시글: https://cafe.naver.com/cafename/ArticleId
-                article: /\\/cafe\\.naver\\.com\\/[^/]+\\/\\d+$/,
-                
-                // iframe 내부 네비게이션
-                iframe: /\\/ArticleRead\\.nhn/i,
-                iframeList: /\\/ArticleList\\.nhn/i,
-                
-                // 모바일 카페
-                mobile: /\\/m\\.cafe\\.naver\\.com/i
-            };
-            
             // URL이 제외 대상인지 확인
             function shouldExcludeFromHistory(url) {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
             
-            // 네이버 카페 URL 분석
-            function analyzeNaverCafeURL(url) {
+            // URL 패턴 분석 (범용)
+            function detectSiteType(url) {
                 const urlObj = new URL(url, window.location.origin);
-                const fullURL = urlObj.href;
+                const host = urlObj.hostname.toLowerCase();
+                const path = urlObj.pathname.toLowerCase();
                 
-                for (const [type, pattern] of Object.entries(NAVER_CAFE_PATTERNS)) {
-                    if (pattern.test(fullURL)) {
-                        return {
-                            type: type,
-                            isCafe: true,
-                            shouldTrack: !shouldExcludeFromHistory(fullURL)
-                        };
-                    }
+                // 패턴 분석
+                let pattern = 'unknown';
+                if (path.match(/\/[^/]+\/\d+\/\d+/)) {
+                    pattern = '3level_numeric';
+                } else if (path.match(/\/[^/]+\/\d+$/)) {
+                    pattern = '2level_numeric';
+                } else if (path.match(/\/[^/]+\/[^/]+\/\d+/)) {
+                    pattern = '3level_mixed';
+                } else if (path.match(/\/[^/]+\/[^/]+$/)) {
+                    pattern = '2level_text';
+                } else if (path.match(/\/[^/]+$/)) {
+                    pattern = '1level';
                 }
                 
-                return {
-                    type: 'unknown',
-                    isCafe: false,
-                    shouldTrack: !shouldExcludeFromHistory(fullURL)
-                };
+                return `${host}_${pattern}`;
             }
             
             // 네이티브로 네비게이션 알림
-            function notifyNavigation(type, url, title, state, cafeInfo) {
-                const analysis = analyzeNaverCafeURL(url);
-                
+            function notifyNavigation(type, url, title, state) {
                 // 🔒 제외 대상은 알림하지 않음
-                if (!analysis.shouldTrack) {
+                if (shouldExcludeFromHistory(url)) {
                     console.log(`🔒 히스토리 제외: ${url} (${type})`);
                     return;
                 }
+                
+                const siteType = detectSiteType(url);
                 
                 const message = {
                     type: type,
@@ -310,25 +290,20 @@ struct CustomWebView: UIViewRepresentable {
                     timestamp: Date.now(),
                     userAgent: navigator.userAgent,
                     referrer: document.referrer,
-                    cafeInfo: analysis,
-                    shouldExclude: !analysis.shouldTrack
+                    siteType: siteType,
+                    shouldExclude: false
                 };
                 
-                // 네이버 카페 전용 핸들러로 전송
-                if (analysis.isCafe && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.naverCafeNavigation) {
-                    window.webkit.messageHandlers.naverCafeNavigation.postMessage(message);
-                    console.log(`🎯 네이버 카페 ${type}: ${analysis.type} | ${url}`);
-                } 
-                // 일반 SPA 핸들러로 전송
-                else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                // 🌐 단일 통합 메시지 핸들러로 전송
+                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
                     window.webkit.messageHandlers.spaNavigation.postMessage(message);
-                    console.log(`🌐 일반 SPA ${type}: ${url}`);
+                    console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
                 }
             }
             
             // pushState 훅 (새 페이지 추가)
             history.pushState = function(state, title, url) {
-                console.log('🎯 강화된 pushState 감지:', url);
+                console.log('🌐 pushState 감지:', url);
                 
                 // 원본 메서드 실행
                 const result = originalPushState.call(this, state, title, url);
@@ -346,7 +321,7 @@ struct CustomWebView: UIViewRepresentable {
                     // 약간의 지연 후 제목 업데이트 및 알림
                     setTimeout(() => {
                         notifyNavigation('push', newURL, document.title, state);
-                    }, 150); // 네이버 카페는 제목 변경이 늦을 수 있음
+                    }, 150); // 제목 변경 대기
                 }
                 
                 return result;
@@ -354,7 +329,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // replaceState 훅 (현재 페이지 교체)
             history.replaceState = function(state, title, url) {
-                console.log('🎯 강화된 replaceState 감지:', url);
+                console.log('🌐 replaceState 감지:', url);
                 
                 const result = originalReplaceState.call(this, state, title, url);
                 
@@ -377,7 +352,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // popstate 이벤트 감지 (뒤로가기/앞으로가기)
             window.addEventListener('popstate', function(event) {
-                console.log('🎯 강화된 popstate 감지:', window.location.href);
+                console.log('🌐 popstate 감지:', window.location.href);
                 
                 const newURL = window.location.href;
                 if (newURL !== currentSPAState.url) {
@@ -396,7 +371,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // 해시 변경 감지
             window.addEventListener('hashchange', function(event) {
-                console.log('🎯 강화된 hashchange 감지:', window.location.href);
+                console.log('🌐 hashchange 감지:', window.location.href);
                 
                 const newURL = window.location.href;
                 if (newURL !== currentSPAState.url) {
@@ -413,34 +388,31 @@ struct CustomWebView: UIViewRepresentable {
                 }
             });
             
-            // 🎯 네이버 카페 iframe 감지 (특수 처리)
-            function setupNaverCafeIframeDetection() {
+            // 🌐 iframe 감지 (범용 처리)
+            function setupIframeDetection() {
                 // iframe 내부 네비게이션 감지
                 const checkIframes = () => {
                     document.querySelectorAll('iframe').forEach(iframe => {
                         try {
                             if (iframe.contentWindow && iframe.contentWindow.location) {
                                 const iframeURL = iframe.contentWindow.location.href;
-                                if (NAVER_CAFE_PATTERNS.iframe.test(iframeURL) || NAVER_CAFE_PATTERNS.iframeList.test(iframeURL)) {
-                                    console.log('🎯 네이버 카페 iframe 감지:', iframeURL);
+                                
+                                // iframe 내부의 pushState/replaceState도 후킹
+                                if (iframe.contentWindow.history && !iframe.contentWindow.__spa_hooked) {
+                                    iframe.contentWindow.__spa_hooked = true;
                                     
-                                    // iframe 내부의 pushState/replaceState도 후킹
-                                    if (iframe.contentWindow.history && !iframe.contentWindow.__spa_hooked) {
-                                        iframe.contentWindow.__spa_hooked = true;
+                                    const iframeOriginalPushState = iframe.contentWindow.history.pushState;
+                                    iframe.contentWindow.history.pushState = function(state, title, url) {
+                                        console.log('🌐 iframe pushState:', url);
+                                        const result = iframeOriginalPushState.call(this, state, title, url);
                                         
-                                        const iframeOriginalPushState = iframe.contentWindow.history.pushState;
-                                        iframe.contentWindow.history.pushState = function(state, title, url) {
-                                            console.log('🎯 iframe pushState:', url);
-                                            const result = iframeOriginalPushState.call(this, state, title, url);
-                                            
-                                            setTimeout(() => {
-                                                const fullURL = new URL(url || iframe.contentWindow.location.href, iframe.contentWindow.location.origin).href;
-                                                notifyNavigation('iframe_push', fullURL, iframe.contentDocument?.title || title, state);
-                                            }, 200);
-                                            
-                                            return result;
-                                        };
-                                    }
+                                        setTimeout(() => {
+                                            const fullURL = new URL(url || iframe.contentWindow.location.href, iframe.contentWindow.location.origin).href;
+                                            notifyNavigation('iframe_push', fullURL, iframe.contentDocument?.title || title, state);
+                                        }, 200);
+                                        
+                                        return result;
+                                    };
                                 }
                             }
                         } catch (e) {
@@ -461,29 +433,27 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
             
-            // 제목 변경 감지 (강화된 버전)
+            // 제목 변경 감지
             if (window.MutationObserver) {
                 const titleObserver = new MutationObserver(function(mutations) {
                     mutations.forEach(function(mutation) {
                         if (mutation.type === 'childList' && document.title !== currentSPAState.title) {
-                            console.log('🎯 강화된 제목 변경 감지:', document.title);
+                            console.log('🌐 제목 변경 감지:', document.title);
                             currentSPAState.title = document.title;
                             
                             // 제목만 변경된 경우
-                            const analysis = analyzeNaverCafeURL(window.location.href);
-                            if (analysis.shouldTrack) {
+                            if (!shouldExcludeFromHistory(window.location.href)) {
                                 const message = {
                                     type: 'title',
                                     url: window.location.href,
                                     title: document.title,
                                     state: history.state,
                                     timestamp: Date.now(),
-                                    cafeInfo: analysis
+                                    siteType: detectSiteType(window.location.href),
+                                    shouldExclude: false
                                 };
                                 
-                                if (analysis.isCafe && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.naverCafeNavigation) {
-                                    window.webkit.messageHandlers.naverCafeNavigation.postMessage(message);
-                                } else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
                                     window.webkit.messageHandlers.spaNavigation.postMessage(message);
                                 }
                             }
@@ -499,14 +469,14 @@ struct CustomWebView: UIViewRepresentable {
                 titleObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
             }
             
-            // 페이지 로드 완료 후 네이버 카페 특수 처리 시작
+            // 페이지 로드 완료 후 iframe 처리 시작
             if (document.readyState === 'complete') {
-                setupNaverCafeIframeDetection();
+                setupIframeDetection();
             } else {
-                window.addEventListener('load', setupNaverCafeIframeDetection);
+                window.addEventListener('load', setupIframeDetection);
             }
             
-            console.log('✅ 강화된 SPA 네비게이션 훅 설정 완료 (네이버 카페 특화)');
+            console.log('✅ 통합된 SPA 네비게이션 훅 설정 완료');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -968,7 +938,7 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
 
-        // MARK: - 🎯 강화된 JS 메시지 처리 (네이버 카페 특화)
+        // MARK: - 🌐 통합된 JS 메시지 처리 (단일 핸들러)
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -985,7 +955,7 @@ struct CustomWebView: UIViewRepresentable {
                     }
                 }
             } else if message.name == "spaNavigation" {
-                // 🌐 일반 SPA 네비게이션 처리
+                // 🌐 통합된 SPA 네비게이션 처리
                 if let data = message.body as? [String: Any],
                    let type = data["type"] as? String,
                    let urlString = data["url"] as? String,
@@ -994,59 +964,25 @@ struct CustomWebView: UIViewRepresentable {
                     let title = data["title"] as? String ?? ""
                     let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
                     let shouldExclude = data["shouldExclude"] as? Bool ?? false
+                    let siteType = data["siteType"] as? String ?? "unknown"
                     
                     DispatchQueue.main.async {
                         // 🔒 제외 대상이면 처리하지 않음
                         if shouldExclude {
-                            TabPersistenceManager.debugMessages.append("🔒 히스토리 제외: \(urlString) (일반 SPA)")
+                            TabPersistenceManager.debugMessages.append("🔒 히스토리 제외: \(urlString)")
                             return
                         }
                         
+                        // ✅ 하나의 통합된 함수로 처리
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
                             url: url,
                             title: title,
-                            timestamp: timestamp
-                        )
-                        
-                        TabPersistenceManager.debugMessages.append("🌐 일반 SPA \(type): \(urlString)")
-                    }
-                }
-            } else if message.name == "naverCafeNavigation" {
-                // 🎯 네이버 카페 전용 네비게이션 처리
-                if let data = message.body as? [String: Any],
-                   let type = data["type"] as? String,
-                   let urlString = data["url"] as? String,
-                   let url = URL(string: urlString) {
-                    
-                    let title = data["title"] as? String ?? ""
-                    let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
-                    let shouldExclude = data["shouldExclude"] as? Bool ?? false
-                    
-                    // 네이버 카페 정보 추출
-                    var cafeType = "unknown"
-                    if let cafeInfo = data["cafeInfo"] as? [String: Any],
-                       let detectedType = cafeInfo["type"] as? String {
-                        cafeType = detectedType
-                    }
-                    
-                    DispatchQueue.main.async {
-                        // 🔒 제외 대상이면 처리하지 않음
-                        if shouldExclude {
-                            TabPersistenceManager.debugMessages.append("🔒 히스토리 제외: \(urlString) (네이버 카페)")
-                            return
-                        }
-                        
-                        // 🎯 네이버 카페 특화 처리
-                        self.parent.stateModel.dataModel.handleNaverCafeNavigation(
-                            type: type,
-                            url: url,
-                            title: title,
                             timestamp: timestamp,
-                            cafeType: cafeType
+                            siteType: siteType
                         )
                         
-                        TabPersistenceManager.debugMessages.append("🎯 네이버카페 \(type)(\(cafeType)): \(urlString)")
+                        TabPersistenceManager.debugMessages.append("🌐 SPA \(type)(\(siteType)): \(urlString)")
                     }
                 }
             }
