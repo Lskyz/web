@@ -391,6 +391,36 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션
+    
+    func safariStyleGoBack(progress: Double = 1.0) {
+        guard canGoBack else { return }
+        
+        // 햅틱 피드백
+        if progress >= 1.0 {
+            let feedback = UIImpactFeedbackGenerator(style: .medium)
+            feedback.impactOccurred()
+            
+            // 실제 뒤로가기 실행
+            goBack()
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+        }
+    }
+    
+    func safariStyleGoForward(progress: Double = 1.0) {
+        guard canGoForward else { return }
+        
+        // 햅틱 피드백
+        if progress >= 1.0 {
+            let feedback = UIImpactFeedbackGenerator(style: .medium)
+            feedback.impactOccurred()
+            
+            // 실제 앞으로가기 실행
+            goForward()
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+        }
+    }
+    
     func reload() { 
         guard let webView = webView else { return }
         webView.reload()
