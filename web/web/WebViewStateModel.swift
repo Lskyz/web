@@ -325,7 +325,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 웹뷰 네이티브 goBack() 사용 금지!
+        // 🎯 **핵심 수정**: 히스토리 네비게이션 시 플래그 설정
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateBack() {
@@ -347,6 +347,12 @@ final class WebViewStateModel: NSObject, ObservableObject {
         } else {
             dbg("❌ 뒤로가기 실패: DataModel에서 nil 반환")
         }
+        
+        // ✅ **중요**: 플래그 리셋하여 이후 주소창 입력이 정상 작동하도록 함
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.isNavigatingFromWebView = false
+            self.dbg("🔄 뒤로가기 플래그 리셋 완료")
+        }
     }
     
     func goForward() {
@@ -355,7 +361,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 웹뷰 네이티브 goForward() 사용 금지!
+        // 🎯 **핵심 수정**: 히스토리 네비게이션 시 플래그 설정
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateForward() {
@@ -376,6 +382,12 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("➡️ 앞으로가기 성공: '\(record.title)' [DataModel 인덱스: \(dataModel.currentHistoryIndex)/\(dataModel.pageHistory.count)]")
         } else {
             dbg("❌ 앞으로가기 실패: DataModel에서 nil 반환")
+        }
+        
+        // ✅ **중요**: 플래그 리셋하여 이후 주소창 입력이 정상 작동하도록 함
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.isNavigatingFromWebView = false
+            self.dbg("🔄 앞으로가기 플래그 리셋 완료")
         }
     }
     
@@ -452,7 +464,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
         
         // 🎯 네비게이션 상태도 함께 로깅
         let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)] \(msg)")
+        let flagState = isNavigatingFromWebView ? "[🚩FLAG]" : ""
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState) \(msg)")
     }
     
     // MARK: - 메모리 정리
