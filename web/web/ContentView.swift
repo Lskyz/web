@@ -81,6 +81,7 @@ struct ContentView: View {
             .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
             .fullScreenCover(isPresented: $showDebugView, content: debugView)
             .safeAreaInset(edge: .bottom, content: bottomUIContent)
+            .ignoresSafeArea(.keyboard, edges: .bottom)   // 
     }
     
     // MARK: - 컴포넌트 분해
