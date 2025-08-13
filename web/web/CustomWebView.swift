@@ -444,7 +444,7 @@ struct CustomWebView: UIViewRepresentable {
                 console.log('✅ 데스크탑 모드 적용 완료');
             }
             
-            function setupZoomFunction() {
+            func­tion setupZoomFunction() {
                 window.setPageZoom = function(scale) {
                     scale = Math.max(0.3, Math.min(3.0, scale));
                     
@@ -693,34 +693,66 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
+        // MARK: - 헬퍼: 오버레이 배치와 z-order 고정
+        // 🔧 스냅샷은 오토레이아웃 대신 frame으로 배치하고, zPosition으로 현재/다음 스택을 명시 고정
+        private func layoutSnapshotsForTransition(_ overlay: UIView,
+                                                  current: UIView,
+                                                  next: UIView,
+                                                  isBack: Bool) {
+            overlay.layoutIfNeeded()
+            let bounds = overlay.bounds
+            let w = bounds.width
+            let h = bounds.height
+            
+            current.frame = CGRect(x: 0, y: 0, width: w, height: h)
+            next.frame    = CGRect(x: isBack ? -w : w, y: 0, width: w, height: h)
+            
+            // add 순서: next -> current (current가 위)
+            overlay.addSubview(next)
+            overlay.addSubview(current)
+            
+            // 명시적 z-order
+            next.layer.zPosition = 0
+            current.layer.zPosition = 1
+        }
+        
         // MARK: - 제스처 전환 준비 (피크 방식 - 히스토리 미변경)
         private func prepareGestureTransition(isBack: Bool, webView: WKWebView, overlayContainer: UIView) {
+            // 🔧 전환 중 하단의 실제 웹뷰가 보이지 않도록 잠시 숨김(깜박임/티어링 방지)
+            webView.isHidden = true
+            
             // 1. 현재 페이지 스냅샷 먼저 생성
             webView.takeSnapshot(with: nil) { [weak self] currentImage, error in
                 guard let self = self, let image = currentImage else {
                     self?.isGestureInProgress = false
+                    webView.isHidden = false // 복구
                     return
                 }
                 
                 DispatchQueue.main.async {
-                    // 현재 페이지 스냅샷 표시
                     let currentSnapshot = UIImageView(image: image)
                     currentSnapshot.contentMode = .scaleAspectFill
                     currentSnapshot.clipsToBounds = true
-                    currentSnapshot.translatesAutoresizingMaskIntoConstraints = false
-                    overlayContainer.addSubview(currentSnapshot)
-                    
-                    NSLayoutConstraint.activate([
-                        currentSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                        currentSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.leadingAnchor),
-                        currentSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.trailingAnchor),
-                        currentSnapshot.bottomAnchor.constraint(equalTo: overlayContainer.bottomAnchor)
-                    ])
-                    
-                    self.currentPageSnapshot = currentSnapshot
                     
                     // 2. 🔍 피크(Peek): 다음 대상 레코드만 조회 (히스토리 변경 없음)
                     self.peekNextPageRecord(isBack: isBack, overlayContainer: overlayContainer)
+                    
+                    // nextPageSnapshot 준비가 끝날 때까지 대기 후 배치
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                        guard let next = self.nextPageSnapshot else {
+                            // next 준비 실패 시에도 현재 스냅샷은 최소 배치
+                            overlayContainer.addSubview(currentSnapshot)
+                            currentSnapshot.frame = overlayContainer.bounds
+                            currentSnapshot.layer.zPosition = 1
+                            self.currentPageSnapshot = currentSnapshot
+                            return
+                        }
+                        self.layoutSnapshotsForTransition(overlayContainer,
+                                                          current: currentSnapshot,
+                                                          next: next,
+                                                          isBack: isBack) // 🔧 frame 배치 + z-order 지정
+                        self.currentPageSnapshot = currentSnapshot
+                    }
                 }
             }
         }
@@ -768,29 +800,14 @@ struct CustomWebView: UIViewRepresentable {
             let nextSnapshot = UIImageView(image: image)
             nextSnapshot.contentMode = .scaleAspectFill
             nextSnapshot.clipsToBounds = true
-            nextSnapshot.translatesAutoresizingMaskIntoConstraints = false
-            
-            // 초기 위치 설정 (화면 밖)
-            overlayContainer.addSubview(nextSnapshot)
-            
-            NSLayoutConstraint.activate([
-                nextSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                nextSnapshot.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
-                nextSnapshot.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
-                isBack ? 
-                    nextSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
-                    nextSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor)
-            ])
-            
+            // 🔧 frame 배치는 layoutSnapshotsForTransition 에서 수행
             self.nextPageSnapshot = nextSnapshot
-            overlayContainer.layoutIfNeeded()
         }
         
         // MARK: - 타이틀 카드로 다음 페이지 스냅샷 생성 (흰 화면 금지)
         private func createFallbackNextPageSnapshot(isBack: Bool, overlayContainer: UIView, title: String, url: String) {
             let cardView = UIView()
             cardView.backgroundColor = .systemBackground
-            cardView.translatesAutoresizingMaskIntoConstraints = false
             
             // 그라데이션 배경
             let gradientLayer = CAGradientLayer()
@@ -806,7 +823,6 @@ struct CustomWebView: UIViewRepresentable {
             let iconView = UIImageView(image: UIImage(systemName: "safari"))
             iconView.contentMode = .scaleAspectFit
             iconView.tintColor = .systemBlue
-            iconView.translatesAutoresizingMaskIntoConstraints = false
             
             // 제목 라벨
             let titleLabel = UILabel()
@@ -815,7 +831,6 @@ struct CustomWebView: UIViewRepresentable {
             titleLabel.textColor = .label
             titleLabel.textAlignment = .center
             titleLabel.numberOfLines = 3
-            titleLabel.translatesAutoresizingMaskIntoConstraints = false
             
             // URL 라벨
             let urlLabel = UILabel()
@@ -824,7 +839,6 @@ struct CustomWebView: UIViewRepresentable {
             urlLabel.textColor = .secondaryLabel
             urlLabel.textAlignment = .center
             urlLabel.numberOfLines = 2
-            urlLabel.translatesAutoresizingMaskIntoConstraints = false
             
             // 부제목
             let subtitleLabel = UILabel()
@@ -832,76 +846,52 @@ struct CustomWebView: UIViewRepresentable {
             subtitleLabel.font = .systemFont(ofSize: 14, weight: .regular)
             subtitleLabel.textColor = .tertiaryLabel
             subtitleLabel.textAlignment = .center
-            subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
             
-            cardView.addSubview(iconView)
-            cardView.addSubview(titleLabel)
-            cardView.addSubview(urlLabel)
-            cardView.addSubview(subtitleLabel)
+            // 🔧 오토레이아웃 대신 autoresizingMask + frame 배치
+            [iconView, titleLabel, urlLabel, subtitleLabel].forEach {
+                $0.translatesAutoresizingMaskIntoConstraints = true
+                cardView.addSubview($0)
+            }
+            cardView.translatesAutoresizingMaskIntoConstraints = true
             
-            // 초기 위치 설정 (화면 밖)
-            overlayContainer.addSubview(cardView)
-            
-            NSLayoutConstraint.activate([
-                cardView.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                cardView.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
-                cardView.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
-                isBack ? 
-                    cardView.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
-                    cardView.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor),
-                
-                // 내부 레이아웃
-                iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-                iconView.centerYAnchor.constraint(equalTo: cardView.centerYAnchor, constant: -60),
-                iconView.widthAnchor.constraint(equalToConstant: 80),
-                iconView.heightAnchor.constraint(equalToConstant: 80),
-                
-                titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 20),
-                titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
-                titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
-                
-                urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-                urlLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
-                urlLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
-                
-                subtitleLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 12),
-                subtitleLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
-            ])
-            
-            // 그라데이션 크기 조정
+            // 배치: 레이아웃은 추후 frame 지정 시점에서 overlay.bounds 기준으로 계산
+            // frame은 layoutSnapshotsForTransition에서 cardView 자체가 배치되고,
+            // 내부 서브뷰는 아래에서 즉시 배치
             DispatchQueue.main.async {
+                let b = self.gestureOverlayContainer?.bounds ?? .zero
+                cardView.frame = CGRect(x: 0, y: 0, width: b.width, height: b.height)
+                
                 gradientLayer.frame = cardView.bounds
+                let centerY = b.midY - 60
+                iconView.frame = CGRect(x: b.midX - 40, y: centerY - 40, width: 80, height: 80)
+                titleLabel.sizeToFit()
+                titleLabel.center = CGPoint(x: b.midX, y: iconView.frame.maxY + 32)
+                titleLabel.frame = CGRect(x: 40, y: iconView.frame.maxY + 20, width: b.width - 80, height: 28*min(3, Int((titleLabel.intrinsicContentSize.width/(b.width-80)).rounded(.up))))
+                urlLabel.frame = CGRect(x: 40, y: titleLabel.frame.maxY + 8, width: b.width - 80, height: 20)
+                subtitleLabel.sizeToFit()
+                subtitleLabel.center = CGPoint(x: b.midX, y: urlLabel.frame.maxY + 18)
             }
             
+            // 🔧 frame 배치는 layoutSnapshotsForTransition 에서 수행
             self.nextPageSnapshot = cardView
-            overlayContainer.layoutIfNeeded()
         }
         
         // MARK: - 제스처 전환 업데이트 (동일)
         private func updateGestureTransition(progress: CGFloat, translation: CGPoint, isBack: Bool) {
             guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else { return }
+                  let nextSnapshot = nextPageSnapshot,
+                  let overlay = gestureOverlayContainer else { return }
             
-            let screenWidth = UIScreen.main.bounds.width
-            let currentTransform: CGAffineTransform
-            let nextTransform: CGAffineTransform
+            let w = overlay.bounds.width
             
-            if isBack {
-                // 뒤로가기: 현재 페이지는 오른쪽으로, 이전 페이지는 따라옴
-                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
-                nextTransform = CGAffineTransform(translationX: -screenWidth + translation.x, y: 0)
-            } else {
-                // 앞으로가기: 현재 페이지는 왼쪽으로, 다음 페이지는 따라옴
-                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
-                nextTransform = CGAffineTransform(translationX: screenWidth + translation.x, y: 0)
-            }
+            // 🔧 좌우 이동 + 현재 페이지 살짝 스케일 다운
+            let currentTx = translation.x
+            let nextBaseX: CGFloat = isBack ? -w : w
+            let nextTx = nextBaseX + translation.x
             
-            // 스케일 효과 추가 (사파리 스타일)
-            let scale = 1.0 - (progress * 0.05)
-            let scaledCurrentTransform = currentTransform.scaledBy(x: scale, y: scale)
-            
-            currentSnapshot.transform = scaledCurrentTransform
-            nextSnapshot.transform = nextTransform
+            currentSnapshot.transform = CGAffineTransform(translationX: currentTx, y: 0)
+                .scaledBy(x: 1 - 0.05*progress, y: 1 - 0.05*progress)
+            nextSnapshot.transform = CGAffineTransform(translationX: nextTx, y: 0)
             
             // 그림자 효과
             currentSnapshot.layer.shadowOpacity = Float(progress * 0.3)
@@ -912,24 +902,21 @@ struct CustomWebView: UIViewRepresentable {
         // MARK: - 제스처 완료 (이때만 실제 네비게이션 실행)
         private func completeGestureTransition(isBack: Bool) {
             guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else { return }
+                  let nextSnapshot = nextPageSnapshot,
+                  let overlay = gestureOverlayContainer else { return }
             
-            // 완료 애니메이션
-            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) {
-                let screenWidth = UIScreen.main.bounds.width
-                
+            let w = overlay.bounds.width
+            
+            UIView.animate(withDuration: 0.28, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0.55) {
                 if isBack {
-                    currentSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                    currentSnapshot.transform = CGAffineTransform(translationX: w, y: 0)
                     nextSnapshot.transform = .identity
                 } else {
-                    currentSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                    currentSnapshot.transform = CGAffineTransform(translationX: -w, y: 0)
                     nextSnapshot.transform = .identity
                 }
-                
                 currentSnapshot.layer.shadowOpacity = 0
-                
             } completion: { _ in
-                // 햅틱 피드백
                 UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
                 
                 // 🎯 이때만 실제 히스토리 네비게이션 실행
@@ -942,6 +929,9 @@ struct CustomWebView: UIViewRepresentable {
                 // 정리
                 self.cleanupGestureTransition()
                 
+                // 🔧 WebView 표시 복구
+                self.webView?.isHidden = false
+                
                 print("🏄‍♂️ 제스처 완료: \(isBack ? "뒤로" : "앞으로") - 실제 네비게이션 실행")
             }
         }
@@ -949,27 +939,26 @@ struct CustomWebView: UIViewRepresentable {
         // MARK: - 제스처 취소 (히스토리 변경 없으므로 단순 정리만)
         private func cancelGestureTransition() {
             guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else {
+                  let nextSnapshot = nextPageSnapshot,
+                  let overlay = gestureOverlayContainer else {
                 isGestureInProgress = false
+                webView?.isHidden = false // 🔧 복구
                 return
             }
             
-            // 취소 애니메이션
-            UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.3) {
+            let w = overlay.bounds.width
+            
+            UIView.animate(withDuration: 0.22, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0.35) {
                 currentSnapshot.transform = .identity
-                
-                let screenWidth = UIScreen.main.bounds.width
                 if self.gestureType == .back {
-                    nextSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                    nextSnapshot.transform = CGAffineTransform(translationX: -w, y: 0)
                 } else {
-                    nextSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                    nextSnapshot.transform = CGAffineTransform(translationX:  w, y: 0)
                 }
-                
                 currentSnapshot.layer.shadowOpacity = 0
-                
             } completion: { _ in
-                // 히스토리는 변경되지 않았으므로 되돌릴 필요 없음
                 self.cleanupGestureTransition()
+                self.webView?.isHidden = false // 🔧 복구
                 print("🏄‍♂️ 제스처 취소 - 히스토리 미변경 상태 유지")
             }
         }
