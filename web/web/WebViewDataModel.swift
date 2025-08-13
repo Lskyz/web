@@ -27,7 +27,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
     
     mutating func updateTitle(_ title: String) {
         if !title.isEmpty {
-            title = title
+            self.title = title
         }
         lastAccessed = Date()
     }
