@@ -69,9 +69,12 @@ struct ContentView: View {
     private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
     private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
+    @State private var kbVisible: Bool = false
+
     var body: some View {
-        mainContentView
-            .ignoresSafeArea(.keyboard, edges: .bottom)
+        // ★ 키보드 표시/숨김 노티 감지 + 키보드 회피 인셋 무시 + 기존 체인 유지
+        let base = mainContentView
+            .ignoresSafeArea(.keyboard, edges: .bottom) // ✅ 항상: SwiftUI 키보드 회피 인셋 차단
             .onAppear(perform: onAppearHandler)
             .onReceive(currentState.$currentURL, perform: onURLChange)
             .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
@@ -81,8 +84,30 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
             .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
             .fullScreenCover(isPresented: $showDebugView, content: debugView)
-            .safeAreaInset(edge: .bottom, content: bottomUIContent)
+            // ✅ 키보드 표시/숨김 상태 수신
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                kbVisible = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                kbVisible = false
+            }
+
+        // ★ 핵심: 키보드가 보일 때는 오버레이(레이아웃 여백 추가 안 함),
+        //         숨을 때는 기존 safeAreaInset(레이아웃 여백 추가) 사용
+        Group {
+            if kbVisible {
+                base
+                    .overlay(alignment: .bottom) {
+                        bottomUIContent()
+                    }
+            } else {
+                base
+                    .safeAreaInset(edge: .bottom, content: bottomUIContent)
+            }
+        }
     }
+    
+    // 
     
     // MARK: - 컴포넌트 분해
     
