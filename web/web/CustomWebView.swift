@@ -1,4 +1,128 @@
-//
+// MARK: - 🏄‍♂️ 사파리 스타일 제스처 핸들러 (가장자리 인식)
+        
+        @objc func handleSafariStylePan(_ gesture: UIPanGestureRecognizer) {
+            guard let webView = gesture.view else { return }
+            
+            let translation = gesture.translation(in: webView)
+            let velocity = gesture.velocity(in: webView)
+            let startLocation = gesture.location(in: webView)
+            let screenWidth = webView.bounds.width
+            let edgeRange: CGFloat = 60 // 사파리보다 넓은 가장자리 범위 (60px)
+            
+            switch gesture.state {
+            case .began:
+                isGestureActive = false
+                
+                // 왼쪽 가장자리에서 시작 (뒤로가기용)
+                if startLocation.x < edgeRange && parent.stateModel.canGoBack {
+                    isGestureActive = true
+                }
+                // 오른쪽 가장자리에서 시작 (앞으로가기용)
+                else if startLocation.x > screenWidth - edgeRange && parent.stateModel.canGoForward {
+                    isGestureActive = true
+                }
+                
+            case .changed:
+                guard isGestureActive else { return }
+                
+                // 왼쪽 가장자리에서 시작한 경우 (뒤로가기)
+                if startLocation.x < edgeRange && translation.x > 0 {
+                    let progress = min(translation.x / 120, 1.0)
+                    let scale = 1.0 - (progress * 0.08)
+                    let translateX = translation.x * 0.6
+                    
+                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                        .concatenating(CGAffineTransform(translationX: translateX, y: 0))
+                    
+                    if progress > 0.5 && progress < 0.6 {
+                        let feedback = UIImpactFeedbackGenerator(style: .light)
+                        feedback.impactOccurred()
+                    }
+                }
+                // 오른쪽 가장자리에서 시작한 경우 (앞으로가기)
+                else if startLocation.x > screenWidth - edgeRange && translation.x < 0 {
+                    let progress = min(abs(translation.x) / 120, 1.0)
+                    let scale = 1.0 - (progress * 0.08)
+                    let translateX = translation.x * 0.6
+                    
+                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                        .concatenating(CGAffineTransform(translationX: translateX, y: 0))
+                    
+                    if progress > 0.5 && progress < 0.6 {
+                        let feedback = UIImpactFeedbackGenerator(style: .light)
+                        feedback.impactOccurred()
+                    }
+                }
+                
+            case .ended:
+                guard isGestureActive else { return }
+                
+                // 복원 애니메이션
+                UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0.3) {
+                    webView.transform = .identity
+                }
+                
+                // 왼쪽 가장자리에서 오른쪽으로 스와이프 → 뒤로가기
+                if startLocation.x < edgeRange && (translation.x > 80 || (translation.x > 40 && velocity.x > 400)) {
+                    let feedback = UIImpactFeedbackGenerator(style: .heavy)
+                    feedback.impactOccurred()
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.parent.stateModel.safariStyleGoBack()
+                    }
+                }
+                // 오른쪽 가장자리에서 왼쪽으로 스와이프 → 앞으로가기
+                else if startLocation.x > screenWidth - edgeRange && (translation.x < -80 || (translation.x < -40 && velocity.x < -400)) {
+                    let feedback = UIImpactFeedbackGenerator(style: .heavy)
+                    feedback.impactOccurred()
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        self.parent.stateModel.safariStyleGoForward()
+                    }
+                }
+                
+                isGestureActive = false
+                
+            case .cancelled:
+                UIView.animate(withDuration: 0.25) {
+                    webView.transform = .identity
+                }
+                isGestureActive = false
+                
+            default:
+                break
+            }
+        }mpactFeedbackGenerator(style: .heavy)
+                    feedback.impactOccurred()
+                    parent.stateModel.safariStyleGoBack()
+                    
+                } else if location.x > screenWidth * 2/3 && (translation.x < -threshold || (translation.x < -30 && velocity.x < -400)) {
+                    // 오른쪽에서 왼쪽으로 - 앞으로가기
+                    let feedback = UIImpactFeedbackGenerator(style: .heavy)
+                    feedback.impactOccurred()
+                    parent.stateModel.safariStyleGoForward()
+                }
+                
+                isGestureActive = false
+                
+            case .cancelled:
+                isGestureActive = false
+                
+            default:
+                break
+            }
+        }🏄‍♂️ 앞으로가기 제스처 준비 완료")
+                }
+                
+            case .changed:
+                guard isGestureActive else { return }
+                
+                // 간단한 진행률 계산
+                let progress = min(abs(translation.x) / 100, 1.0) // 100px 이동하면 100%
+                
+                // 시각적 피드백 - 애니메이션 최소화
+                if progress > 0.1 {
+                    let scale = 1.0 - (//
 //  CustomWebView.swift
 //
 //  🌐 통합된 SPA 네비게이션 + 로그인 리다이렉트 필터링
