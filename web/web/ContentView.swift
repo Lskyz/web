@@ -70,46 +70,50 @@ struct ContentView: View {
     private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
     var body: some View {
-        mainContentView
-            .onAppear(perform: onAppearHandler)
-            .onReceive(currentState.$currentURL, perform: onURLChange)
-            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
-            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
-            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
-            .sheet(isPresented: $showHistorySheet, content: historySheet)
-            .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
-            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-            .fullScreenCover(isPresented: $showDebugView, content: debugView)
-            .safeAreaInset(edge: .bottom) {
-                bottomUIContent()
-                // ✅ 키보드가 올라오면 주소창/툴바를 그 높이만큼 위로 이동
+    mainContentView
+        .onAppear(perform: onAppearHandler)
+        .onReceive(currentState.$currentURL, perform: onURLChange)
+        .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+        .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+        .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+        .sheet(isPresented: $showHistorySheet, content: historySheet)
+        .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
+        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+        .fullScreenCover(isPresented: $showDebugView, content: debugView)
+
+        // ✅ 주소창/툴바만 키보드 높이만큼 위로 이동
+        .safeAreaInset(edge: .bottom) {
+            bottomUIContent()
                 .offset(y: -keyboardHeight)
                 .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
-              }
-            // ✅ SwiftUI의 자동 키보드 인셋은 무시(웹뷰에 빈공간 안 생김
-           .ignoresSafeArea(.keyboard, edges: .bottom) 
-           .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-    guard
-        let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-        let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-    else { return }
+        }
 
-    // 현재 키 윈도우 기준으로 "실제 키보드가 차지하는 높이" 계산
-    let keyWindow = UIApplication.shared.connectedScenes
-        .compactMap { $0 as? UIWindowScene }
-        .flatMap { $0.windows }
-        .first { $0.isKeyWindow }
+        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
 
-    let screenH   = keyWindow?.bounds.height ?? UIScreen.main.bounds.height
-    let bottomSA  = keyWindow?.safeAreaInsets.bottom ?? 0
-    let visibleH  = max(0, screenH - endFrame.origin.y)     // 화면에서 키보드가 차지한 높이
-    let effective = max(0, visibleH - bottomSA)             // 하단 안전영역 제외 실제 영향
+        // ✅ 키보드 프레임 변경에 맞춰 이동 높이 계산
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+            guard
+                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+            else { return }
 
-    withAnimation(.easeInOut(duration: duration)) {
-        keyboardHeight = effective
-    }
+            // 현재 키 윈도우 기준 "실제 키보드가 차지하는 높이"
+            let keyWindow = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first { $0.isKeyWindow }
+
+            let screenH  = keyWindow?.bounds.height ?? UIScreen.main.bounds.height
+            let bottomSA = keyWindow?.safeAreaInsets.bottom ?? 0
+            let visibleH = max(0, screenH - endFrame.origin.y)   // 화면에서 키보드가 차지한 높이
+            let effective = max(0, visibleH - bottomSA)          // 안전영역 제외 실제 영향
+
+            withAnimation(.easeInOut(duration: duration)) {
+                keyboardHeight = effective
+            }
+        }
 }
-    }
     
     // MARK: - 컴포넌트 분해
     
