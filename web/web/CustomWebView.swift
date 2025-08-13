@@ -75,7 +75,7 @@ struct CustomWebView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic // 키보드 처리를 위해 automatic으로 복원
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
 
