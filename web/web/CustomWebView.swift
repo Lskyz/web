@@ -866,8 +866,15 @@ struct CustomWebView: UIViewRepresentable {
                 iconView.frame = CGRect(x: b.midX - 40, y: centerY - 40, width: 80, height: 80)
                 titleLabel.sizeToFit()
                 titleLabel.center = CGPoint(x: b.midX, y: iconView.frame.maxY + 32)
-                titleLabel.frame = CGRect(x: 40, y: iconView.frame.maxY + 20, width: b.width - 80, height: 28*min(3, Int((titleLabel.intrinsicContentSize.width/(b.width-80)).rounded(.up))))
-                urlLabel.frame = CGRect(x: 40, y: titleLabel.frame.maxY + 8, width: b.width - 80, height: 20)
+               titleLabel.frame = CGRect(x: 40,y: iconView.frame.maxY + 20,width: b.width - 80,height: 28 * CGFloat(min(3, Int((titleLabel.intrinsicContentSize.width / (b.width - 80)).rounded(.up))))
+)
+
+urlLabel.frame = CGRect(
+    x: 40,
+    y: titleLabel.frame.maxY + 8,
+    width: b.width - 80,
+    height: 20
+)
                 subtitleLabel.sizeToFit()
                 subtitleLabel.center = CGPoint(x: b.midX, y: urlLabel.frame.maxY + 18)
             }
