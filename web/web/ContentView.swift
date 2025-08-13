@@ -68,7 +68,8 @@ struct ContentView: View {
     // ✨ 핵심 수정: 가장 투명한 블러 + 흰색 틴트로 은은한 효과
     private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
     private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
-
+    
+    @State private var keyboardHeight: CGFloat = 0
     var body: some View {
     mainContentView
         .onAppear(perform: onAppearHandler)
