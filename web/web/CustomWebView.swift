@@ -753,8 +753,6 @@ struct CustomWebView: UIViewRepresentable {
 
         // 🏄‍♂️ 사파리 스타일 제스처 관련
         private var backGesture: UIPanGestureRecognizer?
-        private var isGestureActive: Bool = falseizer?
-        private var forwardGesture: UIScreenEdgePanGestureRecognizer?
         private var isGestureActive: Bool = false
 
         // 다운로드 진행률 UI 구성 요소들
