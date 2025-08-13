@@ -12,7 +12,6 @@ struct VisualEffectBlur: UIViewRepresentable {
 var blurStyle: UIBlurEffect.Style
 var cornerRadius: CGFloat = 0
 
-```
 func makeUIView(context: Context) -> UIVisualEffectView {
     let effect = UIBlurEffect(style: blurStyle)
     let v = UIVisualEffectView(effect: effect)
@@ -26,7 +25,6 @@ func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
     uiView.layer.cornerRadius = cornerRadius
     uiView.backgroundColor = .clear
 }
-```
 
 }
 
@@ -36,7 +34,6 @@ struct ContentView: View {
 @Binding var tabs: [WebTab]
 @Binding var selectedTabIndex: Int
 
-```
 @State private var inputURL: String = ""
 @FocusState private var isTextFieldFocused: Bool
 @State private var textFieldSelectedAll = false
