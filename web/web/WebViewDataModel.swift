@@ -1,8 +1,8 @@
 //
 //  WebViewDataModel.swift
-//  🎯 네이버 카페 특화 히스토리 관리 + 로그인 리다이렉트 필터링
-//  🔒 로그인 관련 임시 페이지 자동 제거 + 스마트 히스토리 관리
-//  🌐 SPA 네비게이션 지원 강화 (네이버 카페 전용 로직 추가)
+//  🌐 통합된 SPA 네비게이션 관리 + 로그인 리다이렉트 필터링
+//  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
+//  🔒 로그인 관련 임시 페이지 히스토리 제외
 //
 
 import Foundation
@@ -17,18 +17,18 @@ struct PageRecord: Codable, Identifiable, Hashable {
     let timestamp: Date
     var lastAccessed: Date
     
-    // 🎯 네이버 카페 메타데이터 추가
-    var cafeType: String?
+    // 🌐 사이트 메타데이터 추가
+    var siteType: String?
     var isLoginRelated: Bool = false
     var isTemporary: Bool = false
     
-    init(url: URL, title: String = "", cafeType: String? = nil) {
+    init(url: URL, title: String = "", siteType: String? = nil) {
         self.id = UUID()
         self.url = url
         self.title = title.isEmpty ? (url.host ?? "제목 없음") : title
         self.timestamp = Date()
         self.lastAccessed = Date()
-        self.cafeType = cafeType
+        self.siteType = siteType
         
         // 🔒 로그인 관련 URL 자동 감지
         self.isLoginRelated = Self.isLoginRelatedURL(url)
@@ -138,17 +138,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
     
-    // 🌐 SPA 네비게이션 상태 관리
+    // 🌐 **통합된 SPA 네비게이션 상태 관리** (네이버 로직을 범용으로)
     private var isSPANavigation: Bool = false
     private var lastSPANavigationTime: Date?
-    private var spaNavigationBuffer: [(type: String, url: URL, title: String, timestamp: Double)] = []
     
-    // 🎯 네이버 카페 특화 상태 관리 (새로 추가)
-    private var isNaverCafeNavigation: Bool = false
-    private var lastNaverCafeNavigationTime: Date?
-    private var naverCafeNavigationBuffer: [(type: String, url: URL, title: String, cafeType: String, timestamp: Double)] = []
-    
-    // 🔒 로그인 리다이렉트 체인 추적 (새로 추가)
+    // 🔒 로그인 리다이렉트 체인 추적
     private var loginRedirectChain: [URL] = []
     private var loginRedirectStartTime: Date?
     private var isInLoginFlow: Bool = false
@@ -182,49 +176,34 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 🎯 네이버 카페 특화 네비게이션 처리 (새로 추가)
+    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (네이버 로직을 범용으로 사용)
     
-    func handleNaverCafeNavigation(type: String, url: URL, title: String, timestamp: Double, cafeType: String) {
-        // 🎯 네이버 카페 네비게이션 플래그 설정
-        isNaverCafeNavigation = true
-        lastNaverCafeNavigationTime = Date()
+    func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
+        // SPA 네비게이션 플래그 설정
+        isSPANavigation = true
+        lastSPANavigationTime = Date()
         
-        // 중복 방지: 짧은 시간 내 같은 URL은 무시
-        if let lastEntry = naverCafeNavigationBuffer.last,
-           lastEntry.url == url,
-           abs(timestamp - lastEntry.timestamp) < 200 { // 200ms 내 중복 무시
-            return
-        }
+        dbg("🌐 SPA \(type) 감지: \(siteType) | \(url.absoluteString) | '\(title)'")
         
-        // 네이버 카페 네비게이션 버퍼에 추가
-        naverCafeNavigationBuffer.append((type: type, url: url, title: title, cafeType: cafeType, timestamp: timestamp))
-        
-        // 버퍼 크기 제한
-        if naverCafeNavigationBuffer.count > 15 {
-            naverCafeNavigationBuffer.removeFirst()
-        }
-        
-        dbg("🎯 네이버카페 \(type) 감지: \(cafeType) | \(url.absoluteString) | '\(title)'")
-        
-        // 네이버 카페 타입별 특화 처리
+        // 기존 네이버 카페 로직을 모든 사이트에 적용
         switch type {
         case "push":
-            handleNaverCafePushState(url: url, title: title, cafeType: cafeType)
+            handleSPAPushState(url: url, title: title, siteType: siteType)
             
         case "replace":
-            handleNaverCafeReplaceState(url: url, title: title, cafeType: cafeType)
+            handleSPAReplaceState(url: url, title: title, siteType: siteType)
             
         case "pop", "hash":
-            handleNaverCafePopState(url: url, title: title, cafeType: cafeType)
+            handleSPAPopState(url: url, title: title, siteType: siteType)
             
         case "iframe_push":
-            handleNaverCafeIframePush(url: url, title: title, cafeType: cafeType)
+            handleSPAIframePush(url: url, title: title, siteType: siteType)
             
         case "title":
             updateCurrentPageTitle(title)
             
         default:
-            dbg("🎯 알 수 없는 네이버 카페 네비게이션 타입: \(type)")
+            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
         }
         
         // 전역 히스토리에도 추가 (중복 및 로그인 관련 제외)
@@ -234,18 +213,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // 일정 시간 후 플래그 해제
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            self.isNaverCafeNavigation = false
+            self.isSPANavigation = false
         }
     }
     
-    private func handleNaverCafePushState(url: URL, title: String, cafeType: String) {
-        // 🎯 네이버 카페는 복잡한 구조이므로 더 정교한 중복 제거
+    private func handleSPAPushState(url: URL, title: String, siteType: String) {
+        // 🎯 네이버 카페 로직을 모든 사이트에 적용: 복잡한 구조에 대한 정교한 중복 제거
         
         // 현재 페이지와 거의 같은 URL인지 확인 (파라미터만 다른 경우)
         if let currentRecord = currentPageRecord,
-           areSimilarNaverCafeURLs(currentRecord.url, url) {
+           areSimilarURLs(currentRecord.url, url) {
             // 비슷한 URL이면 교체 처리
-            handleNaverCafeReplaceState(url: url, title: title, cafeType: cafeType)
+            handleSPAReplaceState(url: url, title: title, siteType: siteType)
             return
         }
         
@@ -254,7 +233,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             pageHistory.removeSubrange((currentPageIndex + 1)...)
         }
         
-        let newRecord = PageRecord(url: url, title: title, cafeType: cafeType)
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
@@ -265,32 +244,32 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         updateNavigationState()
-        dbg("🎯 네이버카페 새 페이지: \(cafeType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
+        dbg("🌐 SPA 새 페이지: \(siteType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
         
         // StateModel URL 동기화
         stateModel?.syncCurrentURL(url)
     }
     
-    private func handleNaverCafeReplaceState(url: URL, title: String, cafeType: String) {
+    private func handleSPAReplaceState(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            handleNaverCafePushState(url: url, title: title, cafeType: cafeType)
+            handleSPAPushState(url: url, title: title, siteType: siteType)
             return
         }
         
         // 현재 페이지 기록 교체
         var updatedRecord = pageHistory[currentPageIndex]
-        updatedRecord = PageRecord(url: url, title: title, cafeType: cafeType)
+        updatedRecord = PageRecord(url: url, title: title, siteType: siteType)
         pageHistory[currentPageIndex] = updatedRecord
         
-        dbg("🎯 네이버카페 페이지 교체: \(cafeType) '\(updatedRecord.title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+        dbg("🌐 SPA 페이지 교체: \(siteType) '\(updatedRecord.title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
         
         // StateModel URL 동기화
         stateModel?.syncCurrentURL(url)
     }
     
-    private func handleNaverCafePopState(url: URL, title: String, cafeType: String) {
+    private func handleSPAPopState(url: URL, title: String, siteType: String) {
         // 히스토리 내에서 해당 URL 찾기
-        if let foundIndex = pageHistory.firstIndex(where: { areSimilarNaverCafeURLs($0.url, url) }) {
+        if let foundIndex = pageHistory.firstIndex(where: { areSimilarURLs($0.url, url) }) {
             // 히스토리 내 이동
             currentPageIndex = foundIndex
             
@@ -298,27 +277,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             var updatedRecord = pageHistory[currentPageIndex]
             updatedRecord.updateTitle(title)
             updatedRecord.updateAccess()
-            updatedRecord.cafeType = cafeType
+            updatedRecord.siteType = siteType
             pageHistory[currentPageIndex] = updatedRecord
             
             updateNavigationState()
-            dbg("🎯 네이버카페 히스토리 이동: \(cafeType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            dbg("🌐 SPA 히스토리 이동: \(siteType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             
             // StateModel URL 동기화
             stateModel?.syncCurrentURL(url)
         } else {
             // 히스토리에 없으면 새로 추가
-            handleNaverCafePushState(url: url, title: title, cafeType: cafeType)
+            handleSPAPushState(url: url, title: title, siteType: siteType)
         }
     }
     
-    private func handleNaverCafeIframePush(url: URL, title: String, cafeType: String) {
+    private func handleSPAIframePush(url: URL, title: String, siteType: String) {
         // iframe 내부 네비게이션은 보통 게시글 읽기 등이므로 일반 push와 동일하게 처리
-        handleNaverCafePushState(url: url, title: title, cafeType: "iframe_\(cafeType)")
+        handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)")
     }
     
-    // 🎯 네이버 카페 URL 유사성 검사 (파라미터 변화는 무시)
-    private func areSimilarNaverCafeURLs(_ url1: URL, _ url2: URL) -> Bool {
+    // 🌐 네이버 카페 URL 유사성 로직을 범용으로 사용
+    private func areSimilarURLs(_ url1: URL, _ url2: URL) -> Bool {
         // 같은 호스트인지 확인
         guard url1.host == url2.host else { return false }
         
@@ -326,147 +305,25 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let path1 = url1.path
         let path2 = url2.path
         
-        // 경로가 완전히 같거나, 네이버 카페의 특정 패턴이면 유사한 것으로 판단
+        // 경로가 완전히 같으면 유사한 것으로 판단
         if path1 == path2 {
             return true
         }
         
-        // 네이버 카페 특수 케이스들
-        let cafePathPattern = #"^/[^/]+(/\d+)?(/\d+)?$"#
-        if path1.range(of: cafePathPattern, options: .regularExpression) != nil &&
-           path2.range(of: cafePathPattern, options: .regularExpression) != nil {
-            
-            // 카페 홈과 게시판 사이는 다른 페이지로 취급
-            let components1 = path1.split(separator: "/")
-            let components2 = path2.split(separator: "/")
-            
-            if components1.count != components2.count {
-                return false
-            }
-            
-            // 첫 번째 컴포넌트(카페명)가 같으면 유사한 페이지로 판단
-            return components1.first == components2.first && 
-                   components1.count <= 2 && components2.count <= 2
+        // 네이버 카페용 로직을 모든 사이트에 적용
+        let components1 = path1.split(separator: "/")
+        let components2 = path2.split(separator: "/")
+        
+        if components1.count != components2.count {
+            return false
         }
         
-        return false
+        // 첫 번째 컴포넌트가 같고 길이가 짧으면 유사한 페이지로 판단 (네이버 카페 로직)
+        return components1.first == components2.first && 
+               components1.count <= 2 && components2.count <= 2
     }
     
-    // 🎯 네이버 카페 네비게이션 활성 상태 확인
-    private func isNaverCafeNavigationActive() -> Bool {
-        if isNaverCafeNavigation {
-            return true
-        }
-        
-        if let lastTime = lastNaverCafeNavigationTime {
-            let elapsed = Date().timeIntervalSince(lastTime)
-            return elapsed < 1.5
-        }
-        
-        return false
-    }
-    
-    // MARK: - 🌐 일반 SPA 네비게이션 처리 (기존 유지)
-    
-    func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double) {
-        // 🎯 네이버 카페 네비게이션이 활성화되어 있으면 무시 (중복 방지)
-        if isNaverCafeNavigationActive() {
-            dbg("🎯 네이버 카페 네비게이션 활성 중 - 일반 SPA 처리 건너뜀")
-            return
-        }
-        
-        isSPANavigation = true
-        lastSPANavigationTime = Date()
-        
-        if let lastEntry = spaNavigationBuffer.last,
-           lastEntry.url == url,
-           abs(timestamp - lastEntry.timestamp) < 100 {
-            return
-        }
-        
-        spaNavigationBuffer.append((type: type, url: url, title: title, timestamp: timestamp))
-        
-        if spaNavigationBuffer.count > 10 {
-            spaNavigationBuffer.removeFirst()
-        }
-        
-        dbg("🌐 일반 SPA \(type) 감지: \(url.absoluteString) | '\(title)'")
-        
-        switch type {
-        case "push":
-            handleSPAPushState(url: url, title: title)
-        case "replace":
-            handleSPAReplaceState(url: url, title: title)
-        case "pop", "hash":
-            handleSPAPopState(url: url, title: title)
-        case "title":
-            updateCurrentPageTitle(title)
-        default:
-            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
-        }
-        
-        if type != "title" && !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { $0.url == url }) {
-            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.isSPANavigation = false
-        }
-    }
-    
-    private func handleSPAPushState(url: URL, title: String) {
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-        }
-        
-        let newRecord = PageRecord(url: url, title: title)
-        pageHistory.append(newRecord)
-        currentPageIndex = pageHistory.count - 1
-        
-        if pageHistory.count > 50 {
-            pageHistory.removeFirst()
-            currentPageIndex -= 1
-        }
-        
-        updateNavigationState()
-        dbg("🌐 SPA 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
-        
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleSPAReplaceState(url: URL, title: String) {
-        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            handleSPAPushState(url: url, title: title)
-            return
-        }
-        
-        var updatedRecord = pageHistory[currentPageIndex]
-        updatedRecord = PageRecord(url: url, title: title)
-        pageHistory[currentPageIndex] = updatedRecord
-        
-        dbg("🌐 SPA 페이지 교체: '\(updatedRecord.title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
-        
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleSPAPopState(url: URL, title: String) {
-        if let foundIndex = pageHistory.firstIndex(where: { $0.url == url }) {
-            currentPageIndex = foundIndex
-            
-            var updatedRecord = pageHistory[currentPageIndex]
-            updatedRecord.updateTitle(title)
-            updatedRecord.updateAccess()
-            pageHistory[currentPageIndex] = updatedRecord
-            
-            updateNavigationState()
-            dbg("🌐 SPA 히스토리 이동: '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
-            
-            stateModel?.syncCurrentURL(url)
-        } else {
-            handleSPAPushState(url: url, title: title)
-        }
-    }
-    
+    // SPA 네비게이션 활성 상태 확인
     private func isSPANavigationActive() -> Bool {
         if isSPANavigation {
             return true
@@ -474,13 +331,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         if let lastTime = lastSPANavigationTime {
             let elapsed = Date().timeIntervalSince(lastTime)
-            return elapsed < 1.0
+            return elapsed < 1.5
         }
         
         return false
     }
     
-    // MARK: - 🔒 로그인 리다이렉트 체인 관리 (새로 추가)
+    // MARK: - 🔒 로그인 리다이렉트 체인 관리
     
     private func startLoginRedirectTracking(url: URL) {
         isInLoginFlow = true
@@ -539,9 +396,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // 🎯 네이버 카페 네비게이션이나 SPA 네비게이션 중인지 체크
-        if isNaverCafeNavigationActive() || isSPANavigationActive() {
-            dbg("🌐 SPA/네이버카페 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
+        // 🌐 SPA 네비게이션 중인지 체크
+        if isSPANavigationActive() {
+            dbg("🌐 SPA 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
             return
         }
         
@@ -638,8 +495,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         dbg("🔄 복원된 히스토리:")
         for (index, record) in pageHistory.enumerated() {
             let marker = index == currentPageIndex ? "👉" : "  "
-            let cafeInfo = record.cafeType != nil ? "[\(record.cafeType!)]" : ""
-            dbg("🔄\(marker) [\(index)] \(record.title) \(cafeInfo)| \(record.url.absoluteString)")
+            let siteInfo = record.siteType != nil ? "[\(record.siteType!)]" : ""
+            dbg("🔄\(marker) [\(index)] \(record.title) \(siteInfo)| \(record.url.absoluteString)")
         }
         
         updateNavigationState()
@@ -744,12 +601,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // 🌐 SPA 상태 리셋
         isSPANavigation = false
         lastSPANavigationTime = nil
-        spaNavigationBuffer.removeAll()
-        
-        // 🎯 네이버 카페 상태 리셋
-        isNaverCafeNavigation = false
-        lastNaverCafeNavigationTime = nil
-        naverCafeNavigationBuffer.removeAll()
         
         // 🔒 로그인 플로우 리셋
         isInLoginFlow = false
@@ -818,9 +669,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return false
         }
         
-        // 🎯 네이버 카페나 SPA 네비게이션 중이면 추가하지 않음
-        if isNaverCafeNavigationActive() || isSPANavigationActive() {
-            dbg("🌐 SPA/네이버카페 네비게이션 활성 중 - 히스토리 추가 건너뜀")
+        // 🌐 SPA 네비게이션 중이면 추가하지 않음
+        if isSPANavigationActive() {
+            dbg("🌐 SPA 네비게이션 활성 중 - 히스토리 추가 건너뜀")
             return false
         }
         
@@ -1143,7 +994,7 @@ extension WebViewDataModel {
     }
 }
 
-// MARK: - 세션 히스토리 행 뷰 (네이버 카페 정보 추가)
+// MARK: - 세션 히스토리 행 뷰 (사이트 타입 정보 추가)
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
@@ -1161,9 +1012,9 @@ struct SessionHistoryRowView: View {
                         .fontWeight(isCurrent ? .bold : .regular)
                         .lineLimit(1)
                     
-                    // 🎯 네이버 카페 타입 표시
-                    if let cafeType = record.cafeType {
-                        Text("[\(cafeType)]")
+                    // 🌐 사이트 타입 표시
+                    if let siteType = record.siteType {
+                        Text("[\(siteType)]")
                             .font(.caption2)
                             .foregroundColor(.orange)
                             .padding(.horizontal, 4)
