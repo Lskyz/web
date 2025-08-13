@@ -67,7 +67,7 @@ struct CustomWebView: UIViewRepresentable {
         // 🎯 네이티브 제스처 완전 비활성화
         webView.allowsBackForwardNavigationGestures = false
         
-        webView.scrollView.contentInsetAdjustmentBehavior = .naver
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.decelerationRate = .normal
 
         // ✅ 하단 UI 겹치기를 위한 투명 처리
@@ -75,7 +75,7 @@ struct CustomWebView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .naver 
+        webView.scrollView.contentInsetAdjustmentBehavior = .never 
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
