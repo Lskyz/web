@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import WebKit
+import Combine
 
 // ============================================================
 // UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
@@ -11,6 +12,7 @@ struct VisualEffectBlur: UIViewRepresentable {
 var blurStyle: UIBlurEffect.Style
 var cornerRadius: CGFloat = 0
 
+```
 func makeUIView(context: Context) -> UIVisualEffectView {
     let effect = UIBlurEffect(style: blurStyle)
     let v = UIVisualEffectView(effect: effect)
@@ -24,17 +26,17 @@ func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
     uiView.layer.cornerRadius = cornerRadius
     uiView.backgroundColor = .clear
 }
-
+```
 
 }
 
-/// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
+/// 웹 브라우저의 메인 콘텐츠 뷰 - 키보드 처리 강화
 struct ContentView: View {
 // MARK: - 속성 정의
 @Binding var tabs: [WebTab]
 @Binding var selectedTabIndex: Int
 
-
+```
 @State private var inputURL: String = ""
 @FocusState private var isTextFieldFocused: Bool
 @State private var textFieldSelectedAll = false
@@ -58,6 +60,14 @@ private let focusDebounceSeconds: TimeInterval = 0.5
 @State private var errorMessage = ""
 @State private var errorTitle = ""
 
+// ✅ 키보드 높이 추적 및 관리
+@State private var keyboardHeight: CGFloat = 0
+@State private var keyboardAnimationDuration: Double = 0.25
+@State private var isKeyboardVisible: Bool = false
+
+// 키보드 높이 추적을 위한 Cancellable
+private var cancellables = Set<AnyCancellable>()
+
 // ============================================================
 // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
 // ============================================================
@@ -75,6 +85,9 @@ private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 var body: some View {
     mainContentView
         .onAppear(perform: onAppearHandler)
+        .onReceive(keyboardHeightPublisher) { keyboardInfo in
+            handleKeyboardChange(keyboardInfo)
+        }
         .onReceive(currentState.$currentURL, perform: onURLChange)
         .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
         .onReceive(errorNotificationPublisher, perform: onErrorReceived)
@@ -83,10 +96,43 @@ var body: some View {
         .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView, content: debugView)
-        // ✅ 변경: safeAreaInset → overlay로 변경하여 키보드 여백 문제 해결
         .overlay(alignment: .bottom) {
             bottomUIContent()
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+}
+
+// MARK: - 키보드 높이 Publisher
+private var keyboardHeightPublisher: AnyPublisher<KeyboardInfo, Never> {
+    Publishers.Merge(
+        NotificationCenter.default
+            .publisher(for: UIResponder.keyboardWillShowNotification)
+            .compactMap { notification -> KeyboardInfo? in
+                guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                      let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double else {
+                    return nil
+                }
+                return KeyboardInfo(height: keyboardFrame.height, duration: duration, isVisible: true)
+            },
+        NotificationCenter.default
+            .publisher(for: UIResponder.keyboardWillHideNotification)
+            .compactMap { notification -> KeyboardInfo? in
+                guard let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double else {
+                    return nil
+                }
+                return KeyboardInfo(height: 0, duration: duration, isVisible: false)
+            }
+    )
+    .eraseToAnyPublisher()
+}
+
+// MARK: - 키보드 변경 처리
+private func handleKeyboardChange(_ keyboardInfo: KeyboardInfo) {
+    withAnimation(.easeInOut(duration: keyboardInfo.duration)) {
+        keyboardHeight = keyboardInfo.height
+        keyboardAnimationDuration = keyboardInfo.duration
+        isKeyboardVisible = keyboardInfo.isVisible
+    }
 }
 
 // MARK: - 컴포넌트 분해
@@ -119,28 +165,41 @@ private var mainContentView: some View {
 
 @ViewBuilder
 private func webContentView(state: WebViewStateModel) -> some View {
-    CustomWebView(
-        stateModel: state,
-        playerURL: Binding(
-            get: { tabs[selectedTabIndex].playerURL },
-            set: { tabs[selectedTabIndex].playerURL = $0 }
-        ),
-        showAVPlayer: Binding(
-            get: { tabs[selectedTabIndex].showAVPlayer },
-            set: { tabs[selectedTabIndex].showAVPlayer = $0 }
-        ),
-        onScroll: { y in
-            handleWebViewScroll(yOffset: y)
-        }
-    )
+    GeometryReader { geometry in
+        CustomWebView(
+            stateModel: state,
+            playerURL: Binding(
+                get: { tabs[selectedTabIndex].playerURL },
+                set: { tabs[selectedTabIndex].playerURL = $0 }
+            ),
+            showAVPlayer: Binding(
+                get: { tabs[selectedTabIndex].showAVPlayer },
+                set: { tabs[selectedTabIndex].showAVPlayer = $0 }
+            ),
+            onScroll: { y in
+                handleWebViewScroll(yOffset: y)
+            }
+        )
+        .frame(width: geometry.size.width, height: geometry.size.height)
+    }
     .id(state.tabID)
     .ignoresSafeArea(.container, edges: allowTopOverlap ? [.top, .bottom] : [.bottom])
-    // ✅ 추가: 하단 UI 높이만큼 패딩 추가하여 콘텐츠가 UI에 가려지지 않도록 함
-    .padding(.bottom, 100)
+    .padding(.bottom, calculateBottomPadding())
     .overlay(scrollOffsetOverlay)
     .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
     .contentShape(Rectangle())
     .onTapGesture(perform: onContentTap)
+}
+
+// MARK: - 키보드 상태에 따른 동적 패딩 계산
+private func calculateBottomPadding() -> CGFloat {
+    if isKeyboardVisible {
+        // 키보드가 보일 때는 키보드 높이에서 UI 높이를 뺀 값
+        return max(0, keyboardHeight - 120) // 120 = 대략적인 UI 높이
+    } else {
+        // 키보드가 없을 때는 기본 UI 높이
+        return 100
+    }
 }
 
 private var dashboardView: some View {
@@ -173,6 +232,23 @@ private func bottomUIContent() -> some View {
         toolbarView
     }
     .background(Color.clear)
+    .padding(.bottom, isKeyboardVisible ? max(0, keyboardHeight - UIScreen.main.bounds.height + geometry.safeAreaInsets.bottom + 120) : 0)
+    .animation(.easeInOut(duration: keyboardAnimationDuration), value: keyboardHeight)
+}
+
+// MARK: - 화면 크기 및 Safe Area 정보 접근을 위한 GeometryReader
+private var geometry: GeometryProxy {
+    // 이 부분은 실제로는 GeometryReader 내부에서 접근해야 하므로
+    // 임시로 화면 크기를 사용
+    struct MockGeometry: GeometryProxy {
+        var size: CGSize { UIScreen.main.bounds.size }
+        var safeAreaInsets: EdgeInsets { 
+            EdgeInsets(top: 44, leading: 0, bottom: 34, trailing: 0) 
+        }
+        subscript<T>(anchor: Anchor<T>) -> T { fatalError() }
+        func frame(in coordinateSpace: CoordinateSpace) -> CGRect { .zero }
+    }
+    return MockGeometry()
 }
 
 private var addressBarView: some View {
@@ -411,6 +487,7 @@ private func onAppearHandler() {
         TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
     }
     TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
+    TabPersistenceManager.debugMessages.append("키보드 처리 시스템 활성화")
 }
 
 private func onURLChange(url: URL?) {
@@ -585,6 +662,9 @@ private func onContentTap() {
             showAddressBar = false
             isTextFieldFocused = false
             allowTopOverlap = true
+            
+            // 키보드 강제 숨김
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         } else {
             showAddressBar = true
             allowTopOverlap = false
@@ -609,9 +689,16 @@ private func onTextFieldTap() {
 private func onTextFieldFocusChange(focused: Bool) {
     if focused {
         ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+        TabPersistenceManager.debugMessages.append("주소창 포커스 획득")
     } else {
         textFieldSelectedAll = false
-        TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+        
+        // 키보드 강제 숨김
+        DispatchQueue.main.async {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        
+        TabPersistenceManager.debugMessages.append("주소창 포커스 해제 + 키보드 숨김")
     }
 }
 
@@ -620,7 +707,13 @@ private func onTextFieldSubmit() {
         currentState.currentURL = url
         TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
     }
+    
     isTextFieldFocused = false
+    
+    // 키보드 즉시 숨김
+    DispatchQueue.main.async {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
 }
 
 private func onToolbarTap() {
@@ -790,7 +883,15 @@ private func getNetworkErrorMessage(for error: Error, url: String) -> (title: St
         return nil
     }
 }
+```
 
+}
+
+// MARK: - 키보드 정보 구조체
+struct KeyboardInfo {
+let height: CGFloat
+let duration: Double
+let isVisible: Bool
 }
 
 // MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
