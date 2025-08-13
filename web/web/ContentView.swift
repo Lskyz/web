@@ -69,12 +69,8 @@ struct ContentView: View {
     private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
     private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
-    @State private var kbVisible: Bool = false
-
     var body: some View {
-        // ★ 키보드 표시/숨김 노티 감지 + 키보드 회피 인셋 무시 + 기존 체인 유지
-        let base = mainContentView
-            .ignoresSafeArea(.keyboard, edges: .bottom) // ✅ 항상: SwiftUI 키보드 회피 인셋 차단
+        mainContentView
             .onAppear(perform: onAppearHandler)
             .onReceive(currentState.$currentURL, perform: onURLChange)
             .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
@@ -84,30 +80,8 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
             .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
             .fullScreenCover(isPresented: $showDebugView, content: debugView)
-            // ✅ 키보드 표시/숨김 상태 수신
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                kbVisible = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                kbVisible = false
-            }
-
-        // ★ 핵심: 키보드가 보일 때는 오버레이(레이아웃 여백 추가 안 함),
-        //         숨을 때는 기존 safeAreaInset(레이아웃 여백 추가) 사용
-        Group {
-            if kbVisible {
-                base
-                    .overlay(alignment: .bottom) {
-                        bottomUIContent()
-                    }
-            } else {
-                base
-                    .safeAreaInset(edge: .bottom, content: bottomUIContent)
-            }
-        }
+            .safeAreaInset(edge: .bottom, content: bottomUIContent)
     }
-    
-    // 
     
     // MARK: - 컴포넌트 분해
     
@@ -820,3 +794,4 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
 extension Notification.Name {
     static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
 }
+ 이코드에 키보드 내려갔을때 키보드만없어지고 그자리에 흰여백생기는이유있어? 주소창은그렇고 게시판검색창은 잘안그러던데
