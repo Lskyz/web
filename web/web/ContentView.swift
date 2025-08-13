@@ -92,28 +92,37 @@ struct ContentView: View {
         // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
         .ignoresSafeArea(.keyboard, edges: .bottom)
 
-        // ✅ 키보드 프레임 변경에 맞춰 이동 높이 계산
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-            guard
-                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-            else { return }
+        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
+.onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+    guard
+        let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+        let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+    else { return }
 
-            // 현재 키 윈도우 기준 "실제 키보드가 차지하는 높이"
-            let keyWindow = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
+    // 현재 키 윈도우
+    let window = UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .flatMap { $0.windows }
+        .first { $0.isKeyWindow }
 
-            let screenH  = keyWindow?.bounds.height ?? UIScreen.main.bounds.height
-            let bottomSA = keyWindow?.safeAreaInsets.bottom ?? 0
-            let visibleH = max(0, screenH - endFrame.origin.y)   // 화면에서 키보드가 차지한 높이
-            let effective = max(0, visibleH - bottomSA)          // 안전영역 제외 실제 영향
+    let bounds   = window?.bounds ?? UIScreen.main.bounds
+    // 좌표계를 윈도우 기준으로 변환
+    let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
+    // 화면과 키보드의 실제 겹치는 높이
+    let overlap  = max(0, bounds.intersection(kbFrame).height)
+    let bottomSA = window?.safeAreaInsets.bottom ?? 0
 
-            withAnimation(.easeInOut(duration: duration)) {
-                keyboardHeight = effective
-            }
-        }
+    // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
+    let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
+
+    withAnimation(.easeInOut(duration: duration)) {
+        keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
+    }
+}
+
+// ✅ 완전 숨김 이벤트에서 확정적으로 0
+.onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+    keyboardHeight = 0
 }
     
     // MARK: - 컴포넌트 분해
