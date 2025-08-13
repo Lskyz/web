@@ -1,11 +1,9 @@
 //
 //  CustomWebView.swift
 //
-//  ✅ 스마트 주소창 & 한글 에러 메시지와 완벽 연동
-//  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
-//  🔄 WKNavigationDelegate는 WebViewDataModel로 이동됨
-//  ✨ 제스처와 하단 버튼 완벽 동기화 - 커스텀 제스처로 해결!
-//  🌐 SPA 네비게이션 훅 추가 - 네이버 카페 등 SPA 지원
+//  ✅ 네이버 카페 특화 SPA 네비게이션 + 로그인 리다이렉트 필터링
+//  🎯 네이버 카페의 복잡한 SPA 구조 완벽 대응
+//  🔒 로그인 관련 임시 페이지 히스토리 제외
 //
 
 import SwiftUI
@@ -23,7 +21,6 @@ extension Notification.Name {
     static let WebViewDownloadFinish   = Notification.Name("WebViewDownloadFinish")
     static let WebViewDownloadFailed   = Notification.Name("WebViewDownloadFailed")
 }
-
 
 // MARK: - CustomWebView (UIViewRepresentable)
 struct CustomWebView: UIViewRepresentable {
@@ -50,15 +47,14 @@ struct CustomWebView: UIViewRepresentable {
         // 사용자 스크립트/메시지 핸들러
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
-        // ✨ 데스크탑 모드 스크립트 항상 주입 (내부에서 조건 확인)
         controller.addUserScript(makeDesktopModeScript())
-        // 🌐 SPA 네비게이션 감지 스크립트 추가
-        controller.addUserScript(makeSPANavigationScript())
+        // 🎯 강화된 SPA 네비게이션 스크립트 (네이버 카페 특화)
+        controller.addUserScript(makeEnhancedSPANavigationScript())
         controller.add(context.coordinator, name: "playVideo")
-        // ✨ 확대/축소 메시지 핸들러 추가
         controller.add(context.coordinator, name: "setZoom")
-        // 🌐 SPA 네비게이션 메시지 핸들러 추가
         controller.add(context.coordinator, name: "spaNavigation")
+        // 🎯 네이버 카페 전용 메시지 핸들러 추가
+        controller.add(context.coordinator, name: "naverCafeNavigation")
         config.userContentController = controller
 
         // ✨ 다운로드 지원 (iOS 14+)
@@ -69,7 +65,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         
-        // 🎯 네이티브 제스처 완전 비활성화 - 동기화 문제 해결의 핵심!
+        // 🎯 네이티브 제스처 완전 비활성화
         webView.allowsBackForwardNavigationGestures = false
         
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
@@ -84,15 +80,15 @@ struct CustomWebView: UIViewRepresentable {
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
 
-        // ✨ Delegate 연결 (NavigationDelegate는 DataModel이 담당)
+        // ✨ Delegate 연결
         webView.uiDelegate = context.coordinator
         context.coordinator.webView = webView
-        stateModel.webView = webView  // 이때 자동으로 dataModel.navigationDelegate 설정됨
+        stateModel.webView = webView
         
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
 
-        // 🎯 커스텀 제스처 추가 - 완벽한 동기화!
+        // 🎯 커스텀 제스처 추가
         context.coordinator.setupCustomGestures(for: webView)
 
         // Pull to Refresh
@@ -107,8 +103,6 @@ struct CustomWebView: UIViewRepresentable {
 
         // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
         context.coordinator.setupLoadingObservers(for: webView)
-        
-        // 🎯 네비게이션 상태 KVO 제거됨 - 이제 완전히 우리 시스템만으로 관리!
 
         // 초기 로드
         if let url = stateModel.currentURL {
@@ -169,7 +163,7 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - updateUIView
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 연결 상태 확인 및 재연결 (NavigationDelegate는 DataModel이 담당하므로 제거)
+        // 연결 상태 확인 및 재연결
         if uiView.uiDelegate !== context.coordinator {
             uiView.uiDelegate = context.coordinator
         }
@@ -191,9 +185,8 @@ struct CustomWebView: UIViewRepresentable {
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
-        // 🎯 네비게이션 옵저버 제거됨 - 이제 웹뷰 상태 무시
 
-        // 스크롤/델리게이트 해제 (NavigationDelegate는 DataModel이 관리하므로 제거)
+        // 스크롤/델리게이트 해제
         uiView.scrollView.delegate = nil
         uiView.uiDelegate = nil
         coordinator.webView = nil
@@ -207,21 +200,21 @@ struct CustomWebView: UIViewRepresentable {
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
-        // 🌐 SPA 네비게이션 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "naverCafeNavigation")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 🌐 SPA 네비게이션 감지 스크립트 (새로 추가)
-    private func makeSPANavigationScript() -> WKUserScript {
+    // MARK: - 🎯 강화된 SPA 네비게이션 스크립트 (네이버 카페 특화)
+    private func makeEnhancedSPANavigationScript() -> WKUserScript {
         let scriptSource = """
-        // 🌐 SPA 네비게이션 감지 및 히스토리 동기화 스크립트
+        // 🎯 강화된 SPA 네비게이션 감지 (네이버 카페 특화)
         (function() {
             'use strict';
             
-            console.log('🌐 SPA 네비게이션 훅 초기화');
+            console.log('🎯 강화된 SPA 네비게이션 훅 초기화 (네이버 카페 특화)');
             
             // 원본 History API 메서드들 백업
             const originalPushState = history.pushState;
@@ -235,25 +228,107 @@ struct CustomWebView: UIViewRepresentable {
                 state: history.state
             };
             
-            // 네이티브로 SPA 네비게이션 알림
-            function notifySPANavigation(type, url, title, state) {
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
-                    window.webkit.messageHandlers.spaNavigation.postMessage({
-                        type: type,              // 'push', 'replace', 'pop'
-                        url: url,
-                        title: title || document.title,
-                        state: state,
-                        timestamp: Date.now(),
-                        userAgent: navigator.userAgent,
-                        referrer: document.referrer
-                    });
-                    console.log(`🌐 SPA ${type}: ${url}`);
+            // 🔒 로그인/리다이렉트 관련 URL 패턴 (히스토리에서 제외)
+            const EXCLUDE_PATTERNS = [
+                /\\/login/i,
+                /\\/signin/i,
+                /\\/auth/i,
+                /\\/oauth/i,
+                /\\/sso/i,
+                /\\/redirect/i,
+                /\\/callback/i,
+                /\\/nid\\.naver\\.com/i,
+                /\\/accounts\\.google\\.com/i,
+                /\\/facebook\\.com\\/login/i,
+                /\\/twitter\\.com\\/oauth/i,
+                /returnUrl=/i,
+                /redirect_uri=/i,
+                /continue=/i
+            ];
+            
+            // 🎯 네이버 카페 특수 URL 패턴
+            const NAVER_CAFE_PATTERNS = {
+                // 카페 홈: https://cafe.naver.com/cafename
+                cafeHome: /\\/cafe\\.naver\\.com\\/[^/]+\\/?$/,
+                
+                // 게시판 목록: https://cafe.naver.com/cafename/MenuId/BoardType
+                boardList: /\\/cafe\\.naver\\.com\\/[^/]+\\/\\d+\\/\\d+/,
+                
+                // 게시글: https://cafe.naver.com/cafename/ArticleId
+                article: /\\/cafe\\.naver\\.com\\/[^/]+\\/\\d+$/,
+                
+                // iframe 내부 네비게이션
+                iframe: /\\/ArticleRead\\.nhn/i,
+                iframeList: /\\/ArticleList\\.nhn/i,
+                
+                // 모바일 카페
+                mobile: /\\/m\\.cafe\\.naver\\.com/i
+            };
+            
+            // URL이 제외 대상인지 확인
+            function shouldExcludeFromHistory(url) {
+                return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
+            }
+            
+            // 네이버 카페 URL 분석
+            function analyzeNaverCafeURL(url) {
+                const urlObj = new URL(url, window.location.origin);
+                const fullURL = urlObj.href;
+                
+                for (const [type, pattern] of Object.entries(NAVER_CAFE_PATTERNS)) {
+                    if (pattern.test(fullURL)) {
+                        return {
+                            type: type,
+                            isCafe: true,
+                            shouldTrack: !shouldExcludeFromHistory(fullURL)
+                        };
+                    }
+                }
+                
+                return {
+                    type: 'unknown',
+                    isCafe: false,
+                    shouldTrack: !shouldExcludeFromHistory(fullURL)
+                };
+            }
+            
+            // 네이티브로 네비게이션 알림
+            function notifyNavigation(type, url, title, state, cafeInfo) {
+                const analysis = analyzeNaverCafeURL(url);
+                
+                // 🔒 제외 대상은 알림하지 않음
+                if (!analysis.shouldTrack) {
+                    console.log(`🔒 히스토리 제외: ${url} (${type})`);
+                    return;
+                }
+                
+                const message = {
+                    type: type,
+                    url: url,
+                    title: title || document.title,
+                    state: state,
+                    timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
+                    referrer: document.referrer,
+                    cafeInfo: analysis,
+                    shouldExclude: !analysis.shouldTrack
+                };
+                
+                // 네이버 카페 전용 핸들러로 전송
+                if (analysis.isCafe && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.naverCafeNavigation) {
+                    window.webkit.messageHandlers.naverCafeNavigation.postMessage(message);
+                    console.log(`🎯 네이버 카페 ${type}: ${analysis.type} | ${url}`);
+                } 
+                // 일반 SPA 핸들러로 전송
+                else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
+                    console.log(`🌐 일반 SPA ${type}: ${url}`);
                 }
             }
             
             // pushState 훅 (새 페이지 추가)
             history.pushState = function(state, title, url) {
-                console.log('🌐 SPA pushState 감지:', url);
+                console.log('🎯 강화된 pushState 감지:', url);
                 
                 // 원본 메서드 실행
                 const result = originalPushState.call(this, state, title, url);
@@ -268,10 +343,10 @@ struct CustomWebView: UIViewRepresentable {
                         state: state
                     };
                     
-                    // 약간의 지연 후 제목 업데이트 (SPA에서 제목이 늦게 바뀔 수 있음)
+                    // 약간의 지연 후 제목 업데이트 및 알림
                     setTimeout(() => {
-                        notifySPANavigation('push', newURL, document.title, state);
-                    }, 100);
+                        notifyNavigation('push', newURL, document.title, state);
+                    }, 150); // 네이버 카페는 제목 변경이 늦을 수 있음
                 }
                 
                 return result;
@@ -279,7 +354,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // replaceState 훅 (현재 페이지 교체)
             history.replaceState = function(state, title, url) {
-                console.log('🌐 SPA replaceState 감지:', url);
+                console.log('🎯 강화된 replaceState 감지:', url);
                 
                 const result = originalReplaceState.call(this, state, title, url);
                 
@@ -293,8 +368,8 @@ struct CustomWebView: UIViewRepresentable {
                     };
                     
                     setTimeout(() => {
-                        notifySPANavigation('replace', newURL, document.title, state);
-                    }, 100);
+                        notifyNavigation('replace', newURL, document.title, state);
+                    }, 150);
                 }
                 
                 return result;
@@ -302,7 +377,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // popstate 이벤트 감지 (뒤로가기/앞으로가기)
             window.addEventListener('popstate', function(event) {
-                console.log('🌐 SPA popstate 감지:', window.location.href);
+                console.log('🎯 강화된 popstate 감지:', window.location.href);
                 
                 const newURL = window.location.href;
                 if (newURL !== currentSPAState.url) {
@@ -313,16 +388,15 @@ struct CustomWebView: UIViewRepresentable {
                         state: event.state
                     };
                     
-                    // popstate는 이미 URL이 변경된 상태이므로 즉시 알림
                     setTimeout(() => {
-                        notifySPANavigation('pop', newURL, document.title, event.state);
-                    }, 50);
+                        notifyNavigation('pop', newURL, document.title, event.state);
+                    }, 100);
                 }
             });
             
-            // 해시 변경 감지 (#fragment 변경)
+            // 해시 변경 감지
             window.addEventListener('hashchange', function(event) {
-                console.log('🌐 SPA hashchange 감지:', window.location.href);
+                console.log('🎯 강화된 hashchange 감지:', window.location.href);
                 
                 const newURL = window.location.href;
                 if (newURL !== currentSPAState.url) {
@@ -334,47 +408,111 @@ struct CustomWebView: UIViewRepresentable {
                     };
                     
                     setTimeout(() => {
-                        notifySPANavigation('hash', newURL, document.title, history.state);
-                    }, 50);
+                        notifyNavigation('hash', newURL, document.title, history.state);
+                    }, 100);
                 }
             });
             
-            // 제목 변경 감지 (MutationObserver 사용)
+            // 🎯 네이버 카페 iframe 감지 (특수 처리)
+            function setupNaverCafeIframeDetection() {
+                // iframe 내부 네비게이션 감지
+                const checkIframes = () => {
+                    document.querySelectorAll('iframe').forEach(iframe => {
+                        try {
+                            if (iframe.contentWindow && iframe.contentWindow.location) {
+                                const iframeURL = iframe.contentWindow.location.href;
+                                if (NAVER_CAFE_PATTERNS.iframe.test(iframeURL) || NAVER_CAFE_PATTERNS.iframeList.test(iframeURL)) {
+                                    console.log('🎯 네이버 카페 iframe 감지:', iframeURL);
+                                    
+                                    // iframe 내부의 pushState/replaceState도 후킹
+                                    if (iframe.contentWindow.history && !iframe.contentWindow.__spa_hooked) {
+                                        iframe.contentWindow.__spa_hooked = true;
+                                        
+                                        const iframeOriginalPushState = iframe.contentWindow.history.pushState;
+                                        iframe.contentWindow.history.pushState = function(state, title, url) {
+                                            console.log('🎯 iframe pushState:', url);
+                                            const result = iframeOriginalPushState.call(this, state, title, url);
+                                            
+                                            setTimeout(() => {
+                                                const fullURL = new URL(url || iframe.contentWindow.location.href, iframe.contentWindow.location.origin).href;
+                                                notifyNavigation('iframe_push', fullURL, iframe.contentDocument?.title || title, state);
+                                            }, 200);
+                                            
+                                            return result;
+                                        };
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // Cross-origin iframe은 접근 불가 (정상)
+                        }
+                    });
+                };
+                
+                // 주기적으로 iframe 체크
+                setInterval(checkIframes, 2000);
+                
+                // DOM 변화 감지로 새 iframe 체크
+                if (window.MutationObserver) {
+                    const observer = new MutationObserver(() => {
+                        setTimeout(checkIframes, 500);
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                }
+            }
+            
+            // 제목 변경 감지 (강화된 버전)
             if (window.MutationObserver) {
                 const titleObserver = new MutationObserver(function(mutations) {
                     mutations.forEach(function(mutation) {
                         if (mutation.type === 'childList' && document.title !== currentSPAState.title) {
-                            console.log('🌐 SPA 제목 변경 감지:', document.title);
+                            console.log('🎯 강화된 제목 변경 감지:', document.title);
                             currentSPAState.title = document.title;
                             
-                            // 제목만 변경된 경우 알림 (URL은 그대로)
-                            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
-                                window.webkit.messageHandlers.spaNavigation.postMessage({
+                            // 제목만 변경된 경우
+                            const analysis = analyzeNaverCafeURL(window.location.href);
+                            if (analysis.shouldTrack) {
+                                const message = {
                                     type: 'title',
                                     url: window.location.href,
                                     title: document.title,
                                     state: history.state,
-                                    timestamp: Date.now()
-                                });
+                                    timestamp: Date.now(),
+                                    cafeInfo: analysis
+                                };
+                                
+                                if (analysis.isCafe && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.naverCafeNavigation) {
+                                    window.webkit.messageHandlers.naverCafeNavigation.postMessage(message);
+                                } else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
+                                }
                             }
                         }
                     });
                 });
                 
-                // title 태그 변경 감지
+                // title 태그와 body 변경 모두 감지
                 const titleElement = document.querySelector('title');
                 if (titleElement) {
                     titleObserver.observe(titleElement, { childList: true, subtree: true });
                 }
+                titleObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
             }
             
-            console.log('✅ SPA 네비게이션 훅 설정 완료');
+            // 페이지 로드 완료 후 네이버 카페 특수 처리 시작
+            if (document.readyState === 'complete') {
+                setupNaverCafeIframeDetection();
+            } else {
+                window.addEventListener('load', setupNaverCafeIframeDetection);
+            }
+            
+            console.log('✅ 강화된 SPA 네비게이션 훅 설정 완료 (네이버 카페 특화)');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
-    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (조건부 실행)
+    // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (기존 유지)
     private func makeDesktopModeScript() -> WKUserScript {
         let scriptSource = """
         // ✨ 데스크탑 모드 관리 스크립트
@@ -502,7 +640,6 @@ struct CustomWebView: UIViewRepresentable {
             // 데스크탑 모드 해제 (페이지 새로고침 필요)
             function removeDesktopMode() {
                 window.desktopModeApplied = false;
-                // 모바일 모드로 돌아가려면 페이지 새로고침이 필요
                 console.log('📱 모바일 모드로 전환 (새로고침 필요)');
             }
             
@@ -632,7 +769,7 @@ struct CustomWebView: UIViewRepresentable {
         try? session.setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    // MARK: - Coordinator (WKNavigationDelegate 제거됨, UIGestureRecognizerDelegate 추가)
+    // MARK: - Coordinator
     class Coordinator: NSObject, WKUIDelegate, UIScrollViewDelegate, WKScriptMessageHandler, UIGestureRecognizerDelegate {
 
         var parent: CustomWebView
@@ -657,43 +794,38 @@ struct CustomWebView: UIViewRepresentable {
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
         private var progressObserver: NSKeyValueObservation?
-        
-        // 🎯 네비게이션 상태 KVO 제거됨 - 이제 웹뷰 상태 무시!
 
         init(_ parent: CustomWebView) { 
             self.parent = parent 
-            self.lastDesktopMode = parent.stateModel.isDesktopMode  // 초기값 설정
+            self.lastDesktopMode = parent.stateModel.isDesktopMode
         }
 
         deinit {
             removeLoadingObservers(for: webView)
-            // 🎯 네비게이션 옵저버 제거됨 - 이제 웹뷰 상태 무시
         }
         
-        // MARK: - 🎯 커스텀 제스처 설정 (핵심!)
+        // MARK: - 🎯 커스텀 제스처 설정
         
         func setupCustomGestures(for webView: WKWebView) {
-            // ✨ 커스텀 뒤로가기 제스처 (왼쪽 가장자리)
             let backGesture = UIScreenEdgePanGestureRecognizer(
                 target: self, 
                 action: #selector(handleBackGesture(_:))
             )
             backGesture.edges = .left
-            backGesture.delegate = self  // 충돌 방지용
+            backGesture.delegate = self
             webView.addGestureRecognizer(backGesture)
             self.backGesture = backGesture
             
-            // ✨ 커스텀 앞으로가기 제스처 (오른쪽 가장자리)
             let forwardGesture = UIScreenEdgePanGestureRecognizer(
                 target: self,
                 action: #selector(handleForwardGesture(_:))
             )
             forwardGesture.edges = .right
-            forwardGesture.delegate = self  // 충돌 방지용
+            forwardGesture.delegate = self
             webView.addGestureRecognizer(forwardGesture)
             self.forwardGesture = forwardGesture
             
-            TabPersistenceManager.debugMessages.append("🎯 커스텀 제스처 설정 완료 - 동기화 문제 해결!")
+            TabPersistenceManager.debugMessages.append("🎯 강화된 커스텀 제스처 설정 완료")
         }
         
         func removeCustomGestures(from webView: WKWebView) {
@@ -707,56 +839,50 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 🎯 커스텀 제스처 핸들러들 (동기화 문제 완전 해결!)
+        // MARK: - 🎯 커스텀 제스처 핸들러들
         
         @objc func handleBackGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
             guard gesture.state == .ended else { return }
             
-            // 최소 이동 거리 체크 (실수 방지)
             let translation = gesture.translation(in: gesture.view)
             guard translation.x > 50 else { return }
             
-            // 🎯 우리 시스템으로 직접 처리 - 동기화 문제 완전 해결!
             if parent.stateModel.canGoBack {
                 parent.stateModel.goBack()
-                TabPersistenceManager.debugMessages.append("👆 커스텀 뒤로가기 제스처 (동기화 완벽!)")
+                TabPersistenceManager.debugMessages.append("👆 강화된 뒤로가기 제스처")
             }
         }
         
         @objc func handleForwardGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
             guard gesture.state == .ended else { return }
             
-            // 최소 이동 거리 체크
             let translation = gesture.translation(in: gesture.view)
-            guard translation.x < -50 else { return }  // 오른쪽에서 왼쪽으로
+            guard translation.x < -50 else { return }
             
             if parent.stateModel.canGoForward {
                 parent.stateModel.goForward()
-                TabPersistenceManager.debugMessages.append("👆 커스텀 앞으로가기 제스처 (동기화 완벽!)")
+                TabPersistenceManager.debugMessages.append("👆 강화된 앞으로가기 제스처")
             }
         }
         
-        // MARK: - UIGestureRecognizerDelegate (제스처 충돌 방지)
+        // MARK: - UIGestureRecognizerDelegate
         
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 스크롤과는 동시 인식 허용
             if otherGestureRecognizer is UIPanGestureRecognizer && gestureRecognizer is UIScreenEdgePanGestureRecognizer {
-                return false  // 화면 가장자리 제스처는 우선권
+                return false
             }
             return true
         }
         
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 우리 커스텀 제스처가 우선권
             return gestureRecognizer is UIScreenEdgePanGestureRecognizer
         }
         
-        // ✨ 사용자 에이전트 업데이트 메서드 (데스크탑 모드용)
+        // ✨ 사용자 에이전트 업데이트 메서드
         func updateUserAgentIfNeeded() {
             guard let webView = webView else { return }
             
             if parent.stateModel.isDesktopMode {
-                // ✨ 강력한 데스크탑 사용자 에이전트 (Windows Chrome)
                 let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 webView.customUserAgent = desktopUA
             } else {
@@ -768,19 +894,15 @@ struct CustomWebView: UIViewRepresentable {
         func updateDesktopModeIfNeeded() {
             guard let webView = webView else { return }
             
-            // 사용자 에이전트 업데이트
             updateUserAgentIfNeeded()
             
-            // ✨ 데스크탑 모드 변경 시 JavaScript로 즉시 토글
             if parent.stateModel.isDesktopMode != lastDesktopMode {
                 lastDesktopMode = parent.stateModel.isDesktopMode
                 
-                // JavaScript 함수 호출로 즉시 적용
                 let script = "if (window.toggleDesktopMode) { window.toggleDesktopMode(\(parent.stateModel.isDesktopMode)); }"
                 webView.evaluateJavaScript(script) { result, error in
                     if let error = error {
                         print("데스크탑 모드 토글 실패: \(error)")
-                        // 실패 시 페이지 새로고침으로 폴백
                         if let currentURL = self.parent.stateModel.currentURL {
                             webView.load(URLRequest(url: currentURL))
                         }
@@ -793,7 +915,6 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
         func setupLoadingObservers(for webView: WKWebView) {
-            // isLoading 상태 관찰
             loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let isLoading = change.newValue ?? false
@@ -805,19 +926,16 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
 
-            // ✅ 진행률 관찰 추가 (단순화 - 모든 변화 반영)
             progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let progress = change.newValue ?? 0.0
 
                 DispatchQueue.main.async {
-                    // ✅ 모든 진행률 변화를 반영
                     let newProgress = max(0.0, min(1.0, progress))
                     self.parent.stateModel.loadingProgress = newProgress
                 }
             }
 
-            // URL 변경 관찰
             urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
                 guard let self = self, let newURL = change.newValue, let url = newURL else { return }
 
@@ -830,7 +948,6 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
 
-            // 제목 변경 관찰
             titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
                 guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
 
@@ -850,10 +967,8 @@ struct CustomWebView: UIViewRepresentable {
             titleObserver = nil
             progressObserver = nil
         }
-        
-        // 🎯 네비게이션 상태 KVO 메서드들 제거됨 - 이제 웹뷰 상태 완전 무시!
 
-        // MARK: - JS → 네이티브 메시지 처리
+        // MARK: - 🎯 강화된 JS 메시지 처리 (네이버 카페 특화)
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -863,16 +978,14 @@ struct CustomWebView: UIViewRepresentable {
                     }
                 }
             } else if message.name == "setZoom" {
-                // ✨ 줌 레벨 업데이트 메시지 처리
                 if let data = message.body as? [String: Any],
                    let zoom = data["zoom"] as? Double {
                     DispatchQueue.main.async {
-                        // 줌 레벨을 StateModel에 전달 (UI 슬라이더 업데이트용)
                         self.parent.stateModel.currentZoomLevel = zoom
                     }
                 }
             } else if message.name == "spaNavigation" {
-                // 🌐 SPA 네비게이션 메시지 처리 (새로 추가)
+                // 🌐 일반 SPA 네비게이션 처리
                 if let data = message.body as? [String: Any],
                    let type = data["type"] as? String,
                    let urlString = data["url"] as? String,
@@ -880,9 +993,15 @@ struct CustomWebView: UIViewRepresentable {
                     
                     let title = data["title"] as? String ?? ""
                     let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
+                    let shouldExclude = data["shouldExclude"] as? Bool ?? false
                     
                     DispatchQueue.main.async {
-                        // SPA 네비게이션 처리를 DataModel에 위임
+                        // 🔒 제외 대상이면 처리하지 않음
+                        if shouldExclude {
+                            TabPersistenceManager.debugMessages.append("🔒 히스토리 제외: \(urlString) (일반 SPA)")
+                            return
+                        }
+                        
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
                             url: url,
@@ -890,7 +1009,44 @@ struct CustomWebView: UIViewRepresentable {
                             timestamp: timestamp
                         )
                         
-                        TabPersistenceManager.debugMessages.append("🌐 SPA \(type): \(urlString)")
+                        TabPersistenceManager.debugMessages.append("🌐 일반 SPA \(type): \(urlString)")
+                    }
+                }
+            } else if message.name == "naverCafeNavigation" {
+                // 🎯 네이버 카페 전용 네비게이션 처리
+                if let data = message.body as? [String: Any],
+                   let type = data["type"] as? String,
+                   let urlString = data["url"] as? String,
+                   let url = URL(string: urlString) {
+                    
+                    let title = data["title"] as? String ?? ""
+                    let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
+                    let shouldExclude = data["shouldExclude"] as? Bool ?? false
+                    
+                    // 네이버 카페 정보 추출
+                    var cafeType = "unknown"
+                    if let cafeInfo = data["cafeInfo"] as? [String: Any],
+                       let detectedType = cafeInfo["type"] as? String {
+                        cafeType = detectedType
+                    }
+                    
+                    DispatchQueue.main.async {
+                        // 🔒 제외 대상이면 처리하지 않음
+                        if shouldExclude {
+                            TabPersistenceManager.debugMessages.append("🔒 히스토리 제외: \(urlString) (네이버 카페)")
+                            return
+                        }
+                        
+                        // 🎯 네이버 카페 특화 처리
+                        self.parent.stateModel.dataModel.handleNaverCafeNavigation(
+                            type: type,
+                            url: url,
+                            title: title,
+                            timestamp: timestamp,
+                            cafeType: cafeType
+                        )
+                        
+                        TabPersistenceManager.debugMessages.append("🎯 네이버카페 \(type)(\(cafeType)): \(urlString)")
                     }
                 }
             }
@@ -914,16 +1070,14 @@ struct CustomWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
 
-        // MARK: 네비게이션 명령 (🎯 완전히 우리 시스템으로 통합!)
+        // MARK: 네비게이션 명령
         @objc func reloadWebView() { 
             webView?.reload()
         }
         @objc func goBack() { 
-            // 🎯 이제 이것도 우리 시스템을 통해 처리!
             parent.stateModel.goBack()
         }
         @objc func goForward() { 
-            // 🎯 이제 이것도 우리 시스템을 통해 처리!
             parent.stateModel.goForward()
         }
 
@@ -932,32 +1086,27 @@ struct CustomWebView: UIViewRepresentable {
             parent.onScroll?(scrollView.contentOffset.y)
         }
 
-        // ✅ SSL 인증서 경고 처리 (수정됨 - 정상 사이트는 자동 통과)
+        // ✅ SSL 인증서 경고 처리
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
 
             let host = challenge.protectionSpace.host
 
-            // 서버 신뢰성 검증 (SSL/TLS)
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
 
-                // ✅ 먼저 시스템 기본 검증 시도
                 guard let serverTrust = challenge.protectionSpace.serverTrust else {
                     completionHandler(.performDefaultHandling, nil)
                     return
                 }
 
-                // ✅ 최신 API 사용 (iOS 13+)
                 var error: CFError?
                 let isValid = SecTrustEvaluateWithError(serverTrust, &error)
 
                 if isValid {
-                    // ✅ 시스템이 신뢰하는 인증서 - 자동 허용
                     let credential = URLCredential(trust: serverTrust)
                     completionHandler(.useCredential, credential)
                     return
                 }
 
-                // ❌ 시스템 검증 실패 - 사용자에게 묻기
                 TabPersistenceManager.debugMessages.append("⚠️ SSL 인증서 문제: \(host)")
 
                 DispatchQueue.main.async {
@@ -972,18 +1121,15 @@ struct CustomWebView: UIViewRepresentable {
                         preferredStyle: .alert
                     )
 
-                    // 무시하고 방문
                     alert.addAction(UIAlertAction(title: "무시하고 방문", style: .destructive) { _ in
                         let credential = URLCredential(trust: serverTrust)
                         completionHandler(.useCredential, credential)
                         TabPersistenceManager.debugMessages.append("🔓 SSL 경고 무시: \(host)")
                     })
 
-                    // 취소 (안전한 선택)
                     alert.addAction(UIAlertAction(title: "취소", style: .cancel) { _ in
                         completionHandler(.cancelAuthenticationChallenge, nil)
 
-                        // SSL 에러 알림 전송
                         if let tabID = self.parent.stateModel.tabID {
                             NotificationCenter.default.post(
                                 name: Notification.Name("webViewDidFailLoad"),
@@ -1002,11 +1148,9 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
 
-            // 다른 인증 방법은 기본 처리
             completionHandler(.performDefaultHandling, nil)
         }
 
-        // ✨ 최상위 뷰컨트롤러 찾기 (SSL 알림용)
         private func topMostViewController() -> UIViewController? {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
                   let window = windowScene.windows.first,
@@ -1018,8 +1162,6 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: - 새 창 요청 처리
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            
-            // ✅ 모든 새 창 요청은 현재 탭에서 열기
             webView.load(navigationAction.request)
             return nil
         }
@@ -1159,5 +1301,3 @@ enum CookieSyncManager {
         }
     }
 }
-
-// ✨ SilentAudioPlayer와 AVPlayerView는 avp.swift에 정의되어 있으므로 여기서는 제거됨
