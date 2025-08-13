@@ -2,6 +2,7 @@
 //  WebViewDataModel.swift
 //  히스토리/세션 관리 + WKNavigationDelegate 전담 모듈
 //  🎯 **웹뷰 네이티브 상태 완전 독립 - 오직 우리 데이터만으로 네비게이션 관리!**
+//  🌐 **SPA 네비게이션 지원 추가 - 네이버 카페 등 SPA 사이트 완벽 대응!**
 //
 
 import Foundation
@@ -24,9 +25,9 @@ struct PageRecord: Codable, Identifiable, Hashable {
         self.lastAccessed = Date()
     }
     
-    mutating func updateTitle(_ newTitle: String) {
-        if !newTitle.isEmpty {
-            title = newTitle
+    mutating func updateTitle(_ title: String) {
+        if !title.isEmpty {
+            title = title
         }
         lastAccessed = Date()
     }
@@ -105,6 +106,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
     
+    // 🌐 SPA 네비게이션 상태 관리 (새로 추가)
+    private var isSPANavigation: Bool = false
+    private var lastSPANavigationTime: Date?
+    private var spaNavigationBuffer: [(type: String, url: URL, title: String, timestamp: Double)] = []
+    
     // 전역 방문기록
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
@@ -136,11 +142,159 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템
+    // MARK: - 🌐 SPA 네비게이션 처리 (새로 추가)
+    
+    func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double) {
+        // 🌐 SPA 네비게이션 플래그 설정
+        isSPANavigation = true
+        lastSPANavigationTime = Date()
+        
+        // 중복 방지: 짧은 시간 내 같은 URL은 무시
+        if let lastEntry = spaNavigationBuffer.last,
+           lastEntry.url == url,
+           abs(timestamp - lastEntry.timestamp) < 100 { // 100ms 내 중복 무시
+            return
+        }
+        
+        // SPA 네비게이션 버퍼에 추가
+        spaNavigationBuffer.append((type: type, url: url, title: title, timestamp: timestamp))
+        
+        // 버퍼 크기 제한 (최대 10개)
+        if spaNavigationBuffer.count > 10 {
+            spaNavigationBuffer.removeFirst()
+        }
+        
+        dbg("🌐 SPA \(type) 감지: \(url.absoluteString) | '\(title)'")
+        
+        // SPA 네비게이션 타입별 처리
+        switch type {
+        case "push":
+            // 새 페이지 추가 (일반적인 네비게이션)
+            handleSPAPushState(url: url, title: title)
+            
+        case "replace":
+            // 현재 페이지 교체 (URL만 변경, 히스토리 추가 안함)
+            handleSPAReplaceState(url: url, title: title)
+            
+        case "pop", "hash":
+            // 뒤로가기/앞으로가기 또는 해시 변경
+            handleSPAPopState(url: url, title: title)
+            
+        case "title":
+            // 제목만 변경
+            updateCurrentPageTitle(title)
+            
+        default:
+            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
+        }
+        
+        // 전역 히스토리에도 추가 (중복 방지)
+        if type != "title" && !Self.globalHistory.contains(where: { $0.url == url }) {
+            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+        }
+        
+        // 일정 시간 후 SPA 플래그 해제 (지연 처리)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isSPANavigation = false
+        }
+    }
+    
+    private func handleSPAPushState(url: URL, title: String) {
+        // push는 새로운 페이지 기록 추가 (일반 네비게이션과 동일)
+        
+        // 현재 위치 이후의 forward 기록 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+        }
+        
+        let newRecord = PageRecord(url: url, title: title)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // 최대 50개 유지
+        if pageHistory.count > 50 {
+            pageHistory.removeFirst()
+            currentPageIndex -= 1
+        }
+        
+        updateNavigationState()
+        dbg("🌐 SPA 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    private func handleSPAReplaceState(url: URL, title: String) {
+        // replace는 현재 페이지 기록 교체 (히스토리 개수 변경 없음)
+        
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
+            // 현재 페이지가 없으면 새로 추가
+            handleSPAPushState(url: url, title: title)
+            return
+        }
+        
+        // 현재 페이지 기록 교체
+        var updatedRecord = pageHistory[currentPageIndex]
+        updatedRecord = PageRecord(url: url, title: title)
+        pageHistory[currentPageIndex] = updatedRecord
+        
+        dbg("🌐 SPA 페이지 교체: '\(updatedRecord.title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    private func handleSPAPopState(url: URL, title: String) {
+        // pop은 히스토리 내에서 이동 (뒤로가기/앞으로가기)
+        
+        // 현재 히스토리에서 해당 URL 찾기
+        if let foundIndex = pageHistory.firstIndex(where: { $0.url == url }) {
+            // 히스토리 내 이동
+            currentPageIndex = foundIndex
+            
+            // 제목 업데이트
+            var updatedRecord = pageHistory[currentPageIndex]
+            updatedRecord.updateTitle(title)
+            updatedRecord.updateAccess()
+            pageHistory[currentPageIndex] = updatedRecord
+            
+            updateNavigationState()
+            dbg("🌐 SPA 히스토리 이동: '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            
+            // StateModel URL 동기화
+            stateModel?.syncCurrentURL(url)
+        } else {
+            // 히스토리에 없는 URL이면 새로 추가
+            handleSPAPushState(url: url, title: title)
+        }
+    }
+    
+    // 🌐 SPA 네비게이션 활성 상태 확인
+    private func isSPANavigationActive() -> Bool {
+        if isSPANavigation {
+            return true
+        }
+        
+        // 시간 기반 체크 (1초 이내)
+        if let lastTime = lastSPANavigationTime {
+            let elapsed = Date().timeIntervalSince(lastTime)
+            return elapsed < 1.0
+        }
+        
+        return false
+    }
+    
+    // MARK: - 새로운 페이지 기록 시스템 (SPA 지원 강화)
     
     func addNewPage(url: URL, title: String = "") {
         // ✅ 히스토리 네비게이션 중인지 체크
         if isHistoryNavigationActive() {
+            return
+        }
+        
+        // 🌐 SPA 네비게이션 중인지 체크 (SPA가 처리 중이면 무시)
+        if isSPANavigationActive() {
+            dbg("🌐 SPA 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
             return
         }
         
@@ -311,6 +465,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         swipeConfirmationTimer = nil
         redirectionChain.removeAll()
         redirectionStartTime = nil
+        
+        // 🌐 SPA 상태도 리셋
+        isSPANavigation = false
+        lastSPANavigationTime = nil
+        spaNavigationBuffer.removeAll()
     }
     
     func isHistoryNavigationActive() -> Bool {
@@ -370,10 +529,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return nil
     }
     
-    // MARK: - 페이지 추가 여부 결정 로직
+    // MARK: - 페이지 추가 여부 결정 로직 (SPA 지원 강화)
     
     private func shouldAddPageToHistory(finalURL: URL) -> Bool {
         if isHistoryNavigationActive() {
+            return false
+        }
+        
+        // 🌐 SPA 네비게이션 중이면 추가하지 않음 (SPA가 직접 처리)
+        if isSPANavigationActive() {
+            dbg("🌐 SPA 네비게이션 활성 중 - 히스토리 추가 건너뜀")
             return false
         }
         
