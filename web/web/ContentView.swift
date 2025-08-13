@@ -11,7 +11,6 @@ struct VisualEffectBlur: UIViewRepresentable {
 var blurStyle: UIBlurEffect.Style
 var cornerRadius: CGFloat = 0
 
-```
 func makeUIView(context: Context) -> UIVisualEffectView {
     let effect = UIBlurEffect(style: blurStyle)
     let v = UIVisualEffectView(effect: effect)
