@@ -67,7 +67,7 @@ struct CustomWebView: UIViewRepresentable {
         // 🎯 네이티브 제스처 완전 비활성화
         webView.allowsBackForwardNavigationGestures = false
         
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        webView.scrollView.contentInsetAdjustmentBehavior = .naver
         webView.scrollView.decelerationRate = .normal
 
         // ✅ 하단 UI 겹치기를 위한 투명 처리
@@ -75,7 +75,7 @@ struct CustomWebView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isOpaque = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic // .never → .automatic
+        webView.scrollView.contentInsetAdjustmentBehavior = .never 
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInset = .zero
         webView.scrollView.scrollIndicatorInsets = .zero
@@ -766,14 +766,37 @@ struct CustomWebView: UIViewRepresentable {
         private var titleObserver: NSKeyValueObservation?
         private var progressObserver: NSKeyValueObservation?
 
-        init(_ parent: CustomWebView) { 
-            self.parent = parent 
-            self.lastDesktopMode = parent.stateModel.isDesktopMode
-        }
+        init(_ parent: CustomWebView) {
+    self.parent = parent
+    self.lastDesktopMode = parent.stateModel.isDesktopMode
+    super.init()
+    NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleKeyboardChange(_:)),
+        name: UIResponder.keyboardWillChangeFrameNotification,
+        object: nil
+    )
+}
 
-        deinit {
-            removeLoadingObservers(for: webView)
-        }
+        // ✅ 2) deinit 교체
+deinit {
+    removeLoadingObservers(for: webView)
+    NotificationCenter.default.removeObserver(self)
+}
+@objc private func handleKeyboardChange(_ n: Notification) {
+    guard let wv = webView,
+          let end = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+    else { return }
+
+    let screenH = wv.window?.bounds.height ?? UIScreen.main.bounds.height
+    let visibleH = max(0, screenH - end.origin.y)
+
+    // ✅ 키보드가 완전히 사라진 순간, 남아 있는 하단 인셋 제거
+    if visibleH == 0 {
+        wv.scrollView.contentInset = .zero
+        wv.scrollView.scrollIndicatorInsets = .zero
+    }
+}
         
         // MARK: - 🎯 커스텀 제스처 설정
         
