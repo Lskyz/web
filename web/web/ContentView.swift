@@ -11,7 +11,6 @@ struct VisualEffectBlur: UIViewRepresentable {
 var blurStyle: UIBlurEffect.Style
 var cornerRadius: CGFloat = 0
 
-
 func makeUIView(context: Context) -> UIVisualEffectView {
     let effect = UIBlurEffect(style: blurStyle)
     let v = UIVisualEffectView(effect: effect)
@@ -26,7 +25,6 @@ func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
     uiView.backgroundColor = .clear
 }
 
-
 }
 
 /// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
@@ -34,7 +32,6 @@ struct ContentView: View {
 // MARK: - 속성 정의
 @Binding var tabs: [WebTab]
 @Binding var selectedTabIndex: Int
-
 
 @State private var inputURL: String = ""
 @FocusState private var isTextFieldFocused: Bool
@@ -792,6 +789,7 @@ private func getNetworkErrorMessage(for error: Error, url: String) -> (title: St
     }
 }
 
+
 }
 
 // MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
@@ -800,7 +798,7 @@ static var defaultValue: CGFloat = 0
 static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-// ✨ WebView 에러 처리를 위한 NotificationCenter 확장
-extension Notification.Name {
-static let webViewDidFailLoad = Notification.Name(“webViewDidFailLoad”)
-}
+// ✨ WebView 에러 처리를 위한 NotificationCenter 확장 (이미 다른 파일에서 정의됨)
+// extension Notification.Name {
+//     static let webViewDidFailLoad = Notification.Name(“webViewDidFailLoad”)
+// }
