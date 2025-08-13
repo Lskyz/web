@@ -5,6 +5,7 @@
 //  ✨ 데스크탑 모드 강화: JS 주입으로 강제 데스크탑 환경 구현
 //  🔄 WKNavigationDelegate는 WebViewDataModel로 이동됨
 //  ✨ 제스처와 하단 버튼 완벽 동기화 - 커스텀 제스처로 해결!
+//  🌐 SPA 네비게이션 훅 추가 - 네이버 카페 등 SPA 지원
 //
 
 import SwiftUI
@@ -51,9 +52,13 @@ struct CustomWebView: UIViewRepresentable {
         controller.addUserScript(makeVideoScript())
         // ✨ 데스크탑 모드 스크립트 항상 주입 (내부에서 조건 확인)
         controller.addUserScript(makeDesktopModeScript())
+        // 🌐 SPA 네비게이션 감지 스크립트 추가
+        controller.addUserScript(makeSPANavigationScript())
         controller.add(context.coordinator, name: "playVideo")
         // ✨ 확대/축소 메시지 핸들러 추가
         controller.add(context.coordinator, name: "setZoom")
+        // 🌐 SPA 네비게이션 메시지 핸들러 추가
+        controller.add(context.coordinator, name: "spaNavigation")
         config.userContentController = controller
 
         // ✨ 다운로드 지원 (iOS 14+)
@@ -202,9 +207,171 @@ struct CustomWebView: UIViewRepresentable {
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
+        // 🌐 SPA 네비게이션 메시지 핸들러 제거
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
+    }
+
+    // MARK: - 🌐 SPA 네비게이션 감지 스크립트 (새로 추가)
+    private func makeSPANavigationScript() -> WKUserScript {
+        let scriptSource = """
+        // 🌐 SPA 네비게이션 감지 및 히스토리 동기화 스크립트
+        (function() {
+            'use strict';
+            
+            console.log('🌐 SPA 네비게이션 훅 초기화');
+            
+            // 원본 History API 메서드들 백업
+            const originalPushState = history.pushState;
+            const originalReplaceState = history.replaceState;
+            
+            // 현재 상태 추적
+            let currentSPAState = {
+                url: window.location.href,
+                title: document.title,
+                timestamp: Date.now(),
+                state: history.state
+            };
+            
+            // 네이티브로 SPA 네비게이션 알림
+            function notifySPANavigation(type, url, title, state) {
+                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                    window.webkit.messageHandlers.spaNavigation.postMessage({
+                        type: type,              // 'push', 'replace', 'pop'
+                        url: url,
+                        title: title || document.title,
+                        state: state,
+                        timestamp: Date.now(),
+                        userAgent: navigator.userAgent,
+                        referrer: document.referrer
+                    });
+                    console.log(`🌐 SPA ${type}: ${url}`);
+                }
+            }
+            
+            // pushState 훅 (새 페이지 추가)
+            history.pushState = function(state, title, url) {
+                console.log('🌐 SPA pushState 감지:', url);
+                
+                // 원본 메서드 실행
+                const result = originalPushState.call(this, state, title, url);
+                
+                // URL이 실제로 변경되었는지 확인
+                const newURL = new URL(url || window.location.href, window.location.origin).href;
+                if (newURL !== currentSPAState.url) {
+                    currentSPAState = {
+                        url: newURL,
+                        title: title || document.title,
+                        timestamp: Date.now(),
+                        state: state
+                    };
+                    
+                    // 약간의 지연 후 제목 업데이트 (SPA에서 제목이 늦게 바뀔 수 있음)
+                    setTimeout(() => {
+                        notifySPANavigation('push', newURL, document.title, state);
+                    }, 100);
+                }
+                
+                return result;
+            };
+            
+            // replaceState 훅 (현재 페이지 교체)
+            history.replaceState = function(state, title, url) {
+                console.log('🌐 SPA replaceState 감지:', url);
+                
+                const result = originalReplaceState.call(this, state, title, url);
+                
+                const newURL = new URL(url || window.location.href, window.location.origin).href;
+                if (newURL !== currentSPAState.url) {
+                    currentSPAState = {
+                        url: newURL,
+                        title: title || document.title,
+                        timestamp: Date.now(),
+                        state: state
+                    };
+                    
+                    setTimeout(() => {
+                        notifySPANavigation('replace', newURL, document.title, state);
+                    }, 100);
+                }
+                
+                return result;
+            };
+            
+            // popstate 이벤트 감지 (뒤로가기/앞으로가기)
+            window.addEventListener('popstate', function(event) {
+                console.log('🌐 SPA popstate 감지:', window.location.href);
+                
+                const newURL = window.location.href;
+                if (newURL !== currentSPAState.url) {
+                    currentSPAState = {
+                        url: newURL,
+                        title: document.title,
+                        timestamp: Date.now(),
+                        state: event.state
+                    };
+                    
+                    // popstate는 이미 URL이 변경된 상태이므로 즉시 알림
+                    setTimeout(() => {
+                        notifySPANavigation('pop', newURL, document.title, event.state);
+                    }, 50);
+                }
+            });
+            
+            // 해시 변경 감지 (#fragment 변경)
+            window.addEventListener('hashchange', function(event) {
+                console.log('🌐 SPA hashchange 감지:', window.location.href);
+                
+                const newURL = window.location.href;
+                if (newURL !== currentSPAState.url) {
+                    currentSPAState = {
+                        url: newURL,
+                        title: document.title,
+                        timestamp: Date.now(),
+                        state: history.state
+                    };
+                    
+                    setTimeout(() => {
+                        notifySPANavigation('hash', newURL, document.title, history.state);
+                    }, 50);
+                }
+            });
+            
+            // 제목 변경 감지 (MutationObserver 사용)
+            if (window.MutationObserver) {
+                const titleObserver = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        if (mutation.type === 'childList' && document.title !== currentSPAState.title) {
+                            console.log('🌐 SPA 제목 변경 감지:', document.title);
+                            currentSPAState.title = document.title;
+                            
+                            // 제목만 변경된 경우 알림 (URL은 그대로)
+                            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                                window.webkit.messageHandlers.spaNavigation.postMessage({
+                                    type: 'title',
+                                    url: window.location.href,
+                                    title: document.title,
+                                    state: history.state,
+                                    timestamp: Date.now()
+                                });
+                            }
+                        }
+                    });
+                });
+                
+                // title 태그 변경 감지
+                const titleElement = document.querySelector('title');
+                if (titleElement) {
+                    titleObserver.observe(titleElement, { childList: true, subtree: true });
+                }
+            }
+            
+            console.log('✅ SPA 네비게이션 훅 설정 완료');
+        })();
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
     // MARK: - ✨ 데스크탑 모드 강제 JS 스크립트 (조건부 실행)
@@ -702,6 +869,28 @@ struct CustomWebView: UIViewRepresentable {
                     DispatchQueue.main.async {
                         // 줌 레벨을 StateModel에 전달 (UI 슬라이더 업데이트용)
                         self.parent.stateModel.currentZoomLevel = zoom
+                    }
+                }
+            } else if message.name == "spaNavigation" {
+                // 🌐 SPA 네비게이션 메시지 처리 (새로 추가)
+                if let data = message.body as? [String: Any],
+                   let type = data["type"] as? String,
+                   let urlString = data["url"] as? String,
+                   let url = URL(string: urlString) {
+                    
+                    let title = data["title"] as? String ?? ""
+                    let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
+                    
+                    DispatchQueue.main.async {
+                        // SPA 네비게이션 처리를 DataModel에 위임
+                        self.parent.stateModel.dataModel.handleSPANavigation(
+                            type: type,
+                            url: url,
+                            title: title,
+                            timestamp: timestamp
+                        )
+                        
+                        TabPersistenceManager.debugMessages.append("🌐 SPA \(type): \(urlString)")
                     }
                 }
             }
