@@ -19,7 +19,6 @@ struct VisualEffectBlur: UIViewRepresentable {
         v.backgroundColor = .clear
         return v
     }
-    
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
         uiView.effect = UIBlurEffect(style: blurStyle)
         uiView.layer.cornerRadius = cornerRadius
@@ -42,81 +41,59 @@ struct ContentView: View {
     @State private var showAddressBar = false
     @State private var scrollOffset: CGFloat = 0
     @State private var previousOffset: CGFloat = 0
+
     @State private var ignoreAutoHideUntil: Date = .distantPast
     private let focusDebounceSeconds: TimeInterval = 0.5
+
     @State private var lastWebContentOffsetY: CGFloat = 0
+
+    // 상단(Dynamic Island) 기본 보호, 주소창 숨김 상태에서만 상단 겹치기 허용
     @State private var allowTopOverlap: Bool = false
+    
+    // ✨ 에러 처리 및 로딩 상태
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var errorTitle = ""
 
-    // ✨ 추가: 키보드 높이와 하단 UI 높이 관리
-    @State private var keyboardHeight: CGFloat = 0
-    @State private var bottomUIHeight: CGFloat = 0
+    // ============================================================
+    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
+    // ============================================================
+    private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
+    private let barCornerRadius: CGFloat       = 22
+    private let barVPadding: CGFloat           = 12
+    private let iconSize: CGFloat              = 23
+    private let textFont: Font                 = .system(size: 18, weight: .semibold)
+    private let toolbarSpacing: CGFloat        = 22
 
-    // 기존 속성들
-    private let outerHorizontalPadding: CGFloat = 24
-    private let barCornerRadius: CGFloat = 22
-    private let barVPadding: CGFloat = 12
-    private let iconSize: CGFloat = 23
-    private let textFont: Font = .system(size: 18, weight: .semibold)
-    private let toolbarSpacing: CGFloat = 22
-    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial
-    private let glassTintOpacity: CGFloat = 0.25
+    // ✨ 핵심 수정: 가장 투명한 블러 + 흰색 틴트로 은은한 효과
+    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
+    private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
 
     var body: some View {
-        ZStack {
-            mainContentView
-                .onAppear(perform: onAppearHandler)
-                .onReceive(currentState.$currentURL, perform: onURLChange)
-                .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
-                .onReceive(errorNotificationPublisher, perform: onErrorReceived)
-                .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
-                .sheet(isPresented: $showHistorySheet, content: historySheet)
-                .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
-                .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-                .fullScreenCover(isPresented: $showDebugView, content: debugView)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomUIContent()
-                .background(
-                    GeometryReader { geometry in
-                        Color.clear
-                            .onAppear { bottomUIHeight = geometry.size.height }
-                            .onChange(of: geometry.size.height) { newHeight in
-                                bottomUIHeight = newHeight
-                            }
-                    }
-                )
-                // 툴바는 고정, 키보드 높이는 콘텐츠에 반영
-                .animation(.easeInOut(duration: 0.3), value: keyboardHeight)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
-            if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-               let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double {
-                withAnimation(.easeInOut(duration: duration)) {
-                    keyboardHeight = keyboardFrame.height
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { notification in
-            if let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double {
-                withAnimation(.easeInOut(duration: duration)) {
-                    keyboardHeight = 0
-                }
-            }
-        }
+        mainContentView
+            .onAppear(perform: onAppearHandler)
+            .onReceive(currentState.$currentURL, perform: onURLChange)
+            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+            .sheet(isPresented: $showHistorySheet, content: historySheet)
+            .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
+            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+            .fullScreenCover(isPresented: $showDebugView, content: debugView)
+            .safeAreaInset(edge: .bottom, content: bottomUIContent)
     }
-
+    
     // MARK: - 컴포넌트 분해
+    
     private var currentState: WebViewStateModel {
         if tabs.indices.contains(selectedTabIndex) {
             return tabs[selectedTabIndex].stateModel
         } else {
+            // 빈 상태 반환
             return WebViewStateModel()
         }
     }
-
+    
     @ViewBuilder
     private var mainContentView: some View {
         if tabs.indices.contains(selectedTabIndex) {
@@ -125,19 +102,15 @@ struct ContentView: View {
             ZStack {
                 if state.currentURL != nil {
                     webContentView(state: state)
-                        // ✨ 키보드 높이와 툴바 높이를 반영한 동적 패딩
-                        .padding(.bottom, keyboardHeight + bottomUIHeight)
                 } else {
                     dashboardView
-                        .padding(.bottom, keyboardHeight + bottomUIHeight)
                 }
             }
         } else {
             dashboardView
-                .padding(.bottom, keyboardHeight + bottomUIHeight)
         }
     }
-
+    
     @ViewBuilder
     private func webContentView(state: WebViewStateModel) -> some View {
         CustomWebView(
@@ -161,7 +134,7 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onContentTap)
     }
-
+    
     private var dashboardView: some View {
         DashboardView(
             onNavigateToURL: { selectedURL in
@@ -171,7 +144,7 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onContentTap)
     }
-
+    
     private var scrollOffsetOverlay: some View {
         GeometryReader { geometry in
             Color.clear
@@ -181,7 +154,7 @@ struct ContentView: View {
                 )
         }
     }
-
+    
     @ViewBuilder
     private func bottomUIContent() -> some View {
         VStack(spacing: 10) {
@@ -193,7 +166,7 @@ struct ContentView: View {
         }
         .background(Color.clear)
     }
-
+    
     private var addressBarView: some View {
         VStack(spacing: 0) {
             addressBarMainContent
@@ -211,7 +184,7 @@ struct ContentView: View {
         .padding(.horizontal, outerHorizontalPadding)
         .transition(.opacity)
     }
-
+    
     private var addressBarMainContent: some View {
         HStack {
             desktopModeButton
@@ -222,7 +195,7 @@ struct ContentView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, barVPadding)
     }
-
+    
     private var desktopModeButton: some View {
         Button(action: {
             currentState.toggleDesktopMode()
@@ -244,7 +217,7 @@ struct ContentView: View {
         .scaleEffect(currentState.isDesktopMode ? 1.1 : 1.0)
         .animation(.easeInOut(duration: 0.2), value: currentState.isDesktopMode)
     }
-
+    
     @ViewBuilder
     private var loadingOrSecurityIcon: some View {
         if currentState.isLoading {
@@ -258,7 +231,7 @@ struct ContentView: View {
                 .frame(width: 20, height: 20)
         }
     }
-
+    
     private var urlTextField: some View {
         TextField("URL 또는 검색어", text: $inputURL)
             .textFieldStyle(.plain)
@@ -269,10 +242,10 @@ struct ContentView: View {
             .focused($isTextFieldFocused)
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
-            .onSubmit(onTextFieldSubmit)
+            .onSubmit(onTextFieldSubmit)  // ✅ 수정: perform: 레이블 제거
             .overlay(textFieldClearButton)
     }
-
+    
     @ViewBuilder
     private var textFieldClearButton: some View {
         HStack {
@@ -287,7 +260,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private var refreshButton: some View {
         Button(action: {
             if currentState.isLoading {
@@ -304,7 +277,7 @@ struct ContentView: View {
         }
         .frame(width: 24, height: 24)
     }
-
+    
     private var progressBarView: some View {
         ProgressView(value: max(0.0, min(1.0, currentState.loadingProgress)))
             .progressViewStyle(LinearProgressViewStyle(tint: currentState.currentURL?.scheme == "https" ? .green : .secondary))
@@ -313,7 +286,7 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
-
+    
     private var desktopModeControls: some View {
         VStack(spacing: 8) {
             zoomSlider
@@ -322,7 +295,7 @@ struct ContentView: View {
         .transition(.opacity.combined(with: .move(edge: .top)))
         .animation(.easeInOut(duration: 0.3), value: currentState.isDesktopMode)
     }
-
+    
     private var zoomSlider: some View {
         HStack {
             Image(systemName: "minus.magnifyingglass")
@@ -353,7 +326,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 14)
     }
-
+    
     private var zoomPresetButtons: some View {
         HStack(spacing: 12) {
             ForEach([0.5, 0.75, 1.0, 1.5, 2.0], id: \.self) { preset in
@@ -376,7 +349,7 @@ struct ContentView: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
     }
-
+    
     private var toolbarView: some View {
         HStack(spacing: 0) {
             HStack(spacing: toolbarSpacing) {
@@ -397,7 +370,7 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onToolbarTap)
     }
-
+    
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
@@ -406,7 +379,7 @@ struct ContentView: View {
         }
         .disabled(!enabled)
     }
-
+    
     private var glassBackground: some View {
         ZStack {
             VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
@@ -414,15 +387,16 @@ struct ContentView: View {
                 .fill(Color.white.opacity(glassTintOpacity))
         }
     }
-
+    
     private var glassOverlay: some View {
         Group {
             RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75)
             RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25)
         }
     }
-
+    
     // MARK: - 이벤트 핸들러들
+    
     private func onAppearHandler() {
         if let url = currentState.currentURL {
             inputURL = url.absoluteString
@@ -430,11 +404,11 @@ struct ContentView: View {
         }
         TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
     }
-
+    
     private func onURLChange(url: URL?) {
         if let url = url { inputURL = url.absoluteString }
     }
-
+    
     private func onNavigationFinish(_: Void) {
         if let currentRecord = currentState.currentPageRecord {
             let back = currentState.canGoBack ? "가능" : "불가"
@@ -448,15 +422,16 @@ struct ContentView: View {
         TabPersistenceManager.saveTabs(tabs)
         TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
         
-        // 페이지 로드 완료 후 주소창 3초간 자동 표시
+        // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
         if !showAddressBar {
             withAnimation {
                 showAddressBar = true
                 allowTopOverlap = false
             }
             
+            // 3초 후 자동으로 숨기기
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                if showAddressBar && !isTextFieldFocused {
+                if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
                     withAnimation {
                         showAddressBar = false
                         allowTopOverlap = true
@@ -465,11 +440,11 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private var errorNotificationPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: .webViewDidFailLoad)
     }
-
+    
     private func onErrorReceived(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let tabIDString = userInfo["tabID"] as? String,
@@ -501,7 +476,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     @ViewBuilder
     private func alertActions() -> some View {
         Button("확인") { }
@@ -511,11 +486,11 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func alertMessage() -> some View {
         Text(errorMessage)
     }
-
+    
     @ViewBuilder
     private func historySheet() -> some View {
         NavigationView { 
@@ -537,7 +512,7 @@ struct ContentView: View {
             )
         }
     }
-
+    
     @ViewBuilder
     private func tabManagerView() -> some View {
         NavigationView {
@@ -559,14 +534,14 @@ struct ContentView: View {
             )
         }
     }
-
+    
     private var avPlayerBinding: Binding<Bool> {
         Binding(
             get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
             set: { if tabs.indices.contains(selectedTabIndex) { tabs[selectedTabIndex].showAVPlayer = $0 } }
         )
     }
-
+    
     @ViewBuilder
     private func avPlayerView() -> some View {
         if tabs.indices.contains(selectedTabIndex),
@@ -574,12 +549,12 @@ struct ContentView: View {
             AVPlayerView(url: url)
         }
     }
-
+    
     @ViewBuilder
     private func debugView() -> some View {
         DebugLogView()
     }
-
+    
     private func onScrollOffsetChange(offset: CGFloat) {
         if isTextFieldFocused || Date() < ignoreAutoHideUntil {
             previousOffset = offset
@@ -595,7 +570,7 @@ struct ContentView: View {
         }
         previousOffset = offset
     }
-
+    
     private func onContentTap() {
         withAnimation {
             if showAddressBar {
@@ -608,7 +583,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func onTextFieldTap() {
         if !isTextFieldFocused {
             isTextFieldFocused = true
@@ -622,7 +597,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func onTextFieldFocusChange(focused: Bool) {
         if focused {
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
@@ -631,7 +606,7 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
         }
     }
-
+    
     private func onTextFieldSubmit() {
         if let url = fixedURL(from: inputURL) {
             currentState.currentURL = url
@@ -639,7 +614,7 @@ struct ContentView: View {
         }
         isTextFieldFocused = false
     }
-
+    
     private func onToolbarTap() {
         if !showAddressBar {
             withAnimation {
@@ -648,13 +623,15 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func handleDashboardNavigation(_ selectedURL: URL) {
         if tabs.indices.contains(selectedTabIndex) {
+            // 기존 탭에 URL 설정
             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
             tabs[selectedTabIndex].stateModel.loadURLIfReady()
             TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
         } else {
+            // 새 탭 생성
             let newTab = WebTab(url: selectedURL)
             tabs.append(newTab)
             selectedTabIndex = tabs.count - 1
@@ -664,6 +641,7 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - WKWebView 스크롤 콜백 처리 (기존)
     private func handleWebViewScroll(yOffset: CGFloat) {
         if isTextFieldFocused || Date() < ignoreAutoHideUntil {
             lastWebContentOffsetY = yOffset
@@ -684,9 +662,12 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
+    // MARK: - 로컬/사설 IP 주소 감지
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
+        // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
+            // localhost 도메인들
             return host == "localhost" || host.hasSuffix(".local")
         }
         
@@ -695,20 +676,25 @@ struct ContentView: View {
         
         let (a, b, c, d) = (components[0], components[1], components[2], components[3])
         
+        // 유효한 IP 범위 체크
         guard (0...255).contains(a) && (0...255).contains(b) && 
               (0...255).contains(c) && (0...255).contains(d) else { return false }
         
+        // 사설 IP 대역 체크
         return (a == 192 && b == 168) ||                    // 192.168.x.x
                (a == 10) ||                                 // 10.x.x.x
                (a == 172 && (16...31).contains(b)) ||       // 172.16.x.x ~ 172.31.x.x
                (a == 127) ||                                // 127.x.x.x (localhost)
                (a == 169 && b == 254)                       // 169.254.x.x (링크 로컬)
     }
-
+    
+    // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         
+        // 이미 완전한 URL인 경우
         if let url = URL(string: trimmed), url.scheme != nil {
+            // 로컬/사설 IP가 아닌 경우에만 HTTP → HTTPS 자동 전환
             if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 components?.scheme = "https"
@@ -720,22 +706,28 @@ struct ContentView: View {
             return url
         }
         
+        // 도메인처럼 보이는 경우 (점이 있고 공백이 없음)
         if trimmed.contains(".") && !trimmed.contains(" ") {
+            // 로컬/사설 IP인지 확인
             if isLocalOrPrivateIP(trimmed) {
+                // 로컬 주소는 HTTP 사용
                 let httpURL = URL(string: "http://\(trimmed)")
                 TabPersistenceManager.debugMessages.append("🏠 로컬 IP 감지, HTTP 적용: http://\(trimmed)")
                 return httpURL
             } else {
+                // 공인 도메인은 HTTPS 사용 (현대 웹 표준)
                 let httpsURL = URL(string: "https://\(trimmed)")
                 TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
                 return httpsURL
             }
         }
         
+        // 검색어로 처리
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
-
+    
+    // MARK: - ✨ HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환 (간단하게)
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
         
@@ -756,15 +748,18 @@ struct ContentView: View {
             return ("\(statusCode)에러", "페이지 오류가 발생했습니다.")
         }
     }
-
+    
+    // MARK: - ✨ 네트워크 오류 메시지 처리 (default 케이스 제거)
     private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String)? {
         let domain = URL(string: url)?.host ?? "사이트"
         let nsError = error as NSError
         
+        // NSURLError가 아닌 경우 nil 반환 (알림 표시 안함)
         guard nsError.domain == NSURLErrorDomain else {
             return nil
         }
         
+        // ✅ 정의된 특정 에러만 처리, 나머지는 nil 반환
         switch nsError.code {
         case NSURLErrorCannotFindHost:
             return ("주소를 찾을 수 없음 (\(nsError.code))", "\(domain)을(를) 찾을 수 없습니다.")
@@ -783,12 +778,13 @@ struct ContentView: View {
         case NSURLErrorUnsupportedURL:
             return ("지원하지 않는 주소 (\(nsError.code))", "이 주소 형식은 지원하지 않습니다.")
         default:
+            // ✅ default 케이스에서 nil 반환 - 알림 표시 안함, 기록도 안함
             return nil
         }
     }
 }
 
-// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
