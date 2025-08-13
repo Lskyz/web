@@ -11,6 +11,7 @@ struct VisualEffectBlur: UIViewRepresentable {
 var blurStyle: UIBlurEffect.Style
 var cornerRadius: CGFloat = 0
 
+```
 func makeUIView(context: Context) -> UIVisualEffectView {
     let effect = UIBlurEffect(style: blurStyle)
     let v = UIVisualEffectView(effect: effect)
@@ -24,6 +25,7 @@ func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
     uiView.layer.cornerRadius = cornerRadius
     uiView.backgroundColor = .clear
 }
+```
 
 }
 
@@ -33,6 +35,7 @@ struct ContentView: View {
 @Binding var tabs: [WebTab]
 @Binding var selectedTabIndex: Int
 
+```
 @State private var inputURL: String = ""
 @FocusState private var isTextFieldFocused: Bool
 @State private var textFieldSelectedAll = false
@@ -448,7 +451,7 @@ private func onNavigationFinish(_: Void) {
 }
 
 private var errorNotificationPublisher: NotificationCenter.Publisher {
-    NotificationCenter.default.publisher(for: .webViewDidFailLoad)
+    NotificationCenter.default.publisher(for: Notification.Name("webViewDidFailLoad"))
 }
 
 private func onErrorReceived(notification: Notification) {
@@ -789,7 +792,6 @@ private func getNetworkErrorMessage(for error: Error, url: String) -> (title: St
     }
 }
 
-
 }
 
 // MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
@@ -798,7 +800,4 @@ static var defaultValue: CGFloat = 0
 static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-// ✨ WebView 에러 처리를 위한 NotificationCenter 확장 (이미 다른 파일에서 정의됨)
-// extension Notification.Name {
-//     static let webViewDidFailLoad = Notification.Name(“webViewDidFailLoad”)
-// }
+// NotificationCenter 확장은 CustomWebView.swift에서 정의됨
