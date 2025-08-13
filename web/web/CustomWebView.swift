@@ -753,15 +753,9 @@ struct CustomWebView: UIViewRepresentable {
 
         // 🏄‍♂️ 사파리 스타일 제스처 관련
         private var backGesture: UIPanGestureRecognizer?
-        private var forwardGesture: UIPanGestureRecognizer?
-        private var gestureStartPoint: CGPoint = .zero
+        private var isGestureActive: Bool = falseizer?
+        private var forwardGesture: UIScreenEdgePanGestureRecognizer?
         private var isGestureActive: Bool = false
-        private var gestureDirection: GestureDirection = .none
-        
-        // 제스처 방향 열거형
-        enum GestureDirection {
-            case none, back, forward
-        }
 
         // 다운로드 진행률 UI 구성 요소들
         private var overlayContainer: UIVisualEffectView?
@@ -810,23 +804,23 @@ struct CustomWebView: UIViewRepresentable {
         // MARK: - 🏄‍♂️ 사파리 스타일 제스처 설정
         
         func setupSafariStyleGestures(for webView: WKWebView) {
-            // 화면 전체에서 제스처 감지 (사파리처럼)
+            // 화면 전체 팬 제스처 (3등분으로 나누어 인식)
             let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleSafariStylePan(_:)))
             panGesture.delegate = self
             webView.addGestureRecognizer(panGesture)
             self.backGesture = panGesture
             
-            TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 스타일 제스처 설정 완료")
+            TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 스타일 제스처 설정 완료 (화면 3등분)")
         }
         
         func removeSafariStyleGestures(from webView: WKWebView) {
-            if let backGesture = backGesture {
-                webView.removeGestureRecognizer(backGesture)
+            if let gesture = backGesture {
+                webView.removeGestureRecognizer(gesture)
                 self.backGesture = nil
             }
         }
         
-        // MARK: - 🏄‍♂️ 사파리 스타일 팬 제스처 핸들러
+        // MARK: - 🏄‍♂️ 사파리 스타일 제스처 핸들러
         
         @objc func handleSafariStylePan(_ gesture: UIPanGestureRecognizer) {
             guard let webView = gesture.view else { return }
@@ -834,98 +828,93 @@ struct CustomWebView: UIViewRepresentable {
             let translation = gesture.translation(in: webView)
             let velocity = gesture.velocity(in: webView)
             let location = gesture.location(in: webView)
+            let screenWidth = webView.bounds.width
+            let leftZone = screenWidth / 3  // 왼쪽 1/3
+            let rightZone = screenWidth * 2 / 3  // 오른쪽 1/3 시작점
             
             switch gesture.state {
             case .began:
-                gestureStartPoint = location
                 isGestureActive = false
-                gestureDirection = .none
                 
-                // 화면 가장자리에서 시작하는지 확인 (사파리처럼)
-                let edgeThreshold: CGFloat = 20
-                if location.x < edgeThreshold {
-                    // 왼쪽 가장자리 - 뒤로가기
+                // 화면 3등분: 왼쪽 1/3, 가운데 1/3(터치용), 오른쪽 1/3
+                if location.x < leftZone {
+                    // 왼쪽 1/3 영역 - 오른쪽으로 스와이프 시 뒤로가기
                     if parent.stateModel.canGoBack {
-                        gestureDirection = .back
                         isGestureActive = true
-                        
-                        // 가벼운 햅틱 피드백 (시작)
                         let feedback = UISelectionFeedbackGenerator()
                         feedback.selectionChanged()
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 뒤로가기 제스처 시작 (왼쪽 영역)")
                     }
-                } else if location.x > webView.bounds.width - edgeThreshold {
-                    // 오른쪽 가장자리 - 앞으로가기
+                } else if location.x > rightZone {
+                    // 오른쪽 1/3 영역 - 왼쪽으로 스와이프 시 앞으로가기
                     if parent.stateModel.canGoForward {
-                        gestureDirection = .forward
                         isGestureActive = true
-                        
-                        // 가벼운 햅틱 피드백 (시작)
                         let feedback = UISelectionFeedbackGenerator()
                         feedback.selectionChanged()
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 앞으로가기 제스처 시작 (오른쪽 영역)")
                     }
                 }
+                // 가운데 1/3 영역에서는 제스처 무시 (일반 터치용)
                 
             case .changed:
                 guard isGestureActive else { return }
                 
-                let progress = abs(translation.x) / (webView.bounds.width * 0.3) // 30% 당기면 완료
-                let clampedProgress = min(max(progress, 0.0), 1.0)
+                let isLeftZone = location.x < leftZone
+                let progress: CGFloat
                 
-                // 사파리처럼 시각적 피드백 (webView transform)
-                if gestureDirection == .back && translation.x > 0 {
-                    // 오른쪽으로 당기기 (뒤로가기)
-                    let scale = 1.0 - (clampedProgress * 0.05) // 살짝 축소
-                    let translate = translation.x * 0.3 // 부드러운 이동
-                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
-                        .concatenating(CGAffineTransform(translationX: translate, y: 0))
-                    
-                    // 50% 진행 시 중간 햅틱
-                    if clampedProgress > 0.5 && clampedProgress < 0.6 {
-                        let feedback = UIImpactFeedbackGenerator(style: .light)
-                        feedback.impactOccurred()
-                    }
-                    
-                } else if gestureDirection == .forward && translation.x < 0 {
-                    // 왼쪽으로 당기기 (앞으로가기)
-                    let scale = 1.0 - (clampedProgress * 0.05)
-                    let translate = translation.x * 0.3
-                    webView.transform = CGAffineTransform(scaleX: scale, y: scale)
-                        .concatenating(CGAffineTransform(translationX: translate, y: 0))
-                    
-                    // 50% 진행 시 중간 햅틱
-                    if clampedProgress > 0.5 && clampedProgress < 0.6 {
-                        let feedback = UIImpactFeedbackGenerator(style: .light)
-                        feedback.impactOccurred()
-                    }
+                if isLeftZone && translation.x > 0 {
+                    // 왼쪽에서 오른쪽으로 - 뒤로가기
+                    progress = min(translation.x / (webView.bounds.width * 0.4), 1.0)
+                } else if !isLeftZone && translation.x < 0 {
+                    // 오른쪽에서 왼쪽으로 - 앞으로가기
+                    progress = min(abs(translation.x) / (webView.bounds.width * 0.4), 1.0)
+                } else {
+                    progress = 0
+                }
+                
+                // 사파리처럼 시각적 피드백
+                let scale = 1.0 - (progress * 0.05)
+                let translate = translation.x * 0.3
+                webView.transform = CGAffineTransform(scaleX: scale, y: scale)
+                    .concatenating(CGAffineTransform(translationX: translate, y: 0))
+                
+                // 중간 햅틱 (50% 지점)
+                if progress > 0.5 && progress < 0.6 {
+                    let feedback = UIImpactFeedbackGenerator(style: .light)
+                    feedback.impactOccurred()
                 }
                 
             case .ended, .cancelled:
                 guard isGestureActive else { return }
-                
-                let progress = abs(translation.x) / (webView.bounds.width * 0.3)
-                let velocityThreshold: CGFloat = 300
                 
                 // 복원 애니메이션
                 UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) {
                     webView.transform = .identity
                 }
                 
-                // 네비게이션 실행 조건
-                let shouldNavigate = progress > 1.0 || abs(velocity.x) > velocityThreshold
+                let isLeftZone = location.x < leftZone
                 
-                if shouldNavigate {
-                    if gestureDirection == .back && translation.x > 0 {
+                if isLeftZone && translation.x > 0 {
+                    // 뒤로가기 조건
+                    let progress = translation.x / (webView.bounds.width * 0.4)
+                    let shouldNavigate = progress > 0.5 || velocity.x > 500
+                    
+                    if shouldNavigate {
                         parent.stateModel.safariStyleGoBack()
-                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 제스처 뒤로가기")
-                    } else if gestureDirection == .forward && translation.x < 0 {
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 뒤로가기 실행!")
+                    }
+                } else if location.x > rightZone && translation.x < 0 {
+                    // 앞으로가기 조건
+                    let progress = abs(translation.x) / (webView.bounds.width * 0.4)
+                    let shouldNavigate = progress > 0.5 || abs(velocity.x) > 500
+                    
+                    if shouldNavigate {
                         parent.stateModel.safariStyleGoForward()
-                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 제스처 앞으로가기")
+                        TabPersistenceManager.debugMessages.append("🏄‍♂️ 사파리 앞으로가기 실행!")
                     }
                 }
                 
-                // 상태 리셋
                 isGestureActive = false
-                gestureDirection = .none
                 
             default:
                 break
@@ -935,8 +924,7 @@ struct CustomWebView: UIViewRepresentable {
         // MARK: - UIGestureRecognizerDelegate
         
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 스크롤과 동시 인식 허용
-            return true
+            return false // 다른 제스처와 충돌 방지
         }
         
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -944,8 +932,8 @@ struct CustomWebView: UIViewRepresentable {
             
             let velocity = panGesture.velocity(in: gestureRecognizer.view)
             
-            // 수평 이동이 수직 이동보다 큰 경우만 허용 (사파리처럼)
-            return abs(velocity.x) > abs(velocity.y)
+            // 수평 이동이 수직 이동보다 2배 이상 클 때만 허용
+            return abs(velocity.x) > abs(velocity.y) * 2
         }
         
         // ✨ 사용자 에이전트 업데이트 메서드
