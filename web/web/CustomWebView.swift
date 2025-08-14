@@ -3,6 +3,7 @@
 //
 //  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
 //  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
+//  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
 //
 
 import SwiftUI
@@ -23,7 +24,7 @@ class AdvancedPageCache: ObservableObject {
     }
     
     private var pageCache: [String: CachedPage] = [:]
-    private let maxCacheSize = 30 // 캐시 크기 증가
+    private let maxCacheSize = 100 // ✅ 캐시 크기 증가 (히스토리 제한 해제에 맞춰)
     private let cacheQueue = DispatchQueue(label: "pageCache", qos: .userInitiated)
     
     func cachePage(url: URL, snapshot: UIImage, title: String) {
@@ -98,7 +99,7 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
-        controller.addUserScript(makeUnifiedSPANavigationScript())
+        controller.addUserScript(makeEnhancedSPANavigationScript()) // ✅ 새로운 완전형 SPA 훅
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
         controller.add(context.coordinator, name: "spaNavigation")
@@ -268,65 +269,110 @@ struct CustomWebView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 🌐 통합된 SPA 네비게이션 스크립트
-    private func makeUnifiedSPANavigationScript() -> WKUserScript {
+    // MARK: - 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 (새로운 버전)
+    private func makeEnhancedSPANavigationScript() -> WKUserScript {
         let scriptSource = """
-        // 🌐 통합된 SPA 네비게이션 감지
+        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅
         (function() {
             'use strict';
-            
-            console.log('🌐 통합된 SPA 네비게이션 훅 초기화');
-            
+
+            console.log('🌐 완전형 SPA 네비게이션 훅 초기화');
+
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
-            
+
             let currentSPAState = {
                 url: window.location.href,
                 title: document.title,
                 timestamp: Date.now(),
                 state: history.state
             };
-            
+
             const EXCLUDE_PATTERNS = [
                 /\\/login/i, /\\/signin/i, /\\/auth/i, /\\/oauth/i, /\\/sso/i,
                 /\\/redirect/i, /\\/callback/i, /\\/nid\\.naver\\.com/i,
                 /\\/accounts\\.google\\.com/i, /\\/facebook\\.com\\/login/i,
                 /\\/twitter\\.com\\/oauth/i, /returnUrl=/i, /redirect_uri=/i, /continue=/i
             ];
-            
+
             function shouldExcludeFromHistory(url) {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
-            
+
+            // ===== 범용 커뮤니티 패턴 매칭 =====
             function detectSiteType(url) {
                 const urlObj = new URL(url, window.location.origin);
                 const host = urlObj.hostname.toLowerCase();
-                const path = urlObj.pathname.toLowerCase();
-                
+                const path = (urlObj.pathname + urlObj.search + urlObj.hash).toLowerCase();
+
                 let pattern = 'unknown';
-                if (path.match(/\\/[^/]+\\/\\d+\\/\\d+/)) {
-                    pattern = '3level_numeric';
-                } else if (path.match(/\\/[^/]+\\/\\d+$/)) {
+
+                // 숫자형 단일 경로
+                if (path.match(/^\\/\\d+$/)) {
+                    pattern = '1level_numeric';
+                } else if (path.match(/^\\/[^/]+\\/\\d+$/)) {
                     pattern = '2level_numeric';
-                } else if (path.match(/\\/[^/]+\\/[^/]+\\/\\d+/)) {
-                    pattern = '3level_mixed';
-                } else if (path.match(/\\/[^/]+\\/[^/]+$/)) {
-                    pattern = '2level_text';
-                } else if (path.match(/\\/[^/]+$/)) {
-                    pattern = '1level';
+                } else if (path.match(/^\\/[^/]+\\/[^/]+\\/\\d+$/)) {
+                    pattern = '3level_numeric';
                 }
-                
+
+                // 파라미터 기반
+                else if (path.match(/[?&]no=\\d+/)) {
+                    pattern = 'param_no_numeric';
+                } else if (path.match(/[?&]id=[^&]+&no=\\d+/)) {
+                    pattern = 'param_id_no_numeric';
+                } else if (path.match(/[?&]wr_id=\\d+/)) {
+                    pattern = 'param_wrid_numeric';
+                } else if (path.match(/[?&]id=[^&]+&page=\\d+/)) {
+                    pattern = 'param_id_page_numeric';
+                } else if (path.match(/[?&]bo_table=[^&]+&wr_id=\\d+/)) {
+                    pattern = 'param_botable_wrid';
+                }
+
+                // php/html 파일명
+                else if (path.match(/\\/[^/]+\\.php[?#]?/)) {
+                    pattern = 'file_php';
+                } else if (path.match(/\\/[^/]+\\.html[?#]?/)) {
+                    pattern = 'file_html';
+                }
+
+                // 해시 라우팅
+                else if (path.match(/#\\/[^/]+$/)) {
+                    pattern = 'hash_1level';
+                } else if (path.match(/#\\/[^/]+\\/\\d+$/)) {
+                    pattern = 'hash_2level_numeric';
+                } else if (path.match(/#\\/[^/]+\\?[^=]+=/)) {
+                    pattern = 'hash_query';
+                }
+
+                // 쿼리스트링 범용
+                else if (path.match(/\\?[^=]+=[^&]+$/)) {
+                    pattern = 'query_single';
+                } else if (path.match(/\\?[^=]+=[^&]+&[^=]+=[^&]+/)) {
+                    pattern = 'query_multi';
+                }
+
+                // 혼합 숫자+문자
+                else if (path.match(/\\/\\d+\\/[^/]+\\/[^/]+/)) {
+                    pattern = 'numeric_first_mixed';
+                }
+
+                // 루트
+                else if (path === '/' || path === '') {
+                    pattern = 'root';
+                }
+
                 return `${host}_${pattern}`;
             }
-            
+
             function notifyNavigation(type, url, title, state) {
                 if (shouldExcludeFromHistory(url)) {
                     console.log(`🔒 히스토리 제외: ${url} (${type})`);
                     return;
                 }
-                
+
                 const siteType = detectSiteType(url);
-                
+
                 const message = {
                     type: type,
                     url: url,
@@ -338,38 +384,28 @@ struct CustomWebView: UIViewRepresentable {
                     siteType: siteType,
                     shouldExclude: false
                 };
-                
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+
+                if (window.webkit?.messageHandlers?.spaNavigation) {
                     window.webkit.messageHandlers.spaNavigation.postMessage(message);
                     console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
                 }
             }
-            
+
+            // ===== History API 후킹 =====
             history.pushState = function(state, title, url) {
-                console.log('🌐 pushState 감지:', url);
-                const result = originalPushState.call(this, state, title, url);
-                
-                const newURL = new URL(url || window.location.href, window.location.origin).href;
-                if (newURL !== currentSPAState.url) {
-                    currentSPAState = {
-                        url: newURL,
-                        title: title || document.title,
-                        timestamp: Date.now(),
-                        state: state
-                    };
-                    
-                    setTimeout(() => {
-                        notifyNavigation('push', newURL, document.title, state);
-                    }, 150);
-                }
-                
+                const result = originalPushState.apply(this, arguments);
+                handleUrlChange('push', url, title, state);
                 return result;
             };
-            
+
             history.replaceState = function(state, title, url) {
-                console.log('🌐 replaceState 감지:', url);
-                const result = originalReplaceState.call(this, state, title, url);
-                
+                const result = originalReplaceState.apply(this, arguments);
+                handleUrlChange('replace', url, title, state);
+                return result;
+            };
+
+            // ===== URL 변경 처리 =====
+            function handleUrlChange(type, url, title, state) {
                 const newURL = new URL(url || window.location.href, window.location.origin).href;
                 if (newURL !== currentSPAState.url) {
                     currentSPAState = {
@@ -378,52 +414,27 @@ struct CustomWebView: UIViewRepresentable {
                         timestamp: Date.now(),
                         state: state
                     };
-                    
                     setTimeout(() => {
-                        notifyNavigation('replace', newURL, document.title, state);
+                        notifyNavigation(type, newURL, document.title, state);
                     }, 150);
                 }
-                
-                return result;
-            };
-            
-            window.addEventListener('popstate', function(event) {
-                console.log('🌐 popstate 감지:', window.location.href);
-                
-                const newURL = window.location.href;
-                if (newURL !== currentSPAState.url) {
-                    currentSPAState = {
-                        url: newURL,
-                        title: document.title,
-                        timestamp: Date.now(),
-                        state: event.state
-                    };
-                    
-                    setTimeout(() => {
-                        notifyNavigation('pop', newURL, document.title, event.state);
-                    }, 100);
+            }
+
+            // ===== popstate / hashchange 감지 =====
+            window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
+            window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
+
+            // ===== DOM 변경 감지 =====
+            const observer = new MutationObserver(() => {
+                const currentURL = window.location.href;
+                if (currentURL !== currentSPAState.url) {
+                    handleUrlChange('dom', currentURL, document.title, history.state);
                 }
             });
-            
-            window.addEventListener('hashchange', function(event) {
-                console.log('🌐 hashchange 감지:', window.location.href);
-                
-                const newURL = window.location.href;
-                if (newURL !== currentSPAState.url) {
-                    currentSPAState = {
-                        url: newURL,
-                        title: document.title,
-                        timestamp: Date.now(),
-                        state: history.state
-                    };
-                    
-                    setTimeout(() => {
-                        notifyNavigation('hash', newURL, document.title, history.state);
-                    }, 100);
-                }
-            });
-            
-            console.log('✅ 통합된 SPA 네비게이션 훅 설정 완료');
+
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            console.log('✅ 완전형 SPA 네비게이션 훅 설정 완료');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
