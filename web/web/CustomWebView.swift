@@ -1,7 +1,7 @@
 //
 //  CustomWebView.swift
 //
-//  📸 스냅샷 기반 애니메이션 + 커스텀 히스토리 시스템 완전 동기화
+//  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
 //  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
 //
 
@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 import Foundation
 import Security
 
-// MARK: - 고급 페이지 캐시 시스템
+// MARK: - 고급 페이지 캐시 시스템 (부드러운 네비게이션용 강화)
 class AdvancedPageCache: ObservableObject {
     struct CachedPage {
         let snapshot: UIImage
@@ -23,7 +23,7 @@ class AdvancedPageCache: ObservableObject {
     }
     
     private var pageCache: [String: CachedPage] = [:]
-    private let maxCacheSize = 20
+    private let maxCacheSize = 30 // 캐시 크기 증가
     private let cacheQueue = DispatchQueue(label: "pageCache", qos: .userInitiated)
     
     func cachePage(url: URL, snapshot: UIImage, title: String) {
@@ -139,6 +139,9 @@ struct CustomWebView: UIViewRepresentable {
         // 📸 스냅샷 기반 제스처 설정 (커스텀 시스템과 완전 동기화)
         context.coordinator.setupSyncedSwipeGesture(for: webView)
 
+        // 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템 설정
+        context.coordinator.setupCachedPagePreview(for: webView)
+
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(
@@ -182,6 +185,14 @@ struct CustomWebView: UIViewRepresentable {
             context.coordinator,
             selector: #selector(Coordinator.goForward),
             name: .init("WebViewGoForward"),
+            object: nil
+        )
+
+        // 🎯 **새로 추가**: 캐시된 페이지 로드 전 미리보기 옵저버
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.handleShowCachedPageBeforeLoad(_:)),
+            name: .init("ShowCachedPageBeforeLoad"),
             object: nil
         )
 
@@ -241,6 +252,9 @@ struct CustomWebView: UIViewRepresentable {
 
         // 📸 제스처 제거
         coordinator.removeSyncedSwipeGesture(from: uiView)
+
+        // 🎯 캐시된 페이지 미리보기 시스템 해제
+        coordinator.teardownCachedPagePreview()
 
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
@@ -568,6 +582,11 @@ struct CustomWebView: UIViewRepresentable {
         private var swipeDirection: SwipeDirection?
         private var targetPageRecord: PageRecord?
         
+        // 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템
+        private var cachedPreviewContainer: UIView?
+        private var cachedPreviewImageView: UIImageView?
+        private var isShowingCachedPreview = false
+        
         enum SwipeDirection {
             case back    // 뒤로가기 (왼쪽 에지에서)
             case forward // 앞으로가기 (오른쪽 에지에서)
@@ -594,6 +613,130 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             removeLoadingObservers(for: webView)
             NotificationCenter.default.removeObserver(self)
+        }
+
+        // MARK: - 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템
+        
+        func setupCachedPagePreview(for webView: WKWebView) {
+            // 캐시된 페이지 미리보기용 컨테이너 생성
+            let container = UIView()
+            container.backgroundColor = .systemBackground
+            container.isHidden = true
+            container.translatesAutoresizingMaskIntoConstraints = false
+            webView.addSubview(container)
+            
+            NSLayoutConstraint.activate([
+                container.topAnchor.constraint(equalTo: webView.topAnchor),
+                container.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+                container.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
+            ])
+            
+            // 캐시된 이미지뷰
+            let imageView = UIImageView()
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(imageView)
+            
+            NSLayoutConstraint.activate([
+                imageView.topAnchor.constraint(equalTo: container.topAnchor),
+                imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+            
+            self.cachedPreviewContainer = container
+            self.cachedPreviewImageView = imageView
+            
+            print("📸 캐시된 페이지 미리보기 시스템 설정 완료")
+        }
+        
+        func teardownCachedPagePreview() {
+            cachedPreviewContainer?.removeFromSuperview()
+            cachedPreviewContainer = nil
+            cachedPreviewImageView = nil
+            isShowingCachedPreview = false
+        }
+        
+        // 🎯 **핵심**: 히스토리 네비게이션 시 캐시된 페이지 먼저 표시
+        @objc func handleShowCachedPageBeforeLoad(_ notification: Notification) {
+            guard let userInfo = notification.userInfo,
+                  let url = userInfo["url"] as? URL,
+                  let direction = userInfo["direction"] as? String,
+                  let webView = webView,
+                  let container = cachedPreviewContainer,
+                  let imageView = cachedPreviewImageView else { return }
+            
+            // 캐시에서 해당 페이지 찾기
+            if let cachedPage = pageCache.getCachedPage(for: url) {
+                DispatchQueue.main.async {
+                    // 캐시된 이미지 설정
+                    imageView.image = cachedPage.snapshot
+                    
+                    // 미리보기 컨테이너 표시
+                    container.isHidden = false
+                    container.alpha = 0.0
+                    
+                    // 부드럽게 페이드 인
+                    UIView.animate(withDuration: 0.2) {
+                        container.alpha = 1.0
+                    }
+                    
+                    self.isShowingCachedPreview = true
+                    print("📸 캐시된 페이지 즉시 표시: \(cachedPage.title)")
+                    
+                    // 실제 페이지 로딩 완료 시 숨김 처리를 위한 타이머
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.startWatchingForRealPageLoad()
+                    }
+                }
+            } else {
+                print("📸 캐시된 페이지 없음: \(url.absoluteString)")
+                
+                // 캐시가 없으면 로딩 인디케이터 대신 빈 페이지 표시
+                DispatchQueue.main.async {
+                    imageView.image = nil
+                    container.backgroundColor = .systemBackground
+                    container.isHidden = false
+                    container.alpha = 0.0
+                    
+                    UIView.animate(withDuration: 0.1) {
+                        container.alpha = 1.0
+                    }
+                    
+                    self.isShowingCachedPreview = true
+                    
+                    // 빠르게 실제 페이지로 전환
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.hideCachedPreview()
+                    }
+                }
+            }
+        }
+        
+        // 실제 페이지 로딩 완료 감지
+        private func startWatchingForRealPageLoad() {
+            // 로딩이 완료되면 캐시된 미리보기 숨김
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                if self.isShowingCachedPreview && !self.parent.stateModel.isLoading {
+                    self.hideCachedPreview()
+                }
+            }
+        }
+        
+        // 캐시된 미리보기 숨김
+        private func hideCachedPreview() {
+            guard isShowingCachedPreview,
+                  let container = cachedPreviewContainer else { return }
+            
+            UIView.animate(withDuration: 0.3, delay: 0, options: .easeInOut) {
+                container.alpha = 0.0
+            } completion: { _ in
+                container.isHidden = true
+                self.isShowingCachedPreview = false
+                print("📸 캐시된 미리보기 숨김 완료")
+            }
         }
 
         // MARK: - 📸 수정된 제스처 설정 (커스텀 시스템과 완전 동기화)
@@ -1000,15 +1143,23 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정
+        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정 (조용한 새로고침 지원)
         func setupLoadingObservers(for webView: WKWebView) {
             loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
                 guard let self = self else { return }
                 let isLoading = change.newValue ?? false
 
                 DispatchQueue.main.async {
-                    if self.parent.stateModel.isLoading != isLoading {
+                    // 🎯 조용한 새로고침 시에는 로딩 상태 변경하지 않음
+                    if !self.parent.stateModel.isSilentRefresh && self.parent.stateModel.isLoading != isLoading {
                         self.parent.stateModel.isLoading = isLoading
+                    }
+                    
+                    // 🎯 로딩 완료 시 캐시된 미리보기 숨김
+                    if !isLoading && self.isShowingCachedPreview {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self.hideCachedPreview()
+                        }
                     }
                     
                     // 로딩 완료 시 현재 페이지 스냅샷 저장
@@ -1025,8 +1176,11 @@ struct CustomWebView: UIViewRepresentable {
                 let progress = change.newValue ?? 0.0
 
                 DispatchQueue.main.async {
-                    let newProgress = max(0.0, min(1.0, progress))
-                    self.parent.stateModel.loadingProgress = newProgress
+                    // 🎯 조용한 새로고침 시에는 진행률 업데이트하지 않음
+                    if !self.parent.stateModel.isSilentRefresh {
+                        let newProgress = max(0.0, min(1.0, progress))
+                        self.parent.stateModel.loadingProgress = newProgress
+                    }
                 }
             }
 
@@ -1067,7 +1221,7 @@ struct CustomWebView: UIViewRepresentable {
             guard let currentURL = parent.stateModel.currentURL,
                   let title = webView.title else { return }
             
-            // 스냅샷만 캐처 (HTML은 제거)
+            // 스냅샷만 캐시 (HTML은 제거)
             webView.takeSnapshot(with: nil) { [weak self] image, error in
                 guard let self = self, let snapshot = image else { return }
                 
