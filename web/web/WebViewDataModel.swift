@@ -1,7 +1,7 @@
 //
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 + 로그인 리다이렉트 필터링
-//  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
+//  🎯 새로고침 Replace 로직 + 홈 클릭 Forward 스택 제거
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
 //  ✅ 히스토리 개수 제한 해제 (무제한)
 //
@@ -10,10 +10,21 @@ import Foundation
 import SwiftUI
 import WebKit
 
+// MARK: - 네비게이션 타입 정의 (Codable enum으로 타입 안정성 보장)
+enum NavigationType: String, Codable, CaseIterable {
+    case normal = "normal"
+    case reloadSoft = "reloadSoft"
+    case reloadHard = "reloadHard"
+    case navHome = "navHome"
+    case navListFirst = "navListFirst"
+    case spaNavigation = "spaNavigation"
+    case loginRedirect = "loginRedirect"
+}
+
 // MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
 struct PageRecord: Codable, Identifiable, Hashable {
     let id: UUID
-    let url: URL
+    var url: URL // ✅ var로 변경 (새로고침/교체 시 갱신 가능)
     var title: String
     let timestamp: Date
     var lastAccessed: Date
@@ -22,14 +33,16 @@ struct PageRecord: Codable, Identifiable, Hashable {
     var siteType: String?
     var isLoginRelated: Bool = false
     var isTemporary: Bool = false
+    var navigationType: NavigationType = .normal // ✅ Codable enum 사용
     
-    init(url: URL, title: String = "", siteType: String? = nil) {
+    init(url: URL, title: String = "", siteType: String? = nil, navigationType: NavigationType = .normal) {
         self.id = UUID()
         self.url = url
         self.title = title.isEmpty ? (url.host ?? "제목 없음") : title
         self.timestamp = Date()
         self.lastAccessed = Date()
         self.siteType = siteType
+        self.navigationType = String(describing: navigationType)
         
         // 🔒 로그인 관련 URL 자동 감지
         self.isLoginRelated = Self.isLoginRelatedURL(url)
@@ -68,6 +81,35 @@ struct PageRecord: Codable, Identifiable, Hashable {
         ]
         
         return tempPatterns.contains { urlString.contains($0) }
+    }
+    
+    // 🆕 URL 정규화 비교 (새로고침 감지용)
+    static func normalizeURL(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        
+        // HTTPS 우선 정규화
+        if components?.scheme == "http" {
+            components?.scheme = "https"
+        }
+        
+        // 트레일링 슬래시 제거
+        if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
+            components?.path = String(path.dropLast())
+        }
+        
+        // 쿼리 파라미터 정렬
+        if let queryItems = components?.queryItems {
+            components?.queryItems = queryItems.sorted { $0.name < $1.name }
+        }
+        
+        // 해시는 무시 (같은 페이지로 취급)
+        components?.fragment = nil
+        
+        return components?.url?.absoluteString ?? url.absoluteString
+    }
+    
+    func normalizedURL() -> String {
+        return Self.normalizeURL(self.url)
     }
 }
 
@@ -131,6 +173,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     private var historyNavigationStartTime: Date?
     
+    // 🆕 새로고침 윈도 관리 (pushState 잠시 금지용) - 1초로 단축
+    private var isInReloadWindow: Bool = false
+    private var reloadWindowStartTime: Date?
+    private let reloadWindowDuration: TimeInterval = 1.0 // ✅ 2초 → 1초로 단축
+    
     // ✅ 스와이프 제스처 관련
     private var swipeDetectedTargetIndex: Int? = nil
     private var swipeConfirmationTimer: Timer?
@@ -177,37 +224,74 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (네이버 로직을 범용으로 사용)
+    // 🆕 새로고침 윈도 관리
+    private func startReloadWindow() {
+        isInReloadWindow = true
+        reloadWindowStartTime = Date()
+        dbg("🔄 새로고침 윈도 시작 (1초) - SPA replace만 차단")
+        
+        // 자동 해제
+        DispatchQueue.main.asyncAfter(deadline: .now() + reloadWindowDuration) { [weak self] in
+            self?.endReloadWindow()
+        }
+    }
+    
+    private func endReloadWindow() {
+        isInReloadWindow = false
+        reloadWindowStartTime = nil
+        dbg("🔄 새로고침 윈도 종료")
+    }
+    
+    private func isInActiveReloadWindow() -> Bool {
+        guard isInReloadWindow, let startTime = reloadWindowStartTime else { return false }
+        let elapsed = Date().timeIntervalSince(startTime)
+        
+        if elapsed > reloadWindowDuration {
+            endReloadWindow()
+            return false
+        }
+        
+        return true
+    }
+    
+    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (새로고침 로직 추가)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
+        // 🆕 새로고침 윈도에서 replace만 차단 (push는 허용)
+        if isInActiveReloadWindow() && type == "replace" {
+            dbg("🔄 새로고침 윈도 중 SPA replace 무시: \(url.absoluteString)")
+            return
+        }
+        
         // SPA 네비게이션 플래그 설정
         isSPANavigation = true
         lastSPANavigationTime = Date()
         
         dbg("🌐 SPA \(type) 감지: \(siteType) | \(url.absoluteString) | '\(title)'")
         
-        // 기존 네이버 카페 로직을 모든 사이트에 적용
-        switch type {
-        case "push":
-            handleSPAPushState(url: url, title: title, siteType: siteType)
+        // 🆕 새로고침 감지 로직
+        if type == "push" || type == "replace" {
+            if let currentRecord = currentPageRecord,
+               PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
+                // 동일한 정규화 URL → 새로고침으로 처리
+                handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
+                return
+            }
+        }
+        
+        // 🆕 홈 클릭 감지 (사이트 루트로의 이동)
+        let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
+        
+        switch navigationType {
+        case .navHome:
+            handleHomeNavigation(url: url, title: title, siteType: siteType)
             
-        case "replace":
-            handleSPAReplaceState(url: url, title: title, siteType: siteType)
-            
-        case "pop", "hash":
-            handleSPAPopState(url: url, title: title, siteType: siteType)
-            
-        case "iframe_push":
-            handleSPAIframePush(url: url, title: title, siteType: siteType)
-            
-        case "title":
-            updateCurrentPageTitle(title)
-            
-        case "dom": // ✅ 새로 추가된 DOM 변경 감지 타입
-            handleSPADOMChange(url: url, title: title, siteType: siteType)
+        case .reloadSoft, .reloadHard:
+            handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
             
         default:
-            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
+            // 기존 SPA 네비게이션 로직
+            handleRegularSPANavigation(type: type, url: url, title: title, siteType: siteType, navigationType: navigationType)
         }
         
         // 전역 히스토리에도 추가 (중복 및 로그인 관련 제외)
@@ -221,14 +305,111 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    private func handleSPAPushState(url: URL, title: String, siteType: String) {
-        // 🎯 네이버 카페 로직을 모든 사이트에 적용: 복잡한 구조에 대한 정교한 중복 제거
+    // 🆕 네비게이션 타입 감지
+    private func detectNavigationType(url: URL, type: String, siteType: String) -> NavigationType {
+        // 홈 클릭 감지 (루트 경로로의 이동)
+        if url.path == "/" || url.path.isEmpty {
+            if let currentRecord = currentPageRecord,
+               url.host == currentRecord.url.host &&
+               currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
+                return .navHome
+            }
+        }
         
-        // 현재 페이지와 거의 같은 URL인지 확인 (파라미터만 다른 경우)
+        // 리로드 감지 (동일 정규화 URL)
         if let currentRecord = currentPageRecord,
-           areSimilarURLs(currentRecord.url, url) {
-            // 비슷한 URL이면 교체 처리
+           PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
+            return type == "replace" ? .reloadSoft : .reloadHard
+        }
+        
+        // 보드 내 첫 페이지 이동 감지 (같은 호스트, 다른 경로지만 리스트형)
+        if siteType.contains("list") || siteType.contains("page_1") {
+            return .navListFirst
+        }
+        
+        return .normal
+    }
+    
+    // 🆕 새로고침 처리 (무조건 replace, ID 유지)
+    private func handleRefreshNavigation(url: URL, title: String, type: String, siteType: String) {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
+            dbg("❌ 새로고침 실패: 유효하지 않은 현재 인덱스")
+            return
+        }
+        
+        // ✅ 기존 레코드의 ID 유지하며 현재 위치의 페이지 기록을 교체
+        var rec = pageHistory[currentPageIndex]
+        rec.url = url
+        rec.updateTitle(title)
+        rec.siteType = siteType
+        rec.navigationType = (type == "replace") ? .reloadSoft : .reloadHard // ✅ enum 사용
+        pageHistory[currentPageIndex] = rec
+        
+        // 새로고침 윈도 시작
+        startReloadWindow()
+        
+        dbg("🔄 새로고침 감지 - 현재 페이지 교체: '\(title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    // 🆕 홈 클릭 처리 (새 페이지 추가, 기존 세션 유지)
+    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
+        // 🎯 핵심: forward 스택만 제거, 뒤로가기 세션은 완전 보존
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🏠 홈 클릭 - forward 스택 \(removedCount)개 제거 (뒤로가기 보존)")
+        }
+        
+        // 🎯 핵심: 홈을 새 페이지로 추가 (기존과 달리 첫 페이지 이동이 아님)
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        updateNavigationState()
+        dbg("🏠 홈 클릭 - 새 페이지 추가 완료: '\(newRecord.title)' [뒤로가기 \(currentPageIndex)개 가능, 앞으로가기 0개]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    // 기존 SPA 네비게이션 로직 (이름 변경)
+    private func handleRegularSPANavigation(type: String, url: URL, title: String, siteType: String, navigationType: NavigationType) {
+        switch type {
+        case "push":
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: navigationType)
+            
+        case "replace":
             handleSPAReplaceState(url: url, title: title, siteType: siteType)
+            
+        case "pop", "hash":
+            handleSPAPopState(url: url, title: title, siteType: siteType)
+            
+        case "iframe_push":
+            handleSPAIframePush(url: url, title: title, siteType: siteType)
+            
+        case "title":
+            updateCurrentPageTitle(title)
+            
+        case "dom":
+            handleSPADOMChange(url: url, title: title, siteType: siteType)
+            
+        default:
+            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
+        }
+    }
+    
+    private func handleSPAPushState(url: URL, title: String, siteType: String, navigationType: NavigationType) {
+        // ✅ 명확한 replace 기준: 경로는 같고 쿼리만 다른 경우
+        if let currentRecord = currentPageRecord,
+           currentRecord.url.host == url.host,
+           currentRecord.url.path == url.path,
+           currentRecord.url.query != url.query {
+            // 같은 경로에서 쿼리만 변경 → replace 처리
+            handleSPAReplaceState(url: url, title: title, siteType: siteType)
+            dbg("🔄 SPA Push → Replace: 같은 경로, 쿼리만 변경")
             return
         }
         
@@ -237,12 +418,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             pageHistory.removeSubrange((currentPageIndex + 1)...)
         }
         
-        let newRecord = PageRecord(url: url, title: title, siteType: siteType)
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
-        
-        // ✅ 히스토리 크기 제한 제거 (무제한)
-        // 기존: if pageHistory.count > 50 { ... } 제거
         
         updateNavigationState()
         dbg("🌐 SPA 새 페이지: \(siteType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
@@ -253,16 +431,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     private func handleSPAReplaceState(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            handleSPAPushState(url: url, title: title, siteType: siteType)
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
             return
         }
         
-        // 현재 페이지 기록 교체
-        var updatedRecord = pageHistory[currentPageIndex]
-        updatedRecord = PageRecord(url: url, title: title, siteType: siteType)
-        pageHistory[currentPageIndex] = updatedRecord
+        // ✅ 기존 레코드의 ID 유지하며 필드만 업데이트
+        var rec = pageHistory[currentPageIndex]
+        rec.url = url
+        rec.updateTitle(title)
+        rec.siteType = siteType
+        rec.navigationType = .spaNavigation // ✅ enum 사용
+        pageHistory[currentPageIndex] = rec
         
-        dbg("🌐 SPA 페이지 교체: \(siteType) '\(updatedRecord.title)' [ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+        dbg("🌐 SPA 페이지 교체: \(siteType) '\(rec.title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
         
         // StateModel URL 동기화
         stateModel?.syncCurrentURL(url)
@@ -288,47 +469,35 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             stateModel?.syncCurrentURL(url)
         } else {
             // 히스토리에 없으면 새로 추가
-            handleSPAPushState(url: url, title: title, siteType: siteType)
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
         }
     }
     
     private func handleSPAIframePush(url: URL, title: String, siteType: String) {
         // iframe 내부 네비게이션은 보통 게시글 읽기 등이므로 일반 push와 동일하게 처리
-        handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)")
+        handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)", navigationType: .normal)
     }
     
-    // ✅ 새로 추가: DOM 변경 감지 처리
     private func handleSPADOMChange(url: URL, title: String, siteType: String) {
         // DOM 변경으로 인한 URL 변화는 보통 SPA 앱에서 발생
         // popstate나 hashchange와 유사하게 처리
         handleSPAPopState(url: url, title: title, siteType: "dom_\(siteType)")
     }
     
-    // 🌐 네이버 카페 URL 유사성 로직을 범용으로 사용
-    private func areSimilarURLs(_ url1: URL, _ url2: URL) -> Bool {
-        // 같은 호스트인지 확인
-        guard url1.host == url2.host else { return false }
+    // ✅ 개선된 URL 유사성 로직 - 더 명확한 기준
+    private func areSimilarURLs(_ a: URL, _ b: URL) -> Bool {
+        guard a.host == b.host else { return false }
         
-        // 경로 비교 (쿼리 파라미터 제외)
-        let path1 = url1.path
-        let path2 = url2.path
+        // 경로가 동일하면 유사
+        if a.path == b.path { return true }
         
-        // 경로가 완전히 같으면 유사한 것으로 판단
-        if path1 == path2 {
-            return true
-        }
+        // ✅ 리스트/상세 같은 얕은 경로만 유사로 판단 (더 보수적)
+        let componentsA = a.pathComponents.dropFirst() // '/' 제거
+        let componentsB = b.pathComponents.dropFirst()
         
-        // 네이버 카페용 로직을 모든 사이트에 적용
-        let components1 = path1.split(separator: "/")
-        let components2 = path2.split(separator: "/")
-        
-        if components1.count != components2.count {
-            return false
-        }
-        
-        // 첫 번째 컴포넌트가 같고 길이가 짧으면 유사한 페이지로 판단 (네이버 카페 로직)
-        return components1.first == components2.first && 
-               components1.count <= 2 && components2.count <= 2
+        // 첫 번째 경로 컴포넌트만 비교 (예: /board/123 vs /board/456)
+        return componentsA.prefix(1) == componentsB.prefix(1) && 
+               componentsA.count <= 2 && componentsB.count <= 2 // 깊은 경로는 제외
     }
     
     // SPA 네비게이션 활성 상태 확인
@@ -428,6 +597,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             finishLoginRedirectTracking(finalURL: url)
         }
         
+        // 🆕 새로고침 감지 (정규화 URL 비교) - replace 처리로 개선
+        if !pageHistory.isEmpty,
+           let lastRecord = pageHistory.last,
+           PageRecord.normalizeURL(lastRecord.url) == PageRecord.normalizeURL(url) {
+            // 새로고침으로 인한 동일 페이지 → 교체만 수행
+            handleRefreshNavigation(url: url, title: title, type: "hard", siteType: "refresh")
+            return
+        }
+        
         // ✅ 연속 중복 URL 체크 (완전히 같은 URL인 경우 제목만 업데이트)
         if !pageHistory.isEmpty,
            let lastRecord = pageHistory.last,
@@ -446,13 +624,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
-        
-        // ✅ 히스토리 크기 제한 제거 (무제한)
-        // 기존 제한 코드 제거:
-        // if pageHistory.count > 50 {
-        //     pageHistory.removeFirst()
-        //     currentPageIndex -= 1
-        // }
         
         updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
@@ -515,7 +686,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         for (index, record) in pageHistory.enumerated() {
             let marker = index == currentPageIndex ? "👉" : "  "
             let siteInfo = record.siteType != nil ? "[\(record.siteType!)]" : ""
-            dbg("🔄\(marker) [\(index)] \(record.title) \(siteInfo)| \(record.url.absoluteString)")
+            let navType = "[\(record.navigationType)]"
+            dbg("🔄\(marker) [\(index)] \(record.title) \(siteInfo)\(navType) | \(record.url.absoluteString)")
         }
         
         updateNavigationState()
@@ -625,6 +797,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         isInLoginFlow = false
         loginRedirectChain.removeAll()
         loginRedirectStartTime = nil
+        
+        // 🆕 새로고침 윈도 리셋
+        endReloadWindow()
     }
     
     func isHistoryNavigationActive() -> Bool {
@@ -894,8 +1069,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
         let loginState = isInLoginFlow ? "🔒Login" : ""
+        let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState) \(msg)")
     }
 
     // MARK: - 메모리 정리
@@ -904,7 +1080,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 }
 
-// MARK: - 방문기록 페이지 뷰 (기존 유지)
+// MARK: - 방문기록 페이지 뷰 (네비게이션 타입 표시 추가)
 extension WebViewDataModel {
     public struct HistoryPage: View {
         @ObservedObject var dataModel: WebViewDataModel
@@ -946,7 +1122,7 @@ extension WebViewDataModel {
         public var body: some View {
             List {
                 if !sessionHistory.isEmpty {
-                    Section("현재 세션 (\(sessionHistory.count)개)") { // ✅ 개수 표시 추가
+                    Section("현재 세션 (\(sessionHistory.count)개)") {
                         ForEach(sessionHistory) { record in
                             SessionHistoryRowView(
                                 record: record, 
@@ -960,7 +1136,7 @@ extension WebViewDataModel {
                     }
                 }
                 
-                Section("전체 기록 (\(filteredGlobalHistory.count)개)") { // ✅ 개수 표시 추가
+                Section("전체 기록 (\(filteredGlobalHistory.count)개)") {
                     ForEach(filteredGlobalHistory) { item in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -1014,15 +1190,35 @@ extension WebViewDataModel {
     }
 }
 
-// MARK: - 세션 히스토리 행 뷰 (사이트 타입 정보 추가)
+// MARK: - 세션 히스토리 행 뷰 (네비게이션 타입 표시 추가)
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
     
+    private var navigationTypeIcon: String {
+        switch record.navigationType {
+        case .navHome: return "house.fill"
+        case .reloadSoft, .reloadHard: return "arrow.clockwise"
+        case .navListFirst: return "list.bullet"
+        case .spaNavigation: return "sparkles"
+        default: return "circle"
+        }
+    }
+    
+    private var navigationTypeColor: Color {
+        switch record.navigationType {
+        case .navHome: return .green
+        case .reloadSoft, .reloadHard: return .orange
+        case .navListFirst: return .purple
+        case .spaNavigation: return .blue
+        default: return .gray
+        }
+    }
+    
     var body: some View {
         HStack {
-            Image(systemName: isCurrent ? "arrow.right.circle.fill" : "circle")
-                .foregroundColor(isCurrent ? .blue : .gray)
+            Image(systemName: isCurrent ? "arrow.right.circle.fill" : navigationTypeIcon)
+                .foregroundColor(isCurrent ? .blue : navigationTypeColor)
                 .frame(width: 20)
             
             VStack(alignment: .leading, spacing: 2) {
@@ -1040,6 +1236,17 @@ struct SessionHistoryRowView: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Color.orange.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    
+                    // 🆕 네비게이션 타입 표시
+                    if record.navigationType != .normal {
+                        Text(record.navigationType.rawValue)
+                            .font(.caption2)
+                            .foregroundColor(navigationTypeColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(navigationTypeColor.opacity(0.1))
                             .cornerRadius(4)
                     }
                     
