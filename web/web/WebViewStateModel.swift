@@ -1,6 +1,6 @@
 //
 //  WebViewStateModel.swift
-//  🎯 **스냅샷 기반 즉석 네비게이션 + 네트워크 재요청 방지**
+//  🎯 **캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침**
 //
 
 import Foundation
@@ -15,7 +15,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewStateModel (스냅샷 기반 네비게이션)
+// MARK: - WebViewStateModel (캐싱 기반 부드러운 네비게이션)
 final class WebViewStateModel: NSObject, ObservableObject {
 
     var tabID: UUID?
@@ -57,6 +57,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // 📸 즉석 네비게이션 플래그 (네트워크 재요청 방지)
     internal var isInstantNavigation: Bool = false
+    
+    // 🎯 **새로 추가**: 조용한 새로고침 플래그 (로딩 인디케이터 숨김)
+    internal var isSilentRefresh: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -149,14 +152,22 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // MARK: - DataModel과의 통신 메서드들
     
     func handleLoadingStart() {
-        if !isInstantNavigation {
+        // 🎯 조용한 새로고침 시에는 로딩 인디케이터 표시 안함
+        if !isInstantNavigation && !isSilentRefresh {
             isLoading = true
         }
     }
     
     func handleLoadingFinish() {
-        if !isInstantNavigation {
+        // 🎯 조용한 새로고침 종료
+        if !isInstantNavigation && !isSilentRefresh {
             isLoading = false
+        }
+        
+        // 조용한 새로고침 플래그 리셋
+        if isSilentRefresh {
+            isSilentRefresh = false
+            dbg("🤫 조용한 새로고침 완료")
         }
         
         // ✨ 데스크탑 모드일 때 줌 레벨 재적용
@@ -168,9 +179,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func handleLoadingError() {
-        if !isInstantNavigation {
+        if !isInstantNavigation && !isSilentRefresh {
             isLoading = false
         }
+        isSilentRefresh = false
     }
     
     func syncCurrentURL(_ url: URL) {
@@ -193,6 +205,16 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("📸 즉석 네비게이션 시작 - 네트워크 재요청 방지")
         } else {
             dbg("📸 즉석 네비게이션 종료")
+        }
+    }
+    
+    // 🎯 **새로 추가**: 조용한 새로고침 제어 메서드
+    func setSilentRefresh(_ value: Bool) {
+        isSilentRefresh = value
+        if value {
+            dbg("🤫 조용한 새로고침 시작 - 로딩 인디케이터 숨김")
+        } else {
+            dbg("🤫 조용한 새로고침 종료")
         }
     }
     
@@ -270,6 +292,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     func stopLoading() {
         webView?.stopLoading()
         isLoading = false
+        isSilentRefresh = false
         dataModel.resetNavigationFlags()
     }
 
@@ -337,7 +360,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - 🎯 **완전 독립형 네비게이션** (웹뷰 네이티브 히스토리 완전 무시)
+    // MARK: - 🎯 **캐싱 기반 부드러운 히스토리 네비게이션** (완전 새로 구현)
     
     func goBack() {
         guard canGoBack else { 
@@ -345,7 +368,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 히스토리 네비게이션 시 플래그 설정
+        // 🎯 **핵심 수정**: 캐싱 기반 부드러운 네비게이션
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateBack() {
@@ -353,14 +376,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
             currentURL = record.url
             
             if let webView = webView {
-                // 🎯 **핵심**: webView.goBack() 사용 금지! 새 URLRequest로 로드
-                // 📸 **중요**: 즉석 네비게이션이 아닌 경우에만 로드
-                if !isInstantNavigation {
-                    webView.load(URLRequest(url: record.url))
-                    dbg("🎯 뒤로가기: 네이티브 goBack() 대신 새 URLRequest 로드")
-                } else {
-                    dbg("📸 뒤로가기: 즉석 네비게이션으로 네트워크 재요청 생략")
-                }
+                // 📸 **중요**: 캐시 활용 부드러운 로딩
+                performSmoothNavigation(to: record.url, webView: webView, direction: .back)
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
@@ -386,7 +403,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 히스토리 네비게이션 시 플래그 설정
+        // 🎯 **핵심 수정**: 캐싱 기반 부드러운 네비게이션
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateForward() {
@@ -394,14 +411,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
             currentURL = record.url
             
             if let webView = webView {
-                // 🎯 **핵심**: webView.goForward() 사용 금지! 새 URLRequest로 로드
-                // 📸 **중요**: 즉석 네비게이션이 아닌 경우에만 로드
-                if !isInstantNavigation {
-                    webView.load(URLRequest(url: record.url))
-                    dbg("🎯 앞으로가기: 네이티브 goForward() 대신 새 URLRequest 로드")
-                } else {
-                    dbg("📸 앞으로가기: 즉석 네비게이션으로 네트워크 재요청 생략")
-                }
+                // 📸 **중요**: 캐시 활용 부드러운 로딩
+                performSmoothNavigation(to: record.url, webView: webView, direction: .forward)
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
@@ -421,7 +432,33 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션
+    // 🎯 **새로 추가**: 캐싱 기반 부드러운 네비게이션 구현
+    private enum NavigationDirection {
+        case back, forward
+    }
+    
+    private func performSmoothNavigation(to url: URL, webView: WKWebView, direction: NavigationDirection) {
+        // 1️⃣ 조용한 새로고침 플래그 설정 (로딩 인디케이터 숨김)
+        setSilentRefresh(true)
+        
+        // 2️⃣ CustomWebView의 캐시에서 스냅샷 확인 및 즉시 표시 알림
+        NotificationCenter.default.post(
+            name: .init("ShowCachedPageBeforeLoad"),
+            object: nil,
+            userInfo: [
+                "url": url,
+                "direction": direction == .back ? "back" : "forward"
+            ]
+        )
+        
+        // 3️⃣ 백그라운드에서 조용히 실제 페이지 로드
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            webView.load(URLRequest(url: url))
+            self.dbg("🤫 백그라운드 조용한 로드 시작: \(url.absoluteString)")
+        }
+    }
+    
+    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (캐싱 적용)
     
     func safariStyleGoBack(progress: Double = 1.0) {
         guard canGoBack else { return }
@@ -431,9 +468,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
             
-            // 실제 뒤로가기 실행
+            // 실제 뒤로가기 실행 (캐싱 적용)
             goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료 (캐싱)")
         }
     }
     
@@ -445,9 +482,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
             
-            // 실제 앞으로가기 실행
+            // 실제 앞으로가기 실행 (캐싱 적용)
             goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료 (캐싱)")
         }
     }
     
@@ -526,7 +563,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
         let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
         let flagState = isNavigatingFromWebView ? "[🚩FLAG]" : ""
         let instantState = isInstantNavigation ? "[📸INSTANT]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState) \(msg)")
+        let silentState = isSilentRefresh ? "[🤫SILENT]" : ""
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState)\(silentState) \(msg)")
     }
     
     // MARK: - 메모리 정리
