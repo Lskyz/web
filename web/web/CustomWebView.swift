@@ -15,10 +15,12 @@ import UniformTypeIdentifiers
 import Foundation
 import Security
 
-// MARK: - 간단한 페이지 스냅샷 캐시
+// MARK: - 페이지 캐시 (스냅샷 + HTML)
 class SimplePageCache: ObservableObject {
     private var snapshots: [String: UIImage] = [:]
+    private var htmlCache: [String: String] = [:]
     private let maxSnapshots = 10
+    private let maxHTMLCache = 5
     
     func saveSnapshot(for url: String, image: UIImage) {
         snapshots[url] = image
@@ -37,8 +39,26 @@ class SimplePageCache: ObservableObject {
         return snapshots[url]
     }
     
+    func saveHTML(for url: String, html: String) {
+        htmlCache[url] = html
+        
+        if htmlCache.count > maxHTMLCache {
+            let firstKey = htmlCache.keys.first
+            if let key = firstKey {
+                htmlCache.removeValue(forKey: key)
+            }
+        }
+        
+        print("💾 HTML 저장: \(url)")
+    }
+    
+    func getHTML(for url: String) -> String? {
+        return htmlCache[url]
+    }
+    
     func clearAll() {
         snapshots.removeAll()
+        htmlCache.removeAll()
     }
 }
 
@@ -768,6 +788,9 @@ struct CustomWebView: UIViewRepresentable {
             let cardView = UIView()
             cardView.backgroundColor = .systemBackground
             
+            // 캐시 상태 확인
+            let hasCache = pageCache.getHTML(for: record.url.absoluteString) != nil
+            
             // 제목
             let titleLabel = UILabel()
             titleLabel.text = record.title
@@ -786,8 +809,8 @@ struct CustomWebView: UIViewRepresentable {
             urlLabel.translatesAutoresizingMaskIntoConstraints = false
             
             // 아이콘
-            let iconView = UIImageView(image: UIImage(systemName: "safari"))
-            iconView.tintColor = .systemBlue
+            let iconView = UIImageView(image: UIImage(systemName: hasCache ? "bolt.fill" : "safari"))
+            iconView.tintColor = hasCache ? .orange : .systemBlue
             iconView.contentMode = .scaleAspectFit
             iconView.translatesAutoresizingMaskIntoConstraints = false
             
@@ -799,10 +822,19 @@ struct CustomWebView: UIViewRepresentable {
             directionLabel.textAlignment = .center
             directionLabel.translatesAutoresizingMaskIntoConstraints = false
             
+            // 캐시 상태 표시
+            let cacheLabel = UILabel()
+            cacheLabel.text = hasCache ? "⚡ 캐시됨 (빠른 로드)" : "🔄 새로 로드"
+            cacheLabel.font = .systemFont(ofSize: 12, weight: .medium)
+            cacheLabel.textColor = hasCache ? .orange : .gray
+            cacheLabel.textAlignment = .center
+            cacheLabel.translatesAutoresizingMaskIntoConstraints = false
+            
             cardView.addSubview(iconView)
             cardView.addSubview(titleLabel)
             cardView.addSubview(urlLabel)
             cardView.addSubview(directionLabel)
+            cardView.addSubview(cacheLabel)
             
             NSLayoutConstraint.activate([
                 iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
@@ -819,7 +851,10 @@ struct CustomWebView: UIViewRepresentable {
                 urlLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
                 
                 directionLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 20),
-                directionLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
+                directionLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+                
+                cacheLabel.topAnchor.constraint(equalTo: directionLabel.bottomAnchor, constant: 8),
+                cacheLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
             ])
             
             return cardView
@@ -885,11 +920,36 @@ struct CustomWebView: UIViewRepresentable {
                 // 햅틱 피드백
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 
-                // 실제 네비게이션 실행
-                if direction == .back {
-                    self.parent.stateModel.goBack()
+                // 캐시된 HTML이 있으면 바로 로드, 없으면 기존 방식
+                if let targetRecord = self.targetPageRecord,
+                   let cachedHTML = self.pageCache.getHTML(for: targetRecord.url.absoluteString),
+                   let webView = self.webView {
+                    
+                    // 캐시된 HTML 바로 로드 (빠름!)
+                    webView.loadHTMLString(cachedHTML, baseURL: targetRecord.url)
+                    
+                    // StateModel 상태 업데이트
+                    self.parent.stateModel.setNavigatingFromWebView(true)
+                    self.parent.stateModel.currentURL = targetRecord.url
+                    
+                    // DataModel 히스토리 업데이트
+                    if direction == .back {
+                        _ = self.parent.stateModel.dataModel.navigateBack()
+                    } else {
+                        _ = self.parent.stateModel.dataModel.navigateForward()
+                    }
+                    
+                    self.parent.stateModel.setNavigatingFromWebView(false)
+                    print("⚡ 캐시된 HTML 로드: \(targetRecord.title)")
+                    
                 } else {
-                    self.parent.stateModel.goForward()
+                    // 캐시 없으면 기존 방식 (새로 로드)
+                    if direction == .back {
+                        self.parent.stateModel.goBack()
+                    } else {
+                        self.parent.stateModel.goForward()
+                    }
+                    print("🔄 새로 로드")
                 }
                 
                 self.cleanupSwipe()
@@ -1034,13 +1094,21 @@ struct CustomWebView: UIViewRepresentable {
             progressObserver = nil
         }
         
-        // MARK: - 현재 페이지 스냅샷 저장
+        // MARK: - 현재 페이지 스냅샷 + HTML 저장
         private func saveCurrentPageSnapshot(webView: WKWebView) {
             guard let currentURL = parent.stateModel.currentURL else { return }
             
+            // 스냅샷 저장
             webView.takeSnapshot(with: nil) { [weak self] image, error in
                 if let image = image {
                     self?.pageCache.saveSnapshot(for: currentURL.absoluteString, image: image)
+                }
+            }
+            
+            // HTML 저장
+            webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] result, error in
+                if let htmlString = result as? String {
+                    self?.pageCache.saveHTML(for: currentURL.absoluteString, html: htmlString)
                 }
             }
         }
