@@ -1,6 +1,6 @@
 //
 //  WebViewStateModel.swift
-//  🎯 **웹뷰 네이티브 히스토리 완전 제어 - 네이티브 네비게이션 강제 비활성화!**
+//  🎯 **스냅샷 기반 즉석 네비게이션 + 네트워크 재요청 방지**
 //
 
 import Foundation
@@ -15,7 +15,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewStateModel (순수 UI 상태 + 에러/다운로드)
+// MARK: - WebViewStateModel (스냅샷 기반 네비게이션)
 final class WebViewStateModel: NSObject, ObservableObject {
 
     var tabID: UUID?
@@ -35,15 +35,15 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
 
-            // ✅ 웹뷰 로드 조건 개선
+            // ✅ 웹뷰 로드 조건 개선 - 즉석 네비게이션 시 로드하지 않음
             let shouldLoad = url != oldValue && 
                            !dataModel.isRestoringSession &&
                            !isNavigatingFromWebView &&
-                           !dataModel.isHistoryNavigationActive()
+                           !dataModel.isHistoryNavigationActive() &&
+                           !isInstantNavigation // 📸 즉석 네비게이션 시 로드 방지
             
             if shouldLoad {
                 if let webView = webView {
-                    // 🎯 핵심: 새 URLRequest로 완전히 새로 로드 (네이티브 히스토리 무시)
                     webView.load(URLRequest(url: url))
                 } else {
                     dbg("⚠️ 웹뷰가 없어서 로드 불가")
@@ -54,6 +54,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
+    
+    // 📸 즉석 네비게이션 플래그 (네트워크 재요청 방지)
+    internal var isInstantNavigation: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -146,11 +149,15 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // MARK: - DataModel과의 통신 메서드들
     
     func handleLoadingStart() {
-        isLoading = true
+        if !isInstantNavigation {
+            isLoading = true
+        }
     }
     
     func handleLoadingFinish() {
-        isLoading = false
+        if !isInstantNavigation {
+            isLoading = false
+        }
         
         // ✨ 데스크탑 모드일 때 줌 레벨 재적용
         if isDesktopMode {
@@ -161,11 +168,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func handleLoadingError() {
-        isLoading = false
+        if !isInstantNavigation {
+            isLoading = false
+        }
     }
     
     func syncCurrentURL(_ url: URL) {
-        if !isNavigatingFromWebView {
+        if !isNavigatingFromWebView && !isInstantNavigation {
             isNavigatingFromWebView = true
             currentURL = url
             isNavigatingFromWebView = false
@@ -174,6 +183,17 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     func triggerNavigationFinished() {
         navigationDidFinish.send(())
+    }
+    
+    // MARK: - 📸 즉석 네비게이션 제어 메서드
+    
+    func setInstantNavigation(_ value: Bool) {
+        isInstantNavigation = value
+        if value {
+            dbg("📸 즉석 네비게이션 시작 - 네트워크 재요청 방지")
+        } else {
+            dbg("📸 즉석 네비게이션 종료")
+        }
     }
     
     // MARK: - 순수 에러 알림 처리
@@ -334,8 +354,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
             
             if let webView = webView {
                 // 🎯 **핵심**: webView.goBack() 사용 금지! 새 URLRequest로 로드
-                webView.load(URLRequest(url: record.url))
-                dbg("🎯 뒤로가기: 네이티브 goBack() 대신 새 URLRequest 로드")
+                // 📸 **중요**: 즉석 네비게이션이 아닌 경우에만 로드
+                if !isInstantNavigation {
+                    webView.load(URLRequest(url: record.url))
+                    dbg("🎯 뒤로가기: 네이티브 goBack() 대신 새 URLRequest 로드")
+                } else {
+                    dbg("📸 뒤로가기: 즉석 네비게이션으로 네트워크 재요청 생략")
+                }
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
@@ -370,8 +395,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
             
             if let webView = webView {
                 // 🎯 **핵심**: webView.goForward() 사용 금지! 새 URLRequest로 로드
-                webView.load(URLRequest(url: record.url))
-                dbg("🎯 앞으로가기: 네이티브 goForward() 대신 새 URLRequest 로드")
+                // 📸 **중요**: 즉석 네비게이션이 아닌 경우에만 로드
+                if !isInstantNavigation {
+                    webView.load(URLRequest(url: record.url))
+                    dbg("🎯 앞으로가기: 네이티브 goForward() 대신 새 URLRequest 로드")
+                } else {
+                    dbg("📸 앞으로가기: 즉석 네비게이션으로 네트워크 재요청 생략")
+                }
             }
             
             // 🎯 강제 UI 업데이트 (웹뷰 상태와 무관하게)
@@ -495,7 +525,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
         // 🎯 네비게이션 상태도 함께 로깅
         let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
         let flagState = isNavigatingFromWebView ? "[🚩FLAG]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState) \(msg)")
+        let instantState = isInstantNavigation ? "[📸INSTANT]" : ""
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState) \(msg)")
     }
     
     // MARK: - 메모리 정리
