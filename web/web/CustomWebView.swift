@@ -1,8 +1,10 @@
 //
 //  CustomWebView.swift
 //
-//  📸 스냅샷 기반 즉석 네비게이션 - 네트워크 재요청 없이 부드러운 전환
-//  🎯 백그라운드 로딩 + 캐시된 상태 복원으로 성능 최적화
+//  🎯 하단 버튼과 제스처 완전 통합 시스템
+//  - 제스처도 항상 parent.stateModel.goBack/goForward 사용
+//  - 스냅샷은 시각적 효과용으로만 사용 
+//  - 주소창/SPA훅/로그인 모두 자동 동기화
 //
 
 import SwiftUI
@@ -12,80 +14,6 @@ import UIKit
 import UniformTypeIdentifiers
 import Foundation
 import Security
-
-// MARK: - 고급 페이지 캐시 시스템
-class AdvancedPageCache: ObservableObject {
-    struct CachedPage {
-        let snapshot: UIImage
-        let html: String?
-        let url: URL
-        let title: String
-        let scrollPosition: CGPoint
-        let timestamp: Date
-    }
-    
-    private var pageCache: [String: CachedPage] = [:]
-    private let maxCacheSize = 20
-    private let cacheQueue = DispatchQueue(label: "pageCache", qos: .userInitiated)
-    
-    func cachePage(url: URL, snapshot: UIImage, html: String?, title: String, scrollPosition: CGPoint) {
-        cacheQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            let cached = CachedPage(
-                snapshot: snapshot,
-                html: html,
-                url: url,
-                title: title,
-                scrollPosition: scrollPosition,
-                timestamp: Date()
-            )
-            
-            self.pageCache[url.absoluteString] = cached
-            
-            // 캐시 크기 제한
-            if self.pageCache.count > self.maxCacheSize {
-                let oldest = self.pageCache.min { $0.value.timestamp < $1.value.timestamp }
-                if let oldestKey = oldest?.key {
-                    self.pageCache.removeValue(forKey: oldestKey)
-                }
-            }
-            
-            print("📸 페이지 캐시됨: \(title)")
-        }
-    }
-    
-    func getCachedPage(for url: URL) -> CachedPage? {
-        return cacheQueue.sync {
-            return pageCache[url.absoluteString]
-        }
-    }
-    
-    func preloadHTML(for url: URL, completion: @escaping (String?) -> Void) {
-        cacheQueue.async { [weak self] in
-            if let cached = self?.pageCache[url.absoluteString], let html = cached.html {
-                DispatchQueue.main.async {
-                    completion(html)
-                }
-                return
-            }
-            
-            // 백그라운드에서 HTML 미리 로드
-            URLSession.shared.dataTask(with: url) { data, response, error in
-                let html = data.flatMap { String(data: $0, encoding: .utf8) }
-                DispatchQueue.main.async {
-                    completion(html)
-                }
-            }.resume()
-        }
-    }
-    
-    func clearAll() {
-        cacheQueue.async { [weak self] in
-            self?.pageCache.removeAll()
-        }
-    }
-}
 
 // MARK: - 다운로드 진행 알림 이름 정의
 extension Notification.Name {
@@ -122,11 +50,9 @@ struct CustomWebView: UIViewRepresentable {
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
         controller.addUserScript(makeUnifiedSPANavigationScript())
-        controller.addUserScript(makePageStateScript()) // 📸 새로 추가: 페이지 상태 캡처
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
         controller.add(context.coordinator, name: "spaNavigation")
-        controller.add(context.coordinator, name: "pageState") // 📸 새로 추가
         config.userContentController = controller
 
         // ✨ 다운로드 지원 (iOS 14+)
@@ -137,7 +63,7 @@ struct CustomWebView: UIViewRepresentable {
         // WKWebView 생성
         let webView = WKWebView(frame: .zero, configuration: config)
         
-        // 🎯 네이티브 제스처 완전 비활성화
+        // 🎯 네이티브 제스처 비활성화 (완전 커스텀 시스템)
         webView.allowsBackForwardNavigationGestures = false
         
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -161,8 +87,8 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
 
-        // 📸 개선된 스냅샷 기반 제스처 설정
-        context.coordinator.setupSnapshotBasedSwipeGesture(for: webView)
+        // 🎯 커스텀 에지 제스처 설정 (네이티브 제스처 대신)
+        context.coordinator.setupCustomSwipeGesture(for: webView)
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -264,8 +190,8 @@ struct CustomWebView: UIViewRepresentable {
         uiView.uiDelegate = nil
         coordinator.webView = nil
 
-        // 📸 제스처 제거
-        coordinator.removeSnapshotBasedSwipeGesture(from: uiView)
+        // 🎯 제스처 제거
+        coordinator.removeUnifiedSwipeGesture(from: uiView)
 
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
@@ -274,52 +200,9 @@ struct CustomWebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "pageState")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    // MARK: - 📸 페이지 상태 캡처 스크립트
-    private func makePageStateScript() -> WKUserScript {
-        let scriptSource = """
-        (function() {
-            'use strict';
-            
-            // 페이지 상태 캡처 함수
-            window.capturePageState = function() {
-                return {
-                    html: document.documentElement.outerHTML,
-                    scrollX: window.pageXOffset || document.documentElement.scrollLeft,
-                    scrollY: window.pageYOffset || document.documentElement.scrollTop,
-                    title: document.title,
-                    url: window.location.href,
-                    timestamp: Date.now()
-                };
-            };
-            
-            // 페이지 상태 복원 함수
-            window.restorePageState = function(state) {
-                if (state.html) {
-                    document.documentElement.innerHTML = state.html;
-                }
-                if (state.scrollX !== undefined && state.scrollY !== undefined) {
-                    window.scrollTo(state.scrollX, state.scrollY);
-                }
-            };
-            
-            // 주기적으로 상태 전송
-            setInterval(() => {
-                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pageState) {
-                    const state = window.capturePageState();
-                    window.webkit.messageHandlers.pageState.postMessage(state);
-                }
-            }, 5000); // 5초마다
-            
-            console.log('✅ 페이지 상태 캡처 스크립트 로드됨');
-        })();
-        """
-        return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
     // MARK: - 🌐 통합된 SPA 네비게이션 스크립트
@@ -621,12 +504,11 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 📸 고급 페이지 캐시
-        private var pageCache = AdvancedPageCache()
+        // 🎯 통합된 제스처 시스템
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
-        // 제스처 오버레이
+        // 제스처 오버레이 (시각적 효과용)
         private var gestureContainer: UIView?
         private var currentPageView: UIImageView?
         private var nextPageView: UIView?
@@ -634,11 +516,6 @@ struct CustomWebView: UIViewRepresentable {
         // 제스처 상태
         private var isSwipeInProgress = false
         private var swipeDirection: SwipeDirection?
-        private var targetPageRecord: PageRecord?
-        
-        // 📸 스냅샷 기반 즉석 전환을 위한 상태
-        private var currentPageState: [String: Any]?
-        private var isInstantNavigation = false
         
         enum SwipeDirection {
             case back    // 뒤로가기 (왼쪽 에지에서)
@@ -668,9 +545,9 @@ struct CustomWebView: UIViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        // MARK: - 📸 스냅샷 기반 제스처 설정
-        func setupSnapshotBasedSwipeGesture(for webView: WKWebView) {
-            // 제스처 컨테이너 생성
+        // MARK: - 🎯 통합된 스와이프 제스처 설정
+        func setupUnifiedSwipeGesture(for webView: WKWebView) {
+            // 제스처 컨테이너 생성 (시각적 효과용)
             let container = UIView()
             container.backgroundColor = .clear
             container.isUserInteractionEnabled = false
@@ -686,24 +563,25 @@ struct CustomWebView: UIViewRepresentable {
             
             self.gestureContainer = container
             
-            // 왼쪽 에지 제스처 (뒤로가기)
-            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSnapshotBasedEdgeGesture(_:)))
+            // 왼쪽 에지 제스처 (뒤로가기) - 네이티브 제스처와 중복되지만 시각적 효과용
+            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleUnifiedEdgeGesture(_:)))
             leftEdge.edges = .left
             leftEdge.delegate = self
+            // ✅ 네이티브 제스처와 동시 실행 허용
             webView.addGestureRecognizer(leftEdge)
             self.leftEdgeGesture = leftEdge
             
             // 오른쪽 에지 제스처 (앞으로가기)
-            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSnapshotBasedEdgeGesture(_:)))
+            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleUnifiedEdgeGesture(_:)))
             rightEdge.edges = .right
             rightEdge.delegate = self
             webView.addGestureRecognizer(rightEdge)
             self.rightEdgeGesture = rightEdge
             
-            print("📸 스냅샷 기반 에지 제스처 설정 완료")
+            print("🎯 통합된 에지 제스처 설정 완료 (네이티브 + 시각적 효과)")
         }
         
-        func removeSnapshotBasedSwipeGesture(from webView: WKWebView) {
+        func removeUnifiedSwipeGesture(from webView: WKWebView) {
             if let gesture = leftEdgeGesture {
                 webView.removeGestureRecognizer(gesture)
                 self.leftEdgeGesture = nil
@@ -716,8 +594,8 @@ struct CustomWebView: UIViewRepresentable {
             gestureContainer = nil
         }
         
-        // MARK: - 📸 스냅샷 기반 에지 제스처 핸들러
-        @objc private func handleSnapshotBasedEdgeGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        // MARK: - 🎯 통합된 에지 제스처 핸들러
+        @objc private func handleUnifiedEdgeGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
             guard let webView = gesture.view as? WKWebView,
                   let container = gestureContainer else { return }
             
@@ -733,28 +611,24 @@ struct CustomWebView: UIViewRepresentable {
                 if canNavigate && !isSwipeInProgress {
                     isSwipeInProgress = true
                     swipeDirection = direction
-                    print("📸 스냅샷 기반 제스처 시작: \(direction == .back ? "뒤로" : "앞으로")")
+                    print("🎯 통합 제스처 시작: \(direction == .back ? "뒤로" : "앞으로")")
                     
-                    // 📸 현재 페이지 상태 캡처
-                    captureCurrentPageState(webView: webView) { [weak self] in
-                        self?.startSnapshotBasedSwipePreview(direction: direction, webView: webView, container: container)
-                    }
+                    // 시각적 효과 시작
+                    startVisualSwipeEffect(direction: direction, webView: webView, container: container)
                 } else {
-                    print("📸 제스처 불가: \(direction == .back ? "뒤로" : "앞으로")")
+                    print("🎯 제스처 불가: \(direction == .back ? "뒤로" : "앞으로")")
                 }
                 
             case .changed:
                 guard isSwipeInProgress,
-                      let direction = swipeDirection,
-                      let currentView = currentPageView,
-                      let nextView = nextPageView else { return }
+                      let direction = swipeDirection else { return }
                 
                 // 에지 방향에 맞는 이동만 허용
                 let validMovement = (direction == .back && translation.x > 0) || (direction == .forward && translation.x < 0)
                 if !validMovement { return }
                 
                 let progress = min(abs(translation.x) / webView.bounds.width, 1.0)
-                updateSwipePreview(progress: progress, translation: translation, direction: direction)
+                updateVisualSwipeEffect(progress: progress, translation: translation, direction: direction)
                 
                 // 30% 지점에서 햅틱
                 if progress > 0.3 && progress < 0.35 {
@@ -768,14 +642,14 @@ struct CustomWebView: UIViewRepresentable {
                 let shouldComplete = progress > 0.4 || abs(velocity.x) > 800
                 
                 if shouldComplete {
-                    completeSnapshotBasedSwipe(webView: webView)
+                    completeUnifiedSwipe(direction: swipeDirection!)
                 } else {
-                    cancelSnapshotBasedSwipe(webView: webView)
+                    cancelUnifiedSwipe()
                 }
                 
             case .cancelled, .failed:
                 if isSwipeInProgress {
-                    cancelSnapshotBasedSwipe(webView: webView)
+                    cancelUnifiedSwipe()
                 }
                 
             default:
@@ -783,21 +657,8 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 📸 현재 페이지 상태 캡처
-        private func captureCurrentPageState(webView: WKWebView, completion: @escaping () -> Void) {
-            webView.evaluateJavaScript("window.capturePageState()") { [weak self] result, error in
-                if let state = result as? [String: Any] {
-                    self?.currentPageState = state
-                    print("📸 페이지 상태 캡처 완료")
-                }
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
-        }
-        
-        // MARK: - 스냅샷 기반 스와이프 미리보기 시작
-        private func startSnapshotBasedSwipePreview(direction: SwipeDirection, webView: WKWebView, container: UIView) {
+        // MARK: - 시각적 스와이프 효과 시작
+        private func startVisualSwipeEffect(direction: SwipeDirection, webView: WKWebView, container: UIView) {
             // 현재 페이지 스냅샷 생성
             webView.takeSnapshot(with: nil) { [weak self] image, error in
                 guard let self = self, let image = image else {
@@ -805,33 +666,13 @@ struct CustomWebView: UIViewRepresentable {
                     return
                 }
                 
-                // 📸 현재 페이지도 캐시에 저장
-                if let url = self.parent.stateModel.currentURL,
-                   let title = webView.title,
-                   let state = self.currentPageState,
-                   let html = state["html"] as? String {
-                    
-                    let scrollPosition = CGPoint(
-                        x: state["scrollX"] as? CGFloat ?? 0,
-                        y: state["scrollY"] as? CGFloat ?? 0
-                    )
-                    
-                    self.pageCache.cachePage(
-                        url: url,
-                        snapshot: image,
-                        html: html,
-                        title: title,
-                        scrollPosition: scrollPosition
-                    )
-                }
-                
                 DispatchQueue.main.async {
-                    self.showSnapshotBasedSwipePreview(currentImage: image, direction: direction, container: container)
+                    self.showVisualSwipeEffect(currentImage: image, direction: direction, container: container)
                 }
             }
         }
         
-        private func showSnapshotBasedSwipePreview(currentImage: UIImage, direction: SwipeDirection, container: UIView) {
+        private func showVisualSwipeEffect(currentImage: UIImage, direction: SwipeDirection, container: UIView) {
             // 현재 페이지 이미지뷰
             let currentView = UIImageView(image: currentImage)
             currentView.contentMode = .scaleAspectFill
@@ -848,20 +689,8 @@ struct CustomWebView: UIViewRepresentable {
             
             self.currentPageView = currentView
             
-            // 다음 페이지 찾기
-            let dataModel = parent.stateModel.dataModel
-            var targetRecord: PageRecord?
-            
-            if direction == .back && dataModel.canGoBack && dataModel.currentPageIndex > 0 {
-                targetRecord = dataModel.pageHistory[dataModel.currentPageIndex - 1]
-            } else if direction == .forward && dataModel.canGoForward && dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
-                targetRecord = dataModel.pageHistory[dataModel.currentPageIndex + 1]
-            }
-            
-            self.targetPageRecord = targetRecord
-            
-            // 다음 페이지 뷰 생성 (캐시 우선 사용)
-            let nextView = createCachedNextPageView(for: targetRecord, direction: direction)
+            // 다음 페이지 플레이스홀더 생성
+            let nextView = createNextPagePlaceholder(direction: direction)
             container.addSubview(nextView)
             
             NSLayoutConstraint.activate([
@@ -877,107 +706,40 @@ struct CustomWebView: UIViewRepresentable {
             container.layoutIfNeeded()
         }
         
-        private func createCachedNextPageView(for record: PageRecord?, direction: SwipeDirection) -> UIView {
-            guard let record = record else {
-                return createEmptyPageView(direction: direction)
-            }
+        private func createNextPagePlaceholder(direction: SwipeDirection) -> UIView {
+            let placeholderView = UIView()
+            placeholderView.backgroundColor = .systemBackground
             
-            // 캐시된 스냅샷 확인
-            if let cachedPage = pageCache.getCachedPage(for: record.url) {
-                let imageView = UIImageView(image: cachedPage.snapshot)
-                imageView.contentMode = .scaleAspectFill
-                imageView.clipsToBounds = true
-                print("📸 캐시된 스냅샷 사용: \(record.title)")
-                return imageView
-            }
+            let label = UILabel()
+            label.text = direction == .back ? "← 이전 페이지" : "다음 페이지 →"
+            label.font = .systemFont(ofSize: 18, weight: .medium)
+            label.textColor = .systemBlue
+            label.textAlignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
             
-            // 캐시가 없으면 페이지 정보 카드 생성
-            return createPageInfoCard(for: record, direction: direction)
-        }
-        
-        private func createPageInfoCard(for record: PageRecord, direction: SwipeDirection) -> UIView {
-            let cardView = UIView()
-            cardView.backgroundColor = .systemBackground
-            
-            // 제목
-            let titleLabel = UILabel()
-            titleLabel.text = record.title
-            titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
-            titleLabel.textAlignment = .center
-            titleLabel.numberOfLines = 0
-            titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            
-            // URL
-            let urlLabel = UILabel()
-            urlLabel.text = record.url.host ?? record.url.absoluteString
-            urlLabel.font = .systemFont(ofSize: 16)
-            urlLabel.textColor = .secondaryLabel
-            urlLabel.textAlignment = .center
-            urlLabel.numberOfLines = 2
-            urlLabel.translatesAutoresizingMaskIntoConstraints = false
-            
-            // 아이콘
-            let iconView = UIImageView(image: UIImage(systemName: "safari"))
+            let iconView = UIImageView(image: UIImage(systemName: direction == .back ? "chevron.left" : "chevron.right"))
             iconView.tintColor = .systemBlue
             iconView.contentMode = .scaleAspectFit
             iconView.translatesAutoresizingMaskIntoConstraints = false
             
-            // 방향 표시
-            let directionLabel = UILabel()
-            directionLabel.text = direction == .back ? "← 캐시된 페이지" : "캐시된 페이지 →"
-            directionLabel.font = .systemFont(ofSize: 14, weight: .medium)
-            directionLabel.textColor = .systemBlue
-            directionLabel.textAlignment = .center
-            directionLabel.translatesAutoresizingMaskIntoConstraints = false
-            
-            cardView.addSubview(iconView)
-            cardView.addSubview(titleLabel)
-            cardView.addSubview(urlLabel)
-            cardView.addSubview(directionLabel)
+            placeholderView.addSubview(iconView)
+            placeholderView.addSubview(label)
             
             NSLayoutConstraint.activate([
-                iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
-                iconView.centerYAnchor.constraint(equalTo: cardView.centerYAnchor, constant: -60),
-                iconView.widthAnchor.constraint(equalToConstant: 60),
-                iconView.heightAnchor.constraint(equalToConstant: 60),
+                iconView.centerXAnchor.constraint(equalTo: placeholderView.centerXAnchor),
+                iconView.centerYAnchor.constraint(equalTo: placeholderView.centerYAnchor, constant: -20),
+                iconView.widthAnchor.constraint(equalToConstant: 40),
+                iconView.heightAnchor.constraint(equalToConstant: 40),
                 
-                titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 20),
-                titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
-                titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
-                
-                urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
-                urlLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
-                urlLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
-                
-                directionLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 20),
-                directionLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
+                label.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 10),
+                label.centerXAnchor.constraint(equalTo: placeholderView.centerXAnchor)
             ])
             
-            return cardView
+            return placeholderView
         }
         
-        private func createEmptyPageView(direction: SwipeDirection) -> UIView {
-            let emptyView = UIView()
-            emptyView.backgroundColor = .systemBackground
-            
-            let label = UILabel()
-            label.text = "더 이상 페이지가 없습니다"
-            label.font = .systemFont(ofSize: 18)
-            label.textColor = .secondaryLabel
-            label.textAlignment = .center
-            label.translatesAutoresizingMaskIntoConstraints = false
-            
-            emptyView.addSubview(label)
-            NSLayoutConstraint.activate([
-                label.centerXAnchor.constraint(equalTo: emptyView.centerXAnchor),
-                label.centerYAnchor.constraint(equalTo: emptyView.centerYAnchor)
-            ])
-            
-            return emptyView
-        }
-        
-        // MARK: - 스와이프 미리보기 업데이트
-        private func updateSwipePreview(progress: CGFloat, translation: CGPoint, direction: SwipeDirection) {
+        // MARK: - 시각적 스와이프 효과 업데이트
+        private func updateVisualSwipeEffect(progress: CGFloat, translation: CGPoint, direction: SwipeDirection) {
             guard let currentView = currentPageView,
                   let nextView = nextPageView else { return }
             
@@ -996,12 +758,10 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 📸 스냅샷 기반 스와이프 완료
-        private func completeSnapshotBasedSwipe(webView: WKWebView) {
+        // MARK: - 🎯 스와이프 완료 (캐시 여부 무관하게 항상 실제 네비게이션)
+        private func completeUnifiedSwipe(direction: SwipeDirection) {
             guard let currentView = currentPageView,
-                  let nextView = nextPageView,
-                  let direction = swipeDirection,
-                  let targetRecord = targetPageRecord else { return }
+                  let nextView = nextPageView else { return }
             
             UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
                 let screenWidth = UIScreen.main.bounds.width
@@ -1017,75 +777,21 @@ struct CustomWebView: UIViewRepresentable {
                 // 햅틱 피드백
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 
-                // 📸 캐시된 페이지가 있으면 즉석 전환, 없으면 일반 네비게이션
-                if let cachedPage = self.pageCache.getCachedPage(for: targetRecord.url) {
-                    self.performInstantNavigation(to: cachedPage, webView: webView, direction: direction)
-                } else {
-                    // 일반 네비게이션 (네트워크 재요청)
-                    if direction == .back {
-                        self.parent.stateModel.goBack()
-                    } else {
-                        self.parent.stateModel.goForward()
-                    }
-                }
-                
-                self.cleanupSwipe()
-                print("📸 스냅샷 기반 제스처 완료: \(direction == .back ? "뒤로" : "앞으로")")
-            }
-        }
-        
-        // MARK: - 📸 즉석 네비게이션 (네트워크 재요청 없이)
-        private func performInstantNavigation(to cachedPage: AdvancedPageCache.CachedPage, webView: WKWebView, direction: SwipeDirection) {
-            isInstantNavigation = true
-            
-            // 1. 히스토리 데이터 모델 업데이트
-            if direction == .back {
-                _ = parent.stateModel.dataModel.navigateBack()
-            } else {
-                _ = parent.stateModel.dataModel.navigateForward()
-            }
-            
-            // 2. 캐시된 HTML 복원
-            if let html = cachedPage.html {
-                let script = """
-                document.documentElement.innerHTML = `\(html.replacingOccurrences(of: "`", with: "\\`"))`;
-                window.scrollTo(\(cachedPage.scrollPosition.x), \(cachedPage.scrollPosition.y));
-                """
-                
-                webView.evaluateJavaScript(script) { result, error in
-                    if let error = error {
-                        print("📸 캐시된 페이지 복원 실패: \(error)")
-                        // 실패시 일반 네비게이션으로 폴백
-                        if direction == .back {
-                            self.parent.stateModel.goBack()
-                        } else {
-                            self.parent.stateModel.goForward()
-                        }
-                    } else {
-                        print("📸 캐시된 페이지 복원 성공: \(cachedPage.title)")
-                        
-                        // URL과 제목 동기화
-                        DispatchQueue.main.async {
-                            self.parent.stateModel.currentURL = cachedPage.url
-                            self.parent.stateModel.triggerNavigationFinished()
-                        }
-                    }
-                    
-                    self.isInstantNavigation = false
-                }
-            } else {
-                // HTML이 없으면 일반 네비게이션
+                // 🎯 핵심: 캐시 있든 없든 항상 하단 버튼과 동일한 경로 사용
+                // 캐시는 시각적 효과용으로만 사용, 실제 이동은 리로드로 처리
                 if direction == .back {
-                    parent.stateModel.goBack()
+                    self.parent.stateModel.goBack()
                 } else {
-                    parent.stateModel.goForward()
+                    self.parent.stateModel.goForward()
                 }
-                isInstantNavigation = false
+                
+                self.cleanupVisualEffect()
+                print("🎯 제스처 완료: \(direction == .back ? "뒤로" : "앞으로") → 하단버튼과 동일한 실제 네비게이션")
             }
         }
         
-        // MARK: - 📸 스냅샷 기반 스와이프 취소
-        private func cancelSnapshotBasedSwipe(webView: WKWebView) {
+        // MARK: - 🎯 통합된 스와이프 취소
+        private func cancelUnifiedSwipe() {
             guard let currentView = currentPageView,
                   let nextView = nextPageView,
                   let direction = swipeDirection else { return }
@@ -1100,26 +806,24 @@ struct CustomWebView: UIViewRepresentable {
                     nextView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
                 }
             } completion: { _ in
-                self.cleanupSwipe()
-                print("📸 스냅샷 기반 제스처 취소")
+                self.cleanupVisualEffect()
+                print("🎯 통합 제스처 취소")
             }
         }
         
-        // MARK: - 스와이프 정리
-        private func cleanupSwipe() {
+        // MARK: - 시각적 효과 정리
+        private func cleanupVisualEffect() {
             currentPageView?.removeFromSuperview()
             nextPageView?.removeFromSuperview()
             currentPageView = nil
             nextPageView = nil
             isSwipeInProgress = false
             swipeDirection = nil
-            targetPageRecord = nil
-            currentPageState = nil
         }
         
         // MARK: - UIGestureRecognizerDelegate
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 에지 제스처는 스크롤과 충돌하지 않음
+            // ✅ 네이티브 제스처와 커스텀 제스처가 동시에 실행되도록 허용
             return true
         }
         
@@ -1167,16 +871,8 @@ struct CustomWebView: UIViewRepresentable {
                 let isLoading = change.newValue ?? false
 
                 DispatchQueue.main.async {
-                    // 📸 즉석 네비게이션 중이면 로딩 상태 무시
-                    if !self.isInstantNavigation && self.parent.stateModel.isLoading != isLoading {
+                    if self.parent.stateModel.isLoading != isLoading {
                         self.parent.stateModel.isLoading = isLoading
-                    }
-                    
-                    // 로딩 완료 시 현재 페이지 스냅샷 저장
-                    if !isLoading && !self.isSwipeInProgress && !self.isInstantNavigation {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            self.saveCurrentPageToCache(webView: webView)
-                        }
                     }
                 }
             }
@@ -1186,11 +882,8 @@ struct CustomWebView: UIViewRepresentable {
                 let progress = change.newValue ?? 0.0
 
                 DispatchQueue.main.async {
-                    // 📸 즉석 네비게이션 중이면 프로그레스 무시
-                    if !self.isInstantNavigation {
-                        let newProgress = max(0.0, min(1.0, progress))
-                        self.parent.stateModel.loadingProgress = newProgress
-                    }
+                    let newProgress = max(0.0, min(1.0, progress))
+                    self.parent.stateModel.loadingProgress = newProgress
                 }
             }
 
@@ -1198,8 +891,7 @@ struct CustomWebView: UIViewRepresentable {
                 guard let self = self, let newURL = change.newValue, let url = newURL else { return }
 
                 DispatchQueue.main.async {
-                    // 📸 즉석 네비게이션 중이면 URL 변경 무시
-                    if !self.isInstantNavigation && self.parent.stateModel.currentURL != url && !self.isSwipeInProgress {
+                    if self.parent.stateModel.currentURL != url && !self.isSwipeInProgress {
                         self.parent.stateModel.setNavigatingFromWebView(true)
                         self.parent.stateModel.currentURL = url
                         self.parent.stateModel.setNavigatingFromWebView(false)
@@ -1211,10 +903,7 @@ struct CustomWebView: UIViewRepresentable {
                 guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
 
                 DispatchQueue.main.async {
-                    // 📸 즉석 네비게이션 중이 아닐 때만 제목 업데이트
-                    if !self.isInstantNavigation {
-                        self.parent.stateModel.updateCurrentPageTitle(title)
-                    }
+                    self.parent.stateModel.updateCurrentPageTitle(title)
                 }
             }
         }
@@ -1228,52 +917,6 @@ struct CustomWebView: UIViewRepresentable {
             urlObserver = nil
             titleObserver = nil
             progressObserver = nil
-        }
-        
-        // MARK: - 📸 현재 페이지를 캐시에 저장
-        private func saveCurrentPageToCache(webView: WKWebView) {
-            guard let currentURL = parent.stateModel.currentURL,
-                  let title = webView.title else { return }
-            
-            // 스냅샷과 페이지 상태를 동시에 캡처
-            let group = DispatchGroup()
-            var snapshot: UIImage?
-            var pageState: [String: Any]?
-            
-            // 스냅샷 캡처
-            group.enter()
-            webView.takeSnapshot(with: nil) { image, error in
-                snapshot = image
-                group.leave()
-            }
-            
-            // 페이지 상태 캡처
-            group.enter()
-            webView.evaluateJavaScript("window.capturePageState()") { result, error in
-                pageState = result as? [String: Any]
-                group.leave()
-            }
-            
-            // 모든 캡처가 완료되면 캐시에 저장
-            group.notify(queue: .main) { [weak self] in
-                guard let self = self,
-                      let snapshot = snapshot,
-                      let state = pageState,
-                      let html = state["html"] as? String else { return }
-                
-                let scrollPosition = CGPoint(
-                    x: state["scrollX"] as? CGFloat ?? 0,
-                    y: state["scrollY"] as? CGFloat ?? 0
-                )
-                
-                self.pageCache.cachePage(
-                    url: currentURL,
-                    snapshot: snapshot,
-                    html: html,
-                    title: title,
-                    scrollPosition: scrollPosition
-                )
-            }
         }
 
         // MARK: - 🌐 통합된 JS 메시지 처리
@@ -1317,16 +960,6 @@ struct CustomWebView: UIViewRepresentable {
                         )
                     }
                 }
-            } else if message.name == "pageState" {
-                // 📸 페이지 상태 수신 (주기적 캐싱용)
-                if let state = message.body as? [String: Any],
-                   let urlString = state["url"] as? String,
-                   let url = URL(string: urlString),
-                   url == parent.stateModel.currentURL {
-                    
-                    // 현재 페이지 상태 업데이트
-                    currentPageState = state
-                }
             }
         }
 
@@ -1348,7 +981,7 @@ struct CustomWebView: UIViewRepresentable {
             webView.load(URLRequest(url: url))
         }
 
-        // MARK: 네비게이션 명령
+        // MARK: 네비게이션 명령 (하단 버튼과 동일한 경로)
         @objc func reloadWebView() { 
             webView?.reload()
         }
