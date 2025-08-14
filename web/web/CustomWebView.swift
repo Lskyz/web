@@ -26,6 +26,7 @@ class AdvancedPageCache: ObservableObject {
         let accessCount: Int
         let lastAccessed: Date
         
+        // ✅ 기본 생성자
         init(snapshot: UIImage, url: URL, title: String) {
             self.snapshot = snapshot
             self.url = url
@@ -33,6 +34,16 @@ class AdvancedPageCache: ObservableObject {
             self.timestamp = Date()
             self.accessCount = 1
             self.lastAccessed = Date()
+        }
+        
+        // ✅ 전체 파라미터 생성자 (private)
+        private init(snapshot: UIImage, url: URL, title: String, timestamp: Date, accessCount: Int, lastAccessed: Date) {
+            self.snapshot = snapshot
+            self.url = url
+            self.title = title
+            self.timestamp = timestamp
+            self.accessCount = accessCount
+            self.lastAccessed = lastAccessed
         }
         
         func withAccess() -> CachedPage {
@@ -764,7 +775,7 @@ struct CustomWebView: UIViewRepresentable {
         private var lastDesktopMode: Bool = false
 
         // 📸 고급 페이지 캐시 (애니메이션용) - 🧹 메모리 최적화 적용
-        private var pageCache = AdvancedPageCache()
+        internal var pageCache = AdvancedPageCache() // ✅ private → internal로 변경
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
