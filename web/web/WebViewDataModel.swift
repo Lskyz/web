@@ -42,7 +42,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
         self.timestamp = Date()
         self.lastAccessed = Date()
         self.siteType = siteType
-        self.navigationType = String(describing: navigationType)
+        self.navigationType = navigationType // ✅ enum 직접 할당
         
         // 🔒 로그인 관련 URL 자동 감지
         self.isLoginRelated = Self.isLoginRelatedURL(url)
