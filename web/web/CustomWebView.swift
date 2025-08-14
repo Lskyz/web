@@ -4,6 +4,8 @@
 //  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
 //  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
 //  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
+//  🔄 새로고침 Replace 로직 + 홈 클릭 감지 (새 페이지 추가)
+//  🧹 캐시 메모리 최적화 (디바운싱 + 오래된 메모리 해체)
 //
 
 import SwiftUI
@@ -14,53 +16,162 @@ import UniformTypeIdentifiers
 import Foundation
 import Security
 
-// MARK: - 고급 페이지 캐시 시스템 (부드러운 네비게이션용 강화)
+// MARK: - 고급 페이지 캐시 시스템 (메모리 최적화 강화)
 class AdvancedPageCache: ObservableObject {
     struct CachedPage {
         let snapshot: UIImage
         let url: URL
         let title: String
         let timestamp: Date
+        let accessCount: Int
+        let lastAccessed: Date
+        
+        init(snapshot: UIImage, url: URL, title: String) {
+            self.snapshot = snapshot
+            self.url = url
+            self.title = title
+            self.timestamp = Date()
+            self.accessCount = 1
+            self.lastAccessed = Date()
+        }
+        
+        func withAccess() -> CachedPage {
+            return CachedPage(
+                snapshot: snapshot,
+                url: url,
+                title: title,
+                timestamp: timestamp,
+                accessCount: accessCount + 1,
+                lastAccessed: Date()
+            )
+        }
     }
     
     private var pageCache: [String: CachedPage] = [:]
-    private let maxCacheSize = 100 // ✅ 캐시 크기 증가 (히스토리 제한 해제에 맞춰)
+    private let maxCacheSize = 50 // 🧹 캐시 크기 최적화 (100 → 50)
     private let cacheQueue = DispatchQueue(label: "pageCache", qos: .userInitiated)
+    private let maxCacheAge: TimeInterval = 300 // 🧹 5분 이상 된 캐시 자동 정리
+    
+    // 🧹 디바운싱을 위한 캐시 정리 타이머
+    private var cleanupTimer: Timer?
+    private let cleanupInterval: TimeInterval = 30 // 30초마다 정리
+    
+    init() {
+        startPeriodicCleanup()
+    }
+    
+    deinit {
+        cleanupTimer?.invalidate()
+    }
+    
+    // 🧹 주기적인 캐시 정리 시작
+    private func startPeriodicCleanup() {
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: cleanupInterval, repeats: true) { [weak self] _ in
+            self?.performScheduledCleanup()
+        }
+    }
+    
+    // 🧹 예약된 캐시 정리 실행
+    private func performScheduledCleanup() {
+        cacheQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let now = Date()
+            let originalCount = self.pageCache.count
+            
+            // 오래된 캐시 제거 (5분 이상 미접근)
+            self.pageCache = self.pageCache.filter { _, page in
+                let age = now.timeIntervalSince(page.lastAccessed)
+                return age < self.maxCacheAge
+            }
+            
+            // 캐시 크기 초과 시 LRU 방식으로 추가 정리
+            if self.pageCache.count > self.maxCacheSize {
+                let sortedPages = self.pageCache.sorted { $0.value.lastAccessed < $1.value.lastAccessed }
+                let toRemove = sortedPages.prefix(self.pageCache.count - self.maxCacheSize)
+                
+                for (key, _) in toRemove {
+                    self.pageCache.removeValue(forKey: key)
+                }
+            }
+            
+            let removedCount = originalCount - self.pageCache.count
+            if removedCount > 0 {
+                print("🧹 캐시 정리 완료: \(removedCount)개 제거, 남은 캐시: \(self.pageCache.count)개")
+            }
+        }
+    }
     
     func cachePage(url: URL, snapshot: UIImage, title: String) {
         cacheQueue.async { [weak self] in
             guard let self = self else { return }
             
-            let cached = CachedPage(
-                snapshot: snapshot,
-                url: url,
-                title: title,
-                timestamp: Date()
-            )
+            let urlKey = url.absoluteString
             
-            self.pageCache[url.absoluteString] = cached
-            
-            // 캐시 크기 제한
-            if self.pageCache.count > self.maxCacheSize {
-                let oldest = self.pageCache.min { $0.value.timestamp < $1.value.timestamp }
-                if let oldestKey = oldest?.key {
-                    self.pageCache.removeValue(forKey: oldestKey)
+            // 🧹 디바운싱: 같은 URL이 연속으로 캐시되는 것 방지
+            if let existing = self.pageCache[urlKey] {
+                let timeSinceLastCache = Date().timeIntervalSince(existing.timestamp)
+                if timeSinceLastCache < 2.0 { // 2초 이내 중복 캐시 방지
+                    return
                 }
             }
             
-            print("📸 페이지 캐시됨: \(title)")
+            let cached = CachedPage(snapshot: snapshot, url: url, title: title)
+            self.pageCache[urlKey] = cached
+            
+            // 즉시 크기 제한 확인 (주기적 정리와 별도)
+            if self.pageCache.count > self.maxCacheSize {
+                self.performImmediateCleanup()
+            }
+            
+            print("📸 페이지 캐시됨: \(title) (총 \(self.pageCache.count)개)")
         }
+    }
+    
+    // 🧹 즉시 캐시 정리 (크기 초과 시)
+    private func performImmediateCleanup() {
+        let sortedPages = pageCache.sorted { $0.value.lastAccessed < $1.value.lastAccessed }
+        let toRemove = sortedPages.prefix(pageCache.count - maxCacheSize)
+        
+        for (key, _) in toRemove {
+            pageCache.removeValue(forKey: key)
+        }
+        
+        print("🧹 즉시 캐시 정리: \(toRemove.count)개 제거")
     }
     
     func getCachedPage(for url: URL) -> CachedPage? {
         return cacheQueue.sync {
-            return pageCache[url.absoluteString]
+            let urlKey = url.absoluteString
+            if let cached = pageCache[urlKey] {
+                // 🧹 접근 시간 업데이트
+                pageCache[urlKey] = cached.withAccess()
+                return cached
+            }
+            return nil
         }
     }
     
     func clearAll() {
         cacheQueue.async { [weak self] in
             self?.pageCache.removeAll()
+            print("🧹 전체 캐시 삭제")
+        }
+    }
+    
+    // 🧹 메모리 상태 정보
+    func getCacheInfo() -> (count: Int, totalMemoryMB: Double) {
+        return cacheQueue.sync {
+            let count = pageCache.count
+            let totalBytes = pageCache.values.reduce(0) { total, page in
+                // 대략적인 이미지 메모리 사용량 계산
+                let imageSize = page.snapshot.size
+                let bytesPerPixel = 4 // RGBA
+                let pixels = imageSize.width * imageSize.height
+                return total + Int(pixels * CGFloat(bytesPerPixel))
+            }
+            let totalMB = Double(totalBytes) / (1024 * 1024)
+            return (count, totalMB)
         }
     }
 }
@@ -99,7 +210,7 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
-        controller.addUserScript(makeEnhancedSPANavigationScript()) // ✅ 새로운 완전형 SPA 훅
+        controller.addUserScript(makeEnhancedSPANavigationScript()) // 🔄 새로고침 & 홈 클릭 감지 포함
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
         controller.add(context.coordinator, name: "spaNavigation")
@@ -257,6 +368,9 @@ struct CustomWebView: UIViewRepresentable {
         // 🎯 캐시된 페이지 미리보기 시스템 해제
         coordinator.teardownCachedPagePreview()
 
+        // 🧹 캐시 정리
+        coordinator.pageCache.clearAll()
+
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
 
@@ -269,14 +383,14 @@ struct CustomWebView: UIViewRepresentable {
         NotificationCenter.default.removeObserver(coordinator)
     }
 
-    // MARK: - 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 (새로운 버전)
+    // MARK: - 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 (새로고침 & 홈 클릭 감지 추가)
     private func makeEnhancedSPANavigationScript() -> WKUserScript {
         let scriptSource = """
-        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅
+        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 + 새로고침 & 홈 클릭 감지
         (function() {
             'use strict';
 
-            console.log('🌐 완전형 SPA 네비게이션 훅 초기화');
+            console.log('🌐 완전형 SPA 네비게이션 훅 초기화 (새로고침 & 홈 클릭 감지 포함)');
 
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
@@ -297,6 +411,49 @@ struct CustomWebView: UIViewRepresentable {
 
             function shouldExcludeFromHistory(url) {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
+            }
+
+            // ===== 🆕 새로고침 & 홈 클릭 감지 =====
+            function detectNavigationType(url, previousUrl) {
+                const urlObj = new URL(url, window.location.origin);
+                const prevUrlObj = previousUrl ? new URL(previousUrl, window.location.origin) : null;
+
+                // 🔄 새로고침 감지 (정규화 URL 비교)
+                if (prevUrlObj && normalizeURL(urlObj) === normalizeURL(prevUrlObj)) {
+                    return 'RELOAD_SOFT';
+                }
+
+                // 🏠 홈 클릭 감지 (루트 경로로의 이동)
+                if ((urlObj.pathname === '/' || urlObj.pathname === '') && 
+                    prevUrlObj && prevUrlObj.pathname !== '/' && prevUrlObj.pathname !== '') {
+                    return 'NAV_HOME';
+                }
+
+                // 📋 보드 내 첫 페이지 이동
+                if (urlObj.search.includes('page=1') || urlObj.pathname.includes('/list')) {
+                    return 'NAV_LIST_FIRST';
+                }
+
+                return 'NORMAL';
+            }
+
+            // 🔄 URL 정규화 함수
+            function normalizeURL(urlObj) {
+                // HTTPS 우선
+                const scheme = urlObj.protocol === 'http:' ? 'https:' : urlObj.protocol;
+                
+                // 트레일링 슬래시 제거
+                let path = urlObj.pathname;
+                if (path.endsWith('/') && path.length > 1) {
+                    path = path.slice(0, -1);
+                }
+                
+                // 쿼리 파라미터 정렬
+                const searchParams = new URLSearchParams(urlObj.search);
+                const sortedParams = new URLSearchParams([...searchParams.entries()].sort());
+                
+                // 해시는 무시
+                return `${scheme}//${urlObj.host}${path}${sortedParams.toString() ? '?' + sortedParams.toString() : ''}`;
             }
 
             // ===== 범용 커뮤니티 패턴 매칭 =====
@@ -365,7 +522,7 @@ struct CustomWebView: UIViewRepresentable {
                 return `${host}_${pattern}`;
             }
 
-            function notifyNavigation(type, url, title, state) {
+            function notifyNavigation(type, url, title, state, navigationType) {
                 if (shouldExcludeFromHistory(url)) {
                     console.log(`🔒 히스토리 제외: ${url} (${type})`);
                     return;
@@ -382,12 +539,13 @@ struct CustomWebView: UIViewRepresentable {
                     userAgent: navigator.userAgent,
                     referrer: document.referrer,
                     siteType: siteType,
+                    navigationType: navigationType,
                     shouldExclude: false
                 };
 
                 if (window.webkit?.messageHandlers?.spaNavigation) {
                     window.webkit.messageHandlers.spaNavigation.postMessage(message);
-                    console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
+                    console.log(`🌐 SPA ${type} (${navigationType}): ${siteType} | ${url}`);
                 }
             }
 
@@ -408,33 +566,60 @@ struct CustomWebView: UIViewRepresentable {
             function handleUrlChange(type, url, title, state) {
                 const newURL = new URL(url || window.location.href, window.location.origin).href;
                 if (newURL !== currentSPAState.url) {
+                    const navigationType = detectNavigationType(newURL, currentSPAState.url);
+                    
                     currentSPAState = {
                         url: newURL,
                         title: title || document.title,
                         timestamp: Date.now(),
                         state: state
                     };
+                    
                     setTimeout(() => {
-                        notifyNavigation(type, newURL, document.title, state);
+                        notifyNavigation(type, newURL, document.title, state, navigationType);
                     }, 150);
                 }
             }
 
             // ===== popstate / hashchange 감지 =====
-            window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
-            window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
+            window.addEventListener('popstate', () => {
+                const navigationType = detectNavigationType(window.location.href, currentSPAState.url);
+                handleUrlChange('pop', window.location.href, document.title, history.state);
+            });
+            
+            window.addEventListener('hashchange', () => {
+                const navigationType = detectNavigationType(window.location.href, currentSPAState.url);
+                handleUrlChange('hash', window.location.href, document.title, history.state);
+            });
 
             // ===== DOM 변경 감지 =====
             const observer = new MutationObserver(() => {
                 const currentURL = window.location.href;
                 if (currentURL !== currentSPAState.url) {
+                    const navigationType = detectNavigationType(currentURL, currentSPAState.url);
                     handleUrlChange('dom', currentURL, document.title, history.state);
                 }
             });
 
             observer.observe(document.body, { childList: true, subtree: true });
 
-            console.log('✅ 완전형 SPA 네비게이션 훅 설정 완료');
+            // ===== 🆕 홈(로고) 클릭 감지 =====
+            document.addEventListener('click', function(event) {
+                const target = event.target.closest('a');
+                if (!target) return;
+
+                const href = target.getAttribute('href');
+                if (href === '/' || href === '' || href === './') {
+                    // 로고나 홈 링크 클릭으로 판단
+                    setTimeout(() => {
+                        if (window.location.pathname === '/' || window.location.pathname === '') {
+                            notifyNavigation('click', window.location.href, document.title, history.state, 'NAV_HOME');
+                        }
+                    }, 100);
+                }
+            }, true);
+
+            console.log('✅ 완전형 SPA 네비게이션 훅 설정 완료 (새로고침 & 홈 클릭 감지 포함)');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -578,7 +763,7 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 📸 고급 페이지 캐시 (애니메이션용)
+        // 📸 고급 페이지 캐시 (애니메이션용) - 🧹 메모리 최적화 적용
         private var pageCache = AdvancedPageCache()
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
@@ -1242,7 +1427,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
 
-        // MARK: - 🌐 통합된 JS 메시지 처리
+        // MARK: - 🌐 통합된 JS 메시지 처리 (새로고침 & 홈 클릭 감지 포함)
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "playVideo" {
                 if let urlString = message.body as? String, let url = URL(string: urlString) {
@@ -1268,11 +1453,15 @@ struct CustomWebView: UIViewRepresentable {
                     let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
                     let shouldExclude = data["shouldExclude"] as? Bool ?? false
                     let siteType = data["siteType"] as? String ?? "unknown"
+                    let navigationType = data["navigationType"] as? String ?? "NORMAL"
                     
                     DispatchQueue.main.async {
                         if shouldExclude {
                             return
                         }
+                        
+                        // 🔄 새로고침 & 🏠 홈 클릭 로그 추가
+                        print("🌐 SPA 메시지 수신: \(type) (\(navigationType)) | \(siteType) | \(title)")
                         
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
