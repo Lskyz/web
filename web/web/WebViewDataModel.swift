@@ -3,6 +3,7 @@
 //  🌐 통합된 SPA 네비게이션 관리 + 로그인 리다이렉트 필터링
 //  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
+//  ✅ 히스토리 개수 제한 해제 (무제한)
 //
 
 import Foundation
@@ -106,7 +107,7 @@ fileprivate func ts() -> String {
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
-    // 페이지 기록 기반 히스토리
+    // 페이지 기록 기반 히스토리 (✅ 무제한)
     @Published private(set) var pageHistory: [PageRecord] = []
     @Published private(set) var currentPageIndex: Int = -1
     
@@ -147,7 +148,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var loginRedirectStartTime: Date?
     private var isInLoginFlow: Bool = false
     
-    // 전역 방문기록
+    // 전역 방문기록 (✅ 무제한)
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
     }
@@ -202,6 +203,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         case "title":
             updateCurrentPageTitle(title)
             
+        case "dom": // ✅ 새로 추가된 DOM 변경 감지 타입
+            handleSPADOMChange(url: url, title: title, siteType: siteType)
+            
         default:
             dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
         }
@@ -237,11 +241,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
-        // 히스토리 크기 제한
-        if pageHistory.count > 50 {
-            pageHistory.removeFirst()
-            currentPageIndex -= 1
-        }
+        // ✅ 히스토리 크기 제한 제거 (무제한)
+        // 기존: if pageHistory.count > 50 { ... } 제거
         
         updateNavigationState()
         dbg("🌐 SPA 새 페이지: \(siteType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
@@ -294,6 +295,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private func handleSPAIframePush(url: URL, title: String, siteType: String) {
         // iframe 내부 네비게이션은 보통 게시글 읽기 등이므로 일반 push와 동일하게 처리
         handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)")
+    }
+    
+    // ✅ 새로 추가: DOM 변경 감지 처리
+    private func handleSPADOMChange(url: URL, title: String, siteType: String) {
+        // DOM 변경으로 인한 URL 변화는 보통 SPA 앱에서 발생
+        // popstate나 hashchange와 유사하게 처리
+        handleSPAPopState(url: url, title: title, siteType: "dom_\(siteType)")
     }
     
     // 🌐 네이버 카페 URL 유사성 로직을 범용으로 사용
@@ -388,7 +396,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (강화된 필터링)
+    // MARK: - 새로운 페이지 기록 시스템 (강화된 필터링 + 연속 중복 방지)
     
     func addNewPage(url: URL, title: String = "") {
         // ✅ 히스토리 네비게이션 중인지 체크
@@ -420,6 +428,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             finishLoginRedirectTracking(finalURL: url)
         }
         
+        // ✅ 연속 중복 URL 체크 (완전히 같은 URL인 경우 제목만 업데이트)
+        if !pageHistory.isEmpty,
+           let lastRecord = pageHistory.last,
+           lastRecord.url.absoluteString == url.absoluteString {
+            // 완전히 같은 URL이면 제목만 업데이트하고 새 기록 추가하지 않음
+            updateCurrentPageTitle(title)
+            dbg("🔄 중복 URL 감지 - 제목만 업데이트: '\(title)' | \(url.absoluteString)")
+            return
+        }
+        
         // 현재 위치 이후의 forward 기록 제거
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             pageHistory.removeSubrange((currentPageIndex + 1)...)
@@ -429,17 +447,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
-        // 최대 50개 유지
-        if pageHistory.count > 50 {
-            pageHistory.removeFirst()
-            currentPageIndex -= 1
-        }
+        // ✅ 히스토리 크기 제한 제거 (무제한)
+        // 기존 제한 코드 제거:
+        // if pageHistory.count > 50 {
+        //     pageHistory.removeFirst()
+        //     currentPageIndex -= 1
+        // }
         
         updateNavigationState()
-        dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
+        dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
         
-        // 전역 히스토리에도 추가 (로그인 관련 제외)
-        if !PageRecord.isLoginRelatedURL(url) {
+        // 전역 히스토리에도 추가 (로그인 관련 제외 + 중복 체크)
+        if !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { $0.url.absoluteString == url.absoluteString }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
     }
@@ -777,7 +796,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 if shouldAddNewPage {
                     addNewPage(url: finalURL, title: title)
                     stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)'")
+                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
                 } else {
                     updateCurrentPageTitle(title)
                     stateModel?.syncCurrentURL(finalURL)
@@ -825,7 +844,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleDidCommitNavigation(webView)
     }
 
-    // MARK: - 전역 히스토리 관리
+    // MARK: - 전역 히스토리 관리 (✅ 무제한)
     
     private static func saveGlobalHistory() {
         // 🔒 로그인 관련 항목은 전역 히스토리에서도 제외
@@ -875,7 +894,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
         let loginState = isInLoginFlow ? "🔒Login" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(loginState) \(msg)")
+        let historyCount = "[\(pageHistory.count)]"
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState) \(msg)")
     }
 
     // MARK: - 메모리 정리
@@ -926,7 +946,7 @@ extension WebViewDataModel {
         public var body: some View {
             List {
                 if !sessionHistory.isEmpty {
-                    Section("현재 세션") {
+                    Section("현재 세션 (\(sessionHistory.count)개)") { // ✅ 개수 표시 추가
                         ForEach(sessionHistory) { record in
                             SessionHistoryRowView(
                                 record: record, 
@@ -940,7 +960,7 @@ extension WebViewDataModel {
                     }
                 }
                 
-                Section("전체 기록") {
+                Section("전체 기록 (\(filteredGlobalHistory.count)개)") { // ✅ 개수 표시 추가
                     ForEach(filteredGlobalHistory) { item in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
