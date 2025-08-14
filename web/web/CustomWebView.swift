@@ -4,7 +4,7 @@
 //  🌐 통합된 SPA 네비게이션 + 로그인 리다이렉트 필터링
 //  🎯 네이버 특화 로직을 범용으로 사용 (중복 제거)
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
-//  🏄‍♂️ 피크(Peek) 방식 사파리 제스처 + 스냅샷 캐시 (안정적인 미리보기)
+//  📱 간단한 밀어내기 제스처 + 페이지 미리보기
 //
 
 import SwiftUI
@@ -15,30 +15,29 @@ import UniformTypeIdentifiers
 import Foundation
 import Security
 
-// MARK: - 히스토리 페이지 스냅샷 관리
-class HistorySnapshotCache: ObservableObject {
+// MARK: - 간단한 페이지 스냅샷 캐시
+class SimplePageCache: ObservableObject {
     private var snapshots: [String: UIImage] = [:]
-    private let maxSnapshots = 20
+    private let maxSnapshots = 10
     
     func saveSnapshot(for url: String, image: UIImage) {
         snapshots[url] = image
         
-        // 최대 개수 초과 시 오래된 것 제거
         if snapshots.count > maxSnapshots {
-            let oldestKey = snapshots.keys.first
-            if let key = oldestKey {
+            let firstKey = snapshots.keys.first
+            if let key = firstKey {
                 snapshots.removeValue(forKey: key)
             }
         }
         
-        print("🖼️ 스냅샷 저장: \(url)")
+        print("📸 스냅샷 저장: \(url)")
     }
     
     func getSnapshot(for url: String) -> UIImage? {
         return snapshots[url]
     }
     
-    func clearSnapshots() {
+    func clearAll() {
         snapshots.removeAll()
     }
 }
@@ -115,8 +114,8 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 초기 사용자 에이전트 설정
         context.coordinator.updateUserAgentIfNeeded()
 
-        // 🏄‍♂️ 사파리 스타일 제스처 설정
-        context.coordinator.setupSafariStyleGestures(for: webView)
+        // 📱 간단한 밀어내기 제스처 설정
+        context.coordinator.setupSimpleSwipeGesture(for: webView)
 
         // Pull to Refresh
         let refreshControl = UIRefreshControl()
@@ -218,8 +217,8 @@ struct CustomWebView: UIViewRepresentable {
         uiView.uiDelegate = nil
         coordinator.webView = nil
 
-        // 🏄‍♂️ 사파리 스타일 제스처 제거
-        coordinator.removeSafariStyleGestures(from: uiView)
+        // 📱 제스처 제거
+        coordinator.removeSimpleSwipeGesture(from: uiView)
 
         // 오디오 세션 비활성화
         coordinator.parent.deactivateAudioSession()
@@ -532,23 +531,23 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 🏄‍♂️ 사파리 스타일 제스처 + 스냅샷 캐싱 (피크 방식)
-        private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
-        private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
-        private var snapshotCache = HistorySnapshotCache()
+        // 📱 간단한 밀어내기 제스처
+        private var pageCache = SimplePageCache()
+        private var panGesture: UIPanGestureRecognizer?
         
-        // 제스처 진행 중 오버레이
-        private var gestureOverlayContainer: UIView?
-        private var currentPageSnapshot: UIView?
-        private var nextPageSnapshot: UIView?
+        // 제스처 오버레이
+        private var gestureContainer: UIView?
+        private var currentPageView: UIImageView?
+        private var nextPageView: UIView?
         
-        // 제스처 상태 (피크 방식)
-        private var isGestureInProgress = false
-        private var peekedRecord: PageRecord? // 미리 조회한 다음 페이지 레코드
-        private var gestureType: GestureType?
+        // 제스처 상태
+        private var isSwipeInProgress = false
+        private var swipeDirection: SwipeDirection?
+        private var targetPageRecord: PageRecord?
         
-        enum GestureType {
-            case back, forward
+        enum SwipeDirection {
+            case left  // 뒤로가기 (오른쪽에서 왼쪽으로)
+            case right // 앞으로가기 (왼쪽에서 오른쪽으로)
         }
 
         // 다운로드 진행률 UI 구성 요소들
@@ -574,118 +573,99 @@ struct CustomWebView: UIViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        // MARK: - 🏄‍♂️ 사파리 스타일 제스처 설정
-        func setupSafariStyleGestures(for webView: WKWebView) {
-            // 제스처 오버레이 컨테이너 생성
-            let overlayContainer = UIView()
-            overlayContainer.backgroundColor = .clear
-            overlayContainer.isUserInteractionEnabled = false
-            overlayContainer.translatesAutoresizingMaskIntoConstraints = false
-            webView.addSubview(overlayContainer)
+        // MARK: - 📱 간단한 밀어내기 제스처 설정
+        func setupSimpleSwipeGesture(for webView: WKWebView) {
+            // 제스처 컨테이너 생성
+            let container = UIView()
+            container.backgroundColor = .clear
+            container.isUserInteractionEnabled = false
+            container.translatesAutoresizingMaskIntoConstraints = false
+            webView.addSubview(container)
             
             NSLayoutConstraint.activate([
-                overlayContainer.topAnchor.constraint(equalTo: webView.topAnchor),
-                overlayContainer.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
-                overlayContainer.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
-                overlayContainer.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
+                container.topAnchor.constraint(equalTo: webView.topAnchor),
+                container.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+                container.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+                container.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
             ])
             
-            self.gestureOverlayContainer = overlayContainer
+            self.gestureContainer = container
             
-            // 좌측 에지 제스처 (뒤로가기)
-            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
-            leftEdge.edges = .left
-            leftEdge.delegate = self
-            leftEdge.cancelsTouchesInView = false
-            webView.addGestureRecognizer(leftEdge)
-            self.leftEdgeGesture = leftEdge
+            // 팬 제스처 생성
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:)))
+            pan.delegate = self
+            webView.addGestureRecognizer(pan)
+            self.panGesture = pan
             
-            // 우측 에지 제스처 (앞으로가기)
-            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgePan(_:)))
-            rightEdge.edges = .right
-            rightEdge.delegate = self
-            rightEdge.cancelsTouchesInView = false
-            webView.addGestureRecognizer(rightEdge)
-            self.rightEdgeGesture = rightEdge
-            
-            // 우선순위 설정
-            let scrollPan = webView.scrollView.panGestureRecognizer
-            scrollPan.require(toFail: leftEdge)
-            scrollPan.require(toFail: rightEdge)
-            
-            print("🏄‍♂️ 피크 방식 사파리 제스처 설정 완료")
+            print("📱 간단한 밀어내기 제스처 설정 완료")
         }
         
-        func removeSafariStyleGestures(from webView: WKWebView) {
-            if let gesture = leftEdgeGesture {
+        func removeSimpleSwipeGesture(from webView: WKWebView) {
+            if let gesture = panGesture {
                 webView.removeGestureRecognizer(gesture)
-                self.leftEdgeGesture = nil
+                self.panGesture = nil
             }
-            if let gesture = rightEdgeGesture {
-                webView.removeGestureRecognizer(gesture)
-                self.rightEdgeGesture = nil
-            }
-            gestureOverlayContainer?.removeFromSuperview()
-            gestureOverlayContainer = nil
+            gestureContainer?.removeFromSuperview()
+            gestureContainer = nil
         }
         
-        // MARK: - 🏄‍♂️ 에지 제스처 핸들러 (피크 방식)
-        @objc private func handleEdgePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        // MARK: - 📱 팬 제스처 핸들러
+        @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
             guard let webView = gesture.view as? WKWebView,
-                  let overlayContainer = gestureOverlayContainer else { return }
+                  let container = gestureContainer else { return }
             
             let translation = gesture.translation(in: webView)
             let velocity = gesture.velocity(in: webView)
-            let isLeftEdge = (gesture.edges == .left)
             
             switch gesture.state {
             case .began:
-                let canNavigate = isLeftEdge ? parent.stateModel.canGoBack : parent.stateModel.canGoForward
+                // 가로 스와이프만 처리
+                let isHorizontalSwipe = abs(translation.x) > abs(translation.y)
+                if !isHorizontalSwipe { return }
                 
-                if canNavigate && !isGestureInProgress {
-                    isGestureInProgress = true
-                    gestureType = isLeftEdge ? .back : .forward
-                    print("🏄‍♂️ 피크 제스처 시작: \(isLeftEdge ? "뒤로" : "앞으로")")
-                    prepareGestureTransition(isBack: isLeftEdge, webView: webView, overlayContainer: overlayContainer)
-                } else {
-                    print("🏄‍♂️ 제스처 불가: \(isLeftEdge ? "뒤로" : "앞으로"), 진행중: \(isGestureInProgress)")
-                    gesture.isEnabled = false
-                    gesture.isEnabled = true
+                let direction: SwipeDirection = translation.x > 0 ? .right : .left
+                let canNavigate = direction == .right ? parent.stateModel.canGoBack : parent.stateModel.canGoForward
+                
+                if canNavigate && !isSwipeInProgress {
+                    isSwipeInProgress = true
+                    swipeDirection = direction
+                    print("📱 밀어내기 시작: \(direction == .right ? "뒤로" : "앞으로")")
+                    startSwipePreview(direction: direction, webView: webView, container: container)
                 }
                 
             case .changed:
-                guard isGestureInProgress else { return }
+                guard isSwipeInProgress,
+                      let direction = swipeDirection,
+                      let currentView = currentPageView,
+                      let nextView = nextPageView else { return }
                 
-                let validMovement = isLeftEdge ? translation.x > 0 : translation.x < 0
-                guard validMovement,
-                      currentPageSnapshot != nil,
-                      nextPageSnapshot != nil else { return }
+                // 방향에 맞는 이동만 허용
+                let validMovement = (direction == .right && translation.x > 0) || (direction == .left && translation.x < 0)
+                if !validMovement { return }
                 
-                let progress = min(abs(translation.x) / UIScreen.main.bounds.width, 1.0)
-                updateGestureTransition(progress: progress, translation: translation, isBack: isLeftEdge)
+                let progress = min(abs(translation.x) / webView.bounds.width, 1.0)
+                updateSwipePreview(progress: progress, translation: translation, direction: direction)
                 
-                // 중간 지점 햅틱
+                // 30% 지점에서 햅틱
                 if progress > 0.3 && progress < 0.35 {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
                 
             case .ended:
-                guard isGestureInProgress else { return }
+                guard isSwipeInProgress else { return }
                 
-                let velocityThreshold: CGFloat = 500
-                let progress = abs(translation.x) / UIScreen.main.bounds.width
-                
-                let shouldComplete = progress > 0.3 || abs(velocity.x) > velocityThreshold
+                let progress = abs(translation.x) / webView.bounds.width
+                let shouldComplete = progress > 0.4 || abs(velocity.x) > 800
                 
                 if shouldComplete {
-                    completeGestureTransition(isBack: isLeftEdge)
+                    completeSwipe()
                 } else {
-                    cancelGestureTransition()
+                    cancelSwipe()
                 }
                 
             case .cancelled, .failed:
-                if isGestureInProgress {
-                    cancelGestureTransition()
+                if isSwipeInProgress {
+                    cancelSwipe()
                 }
                 
             default:
@@ -693,306 +673,264 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 제스처 전환 준비 (피크 방식 - 히스토리 미변경)
-        private func prepareGestureTransition(isBack: Bool, webView: WKWebView, overlayContainer: UIView) {
-            // 1. 현재 페이지 스냅샷 먼저 생성
-            webView.takeSnapshot(with: nil) { [weak self] currentImage, error in
-                guard let self = self, let image = currentImage else {
-                    self?.isGestureInProgress = false
+        // MARK: - 스와이프 미리보기 시작
+        private func startSwipePreview(direction: SwipeDirection, webView: WKWebView, container: UIView) {
+            // 현재 페이지 스냅샷 생성
+            webView.takeSnapshot(with: nil) { [weak self] image, error in
+                guard let self = self, let image = image else {
+                    self?.isSwipeInProgress = false
                     return
                 }
                 
                 DispatchQueue.main.async {
-                    // 현재 페이지 스냅샷 표시
-                    let currentSnapshot = UIImageView(image: image)
-                    currentSnapshot.contentMode = .scaleAspectFill
-                    currentSnapshot.clipsToBounds = true
-                    currentSnapshot.translatesAutoresizingMaskIntoConstraints = false
-                    overlayContainer.addSubview(currentSnapshot)
-                    
-                    NSLayoutConstraint.activate([
-                        currentSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                        currentSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.leadingAnchor),
-                        currentSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.trailingAnchor),
-                        currentSnapshot.bottomAnchor.constraint(equalTo: overlayContainer.bottomAnchor)
-                    ])
-                    
-                    self.currentPageSnapshot = currentSnapshot
-                    
-                    // 2. 🔍 피크(Peek): 다음 대상 레코드만 조회 (히스토리 변경 없음)
-                    self.peekNextPageRecord(isBack: isBack, overlayContainer: overlayContainer)
+                    self.showSwipePreview(currentImage: image, direction: direction, container: container)
                 }
             }
         }
         
-        // MARK: - 🔍 피크: 다음 대상 레코드 조회 (히스토리 미변경)
-        private func peekNextPageRecord(isBack: Bool, overlayContainer: UIView) {
+        private func showSwipePreview(currentImage: UIImage, direction: SwipeDirection, container: UIView) {
+            // 현재 페이지 이미지뷰
+            let currentView = UIImageView(image: currentImage)
+            currentView.contentMode = .scaleAspectFill
+            currentView.clipsToBounds = true
+            currentView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(currentView)
+            
+            NSLayoutConstraint.activate([
+                currentView.topAnchor.constraint(equalTo: container.topAnchor),
+                currentView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                currentView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                currentView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+            
+            self.currentPageView = currentView
+            
+            // 다음 페이지 찾기
             let dataModel = parent.stateModel.dataModel
             var targetRecord: PageRecord?
             
-            // 히스토리를 변경하지 않고 다음 대상만 조회
-            if isBack && dataModel.canGoBack && dataModel.currentPageIndex > 0 {
-                let backIndex = dataModel.currentPageIndex - 1
-                if backIndex < dataModel.pageHistory.count {
-                    targetRecord = dataModel.pageHistory[backIndex]
-                }
-            } else if !isBack && dataModel.canGoForward && dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
-                let forwardIndex = dataModel.currentPageIndex + 1
-                if forwardIndex < dataModel.pageHistory.count {
-                    targetRecord = dataModel.pageHistory[forwardIndex]
-                }
+            if direction == .right && dataModel.canGoBack && dataModel.currentPageIndex > 0 {
+                targetRecord = dataModel.pageHistory[dataModel.currentPageIndex - 1]
+            } else if direction == .left && dataModel.canGoForward && dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
+                targetRecord = dataModel.pageHistory[dataModel.currentPageIndex + 1]
             }
             
-            guard let record = targetRecord else {
-                print("🏄‍♂️ 피크 실패: 대상 레코드 없음")
-                createFallbackNextPageSnapshot(isBack: isBack, overlayContainer: overlayContainer, title: "페이지 없음", url: "")
-                return
-            }
+            self.targetPageRecord = targetRecord
             
-            self.peekedRecord = record
-            print("🏄‍♂️ 피크 성공: \(record.title) | \(record.url.absoluteString)")
-            
-            // 3. 캐시에서 스냅샷 찾기
-            if let cachedSnapshot = snapshotCache.getSnapshot(for: record.url.absoluteString) {
-                createNextPageSnapshotFromImage(isBack: isBack, overlayContainer: overlayContainer, image: cachedSnapshot)
-                print("🖼️ 캐시된 스냅샷 사용: \(record.title)")
-            } else {
-                // 4. 스냅샷 없으면 타이틀 카드 생성
-                createFallbackNextPageSnapshot(isBack: isBack, overlayContainer: overlayContainer, title: record.title, url: record.url.absoluteString)
-                print("📄 타이틀 카드 생성: \(record.title)")
-            }
-        }
-        
-        // MARK: - 캐시된 이미지로 다음 페이지 스냅샷 생성
-        private func createNextPageSnapshotFromImage(isBack: Bool, overlayContainer: UIView, image: UIImage) {
-            let nextSnapshot = UIImageView(image: image)
-            nextSnapshot.contentMode = .scaleAspectFill
-            nextSnapshot.clipsToBounds = true
-            nextSnapshot.translatesAutoresizingMaskIntoConstraints = false
-            
-            // 초기 위치 설정 (화면 밖)
-            overlayContainer.addSubview(nextSnapshot)
+            // 다음 페이지 뷰 생성
+            let nextView = createNextPageView(for: targetRecord, direction: direction)
+            container.addSubview(nextView)
             
             NSLayoutConstraint.activate([
-                nextSnapshot.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                nextSnapshot.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
-                nextSnapshot.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
-                isBack ? 
-                    nextSnapshot.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
-                    nextSnapshot.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor)
+                nextView.topAnchor.constraint(equalTo: container.topAnchor),
+                nextView.widthAnchor.constraint(equalTo: container.widthAnchor),
+                nextView.heightAnchor.constraint(equalTo: container.heightAnchor),
+                direction == .right ?
+                    nextView.trailingAnchor.constraint(equalTo: container.leadingAnchor) :
+                    nextView.leadingAnchor.constraint(equalTo: container.trailingAnchor)
             ])
             
-            self.nextPageSnapshot = nextSnapshot
-            overlayContainer.layoutIfNeeded()
+            self.nextPageView = nextView
+            container.layoutIfNeeded()
         }
         
-        // MARK: - 타이틀 카드로 다음 페이지 스냅샷 생성 (흰 화면 금지)
-        private func createFallbackNextPageSnapshot(isBack: Bool, overlayContainer: UIView, title: String, url: String) {
+        private func createNextPageView(for record: PageRecord?, direction: SwipeDirection) -> UIView {
+            guard let record = record else {
+                return createEmptyPageView(direction: direction)
+            }
+            
+            // 캐시된 스냅샷 확인
+            if let cachedImage = pageCache.getSnapshot(for: record.url.absoluteString) {
+                let imageView = UIImageView(image: cachedImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                print("📸 캐시된 이미지 사용: \(record.title)")
+                return imageView
+            }
+            
+            // 페이지 정보 카드 생성
+            return createPageInfoCard(for: record, direction: direction)
+        }
+        
+        private func createPageInfoCard(for record: PageRecord, direction: SwipeDirection) -> UIView {
             let cardView = UIView()
             cardView.backgroundColor = .systemBackground
-            cardView.translatesAutoresizingMaskIntoConstraints = false
             
-            // 그라데이션 배경
-            let gradientLayer = CAGradientLayer()
-            gradientLayer.colors = [
-                UIColor.systemBlue.withAlphaComponent(0.1).cgColor,
-                UIColor.systemBackground.cgColor
-            ]
-            gradientLayer.startPoint = CGPoint(x: 0, y: 0)
-            gradientLayer.endPoint = CGPoint(x: 1, y: 1)
-            cardView.layer.addSublayer(gradientLayer)
-            
-            // 아이콘
-            let iconView = UIImageView(image: UIImage(systemName: "safari"))
-            iconView.contentMode = .scaleAspectFit
-            iconView.tintColor = .systemBlue
-            iconView.translatesAutoresizingMaskIntoConstraints = false
-            
-            // 제목 라벨
+            // 제목
             let titleLabel = UILabel()
-            titleLabel.text = title.isEmpty ? "새 페이지" : title
+            titleLabel.text = record.title
             titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
-            titleLabel.textColor = .label
             titleLabel.textAlignment = .center
-            titleLabel.numberOfLines = 3
+            titleLabel.numberOfLines = 0
             titleLabel.translatesAutoresizingMaskIntoConstraints = false
             
-            // URL 라벨
+            // URL
             let urlLabel = UILabel()
-            urlLabel.text = url.isEmpty ? "" : URL(string: url)?.host ?? url
-            urlLabel.font = .systemFont(ofSize: 16, weight: .medium)
+            urlLabel.text = record.url.host ?? record.url.absoluteString
+            urlLabel.font = .systemFont(ofSize: 16)
             urlLabel.textColor = .secondaryLabel
             urlLabel.textAlignment = .center
             urlLabel.numberOfLines = 2
             urlLabel.translatesAutoresizingMaskIntoConstraints = false
             
-            // 부제목
-            let subtitleLabel = UILabel()
-            subtitleLabel.text = isBack ? "이전 페이지" : "다음 페이지"
-            subtitleLabel.font = .systemFont(ofSize: 14, weight: .regular)
-            subtitleLabel.textColor = .tertiaryLabel
-            subtitleLabel.textAlignment = .center
-            subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+            // 아이콘
+            let iconView = UIImageView(image: UIImage(systemName: "safari"))
+            iconView.tintColor = .systemBlue
+            iconView.contentMode = .scaleAspectFit
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            
+            // 방향 표시
+            let directionLabel = UILabel()
+            directionLabel.text = direction == .right ? "← 이전 페이지" : "다음 페이지 →"
+            directionLabel.font = .systemFont(ofSize: 14, weight: .medium)
+            directionLabel.textColor = .systemBlue
+            directionLabel.textAlignment = .center
+            directionLabel.translatesAutoresizingMaskIntoConstraints = false
             
             cardView.addSubview(iconView)
             cardView.addSubview(titleLabel)
             cardView.addSubview(urlLabel)
-            cardView.addSubview(subtitleLabel)
-            
-            // 초기 위치 설정 (화면 밖)
-            overlayContainer.addSubview(cardView)
+            cardView.addSubview(directionLabel)
             
             NSLayoutConstraint.activate([
-                cardView.topAnchor.constraint(equalTo: overlayContainer.topAnchor),
-                cardView.widthAnchor.constraint(equalTo: overlayContainer.widthAnchor),
-                cardView.heightAnchor.constraint(equalTo: overlayContainer.heightAnchor),
-                isBack ? 
-                    cardView.trailingAnchor.constraint(equalTo: overlayContainer.leadingAnchor) :
-                    cardView.leadingAnchor.constraint(equalTo: overlayContainer.trailingAnchor),
-                
-                // 내부 레이아웃
                 iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
                 iconView.centerYAnchor.constraint(equalTo: cardView.centerYAnchor, constant: -60),
-                iconView.widthAnchor.constraint(equalToConstant: 80),
-                iconView.heightAnchor.constraint(equalToConstant: 80),
+                iconView.widthAnchor.constraint(equalToConstant: 60),
+                iconView.heightAnchor.constraint(equalToConstant: 60),
                 
                 titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 20),
                 titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
                 titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
                 
-                urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+                urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
                 urlLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 40),
                 urlLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -40),
                 
-                subtitleLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 12),
-                subtitleLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
+                directionLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 20),
+                directionLabel.centerXAnchor.constraint(equalTo: cardView.centerXAnchor)
             ])
             
-            // 그라데이션 크기 조정
-            DispatchQueue.main.async {
-                gradientLayer.frame = cardView.bounds
-            }
-            
-            self.nextPageSnapshot = cardView
-            overlayContainer.layoutIfNeeded()
+            return cardView
         }
         
-        // MARK: - 제스처 전환 업데이트 (동일)
-        private func updateGestureTransition(progress: CGFloat, translation: CGPoint, isBack: Bool) {
-            guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else { return }
+        private func createEmptyPageView(direction: SwipeDirection) -> UIView {
+            let emptyView = UIView()
+            emptyView.backgroundColor = .systemBackground
+            
+            let label = UILabel()
+            label.text = "더 이상 페이지가 없습니다"
+            label.font = .systemFont(ofSize: 18)
+            label.textColor = .secondaryLabel
+            label.textAlignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
+            
+            emptyView.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: emptyView.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: emptyView.centerYAnchor)
+            ])
+            
+            return emptyView
+        }
+        
+        // MARK: - 스와이프 미리보기 업데이트
+        private func updateSwipePreview(progress: CGFloat, translation: CGPoint, direction: SwipeDirection) {
+            guard let currentView = currentPageView,
+                  let nextView = nextPageView else { return }
             
             let screenWidth = UIScreen.main.bounds.width
-            let currentTransform: CGAffineTransform
-            let nextTransform: CGAffineTransform
             
-            if isBack {
-                // 뒤로가기: 현재 페이지는 오른쪽으로, 이전 페이지는 따라옴
-                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
-                nextTransform = CGAffineTransform(translationX: -screenWidth + translation.x, y: 0)
+            // 현재 페이지 이동
+            currentView.transform = CGAffineTransform(translationX: translation.x, y: 0)
+            
+            // 다음 페이지 이동
+            if direction == .right {
+                // 뒤로가기: 이전 페이지가 따라옴
+                nextView.transform = CGAffineTransform(translationX: -screenWidth + translation.x, y: 0)
             } else {
-                // 앞으로가기: 현재 페이지는 왼쪽으로, 다음 페이지는 따라옴
-                currentTransform = CGAffineTransform(translationX: translation.x, y: 0)
-                nextTransform = CGAffineTransform(translationX: screenWidth + translation.x, y: 0)
+                // 앞으로가기: 다음 페이지가 따라옴
+                nextView.transform = CGAffineTransform(translationX: screenWidth + translation.x, y: 0)
             }
-            
-            // 스케일 효과 추가 (사파리 스타일)
-            let scale = 1.0 - (progress * 0.05)
-            let scaledCurrentTransform = currentTransform.scaledBy(x: scale, y: scale)
-            
-            currentSnapshot.transform = scaledCurrentTransform
-            nextSnapshot.transform = nextTransform
-            
-            // 그림자 효과
-            currentSnapshot.layer.shadowOpacity = Float(progress * 0.3)
-            currentSnapshot.layer.shadowOffset = CGSize(width: isBack ? 5 : -5, height: 0)
-            currentSnapshot.layer.shadowRadius = 10
         }
         
-        // MARK: - 제스처 완료 (이때만 실제 네비게이션 실행)
-        private func completeGestureTransition(isBack: Bool) {
-            guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else { return }
+        // MARK: - 스와이프 완료
+        private func completeSwipe() {
+            guard let currentView = currentPageView,
+                  let nextView = nextPageView,
+                  let direction = swipeDirection else { return }
             
-            // 완료 애니메이션
-            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) {
+            UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
                 let screenWidth = UIScreen.main.bounds.width
                 
-                if isBack {
-                    currentSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
-                    nextSnapshot.transform = .identity
+                if direction == .right {
+                    currentView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                    nextView.transform = .identity
                 } else {
-                    currentSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
-                    nextSnapshot.transform = .identity
+                    currentView.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                    nextView.transform = .identity
                 }
-                
-                currentSnapshot.layer.shadowOpacity = 0
-                
             } completion: { _ in
                 // 햅틱 피드백
-                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 
-                // 🎯 이때만 실제 히스토리 네비게이션 실행
-                if isBack {
+                // 실제 네비게이션 실행
+                if direction == .right {
                     self.parent.stateModel.goBack()
                 } else {
                     self.parent.stateModel.goForward()
                 }
                 
-                // 정리
-                self.cleanupGestureTransition()
-                
-                print("🏄‍♂️ 제스처 완료: \(isBack ? "뒤로" : "앞으로") - 실제 네비게이션 실행")
+                self.cleanupSwipe()
+                print("📱 밀어내기 완료: \(direction == .right ? "뒤로" : "앞으로")")
             }
         }
         
-        // MARK: - 제스처 취소 (히스토리 변경 없으므로 단순 정리만)
-        private func cancelGestureTransition() {
-            guard let currentSnapshot = currentPageSnapshot,
-                  let nextSnapshot = nextPageSnapshot else {
-                isGestureInProgress = false
-                return
-            }
+        // MARK: - 스와이프 취소
+        private func cancelSwipe() {
+            guard let currentView = currentPageView,
+                  let nextView = nextPageView,
+                  let direction = swipeDirection else { return }
             
-            // 취소 애니메이션
-            UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.3) {
-                currentSnapshot.transform = .identity
+            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut) {
+                currentView.transform = .identity
                 
                 let screenWidth = UIScreen.main.bounds.width
-                if self.gestureType == .back {
-                    nextSnapshot.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+                if direction == .right {
+                    nextView.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
                 } else {
-                    nextSnapshot.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+                    nextView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
                 }
-                
-                currentSnapshot.layer.shadowOpacity = 0
-                
             } completion: { _ in
-                // 히스토리는 변경되지 않았으므로 되돌릴 필요 없음
-                self.cleanupGestureTransition()
-                print("🏄‍♂️ 제스처 취소 - 히스토리 미변경 상태 유지")
+                self.cleanupSwipe()
+                print("📱 밀어내기 취소")
             }
         }
         
-        // MARK: - 제스처 정리
-        private func cleanupGestureTransition() {
-            currentPageSnapshot?.removeFromSuperview()
-            nextPageSnapshot?.removeFromSuperview()
-            currentPageSnapshot = nil
-            nextPageSnapshot = nil
-            isGestureInProgress = false
-            gestureType = nil
-            peekedRecord = nil
+        // MARK: - 스와이프 정리
+        private func cleanupSwipe() {
+            currentPageView?.removeFromSuperview()
+            nextPageView?.removeFromSuperview()
+            currentPageView = nil
+            nextPageView = nil
+            isSwipeInProgress = false
+            swipeDirection = nil
+            targetPageRecord = nil
         }
         
         // MARK: - UIGestureRecognizerDelegate
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            // 스크롤과 동시에 작동하지 않도록
             return false
         }
         
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === leftEdgeGesture || gestureRecognizer === rightEdgeGesture {
-                return !isGestureInProgress
+            if gestureRecognizer === panGesture {
+                guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+                let translation = pan.translation(in: gestureRecognizer.view)
+                
+                // 가로 스와이프만 허용
+                let isHorizontalSwipe = abs(translation.x) > abs(translation.y)
+                return isHorizontalSwipe && !isSwipeInProgress
             }
             return true
         }
@@ -1038,9 +976,9 @@ struct CustomWebView: UIViewRepresentable {
                         self.parent.stateModel.isLoading = isLoading
                     }
                     
-                    // 로딩 완료 시 현재 페이지 스냅샷 저장 (제스처 중이 아닐 때만)
-                    if !isLoading && !self.isGestureInProgress {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // 로딩 완료 시 현재 페이지 스냅샷 저장
+                    if !isLoading && !self.isSwipeInProgress {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                             self.saveCurrentPageSnapshot(webView: webView)
                         }
                     }
@@ -1061,7 +999,7 @@ struct CustomWebView: UIViewRepresentable {
                 guard let self = self, let newURL = change.newValue, let url = newURL else { return }
 
                 DispatchQueue.main.async {
-                    if self.parent.stateModel.currentURL != url && !self.isGestureInProgress {
+                    if self.parent.stateModel.currentURL != url && !self.isSwipeInProgress {
                         self.parent.stateModel.setNavigatingFromWebView(true)
                         self.parent.stateModel.currentURL = url
                         self.parent.stateModel.setNavigatingFromWebView(false)
@@ -1095,7 +1033,7 @@ struct CustomWebView: UIViewRepresentable {
             
             webView.takeSnapshot(with: nil) { [weak self] image, error in
                 if let image = image {
-                    self?.snapshotCache.saveSnapshot(for: currentURL.absoluteString, image: image)
+                    self?.pageCache.saveSnapshot(for: currentURL.absoluteString, image: image)
                 }
             }
         }
