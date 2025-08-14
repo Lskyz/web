@@ -663,8 +663,8 @@ struct CustomWebView: UIViewRepresentable {
         @objc func handleShowCachedPageBeforeLoad(_ notification: Notification) {
             guard let userInfo = notification.userInfo,
                   let url = userInfo["url"] as? URL,
-                  let direction = userInfo["direction"] as? String,
-                  let webView = webView,
+                  let _ = userInfo["direction"] as? String,
+                  let _ = webView,
                   let container = cachedPreviewContainer,
                   let imageView = cachedPreviewImageView else { return }
             
@@ -730,7 +730,7 @@ struct CustomWebView: UIViewRepresentable {
             guard isShowingCachedPreview,
                   let container = cachedPreviewContainer else { return }
             
-            UIView.animate(withDuration: 0.3, delay: 0, options: .easeInOut) {
+            UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseInOut) {
                 container.alpha = 0.0
             } completion: { _ in
                 container.isHidden = true
