@@ -531,9 +531,10 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         private var lastDesktopMode: Bool = false
 
-        // 📱 간단한 밀어내기 제스처
+        // 📱 간단한 에지 제스처
         private var pageCache = SimplePageCache()
-        private var panGesture: UIPanGestureRecognizer?
+        private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
+        private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
         // 제스처 오버레이
         private var gestureContainer: UIView?
@@ -546,8 +547,8 @@ struct CustomWebView: UIViewRepresentable {
         private var targetPageRecord: PageRecord?
         
         enum SwipeDirection {
-            case left  // 뒤로가기 (오른쪽에서 왼쪽으로)
-            case right // 앞으로가기 (왼쪽에서 오른쪽으로)
+            case back    // 뒤로가기 (왼쪽 에지에서)
+            case forward // 앞으로가기 (오른쪽 에지에서)
         }
 
         // 다운로드 진행률 UI 구성 요소들
@@ -573,7 +574,7 @@ struct CustomWebView: UIViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        // MARK: - 📱 간단한 밀어내기 제스처 설정
+        // MARK: - 📱 간단한 에지 제스처 설정
         func setupSimpleSwipeGesture(for webView: WKWebView) {
             // 제스처 컨테이너 생성
             let container = UIView()
@@ -591,46 +592,57 @@ struct CustomWebView: UIViewRepresentable {
             
             self.gestureContainer = container
             
-            // 팬 제스처 생성
-            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:)))
-            pan.delegate = self
-            webView.addGestureRecognizer(pan)
-            self.panGesture = pan
+            // 왼쪽 에지 제스처 (뒤로가기)
+            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgeGesture(_:)))
+            leftEdge.edges = .left
+            leftEdge.delegate = self
+            webView.addGestureRecognizer(leftEdge)
+            self.leftEdgeGesture = leftEdge
             
-            print("📱 간단한 밀어내기 제스처 설정 완료")
+            // 오른쪽 에지 제스처 (앞으로가기)
+            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleEdgeGesture(_:)))
+            rightEdge.edges = .right
+            rightEdge.delegate = self
+            webView.addGestureRecognizer(rightEdge)
+            self.rightEdgeGesture = rightEdge
+            
+            print("📱 에지 제스처 설정 완료")
         }
         
         func removeSimpleSwipeGesture(from webView: WKWebView) {
-            if let gesture = panGesture {
+            if let gesture = leftEdgeGesture {
                 webView.removeGestureRecognizer(gesture)
-                self.panGesture = nil
+                self.leftEdgeGesture = nil
+            }
+            if let gesture = rightEdgeGesture {
+                webView.removeGestureRecognizer(gesture)
+                self.rightEdgeGesture = nil
             }
             gestureContainer?.removeFromSuperview()
             gestureContainer = nil
         }
         
-        // MARK: - 📱 팬 제스처 핸들러
-        @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
+        // MARK: - 📱 에지 제스처 핸들러
+        @objc private func handleEdgeGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
             guard let webView = gesture.view as? WKWebView,
                   let container = gestureContainer else { return }
             
             let translation = gesture.translation(in: webView)
             let velocity = gesture.velocity(in: webView)
+            let isLeftEdge = (gesture.edges == .left)
             
             switch gesture.state {
             case .began:
-                // 가로 스와이프만 처리
-                let isHorizontalSwipe = abs(translation.x) > abs(translation.y)
-                if !isHorizontalSwipe { return }
-                
-                let direction: SwipeDirection = translation.x > 0 ? .right : .left
-                let canNavigate = direction == .right ? parent.stateModel.canGoBack : parent.stateModel.canGoForward
+                let direction: SwipeDirection = isLeftEdge ? .back : .forward
+                let canNavigate = direction == .back ? parent.stateModel.canGoBack : parent.stateModel.canGoForward
                 
                 if canNavigate && !isSwipeInProgress {
                     isSwipeInProgress = true
                     swipeDirection = direction
-                    print("📱 밀어내기 시작: \(direction == .right ? "뒤로" : "앞으로")")
+                    print("📱 에지 제스처 시작: \(direction == .back ? "뒤로" : "앞으로")")
                     startSwipePreview(direction: direction, webView: webView, container: container)
+                } else {
+                    print("📱 제스처 불가: \(direction == .back ? "뒤로" : "앞으로")")
                 }
                 
             case .changed:
@@ -639,8 +651,8 @@ struct CustomWebView: UIViewRepresentable {
                       let currentView = currentPageView,
                       let nextView = nextPageView else { return }
                 
-                // 방향에 맞는 이동만 허용
-                let validMovement = (direction == .right && translation.x > 0) || (direction == .left && translation.x < 0)
+                // 에지 방향에 맞는 이동만 허용
+                let validMovement = (direction == .back && translation.x > 0) || (direction == .forward && translation.x < 0)
                 if !validMovement { return }
                 
                 let progress = min(abs(translation.x) / webView.bounds.width, 1.0)
@@ -709,9 +721,9 @@ struct CustomWebView: UIViewRepresentable {
             let dataModel = parent.stateModel.dataModel
             var targetRecord: PageRecord?
             
-            if direction == .right && dataModel.canGoBack && dataModel.currentPageIndex > 0 {
+            if direction == .back && dataModel.canGoBack && dataModel.currentPageIndex > 0 {
                 targetRecord = dataModel.pageHistory[dataModel.currentPageIndex - 1]
-            } else if direction == .left && dataModel.canGoForward && dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
+            } else if direction == .forward && dataModel.canGoForward && dataModel.currentPageIndex < dataModel.pageHistory.count - 1 {
                 targetRecord = dataModel.pageHistory[dataModel.currentPageIndex + 1]
             }
             
@@ -725,7 +737,7 @@ struct CustomWebView: UIViewRepresentable {
                 nextView.topAnchor.constraint(equalTo: container.topAnchor),
                 nextView.widthAnchor.constraint(equalTo: container.widthAnchor),
                 nextView.heightAnchor.constraint(equalTo: container.heightAnchor),
-                direction == .right ?
+                direction == .back ?
                     nextView.trailingAnchor.constraint(equalTo: container.leadingAnchor) :
                     nextView.leadingAnchor.constraint(equalTo: container.trailingAnchor)
             ])
@@ -781,7 +793,7 @@ struct CustomWebView: UIViewRepresentable {
             
             // 방향 표시
             let directionLabel = UILabel()
-            directionLabel.text = direction == .right ? "← 이전 페이지" : "다음 페이지 →"
+            directionLabel.text = direction == .back ? "← 이전 페이지" : "다음 페이지 →"
             directionLabel.font = .systemFont(ofSize: 14, weight: .medium)
             directionLabel.textColor = .systemBlue
             directionLabel.textAlignment = .center
@@ -844,7 +856,7 @@ struct CustomWebView: UIViewRepresentable {
             currentView.transform = CGAffineTransform(translationX: translation.x, y: 0)
             
             // 다음 페이지 이동
-            if direction == .right {
+            if direction == .back {
                 // 뒤로가기: 이전 페이지가 따라옴
                 nextView.transform = CGAffineTransform(translationX: -screenWidth + translation.x, y: 0)
             } else {
@@ -862,7 +874,7 @@ struct CustomWebView: UIViewRepresentable {
             UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
                 let screenWidth = UIScreen.main.bounds.width
                 
-                if direction == .right {
+                if direction == .back {
                     currentView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
                     nextView.transform = .identity
                 } else {
@@ -874,14 +886,14 @@ struct CustomWebView: UIViewRepresentable {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 
                 // 실제 네비게이션 실행
-                if direction == .right {
+                if direction == .back {
                     self.parent.stateModel.goBack()
                 } else {
                     self.parent.stateModel.goForward()
                 }
                 
                 self.cleanupSwipe()
-                print("📱 밀어내기 완료: \(direction == .right ? "뒤로" : "앞으로")")
+                print("📱 에지 제스처 완료: \(direction == .back ? "뒤로" : "앞으로")")
             }
         }
         
@@ -895,14 +907,14 @@ struct CustomWebView: UIViewRepresentable {
                 currentView.transform = .identity
                 
                 let screenWidth = UIScreen.main.bounds.width
-                if direction == .right {
+                if direction == .back {
                     nextView.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
                 } else {
                     nextView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
                 }
             } completion: { _ in
                 self.cleanupSwipe()
-                print("📱 밀어내기 취소")
+                print("📱 에지 제스처 취소")
             }
         }
         
@@ -919,18 +931,13 @@ struct CustomWebView: UIViewRepresentable {
         
         // MARK: - UIGestureRecognizerDelegate
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            // 스크롤과 동시에 작동하지 않도록
-            return false
+            // 에지 제스처는 스크롤과 충돌하지 않음
+            return true
         }
         
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === panGesture {
-                guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
-                let translation = pan.translation(in: gestureRecognizer.view)
-                
-                // 가로 스와이프만 허용
-                let isHorizontalSwipe = abs(translation.x) > abs(translation.y)
-                return isHorizontalSwipe && !isSwipeInProgress
+            if gestureRecognizer === leftEdgeGesture || gestureRecognizer === rightEdgeGesture {
+                return !isSwipeInProgress
             }
             return true
         }
