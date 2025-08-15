@@ -1110,7 +1110,7 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: Pull to Refresh (헬퍼 호출)
         @objc func handleRefresh(_ sender: UIRefreshControl) {
-            handleRefresh(sender, webView: webView)
+            handleWebViewRefresh(sender, webView: webView)
         }
 
         // MARK: 외부 URL 오픈
