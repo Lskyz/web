@@ -3,6 +3,7 @@
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
 //  ✅ 홈클릭 마지막세션 문제 + 인접 중복제거 강화
+//  🔧 홈 클릭 히스토리 문제 수정: 항상 새 페이지로 추가
 //
 
 import Foundation
@@ -402,13 +403,14 @@ private func startHomeNavigationHandling() {
         }
     }
     
-    // 🆕 네비게이션 타입 감지
+    // 🆕 네비게이션 타입 감지 (🔧 홈 클릭 감지 강화)
     private func detectNavigationType(url: URL, type: String, siteType: String) -> NavigationType {
-        // 홈 클릭 감지 (루트 경로로의 이동)
-        if url.path == "/" || url.path.isEmpty {
+        // 🔧 **핵심 수정**: 홈 클릭 감지 강화 - 루트 경로로의 이동을 더 명확히 감지
+        if isHomepageURL(url) {
             if let currentRecord = currentPageRecord,
                url.host == currentRecord.url.host &&
-               currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
+               !isHomepageURL(currentRecord.url) {
+                dbg("🏠 홈 클릭 감지 강화: \(currentRecord.url.path) → \(url.path)")
                 return .navHome
             }
         }
@@ -425,6 +427,19 @@ private func startHomeNavigationHandling() {
         }
         
         return .normal
+    }
+    
+    // 🔧 **새로 추가**: 홈페이지 URL 감지 로직
+    private func isHomepageURL(_ url: URL) -> Bool {
+        let path = url.path
+        // 루트 경로거나, 슬래시만 있거나, 빈 경로이거나, index 관련 파일
+        return path == "/" || 
+               path.isEmpty || 
+               path == "/index" ||
+               path == "/index.html" ||
+               path == "/index.php" ||
+               path == "/main" ||
+               path == "/home"
     }
     
     // 🆕 새로고침 처리 (무조건 replace, ID 유지)
@@ -491,7 +506,13 @@ private func startHomeNavigationHandling() {
             handleSPAReplaceState(url: url, title: title, siteType: siteType)
             
         case "pop", "hash":
-            handleSPAPopState(url: url, title: title, siteType: siteType)
+            // 🔧 **핵심 수정**: 홈페이지 URL의 경우 항상 새 페이지로 추가
+            if isHomepageURL(url) {
+                dbg("🏠 SPA Pop에서 홈페이지 감지 - 새 페이지로 처리: \(url.absoluteString)")
+                handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .navHome)
+            } else {
+                handleSPAPopState(url: url, title: title, siteType: siteType)
+            }
             
         case "iframe_push":
             handleSPAIframePush(url: url, title: title, siteType: siteType)
@@ -500,7 +521,13 @@ private func startHomeNavigationHandling() {
             updateCurrentPageTitle(title)
             
         case "dom":
-            handleSPADOMChange(url: url, title: title, siteType: siteType)
+            // 🔧 **핵심 수정**: DOM 변경도 홈페이지 URL이면 새 페이지로 처리
+            if isHomepageURL(url) {
+                dbg("🏠 SPA DOM에서 홈페이지 감지 - 새 페이지로 처리: \(url.absoluteString)")
+                handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .navHome)
+            } else {
+                handleSPADOMChange(url: url, title: title, siteType: siteType)
+            }
             
         default:
             dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
