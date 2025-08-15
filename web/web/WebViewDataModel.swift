@@ -394,11 +394,17 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // SPA 로직 차단 시작
         startHomeNavigationHandling()
         
-        // Forward 스택 제거
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+        // ✅ **수정**: 홈 클릭도 더 신중하게 forward 스택 제거
+        // 현재 페이지가 같은 사이트의 홈이 아닐 때만 제거
+        let shouldClearForwardStack = currentPageRecord?.url.host != url.host || 
+                                     !(currentPageRecord?.url.path == "/" || currentPageRecord?.url.path.isEmpty)
+        
+        if shouldClearForwardStack && currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ 홈 클릭 - forward 스택 \(removedCount)개 제거")
+            dbg("🗑️ 홈 클릭 - 다른 사이트/섹션, forward 스택 \(removedCount)개 제거")
+        } else {
+            dbg("💾 홈 클릭 - forward 스택 보존 (같은 사이트 홈)")
         }
         
         // 새 홈 페이지 추가
@@ -473,11 +479,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // Forward 스택 제거
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+        // ✅ **수정**: SPA Push에서는 forward 스택을 더 보수적으로 제거
+        // 정말 다른 섹션으로 이동할 때만 제거
+        let shouldClearForwardStack = !areSimilarPages(url, currentPageRecord?.url)
+        
+        if shouldClearForwardStack && currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ SPA Push - forward 스택 \(removedCount)개 제거")
+            dbg("🗑️ SPA Push - 다른 섹션 이동, forward 스택 \(removedCount)개 제거")
+        } else {
+            dbg("💾 SPA Push - forward 스택 보존 (같은 섹션 내)")
         }
         
         let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
@@ -560,7 +571,29 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // MARK: - 페이지 기록 시스템
+    // MARK: - 페이지 유사성 체크 (forward 스택 보존용)
+    
+    private func areSimilarPages(_ url1: URL?, _ url2: URL?) -> Bool {
+        guard let url1 = url1, let url2 = url2 else { return false }
+        
+        // 같은 호스트인지 확인
+        guard url1.host == url2.host else { return false }
+        
+        // 경로가 동일하면 유사
+        if url1.path == url2.path { return true }
+        
+        // 루트 경로들 (홈페이지들)
+        let isRoot1 = url1.path == "/" || url1.path.isEmpty
+        let isRoot2 = url2.path == "/" || url2.path.isEmpty
+        if isRoot1 && isRoot2 { return true }
+        
+        // 첫 번째 경로 컴포넌트만 비교 (같은 섹션)
+        let components1 = url1.pathComponents.dropFirst() // '/' 제거
+        let components2 = url2.pathComponents.dropFirst()
+        
+        return components1.prefix(1) == components2.prefix(1) && 
+               components1.count <= 2 && components2.count <= 2
+    }
     
     func addNewPage(url: URL, title: String = "") {
         // 히스토리 네비게이션 중 새 페이지 추가 금지
@@ -601,9 +634,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // 현재 위치 이후의 forward 기록 제거
+        // ✅ **원래대로**: 새 페이지 추가 시 당연히 앞으로가기 스택 제거
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🗑️ 새 페이지 추가 - 앞으로가기 스택 \(removedCount)개 제거")
         }
         
         let newRecord = PageRecord(url: url, title: title)
