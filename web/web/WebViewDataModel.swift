@@ -1145,9 +1145,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
     
     dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
 }
-
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     stateModel?.handleLoadingFinish()
     let title = webView.title ?? webView.url?.host ?? "제목 없음"
     let wasRestoringSession = isRestoringSession
