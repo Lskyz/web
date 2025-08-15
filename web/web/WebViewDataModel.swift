@@ -288,6 +288,9 @@ private func startHomeNavigationHandling() {
     swipeConfirmationTimer?.invalidate()
     swipeConfirmationTimer = nil
 
+    // ✅ 핵심 변경: 홈 클릭에서는 히스토리 차단 윈도우를 생성/유지하지 않도록 즉시 제거
+    historyNavigationEndTime = nil
+
     isHandlingHomeNavigation = true
     homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
     dbg("🏠 홈 클릭 처리 시작 - SPA 로직 1초간 차단 (스와이프/히스토리 플래그 해제)")
@@ -1097,21 +1100,30 @@ func saveSession() -> WebViewSession? {
 
     // MARK: - WKNavigationDelegate (간소화)
     
-   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
     stateModel?.handleLoadingStart()
     
     let startURL = webView.url
-    
+
+    // ✅ 추가: 홈으로 가는 풀 네비 시작 시, 남아있을 수 있는 스와이프 타이머/타겟을 즉시 제거
+    if let startURL = startURL, isHomepageURL(startURL) {
+        swipeDetectedTargetIndex = nil
+        swipeConfirmationTimer?.invalidate()
+        swipeConfirmationTimer = nil
+    }
+
     // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지 + 홈페이지 URL도 제외)
     if let startURL = startURL, 
        !isRestoringSession, 
        !isHistoryNavigationActive(),
        !isInHomeNavigationHandling(),            // 홈 처리 중에는 금지
-       !isHomepageURL(startURL),                 // 🔧 홈페이지 URL은 스와이프 감지 제외
+       !isHomepageURL(startURL),                 // 홈페이지 URL은 스와이프 감지 제외
        stateModel?.currentURL != startURL {
         
         handleSwipeGestureDetected(to: startURL)
     }
+
+
     
     // 리다이렉트 체인 관리
     if let url = startURL {
@@ -1136,63 +1148,57 @@ func saveSession() -> WebViewSession? {
 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        stateModel?.handleLoadingFinish()
-        
-        let title = webView.title ?? webView.url?.host ?? "제목 없음"
-        
-        let wasRestoringSession = isRestoringSession
-        
-        if let finalURL = webView.url {
-            if isRestoringSession {
-                updateCurrentPageTitle(title)
-                finishSessionRestore()
-                dbg("🔄 복원 완료: '\(title)'")
-                
-            } else if isHistoryNavigationActive() {
-                updateCurrentPageTitle(title)
-                
-                if stateModel?.currentURL != finalURL {
-                    stateModel?.syncCurrentURL(finalURL)
-                }
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.resetNavigationFlags()
-                }
-                
-                dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
-                
+    stateModel?.handleLoadingFinish()
+    let title = webView.title ?? webView.url?.host ?? "제목 없음"
+    let wasRestoringSession = isRestoringSession
+
+    if let finalURL = webView.url {
+        let isHome = isHomepageURL(finalURL)
+
+        if isRestoringSession {
+            updateCurrentPageTitle(title)
+            finishSessionRestore()
+            dbg("🔄 복원 완료: '\(title)'")
+
+        } else if isHome {
+            // ✅ 홈 완료: 무조건 새 레코드 + 스와이프 타이머 강제 종료
+            swipeDetectedTargetIndex = nil
+            swipeConfirmationTimer?.invalidate()
+            swipeConfirmationTimer = nil
+
+            addNewPage(url: finalURL, title: title)
+            stateModel?.syncCurrentURL(finalURL)
+            dbg("🏠 홈 완료 - 새 페이지 강제 기록: '\(title)' (총 \(pageHistory.count)개)")
+
+        } else if isHistoryNavigationActive() {
+            updateCurrentPageTitle(title)
+            if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.resetNavigationFlags() }
+            dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+
+        } else {
+            let isHistoryRelated = isHistoryNavigation ||
+                                   historyNavigationEndTime != nil ||
+                                   (historyNavigationStartTime != nil)
+
+            if !isHistoryRelated {
+                addNewPage(url: finalURL, title: title)
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             } else {
-                // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
-                // 🔧 **핵심 수정**: 모든 히스토리 관련 상태를 체크
-                let isHistoryRelated = isHistoryNavigation || 
-                                      historyNavigationEndTime != nil ||
-                                      (historyNavigationStartTime != nil)
-                
-                if !isHistoryRelated {
-                    addNewPage(url: finalURL, title: title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                } else {
-                    // 히스토리 네비게이션 관련 상태에서는 제목만 업데이트
-                    updateCurrentPageTitle(title)
-                    if stateModel?.currentURL != finalURL {
-                        stateModel?.syncCurrentURL(finalURL)
-                    }
-                    dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
-                }
+                updateCurrentPageTitle(title)
+                if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
+                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
             }
-            
-            // 리다이렉트 체인 정리
-            redirectionChain.removeAll()
-            redirectionStartTime = nil
         }
-        
-        if !wasRestoringSession {
-            stateModel?.triggerNavigationFinished()
-        }
-        
-        dbg("✅ 네비게이션 완료")
+
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
     }
+
+    if !wasRestoringSession { stateModel?.triggerNavigationFinished() }
+    dbg("✅ 네비게이션 완료")
+}
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
