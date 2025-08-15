@@ -721,6 +721,14 @@ private func startHomeNavigationHandling() {
             return
         }
         
+        // 🔧 홈페이지 URL 감지 시 스와이프 상태 즉시 정리
+        if isHomepageURL(url) {
+            swipeDetectedTargetIndex = nil
+            swipeConfirmationTimer?.invalidate()
+            swipeConfirmationTimer = nil
+            dbg("🏠 홈페이지 감지 - 스와이프 상태 정리")
+        }
+        
         // 🔒 로그인 관련 URL 감지 및 추적
         if PageRecord.isLoginRelatedURL(url) {
             if !isInLoginFlow {
@@ -1043,11 +1051,12 @@ func saveSession() -> WebViewSession? {
     
     let startURL = webView.url
     
-    // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지)
+    // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지 + 홈페이지 URL도 제외)
     if let startURL = startURL, 
        !isRestoringSession, 
        !isHistoryNavigationActive(),
-       !isInHomeNavigationHandling(),            // ⬅️ 추가된 가드
+       !isInHomeNavigationHandling(),            // 홈 처리 중에는 금지
+       !isHomepageURL(startURL),                 // 🔧 홈페이지 URL은 스와이프 감지 제외
        stateModel?.currentURL != startURL {
         
         handleSwipeGestureDetected(to: startURL)
