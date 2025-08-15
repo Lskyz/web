@@ -1,6 +1,7 @@
 //
 //  WebViewDataModel.swift
-//  🌐 홈클릭 마지막세션 유지 + 정규식 기반 중복제거 + 자연스러운 히스토리 흐름
+//  🌐 홈클릭 마지막세션 유지 + 정규식 기반 강화된 중복제거 + 자연스러운 히스토리 흐름
+//  ✅ 앞으로가기 스택 제거 로직 완전 제거, 정규식 기반 인접 중복 제거 강화
 //
 
 import Foundation
@@ -231,7 +232,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // MARK: - 약한 중복제거를 위한 URL 정규화 (의미있는 차이는 보존)
+    // MARK: - 🔧 정규식 기반 강화된 URL 중복 검사
     
     private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -268,54 +269,145 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return components?.url?.absoluteString ?? url.absoluteString
     }
     
-    // MARK: - 보수적인 인접 중복 제거 (정말로 같은 페이지일 때만)
+    // MARK: - 🎯 정규식 기반 고급 페이지 유사성 검사
+    
+    private func arePagesSimilarByPattern(_ url1: URL, _ url2: URL) -> Bool {
+        guard url1.host == url2.host else { return false }
+        
+        let url1String = url1.absoluteString
+        let url2String = url2.absoluteString
+        
+        // 1. 완전히 같은 URL (정규화 후)
+        if normalizeURLForDuplicateCheck(url1) == normalizeURLForDuplicateCheck(url2) {
+            return true
+        }
+        
+        // 2. 게시판 글번호만 다른 경우 패턴 매칭
+        let boardPatterns: [(String, String)] = [
+            // 숫자 ID만 다른 경우: /board/123 vs /board/456
+            (#"^(.*/)(\d+)([/?].*)?$"#, #"^(.*/)(\d+)([/?].*)?$"#),
+            // 파라미터 no값만 다른 경우: ?no=123 vs ?no=456
+            (#"^(.*)([?&]no=)(\d+)(.*)$"#, #"^(.*)([?&]no=)(\d+)(.*)$"#),
+            // 파라미터 wr_id값만 다른 경우: ?wr_id=123 vs ?wr_id=456
+            (#"^(.*)([?&]wr_id=)(\d+)(.*)$"#, #"^(.*)([?&]wr_id=)(\d+)(.*)$"#),
+            // 파라미터 id값만 다른 경우: ?id=abc vs ?id=def
+            (#"^(.*)([?&]id=)([^&]+)(.*)$"#, #"^(.*)([?&]id=)([^&]+)(.*)$"#),
+            // 페이지 번호만 다른 경우: ?page=1 vs ?page=2
+            (#"^(.*)([?&]page=)(\d+)(.*)$"#, #"^(.*)([?&]page=)(\d+)(.*)$"#)
+        ]
+        
+        for (pattern1, pattern2) in boardPatterns {
+            if let match1 = matchURLPattern(url1String, pattern: pattern1),
+               let match2 = matchURLPattern(url2String, pattern: pattern2) {
+                
+                // 기본 부분이 같은지 확인 (숫자/ID 부분 제외)
+                let base1 = "\(match1.prefix)\(match1.suffix)"
+                let base2 = "\(match2.prefix)\(match2.suffix)"
+                
+                if base1 == base2 {
+                    dbg("🔍 패턴 매칭 중복 감지: 기본부분 '\(base1)' 동일")
+                    return true
+                }
+            }
+        }
+        
+        // 3. 해시 프래그먼트만 다른 SPA 페이지
+        if url1.scheme == url2.scheme && 
+           url1.host == url2.host && 
+           url1.path == url2.path && 
+           url1.query == url2.query && 
+           url1.fragment != url2.fragment {
+            dbg("🔍 SPA 해시 차이 중복 감지")
+            return true
+        }
+        
+        // 4. 쿼리스트링 일부만 다른 경우
+        if url1.scheme == url2.scheme && 
+           url1.host == url2.host && 
+           url1.path == url2.path {
+            
+            let query1Items = URLComponents(url: url1, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let query2Items = URLComponents(url: url2, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            
+            // 중요한 파라미터들을 제외하고 비교
+            let importantParams = Set(["q", "search", "keyword", "query", "term"])
+            let filtered1 = query1Items.filter { importantParams.contains($0.name.lowercased()) }
+            let filtered2 = query2Items.filter { importantParams.contains($0.name.lowercased()) }
+            
+            if filtered1.isEmpty && filtered2.isEmpty {
+                // 중요한 파라미터가 없으면 같은 페이지로 간주
+                dbg("🔍 쿼리스트링 차이 중복 감지 (중요 파라미터 없음)")
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func matchURLPattern(_ url: String, pattern: String) -> (prefix: String, variable: String, suffix: String)? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
+        
+        let nsString = url as NSString
+        let range = NSRange(location: 0, length: nsString.length)
+        
+        if let match = regex.firstMatch(in: url, options: [], range: range) {
+            let prefixRange = match.range(at: 1)
+            let variableRange = match.range(at: 3)
+            let suffixRange = match.range(at: 4)
+            
+            let prefix = prefixRange.location != NSNotFound ? nsString.substring(with: prefixRange) : ""
+            let variable = variableRange.location != NSNotFound ? nsString.substring(with: variableRange) : ""
+            let suffix = suffixRange.location != NSNotFound ? nsString.substring(with: suffixRange) : ""
+            
+            return (prefix: prefix, variable: variable, suffix: suffix)
+        }
+        
+        return nil
+    }
+    
+    // MARK: - 🔧 강화된 인접 중복 제거 (정규식 기반)
     
     private func removeAdjacentDuplicates() {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return }
         
         let currentRecord = pageHistory[currentPageIndex]
-        let currentNormalizedURL = normalizeURLForDuplicateCheck(currentRecord.url)
         var removedCount = 0
         
-        // 바로 앞 페이지 체크 - 정말로 거의 같은 URL이고 시간차이가 짧을 때만
+        // 바로 앞 페이지 체크 - 정규식 패턴 매칭으로 더 정교하게
         if currentPageIndex > 0 {
             let prevIndex = currentPageIndex - 1
             let prevRecord = pageHistory[prevIndex]
-            let prevNormalizedURL = normalizeURLForDuplicateCheck(prevRecord.url)
             
-            // 추가 조건: 시간차이가 3초 이내이고 URL이 정말 같을 때만
             let timeDifference = currentRecord.timestamp.timeIntervalSince(prevRecord.timestamp)
-            let isSameNormalizedURL = currentNormalizedURL == prevNormalizedURL
-            let isQuickNavigation = timeDifference < 3.0
+            let isQuickNavigation = timeDifference < 5.0  // 5초로 확장
+            let isSimilarPage = arePagesSimilarByPattern(prevRecord.url, currentRecord.url)
             
-            if isSameNormalizedURL && isQuickNavigation {
-                dbg("🔄 인접 중복 제거 (앞): '\(prevRecord.title)' [인덱스: \(prevIndex)] (시간차: \(String(format: "%.1f", timeDifference))초)")
+            if isSimilarPage && isQuickNavigation {
+                dbg("🔄 정규식 인접 중복 제거 (앞): '\(prevRecord.title)' → '\(currentRecord.title)' [시간차: \(String(format: "%.1f", timeDifference))초]")
                 pageHistory.remove(at: prevIndex)
-                setCurrentPageIndex(currentPageIndex - 1, reason: "앞 페이지 중복 제거")
+                setCurrentPageIndex(currentPageIndex - 1, reason: "정규식 앞 페이지 중복 제거")
                 removedCount += 1
             }
         }
         
-        // 바로 뒤 페이지 체크 - 정말로 거의 같은 URL이고 시간차이가 짧을 때만
+        // 바로 뒤 페이지 체크 - 정규식 패턴 매칭으로 더 정교하게
         if currentPageIndex < pageHistory.count - 1 {
             let nextIndex = currentPageIndex + 1
             let nextRecord = pageHistory[nextIndex]
-            let nextNormalizedURL = normalizeURLForDuplicateCheck(nextRecord.url)
             
-            // 추가 조건: 시간차이가 3초 이내이고 URL이 정말 같을 때만
             let timeDifference = nextRecord.timestamp.timeIntervalSince(currentRecord.timestamp)
-            let isSameNormalizedURL = currentNormalizedURL == nextNormalizedURL
-            let isQuickNavigation = timeDifference < 3.0
+            let isQuickNavigation = timeDifference < 5.0  // 5초로 확장
+            let isSimilarPage = arePagesSimilarByPattern(currentRecord.url, nextRecord.url)
             
-            if isSameNormalizedURL && isQuickNavigation {
-                dbg("🔄 인접 중복 제거 (뒤): '\(nextRecord.title)' [인덱스: \(nextIndex)] (시간차: \(String(format: "%.1f", timeDifference))초)")
+            if isSimilarPage && isQuickNavigation {
+                dbg("🔄 정규식 인접 중복 제거 (뒤): '\(currentRecord.title)' → '\(nextRecord.title)' [시간차: \(String(format: "%.1f", timeDifference))초]")
                 pageHistory.remove(at: nextIndex)
                 removedCount += 1
             }
         }
         
         if removedCount > 0 {
-            dbg("🔄 보수적 중복 제거 완료: \(removedCount)개 제거")
+            dbg("🔄 정규식 기반 중복 제거 완료: \(removedCount)개 제거")
         }
     }
     
@@ -399,24 +491,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // SPA 로직 차단 시작
         startHomeNavigationHandling()
         
-        // ✅ **수정**: 홈 클릭도 더 신중하게 forward 스택 제거
-        // 현재 페이지가 같은 사이트의 홈이 아닐 때만 제거
-        let shouldClearForwardStack: Bool
-        if let currentRecord = currentPageRecord {
-            let isDifferentHost = currentRecord.url.host != url.host
-            let isNotCurrentlyOnHomePage = !(currentRecord.url.path == "/" || currentRecord.url.path.isEmpty)
-            shouldClearForwardStack = isDifferentHost || isNotCurrentlyOnHomePage
-        } else {
-            shouldClearForwardStack = true
-        }
-        
-        if shouldClearForwardStack && currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            let removedCount = pageHistory.count - currentPageIndex - 1
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ 홈 클릭 - 다른 사이트/섹션, forward 스택 \(removedCount)개 제거")
-        } else {
-            dbg("💾 홈 클릭 - forward 스택 보존 (같은 사이트 홈)")
-        }
+        // ✅ 홈 클릭에서도 앞으로가기 스택 제거하지 않음
+        dbg("💾 홈 클릭 - 앞으로가기 스택 보존")
         
         // 새 홈 페이지 추가
         let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
@@ -424,6 +500,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         setCurrentPageIndex(pageHistory.count - 1, reason: "홈 클릭")
         
         dbg("🏠 홈 클릭 - 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+        
+        // 인접 중복 제거 실행
+        removeAdjacentDuplicates()
         
         // 세션 위치 보호
         let targetIndex = pageHistory.count - 1
@@ -490,17 +569,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // ✅ **수정**: SPA Push에서는 forward 스택을 더 보수적으로 제거
-        // 정말 다른 섹션으로 이동할 때만 제거
-        let shouldClearForwardStack = !areSimilarPages(url, currentPageRecord?.url)
-        
-        if shouldClearForwardStack && currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            let removedCount = pageHistory.count - currentPageIndex - 1
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ SPA Push - 다른 섹션 이동, forward 스택 \(removedCount)개 제거")
-        } else {
-            dbg("💾 SPA Push - forward 스택 보존 (같은 섹션 내)")
-        }
+        // ✅ SPA Push에서도 앞으로가기 스택 제거하지 않음
+        dbg("💾 SPA Push - 앞으로가기 스택 보존")
         
         let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
         pageHistory.append(newRecord)
@@ -582,7 +652,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // MARK: - 페이지 유사성 체크 (forward 스택 보존용)
+    // MARK: - 페이지 유사성 체크 (네비게이션용)
     
     private func areSimilarPages(_ url1: URL?, _ url2: URL?) -> Bool {
         guard let url1 = url1, let url2 = url2 else { return false }
@@ -639,24 +709,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // 보수적인 연속 중복 체크 (정말로 같은 페이지이고 빠른 시간 내에 연속으로 온 경우만)
         if !pageHistory.isEmpty,
            let lastRecord = pageHistory.last {
-            let lastNormalizedURL = normalizeURLForDuplicateCheck(lastRecord.url)
-            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
             let timeDifference = Date().timeIntervalSince(lastRecord.timestamp)
+            let isSimilarPage = arePagesSimilarByPattern(lastRecord.url, url)
             
-            // 정말로 같은 URL이고 3초 이내에 연속으로 온 경우만 중복으로 처리
-            if lastNormalizedURL == currentNormalizedURL && timeDifference < 3.0 {
+            // 정규식 패턴으로 같은 페이지이고 5초 이내에 연속으로 온 경우만 중복으로 처리
+            if isSimilarPage && timeDifference < 5.0 {
                 updateCurrentPageTitle(title)
-                dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' (시간차: \(String(format: "%.1f", timeDifference))초)")
+                dbg("🔄 정규식 연속 중복 감지 - 제목만 업데이트: '\(title)' (시간차: \(String(format: "%.1f", timeDifference))초)")
                 return
             }
         }
         
-        // ✅ **원래대로**: 새 페이지 추가 시 당연히 앞으로가기 스택 제거
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            let removedCount = pageHistory.count - currentPageIndex - 1
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ 새 페이지 추가 - 앞으로가기 스택 \(removedCount)개 제거")
-        }
+        // ✅ 새 페이지 추가 시에도 앞으로가기 스택 제거하지 않음
+        dbg("💾 새 페이지 추가 - 앞으로가기 스택 보존")
         
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
