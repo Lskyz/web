@@ -1123,7 +1123,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
         handleSwipeGestureDetected(to: startURL)
     }
 
-}
+
     
     // 리다이렉트 체인 관리
     if let url = startURL {
