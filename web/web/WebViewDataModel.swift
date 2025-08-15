@@ -1147,7 +1147,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
 }
 
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     stateModel?.handleLoadingFinish()
     let title = webView.title ?? webView.url?.host ?? "제목 없음"
     let wasRestoringSession = isRestoringSession
@@ -1188,7 +1188,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
             } else {
                 updateCurrentPageTitle(title)
                 if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
-                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
+                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(String(isHistoryNavigation)), endTime:\(String(historyNavigationEndTime != nil)), startTime:\(String(historyNavigationStartTime != nil))]")
             }
         }
 
@@ -1198,7 +1198,6 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
 
     if !wasRestoringSession { stateModel?.triggerNavigationFinished() }
     dbg("✅ 네비게이션 완료")
-}}
 }
 
             } else {
