@@ -644,7 +644,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (연속 중복 제거 완화)
+    // MARK: - 새로운 페이지 기록 시스템 (연속 중복 제거 완화 + 홈클릭 가드)
     
     func addNewPage(url: URL, title: String = "") {
         // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지 (과거 점프 방지)
@@ -657,6 +657,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if isSPANavigationActive() {
             dbg("🌐 SPA 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
             return
+        }
+        
+        // ✅ **추가**: 일반 네비게이션에서도 홈 클릭 감지 및 가드 실행
+        if let currentRecord = currentPageRecord,
+           url.host == currentRecord.url.host &&
+           (url.path == "/" || url.path.isEmpty) &&
+           currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
+            // 홈 클릭 감지!
+            startHomeNavigationHandling()
+            dbg("🏠 일반 네비게이션 홈 클릭 감지 - 과거 점프 방지 가드 실행: \(url.absoluteString)")
         }
         
         // 🔒 로그인 관련 URL 감지 및 추적
