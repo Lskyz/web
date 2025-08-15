@@ -1,4 +1,5 @@
-//
+# Save the provided Swift source as an artifact the user can download
+code = r"""//
 //  WebViewDataModel.swift
 //  🌐 홈클릭 마지막세션 유지 + 정규식 기반 강화된 중복제거 + 자연스러운 히스토리 흐름
 //  ✅ 앞으로가기 스택 제거 로직 완전 제거, 정규식 기반 인접 중복 제거 강화
@@ -312,18 +313,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         // 3. 해시 프래그먼트만 다른 SPA 페이지
-        if url1.scheme == url2.scheme && 
-           url1.host == url2.host && 
-           url1.path == url2.path && 
-           url1.query == url2.query && 
+        if url1.scheme == url2.scheme and 
+           url1.host == url2.host and 
+           url1.path == url2.path and 
+           url1.query == url2.query and 
            url1.fragment != url2.fragment {
             dbg("🔍 SPA 해시 차이 중복 감지")
             return true
         }
         
         // 4. 쿼리스트링 일부만 다른 경우
-        if url1.scheme == url2.scheme && 
-           url1.host == url2.host && 
+        if url1.scheme == url2.scheme and 
+           url1.host == url2.host and 
            url1.path == url2.path {
             
             let query1Items = URLComponents(url: url1, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -334,7 +335,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let filtered1 = query1Items.filter { importantParams.contains($0.name.lowercased()) }
             let filtered2 = query2Items.filter { importantParams.contains($0.name.lowercased()) }
             
-            if filtered1.isEmpty && filtered2.isEmpty {
+            if filtered1.isEmpty and filtered2.isEmpty {
                 // 중요한 파라미터가 없으면 같은 페이지로 간주
                 dbg("🔍 쿼리스트링 차이 중복 감지 (중요 파라미터 없음)")
                 return true
@@ -672,8 +673,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let components1 = url1.pathComponents.dropFirst() // '/' 제거
         let components2 = url2.pathComponents.dropFirst()
         
-        return components1.prefix(1) == components2.prefix(1) && 
-               components1.count <= 2 && components2.count <= 2
+        return components1.prefix(1) == components2.prefix(1) and 
+               components1.count <= 2 and components2.count <= 2
     }
     
     func addNewPage(url: URL, title: String = "") {
@@ -1042,8 +1043,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let originalCount = pageHistory.count
         
         pageHistory.removeAll { record in
-            record.isLoginRelated || 
-            record.isTemporary || 
+            record.isLoginRelated or 
+            record.isTemporary or 
             loginRedirectChain.contains(record.url)
         }
         
@@ -1087,7 +1088,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if let url = startURL {
             let now = Date()
             
-            if redirectionChain.isEmpty || redirectionStartTime == nil || 
+            if redirectionChain.isEmpty or redirectionStartTime == nil or 
                now.timeIntervalSince(redirectionStartTime!) > 3.0 {
                 redirectionChain = [url]
                 redirectionStartTime = now
