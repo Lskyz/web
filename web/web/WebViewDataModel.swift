@@ -4,7 +4,7 @@
 //  🎯 새로고침 Replace 로직 + 홈 클릭 Forward 스택 제거
 //  🔒 로그인 관련 임시 페이지 히스토리 제외
 //  ✅ 히스토리 개수 제한 해제 (무제한)
-//  🛡️ 9단계 방어 로직 + 홈 클릭 점프 방지
+//  🛡️ 9단계 방어 로직 + 홈 클릭 점프 방지 (안전 처리)
 //
 
 import Foundation
@@ -371,12 +371,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        // 🆕 홈 클릭 감지 (사이트 루트로의 이동) - ⚠️ 점프 방지 수정
+        // 🆕 홈 클릭 감지 (사이트 루트로의 이동) - ✅ 안전 처리
         let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
         
         switch navigationType {
         case .navHome:
-            handleHomeNavigation(url: url, title: title, siteType: siteType)
+            handleHomeNavigationSafely(url: url, title: title, siteType: siteType)
             
         case .reloadSoft, .reloadHard:
             handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
@@ -449,31 +449,26 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
     
-    // 🆕 홈 클릭 처리 - ⚠️ 점프하지 않고 제자리에서 URL만 교체
-    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
+    // ✅ **핵심 수정**: 홈 클릭 처리 - 안전한 배열 접근
+    private func handleHomeNavigationSafely(url: URL, title: String, siteType: String) {
         dbg("🏠 홈 클릭 감지: \(url.absoluteString)")
         
-        // ⚠️ 기존 로직 변경: 새 페이지 추가하지 않고 현재 페이지를 홈으로 교체
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
-            // 현재 페이지를 홈 페이지로 교체
-            var rec = pageHistory[currentPageIndex]
-            rec.url = url
-            rec.updateTitle(title)
-            rec.siteType = siteType
-            rec.navigationType = .navHome
-            pageHistory[currentPageIndex] = rec
-            
-            dbg("🏠 홈 클릭 - 현재 페이지를 홈으로 교체: '\(rec.title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
-        } else {
-            // 히스토리가 비어있거나 인덱스가 잘못된 경우만 새 페이지 추가
-            let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
-            pageHistory.append(newRecord)
-            currentPageIndex = pageHistory.count - 1
-            
-            dbg("🏠 홈 클릭 - 빈 히스토리에 새 페이지 추가: '\(newRecord.title)'")
+        // ✅ 안전한 새 페이지 추가 (기존 페이지 교체 대신)
+        // Forward 스택 제거 (명시적 push이므로)
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🗑️ 홈 클릭 - forward 스택 \(removedCount)개 제거")
         }
         
+        // 새 홈 페이지 추가
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
         updateNavigationState()
+        
+        dbg("🏠 홈 클릭 - 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
         
         // StateModel URL 동기화
         stateModel?.syncCurrentURL(url)
