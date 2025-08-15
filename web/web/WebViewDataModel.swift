@@ -1159,8 +1159,9 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
             updateCurrentPageTitle(title)
             finishSessionRestore()
             dbg("🔄 복원 완료: '\(title)'")
+
         } else if isHome {
-            // ✅ 핵심 변경: 홈 완료 시 무조건 새 레코드 + 스와이프 타이머 강제 종료
+            // ✅ 홈 완료: 무조건 새 레코드 + 스와이프 타이머 강제 종료
             swipeDetectedTargetIndex = nil
             swipeConfirmationTimer?.invalidate()
             swipeConfirmationTimer = nil
@@ -1168,11 +1169,13 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
             addNewPage(url: finalURL, title: title)
             stateModel?.syncCurrentURL(finalURL)
             dbg("🏠 홈 완료 - 새 페이지 강제 기록: '\(title)' (총 \(pageHistory.count)개)")
+
         } else if isHistoryNavigationActive() {
             updateCurrentPageTitle(title)
             if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.resetNavigationFlags() }
             dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+
         } else {
             let isHistoryRelated = isHistoryNavigation ||
                                    historyNavigationEndTime != nil ||
@@ -1195,6 +1198,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
 
     if !wasRestoringSession { stateModel?.triggerNavigationFinished() }
     dbg("✅ 네비게이션 완료")
+}}
 }
 
             } else {
