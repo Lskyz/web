@@ -711,17 +711,32 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        // 현재 위치 이후의 forward 기록 제거
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
+        // ✅ **핵심 수정**: 히스토리 네비게이션 중에는 forward 스택 제거 금지
+        let isInHistoryNav = isHistoryNavigationActive() || 
+                           (stateModel?.isNavigatingFromWebView == true) ||
+                           (stateModel?.isSilentRefresh == true)
+        
+        if !isInHistoryNav {
+            // 현재 위치 이후의 forward 기록 제거 (일반 네비게이션에서만)
+            if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+                let removedCount = pageHistory.count - currentPageIndex - 1
+                pageHistory.removeSubrange((currentPageIndex + 1)...)
+                dbg("🗑️ forward 스택 \(removedCount)개 제거 (일반 네비게이션)")
+            }
+        } else {
+            dbg("🔄 히스토리 네비게이션 중 - forward 스택 보호")
         }
         
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
-        // ✅ 인접 중복 제거 실행
-        removeAdjacentDuplicates()
+        // ✅ 인접 중복 제거 실행 (히스토리 네비게이션 중에는 안전)
+        if !isInHistoryNav {
+            removeAdjacentDuplicates()
+        } else {
+            dbg("🔄 히스토리 네비게이션 중 - 인접 중복 제거 생략")
+        }
         
         updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
@@ -1064,19 +1079,10 @@ func saveSession() -> WebViewSession? {
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
             } else {
-                // ✅ **강화된 체크**: 히스토리 네비게이션이 아닌 경우에만 새 페이지 추가
-                let isActualHistoryNavigation = isHistoryNavigationActive() || 
-                                               (stateModel?.isNavigatingFromWebView == true) ||
-                                               (stateModel?.isSilentRefresh == true)
-                
-                if !isActualHistoryNavigation {
-                    addNewPage(url: finalURL, title: title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                } else {
-                    dbg("🔄 히스토리 네비게이션 중 - 새 페이지 추가 건너뜀: '\(title)'")
-                    stateModel?.syncCurrentURL(finalURL)
-                }
+                // ✅ 정상적인 새 페이지 추가
+                addNewPage(url: finalURL, title: title)
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
             
             // 리다이렉트 체인 정리
