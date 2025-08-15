@@ -1,5 +1,4 @@
-# Save the provided Swift source as an artifact the user can download
-code = r"""//
+
 //  WebViewDataModel.swift
 //  🌐 홈클릭 마지막세션 유지 + 정규식 기반 강화된 중복제거 + 자연스러운 히스토리 흐름
 //  ✅ 앞으로가기 스택 제거 로직 완전 제거, 정규식 기반 인접 중복 제거 강화
