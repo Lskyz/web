@@ -1,10 +1,7 @@
 //
 //  WebViewDataModel.swift
-//  🌐 통합된 SPA 네비게이션 관리 + 로그인 리다이렉트 필터링
-//  🎯 새로고침 Replace 로직 + 홈 클릭 Forward 스택 제거
-//  🔒 로그인 관련 임시 페이지 히스토리 제외
-//  ✅ 히스토리 개수 제한 해제 (무제한)
-//  🛡️ 9단계 방어 로직 + 홈 클릭 점프 방지 (안전 처리)
+//  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
+//  🎯 핵심 방어 로직만 유지
 //
 
 import Foundation
@@ -146,7 +143,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewDataModel (히스토리/세션 + WKNavigationDelegate 담당)
+// MARK: - WebViewDataModel (정리된 버전)
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
@@ -161,7 +158,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // 복원 상태 관리
     private(set) var isRestoringSession: Bool = false
     
-    // ✅ 강화된 히스토리 네비게이션 플래그
+    // ✅ 강화된 히스토리 네비게이션 플래그 (시간 단축)
     private var isHistoryNavigation: Bool = false {
         didSet {
             if isHistoryNavigation {
@@ -174,10 +171,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     private var historyNavigationStartTime: Date?
     
-    // 🆕 새로고침 윈도 관리 (pushState 잠시 금지용) - 1초로 단축
+    // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
     private var reloadWindowStartTime: Date?
-    private let reloadWindowDuration: TimeInterval = 1.0 // ✅ 2초 → 1초로 단축
+    private let reloadWindowDuration: TimeInterval = 0.5 // ✅ 1초 → 0.5초로 단축
     
     // ✅ 스와이프 제스처 관련
     private var swipeDetectedTargetIndex: Int? = nil
@@ -187,7 +184,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
     
-    // 🌐 **통합된 SPA 네비게이션 상태 관리** (네이버 로직을 범용으로)
+    // 🌐 **통합된 SPA 네비게이션 상태 관리**
     private var isSPANavigation: Bool = false
     private var lastSPANavigationTime: Date?
     
@@ -196,56 +193,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var loginRedirectStartTime: Date?
     private var isInLoginFlow: Bool = false
     
-    // 🛡️ 1) 트랜잭션 토큰 + 에폭(세대) 게이트
-    private(set) var navEpoch: Int = 0            // 세대
-    private var currentTxn: UUID? = nil           // 트랜잭션 토큰
-    
-    func beginNavTxn() -> UUID {
-        let t = UUID()
-        currentTxn = t
-        return t
-    }
-    func invalidateEpoch() { 
-        navEpoch &+= 1     
-        dbg("🔄 에폭 무효화: \(navEpoch)")
-    }
-    func isTxnValid(_ token: UUID, epoch: Int) -> Bool {
-        return token == currentTxn && epoch == navEpoch
-    }
-    
-    // 🛡️ 2) Re-entrancy Gate (JS훅 ↔ delegate 교차 폭주 차단)
-    private var navCooldownUntil: Date = .distantPast
-    
-    private func enterCooldown(_ ms: Int = 300) {
-        navCooldownUntil = Date().addingTimeInterval(Double(ms)/1000.0)
-        dbg("🧊 쿨다운 시작: \(ms)ms")
-    }
-    private func inCooldown() -> Bool {
-        let result = Date() < navCooldownUntil
-        if result {
-            dbg("🧊 쿨다운 중")
-        }
-        return result
-    }
-    
-    // 🛡️ 3) 정규화+세분화 중복 필터
-    private var lastByNorm: [String: Date] = [:]
-    private let dupWindow: TimeInterval = 1.2
-    
-    private func recentlyVisited(_ url: URL) -> Bool {
-        let key = PageRecord.normalizeURL(url)
-        let now = Date()
-        defer { lastByNorm[key] = now }
-        if let t = lastByNorm[key], now.timeIntervalSince(t) < dupWindow { 
-            dbg("🛡️ 최근 동일 정규화 URL 감지: \(key)")
-            return true 
-        }
-        return false
-    }
-    
-    // 🛡️ 6) 사이트-버킷 히스토리 (서로 다른 호스트끼리 간섭 방지)
+    // 🛡️ 간소화된 중복 필터 (버킷 방식 유지)
     private func bucket(for url: URL) -> String { url.host ?? "_" }
     private var perBucketLastByNorm: [String: [String: Date]] = [:]
+    private let dupWindow: TimeInterval = 0.8 // ✅ 1.2초 → 0.8초로 단축
     
     private func recentlyVisitedInBucket(_ url: URL) -> Bool {
         let b = bucket(for: url)
@@ -289,11 +240,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // 🆕 새로고침 윈도 관리
+    // 🆕 새로고침 윈도 관리 (단축)
     private func startReloadWindow() {
         isInReloadWindow = true
         reloadWindowStartTime = Date()
-        dbg("🔄 새로고침 윈도 시작 (1초) - SPA replace만 차단")
+        dbg("🔄 새로고침 윈도 시작 (0.5초)")
         
         // 자동 해제
         DispatchQueue.main.asyncAfter(deadline: .now() + reloadWindowDuration) { [weak self] in
@@ -319,34 +270,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // 🛡️ 8) 마지막 방어: 포스트 머지(Reconcile)
-    private func reconcileTailDuplicates() {
-        guard pageHistory.count >= 2 else { return }
-        let tail = max(0, pageHistory.count - 3)
-        var seen = Set<String>()
-        var toRemove = [Int]()
-        for i in tail..<pageHistory.count {
-            let norm = PageRecord.normalizeURL(pageHistory[i].url)
-            if seen.contains(norm) { toRemove.append(i) }
-            else { seen.insert(norm) }
-        }
-        if !toRemove.isEmpty {
-            for i in toRemove.reversed() { pageHistory.remove(at: i) }
-            currentPageIndex = min(currentPageIndex, pageHistory.count - 1)
-            updateNavigationState()
-            dbg("🧹 꼬리 중복 정리: \(toRemove.count)개 제거")
-        }
-    }
-    
-    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (새로고침 로직 추가)
+    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (간소화)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
-        // 🛡️ 9) 쿨다운 먼저 체크
-        if inCooldown() {
-            dbg("🧊 쿨다운 중 - SPA 네비게이션 무시")
-            return
-        }
-        
         // 🆕 새로고침 윈도에서 replace만 차단 (push는 허용)
         if isInActiveReloadWindow() && type == "replace" {
             dbg("🔄 새로고침 윈도 중 SPA replace 무시: \(url.absoluteString)")
@@ -365,18 +291,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
                 // 동일한 정규화 URL → 새로고침으로 처리
                 handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
-                // 🛡️ 2) SPA 네비게이션 후 쿨다운 시작
-                enterCooldown(350)
                 return
             }
         }
         
-        // 🆕 홈 클릭 감지 (사이트 루트로의 이동) - ✅ 안전 처리
+        // 🆕 홈 클릭 감지 (사이트 루트로의 이동)
         let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
         
         switch navigationType {
         case .navHome:
-            handleHomeNavigationSafely(url: url, title: title, siteType: siteType)
+            handleHomeNavigation(url: url, title: title, siteType: siteType)
             
         case .reloadSoft, .reloadHard:
             handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
@@ -391,11 +315,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
         
-        // 🛡️ 2) SPA 네비게이션 후 쿨다운 시작
-        enterCooldown(350)
-        
-        // 일정 시간 후 플래그 해제
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        // 1초 후 플래그 해제 (단축)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.isSPANavigation = false
         }
     }
@@ -449,11 +370,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
     
-    // ✅ **핵심 수정**: 홈 클릭 처리 - 안전한 배열 접근
-    private func handleHomeNavigationSafely(url: URL, title: String, siteType: String) {
+    // ✅ **수정**: 홈 클릭 처리 - 정상적인 새 페이지 추가
+    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
         dbg("🏠 홈 클릭 감지: \(url.absoluteString)")
         
-        // ✅ 안전한 새 페이지 추가 (기존 페이지 교체 대신)
         // Forward 스택 제거 (명시적 push이므로)
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
@@ -474,7 +394,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
     
-    // 기존 SPA 네비게이션 로직 (이름 변경)
+    // 기존 SPA 네비게이션 로직
     private func handleRegularSPANavigation(type: String, url: URL, title: String, siteType: String, navigationType: NavigationType) {
         switch type {
         case "push":
@@ -512,7 +432,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // 🛡️ 5) Forward 스택 보존 규칙: 오직 명시적 "push"에서만 forward 제거
+        // Forward 스택 제거: 오직 명시적 "push"에서만
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
@@ -601,15 +521,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                componentsA.count <= 2 && componentsB.count <= 2 // 깊은 경로는 제외
     }
     
-    // SPA 네비게이션 활성 상태 확인
+    // SPA 네비게이션 활성 상태 확인 (단축)
     private func isSPANavigationActive() -> Bool {
-        if isSPANavigation {
-            return true
-        }
+        if isSPANavigation { return true }
         
         if let lastTime = lastSPANavigationTime {
             let elapsed = Date().timeIntervalSince(lastTime)
-            return elapsed < 1.5
+            return elapsed < 1.0 // ✅ 1.5초 → 1.0초로 단축
         }
         
         return false
@@ -666,10 +584,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (강화된 필터링 + 연속 중복 방지)
+    // MARK: - 새로운 페이지 기록 시스템 (간소화된 필터링)
     
     func addNewPage(url: URL, title: String = "") {
-        // 🛡️ 4) 앞/뒤 네비 중 추가 금지
+        // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
         if isHistoryNavigationActive() {
             dbg("🔄 히스토리 네비 중 - 새 페이지 추가 금지")
             return
@@ -699,14 +617,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             finishLoginRedirectTracking(finalURL: url)
         }
         
-        // 🛡️ 3) 정규화+세분화 중복 필터 (버킷 버전)
+        // 🛡️ 간소화된 중복 필터 (버킷 버전만 유지)
         if recentlyVisitedInBucket(url) {
             dbg("🛡️ 버킷 최근 동일 정규화 URL - replace로 전환")
             handleRefreshNavigation(url: url, title: title, type: "replace", siteType: "dup")
             return
         }
         
-        // 🆕 새로고침 감지 (정규화 URL 비교) - replace 처리로 개선
+        // 🆕 새로고침 감지 (정규화 URL 비교)
         if !pageHistory.isEmpty,
            let lastRecord = pageHistory.last,
            PageRecord.normalizeURL(lastRecord.url) == PageRecord.normalizeURL(url) {
@@ -790,17 +708,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         pageHistory = session.pageRecords
         currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
-        
-        // 🛡️ 에폭 무효화 (세션 복원은 큰 전환)
-        invalidateEpoch()
-        
-        dbg("🔄 복원된 히스토리:")
-        for (index, record) in pageHistory.enumerated() {
-            let marker = index == currentPageIndex ? "👉" : "  "
-            let siteInfo = record.siteType != nil ? "[\(record.siteType!)]" : ""
-            let navType = "[\(record.navigationType)]"
-            dbg("🔄\(marker) [\(index)] \(record.title) \(siteInfo)\(navType) | \(record.url.absoluteString)")
-        }
         
         updateNavigationState()
         
@@ -887,14 +794,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         currentPageIndex = -1
         resetNavigationFlags()
         updateNavigationState()
-        
-        // 🛡️ 에폭 무효화 (히스토리 삭제는 큰 전환)
-        invalidateEpoch()
-        
         dbg("🧹 전체 히스토리 삭제")
     }
 
-    // MARK: - ✅ 강화된 네비게이션 상태 관리
+    // MARK: - ✅ 간소화된 네비게이션 상태 관리
     
     func resetNavigationFlags() {
         isHistoryNavigation = false
@@ -916,28 +819,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // 🆕 새로고침 윈도 리셋
         endReloadWindow()
-        
-        // 🛡️ 방어 로직 리셋
-        navCooldownUntil = .distantPast
-        currentTxn = nil
     }
     
     func isHistoryNavigationActive() -> Bool {
         if isHistoryNavigation {
-            return true
-        }
-        
-        if let startTime = historyNavigationStartTime {
-            let elapsed = Date().timeIntervalSince(startTime)
-            if elapsed < 2.0 {
+            if let startTime = historyNavigationStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                if elapsed > 1.0 { // ✅ 2.0초 → 1.0초로 단축
+                    isHistoryNavigation = false
+                    historyNavigationStartTime = nil
+                    return false
+                }
                 return true
-            } else {
-                isHistoryNavigation = false
-                historyNavigationStartTime = nil
-                return false
             }
         }
-        
         return false
     }
     
@@ -975,83 +870,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         return nil
     }
-    
-    // MARK: - 페이지 추가 여부 결정 로직 (강화된 필터링)
-    
-    private func shouldAddPageToHistory(finalURL: URL) -> Bool {
-        // 🛡️ 4) 앞/뒤 네비 중 추가 금지 - 첫 번째 차단점
-        if isHistoryNavigationActive() {
-            dbg("🔄 히스토리 네비 중 - 히스토리 추가 건너뜀")
-            return false
-        }
-        
-        // 🛡️ 2) Re-entrancy Gate - 쿨다운 체크 (9번 규칙의 첫 번째)
-        if inCooldown() {
-            dbg("🧊 쿨다운 중 - 추가 금지")
-            return false
-        }
-        
-        // 🆕 새로고침 윈도 체크 (9번 규칙의 두 번째)
-        if isInActiveReloadWindow() {
-            dbg("🔄 새로고침 윈도 중 - 추가 금지")
-            return false
-        }
-        
-        // 🌐 SPA 네비게이션 중이면 추가하지 않음
-        if isSPANavigationActive() {
-            dbg("🌐 SPA 네비게이션 활성 중 - 히스토리 추가 건너뜀")
-            return false
-        }
-        
-        // 🔒 로그인 관련 URL은 히스토리에 추가하지 않음
-        if PageRecord.isLoginRelatedURL(finalURL) {
-            dbg("🔒 로그인 관련 URL 히스토리 제외: \(finalURL.absoluteString)")
-            return false
-        }
-        
-        // 🛡️ 3) 정규화+세분화 중복 필터 (버킷 버전)
-        if recentlyVisitedInBucket(finalURL) {
-            dbg("🛡️ 버킷 최근 동일 정규화 URL - replace로 전환")
-            handleRefreshNavigation(url: finalURL, title: stateModel?.webView?.title ?? "", type: "replace", siteType: "dup")
-            return false
-        }
-        
-        if pageHistory.isEmpty {
-            return true
-        }
-        
-        guard let lastRecord = pageHistory.last else {
-            return true
-        }
-        
-        if lastRecord.url != finalURL {
-            // 리다이렉트 분석
-            if redirectionChain.count > 1 {
-                let firstURL = redirectionChain.first!
-                let lastURL = redirectionChain.last!
-                
-                if lastRecord.url == firstURL && lastURL == finalURL {
-                    if firstURL.host == finalURL.host {
-                        return false // 같은 도메인 리다이렉트 - 기존 페이지 업데이트
-                    } else {
-                        return true // 다른 도메인 리다이렉트 - 새 페이지 추가
-                    }
-                }
-            }
-            
-            return true // 다른 URL이므로 새 페이지 추가
-        } else {
-            return false // 같은 URL - 제목만 업데이트
-        }
-    }
 
-    // MARK: - WKNavigationDelegate (히스토리/세션 로직만)
+    // MARK: - WKNavigationDelegate (간소화)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        // 🛡️ 1) 트랜잭션 토큰 발급
-        let token = beginNavTxn()
-        let epoch = navEpoch
-        
         stateModel?.handleLoadingStart()
         
         let startURL = webView.url
@@ -1083,7 +905,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        dbg("🚀 네비게이션 시작: txn=\(String(token.uuidString.prefix(6))), epoch=\(epoch)")
+        dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1113,29 +935,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
             } else {
-                let shouldAddNewPage = shouldAddPageToHistory(finalURL: finalURL)
-                
-                // 🛡️ 4) 앞/뒤 네비 중 추가 금지 - 두 번째 차단점
-                if shouldAddNewPage && !isHistoryNavigationActive() {
-                    addNewPage(url: finalURL, title: title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                } else {
-                    updateCurrentPageTitle(title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    if isHistoryNavigationActive() {
-                        dbg("🔄 히스토리 네비 중 - 새 페이지 추가 금지")
-                    }
-                }
+                // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
+                addNewPage(url: finalURL, title: title)
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
             
             // 리다이렉트 체인 정리
             redirectionChain.removeAll()
             redirectionStartTime = nil
         }
-        
-        // 🛡️ 8) 마지막 방어: 포스트 머지(Reconcile)
-        reconcileTailDuplicates()
         
         if !wasRestoringSession {
             stateModel?.triggerNavigationFinished()
@@ -1147,14 +956,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
         resetNavigationFlags()
-        
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? stateModel?.currentURL?.absoluteString ?? "")
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
         resetNavigationFlags()
-        
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? stateModel?.currentURL?.absoluteString ?? "")
     }
 
@@ -1175,7 +982,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleDidCommitNavigation(webView)
     }
 
-    // MARK: - 전역 히스토리 관리 (✅ 무제한)
+    // MARK: - 전역 히스토리 관리
     
     private static func saveGlobalHistory() {
         // 🔒 로그인 관련 항목은 전역 히스토리에서도 제외
@@ -1226,10 +1033,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
-        let cooldownState = inCooldown() ? "🧊Cool" : ""
-        let epochState = "E\(navEpoch)"
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)[\(epochState)]\(loginState)\(reloadState)\(cooldownState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState) \(msg)")
     }
 
     // MARK: - 메모리 정리
