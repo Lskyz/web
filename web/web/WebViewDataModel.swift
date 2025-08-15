@@ -1,13 +1,15 @@
+//
 //  WebViewDataModel.swift
-//  🌐 홈클릭 마지막세션 유지 + 정규식 기반 강화된 중복제거 + 자연스러운 히스토리 흐름
-//  ✅ 앞으로가기 스택 제거 로직 완전 제거, 정규식 기반 인접 중복 제거 강화
+//  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
+//  🎯 핵심 방어 로직만 유지
+//  ✅ 홈클릭 마지막세션 문제 + 인접 중복제거 강화
 //
 
 import Foundation
 import SwiftUI
 import WebKit
 
-// MARK: - 네비게이션 타입 정의
+// MARK: - 네비게이션 타입 정의 (Codable enum으로 타입 안정성 보장)
 enum NavigationType: String, Codable, CaseIterable {
     case normal = "normal"
     case reloadSoft = "reloadSoft"
@@ -18,18 +20,19 @@ enum NavigationType: String, Codable, CaseIterable {
     case loginRedirect = "loginRedirect"
 }
 
-// MARK: - 페이지 식별자
+// MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
 struct PageRecord: Codable, Identifiable, Hashable {
     let id: UUID
-    var url: URL
+    var url: URL // ✅ var로 변경 (새로고침/교체 시 갱신 가능)
     var title: String
     let timestamp: Date
     var lastAccessed: Date
     
+    // 🌐 사이트 메타데이터 추가
     var siteType: String?
     var isLoginRelated: Bool = false
     var isTemporary: Bool = false
-    var navigationType: NavigationType = .normal
+    var navigationType: NavigationType = .normal // ✅ Codable enum 사용
     
     init(url: URL, title: String = "", siteType: String? = nil, navigationType: NavigationType = .normal) {
         self.id = UUID()
@@ -38,8 +41,9 @@ struct PageRecord: Codable, Identifiable, Hashable {
         self.timestamp = Date()
         self.lastAccessed = Date()
         self.siteType = siteType
-        self.navigationType = navigationType
+        self.navigationType = navigationType // ✅ enum 직접 할당
         
+        // 🔒 로그인 관련 URL 자동 감지
         self.isLoginRelated = Self.isLoginRelatedURL(url)
         self.isTemporary = Self.isTemporaryURL(url)
     }
@@ -55,6 +59,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
         lastAccessed = Date()
     }
     
+    // 🔒 로그인 관련 URL 감지
     static func isLoginRelatedURL(_ url: URL) -> Bool {
         let urlString = url.absoluteString.lowercased()
         let loginPatterns = [
@@ -62,33 +67,41 @@ struct PageRecord: Codable, Identifiable, Hashable {
             "nid.naver.com", "accounts.google.com", "facebook.com/login", "twitter.com/oauth",
             "returnurl=", "redirect_uri=", "continue=", "state=", "code="
         ]
+        
         return loginPatterns.contains { urlString.contains($0) }
     }
     
+    // 🔒 임시 페이지 감지
     static func isTemporaryURL(_ url: URL) -> Bool {
         let urlString = url.absoluteString.lowercased()
         let tempPatterns = [
             "loading", "wait", "processing", "intermediate", "bridge", "proxy",
             "temp", "tmp", "cache", "blank", "about:blank", "javascript:"
         ]
+        
         return tempPatterns.contains { urlString.contains($0) }
     }
     
+    // 🆕 URL 정규화 비교 (새로고침 감지용)
     static func normalizeURL(_ url: URL) -> String {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         
+        // HTTPS 우선 정규화
         if components?.scheme == "http" {
             components?.scheme = "https"
         }
         
+        // 트레일링 슬래시 제거
         if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
             components?.path = String(path.dropLast())
         }
         
+        // 쿼리 파라미터 정렬
         if let queryItems = components?.queryItems {
             components?.queryItems = queryItems.sorted { $0.name < $1.name }
         }
         
+        // 해시는 무시 (같은 페이지로 취급)
         components?.fragment = nil
         
         return components?.url?.absoluteString ?? url.absoluteString
@@ -99,7 +112,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
     }
 }
 
-// MARK: - 세션 구조체
+// MARK: - 간단한 히스토리 세션 
 struct WebViewSession: Codable {
     let pageRecords: [PageRecord]
     let currentIndex: Int
@@ -131,50 +144,79 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewDataModel
+// MARK: - WebViewDataModel (정리된 버전)
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
-    // 페이지 기록 기반 히스토리
+    // 페이지 기록 기반 히스토리 (✅ 무제한)
     @Published private(set) var pageHistory: [PageRecord] = []
     @Published private(set) var currentPageIndex: Int = -1
     
-    // 독립형 네비게이션 상태
+    // 🎯 **완전 독립형 네비게이션 상태** (웹뷰와 무관)
     @Published private(set) var canGoBack: Bool = false
     @Published private(set) var canGoForward: Bool = false
     
-    // 상태 관리
+    // 복원 상태 관리
     private(set) var isRestoringSession: Bool = false
-    private var isHistoryNavigation: Bool = false
+    
+    // ✅ 강화된 히스토리 네비게이션 플래그 (시간 단축)
+    private var isHistoryNavigation: Bool = false {
+        didSet {
+            if isHistoryNavigation {
+                historyNavigationStartTime = Date()
+            } else {
+                historyNavigationStartTime = nil
+            }
+        }
+    }
+    
     private var historyNavigationStartTime: Date?
     
-    // 새로고침 윈도 관리
+    // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
     private var reloadWindowStartTime: Date?
-    private let reloadWindowDuration: TimeInterval = 0.5
+    private let reloadWindowDuration: TimeInterval = 0.5 // ✅ 1초 → 0.5초로 단축
     
-    // 홈 클릭 처리 상태
+    // ✅ 홈 클릭 처리 상태 (SPA 로직 차단용)
     private var isHandlingHomeNavigation: Bool = false
     private var homeNavigationEndTime: Date?
     
-    // 스와이프 제스처 관련
+    // ✅ 스와이프 제스처 관련
     private var swipeDetectedTargetIndex: Int? = nil
     private var swipeConfirmationTimer: Timer?
     
-    // 리다이렉트 감지
+    // 리다이렉트 감지용
     private var redirectionChain: [URL] = []
     private var redirectionStartTime: Date?
     
-    // SPA 네비게이션 상태 관리
+    // 🌐 **통합된 SPA 네비게이션 상태 관리**
     private var isSPANavigation: Bool = false
     private var lastSPANavigationTime: Date?
     
-    // 로그인 리다이렉트 체인 추적
+    // 🔒 로그인 리다이렉트 체인 추적
     private var loginRedirectChain: [URL] = []
     private var loginRedirectStartTime: Date?
     private var isInLoginFlow: Bool = false
     
-    // 전역 방문기록
+    // 🛡️ 간소화된 중복 필터 (버킷 방식 유지)
+    private func bucket(for url: URL) -> String { url.host ?? "_" }
+    private var perBucketLastByNorm: [String: [String: Date]] = [:]
+    private let dupWindow: TimeInterval = 0.8 // ✅ 1.2초 → 0.8초로 단축
+    
+    private func recentlyVisitedInBucket(_ url: URL) -> Bool {
+        let b = bucket(for: url)
+        let key = PageRecord.normalizeURL(url)
+        let now = Date()
+        var map = perBucketLastByNorm[b] ?? [:]
+        defer { map[key] = now; perBucketLastByNorm[b] = map }
+        if let t = map[key], now.timeIntervalSince(t) < dupWindow { 
+            dbg("🛡️ 버킷[\(b)] 최근 동일 정규화 URL: \(key)")
+            return true 
+        }
+        return false
+    }
+    
+    // 전역 방문기록 (✅ 무제한)
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
     }
@@ -187,7 +229,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         Self.loadGlobalHistory()
     }
     
-    // MARK: - 네비게이션 상태 관리
+    // 🎯 **완전 독립형 네비게이션 상태 관리**
     
     private func updateNavigationState() {
         let newCanGoBack = currentPageIndex > 0
@@ -196,438 +238,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if canGoBack != newCanGoBack || canGoForward != newCanGoForward {
             canGoBack = newCanGoBack
             canGoForward = newCanGoForward
+            
             objectWillChange.send()
-        }
-    }
-    
-    private func setCurrentPageIndex(_ newIndex: Int, reason: String) {
-        let oldIndex = currentPageIndex
-        currentPageIndex = newIndex
-        
-        if oldIndex != newIndex {
-            dbg("📍 인덱스 변경: \(oldIndex) → \(newIndex) (이유: \(reason))")
-            updateNavigationState()
-        }
-    }
-    
-    // MARK: - 홈 클릭 상태 관리
-    
-    private func startHomeNavigationHandling() {
-        isHandlingHomeNavigation = true
-        homeNavigationEndTime = Date().addingTimeInterval(1.5)
-        dbg("🏠 홈 클릭 처리 시작 - 1.5초간 보호")
-    }
-    
-    private func isInHomeNavigationHandling() -> Bool {
-        guard isHandlingHomeNavigation, let endTime = homeNavigationEndTime else { return false }
-        
-        if Date() > endTime {
-            isHandlingHomeNavigation = false
-            homeNavigationEndTime = nil
-            dbg("🏠 홈 클릭 처리 완료")
-            return false
-        }
-        
-        return true
-    }
-    
-    // MARK: - 🔧 정규식 기반 강화된 URL 중복 검사
-    
-    private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        
-        // 1. HTTP/HTTPS 정규화만 (다른 건 그대로 보존)
-        if components?.scheme == "http" {
-            components?.scheme = "https"
-        }
-        
-        // 2. 트레일링 슬래시만 제거 (루트 경로 제외)
-        if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
-            components?.path = String(path.dropLast())
-        }
-        
-        // 3. 의미없는 추적 파라미터만 제거, 나머지는 보존
-        if var queryItems = components?.queryItems, !queryItems.isEmpty {
-            // 정말 의미없는 추적 파라미터만 제거
-            let trackingParams = Set([
-                "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-                "fbclid", "gclid", "_ga", "ref", "source"
-            ])
             
-            queryItems = queryItems.filter { item in
-                !trackingParams.contains(item.name.lowercased())
-            }
-            
-            // 의미있는 파라미터가 남아있으면 보존, 없으면 완전 제거
-            components?.queryItems = queryItems.isEmpty ? nil : queryItems
-        }
-        
-        // 4. 해시는 그대로 보존 (SPA에서 중요함)
-        // components?.fragment = 그대로 보존
-        
-        return components?.url?.absoluteString ?? url.absoluteString
-    }
-    
-    // MARK: - 🎯 정규식 기반 고급 페이지 유사성 검사
-    
-    private func arePagesSimilarByPattern(_ url1: URL, _ url2: URL) -> Bool {
-        guard url1.host == url2.host else { return false }
-        
-        let url1String = url1.absoluteString
-        let url2String = url2.absoluteString
-        
-        // 1. 완전히 같은 URL (정규화 후)
-        if normalizeURLForDuplicateCheck(url1) == normalizeURLForDuplicateCheck(url2) {
-            return true
-        }
-        
-        // 2. 게시판 글번호만 다른 경우 패턴 매칭
-        let boardPatterns: [(String, String)] = [
-            // 숫자 ID만 다른 경우: /board/123 vs /board/456
-            (#"^(.*/)(\d+)([/?].*)?$"#, #"^(.*/)(\d+)([/?].*)?$"#),
-            // 파라미터 no값만 다른 경우: ?no=123 vs ?no=456
-            (#"^(.*)([?&]no=)(\d+)(.*)$"#, #"^(.*)([?&]no=)(\d+)(.*)$"#),
-            // 파라미터 wr_id값만 다른 경우: ?wr_id=123 vs ?wr_id=456
-            (#"^(.*)([?&]wr_id=)(\d+)(.*)$"#, #"^(.*)([?&]wr_id=)(\d+)(.*)$"#),
-            // 파라미터 id값만 다른 경우: ?id=abc vs ?id=def
-            (#"^(.*)([?&]id=)([^&]+)(.*)$"#, #"^(.*)([?&]id=)([^&]+)(.*)$"#),
-            // 페이지 번호만 다른 경우: ?page=1 vs ?page=2
-            (#"^(.*)([?&]page=)(\d+)(.*)$"#, #"^(.*)([?&]page=)(\d+)(.*)$"#)
-        ]
-        
-        for (pattern1, pattern2) in boardPatterns {
-            if let match1 = matchURLPattern(url1String, pattern: pattern1),
-               let match2 = matchURLPattern(url2String, pattern: pattern2) {
-                
-                // 기본 부분이 같은지 확인 (숫자/ID 부분 제외)
-                let base1 = "\(match1.prefix)\(match1.suffix)"
-                let base2 = "\(match2.prefix)\(match2.suffix)"
-                
-                if base1 == base2 {
-                    dbg("🔍 패턴 매칭 중복 감지: 기본부분 '\(base1)' 동일")
-                    return true
-                }
-            }
-        }
-        
-        // 3. 해시 프래그먼트만 다른 SPA 페이지
-        if url1.scheme == url2.scheme and 
-           url1.host == url2.host and 
-           url1.path == url2.path and 
-           url1.query == url2.query and 
-           url1.fragment != url2.fragment {
-            dbg("🔍 SPA 해시 차이 중복 감지")
-            return true
-        }
-        
-        // 4. 쿼리스트링 일부만 다른 경우
-        if url1.scheme == url2.scheme and 
-           url1.host == url2.host and 
-           url1.path == url2.path {
-            
-            let query1Items = URLComponents(url: url1, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            let query2Items = URLComponents(url: url2, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            
-            // 중요한 파라미터들을 제외하고 비교
-            let importantParams = Set(["q", "search", "keyword", "query", "term"])
-            let filtered1 = query1Items.filter { importantParams.contains($0.name.lowercased()) }
-            let filtered2 = query2Items.filter { importantParams.contains($0.name.lowercased()) }
-            
-            if filtered1.isEmpty and filtered2.isEmpty {
-                // 중요한 파라미터가 없으면 같은 페이지로 간주
-                dbg("🔍 쿼리스트링 차이 중복 감지 (중요 파라미터 없음)")
-                return true
-            }
-        }
-        
-        return false
-    }
-    
-    private func matchURLPattern(_ url: String, pattern: String) -> (prefix: String, variable: String, suffix: String)? {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return nil }
-        
-        let nsString = url as NSString
-        let range = NSRange(location: 0, length: nsString.length)
-        
-        if let match = regex.firstMatch(in: url, options: [], range: range) {
-            let prefixRange = match.range(at: 1)
-            let variableRange = match.range(at: 3)
-            let suffixRange = match.range(at: 4)
-            
-            let prefix = prefixRange.location != NSNotFound ? nsString.substring(with: prefixRange) : ""
-            let variable = variableRange.location != NSNotFound ? nsString.substring(with: variableRange) : ""
-            let suffix = suffixRange.location != NSNotFound ? nsString.substring(with: suffixRange) : ""
-            
-            return (prefix: prefix, variable: variable, suffix: suffix)
-        }
-        
-        return nil
-    }
-    
-    // MARK: - 🔧 강화된 인접 중복 제거 (정규식 기반)
-    
-    private func removeAdjacentDuplicates() {
-        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return }
-        
-        let currentRecord = pageHistory[currentPageIndex]
-        var removedCount = 0
-        
-        // 바로 앞 페이지 체크 - 정규식 패턴 매칭으로 더 정교하게
-        if currentPageIndex > 0 {
-            let prevIndex = currentPageIndex - 1
-            let prevRecord = pageHistory[prevIndex]
-            
-            let timeDifference = currentRecord.timestamp.timeIntervalSince(prevRecord.timestamp)
-            let isQuickNavigation = timeDifference < 5.0  // 5초로 확장
-            let isSimilarPage = arePagesSimilarByPattern(prevRecord.url, currentRecord.url)
-            
-            if isSimilarPage && isQuickNavigation {
-                dbg("🔄 정규식 인접 중복 제거 (앞): '\(prevRecord.title)' → '\(currentRecord.title)' [시간차: \(String(format: "%.1f", timeDifference))초]")
-                pageHistory.remove(at: prevIndex)
-                setCurrentPageIndex(currentPageIndex - 1, reason: "정규식 앞 페이지 중복 제거")
-                removedCount += 1
-            }
-        }
-        
-        // 바로 뒤 페이지 체크 - 정규식 패턴 매칭으로 더 정교하게
-        if currentPageIndex < pageHistory.count - 1 {
-            let nextIndex = currentPageIndex + 1
-            let nextRecord = pageHistory[nextIndex]
-            
-            let timeDifference = nextRecord.timestamp.timeIntervalSince(currentRecord.timestamp)
-            let isQuickNavigation = timeDifference < 5.0  // 5초로 확장
-            let isSimilarPage = arePagesSimilarByPattern(currentRecord.url, nextRecord.url)
-            
-            if isSimilarPage && isQuickNavigation {
-                dbg("🔄 정규식 인접 중복 제거 (뒤): '\(currentRecord.title)' → '\(nextRecord.title)' [시간차: \(String(format: "%.1f", timeDifference))초]")
-                pageHistory.remove(at: nextIndex)
-                removedCount += 1
-            }
-        }
-        
-        if removedCount > 0 {
-            dbg("🔄 정규식 기반 중복 제거 완료: \(removedCount)개 제거")
+            dbg("🎯 독립형 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
         }
     }
     
-    // MARK: - SPA 네비게이션 처리
-    
-    func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
-        // 홈 클릭 처리 중이면 차단
-        if isInHomeNavigationHandling() {
-            dbg("🏠 홈 클릭 처리 중 - SPA \(type) 무시: \(url.absoluteString)")
-            return
-        }
-        
-        // 새로고침 윈도에서 replace만 차단
-        if isInActiveReloadWindow() && type == "replace" {
-            dbg("🔄 새로고침 윈도 중 SPA replace 무시: \(url.absoluteString)")
-            return
-        }
-        
-        isSPANavigation = true
-        lastSPANavigationTime = Date()
-        
-        dbg("🌐 SPA \(type) 감지: \(siteType) | \(url.absoluteString) | '\(title)'")
-        
-        // 네비게이션 타입 감지
-        let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
-        
-        switch navigationType {
-        case .navHome:
-            handleHomeNavigation(url: url, title: title, siteType: siteType)
-        case .reloadSoft, .reloadHard:
-            handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
-        default:
-            handleRegularSPANavigation(type: type, url: url, title: title, siteType: siteType, navigationType: navigationType)
-        }
-        
-        // 전역 히스토리에 추가 (보수적 중복 체크)
-        if type != "title" && !PageRecord.isLoginRelatedURL(url) {
-            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
-            let alreadyExists = Self.globalHistory.contains { historyEntry in
-                normalizeURLForDuplicateCheck(historyEntry.url) == currentNormalizedURL
-            }
-            
-            if !alreadyExists {
-                Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
-            }
-        }
-        
-        // 1초 후 플래그 해제
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.isSPANavigation = false
-        }
-    }
-    
-    private func detectNavigationType(url: URL, type: String, siteType: String) -> NavigationType {
-        // 홈 클릭 감지
-        if url.path == "/" || url.path.isEmpty {
-            if let currentRecord = currentPageRecord,
-               url.host == currentRecord.url.host &&
-               currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
-                return .navHome
-            }
-        }
-        
-        // 리로드 감지
-        if let currentRecord = currentPageRecord,
-           PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
-            return type == "replace" ? .reloadSoft : .reloadHard
-        }
-        
-        // 보드 내 첫 페이지 이동 감지
-        if siteType.contains("list") || siteType.contains("page_1") {
-            return .navListFirst
-        }
-        
-        return .normal
-    }
-    
-    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
-        dbg("🏠 홈 클릭 감지: \(url.absoluteString)")
-        
-        // SPA 로직 차단 시작
-        startHomeNavigationHandling()
-        
-        // ✅ 홈 클릭에서도 앞으로가기 스택 제거하지 않음
-        dbg("💾 홈 클릭 - 앞으로가기 스택 보존")
-        
-        // 새 홈 페이지 추가
-        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
-        pageHistory.append(newRecord)
-        setCurrentPageIndex(pageHistory.count - 1, reason: "홈 클릭")
-        
-        dbg("🏠 홈 클릭 - 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
-        
-        // 인접 중복 제거 실행
-        removeAdjacentDuplicates()
-        
-        // 세션 위치 보호
-        let targetIndex = pageHistory.count - 1
-        for delay in [0.1, 0.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                if self.currentPageIndex != targetIndex {
-                    self.dbg("🏠 세션 위치 보호(\(delay)초): \(self.currentPageIndex) → \(targetIndex)")
-                    self.setCurrentPageIndex(targetIndex, reason: "홈 클릭 세션 보호")
-                }
-            }
-        }
-        
-        // StateModel URL 동기화
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleRefreshNavigation(url: URL, title: String, type: String, siteType: String) {
-        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            dbg("❌ 새로고침 실패: 유효하지 않은 현재 인덱스")
-            return
-        }
-        
-        var rec = pageHistory[currentPageIndex]
-        rec.url = url
-        rec.updateTitle(title)
-        rec.siteType = siteType
-        rec.navigationType = (type == "replace") ? .reloadSoft : .reloadHard
-        pageHistory[currentPageIndex] = rec
-        
-        startReloadWindow()
-        
-        dbg("🔄 새로고침 감지: '\(title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
-        
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleRegularSPANavigation(type: String, url: URL, title: String, siteType: String, navigationType: NavigationType) {
-        switch type {
-        case "push":
-            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: navigationType)
-        case "replace":
-            handleSPAReplaceState(url: url, title: title, siteType: siteType)
-        case "pop", "hash":
-            handleSPAPopState(url: url, title: title, siteType: siteType)
-        case "iframe_push":
-            handleSPAIframePush(url: url, title: title, siteType: siteType)
-        case "title":
-            updateCurrentPageTitle(title)
-        case "dom":
-            handleSPADOMChange(url: url, title: title, siteType: siteType)
-        default:
-            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
-        }
-    }
-    
-    private func handleSPAPushState(url: URL, title: String, siteType: String, navigationType: NavigationType) {
-        // 같은 경로에서 쿼리만 변경 시 replace 처리
-        if let currentRecord = currentPageRecord,
-           currentRecord.url.host == url.host,
-           currentRecord.url.path == url.path,
-           currentRecord.url.query != url.query {
-            handleSPAReplaceState(url: url, title: title, siteType: siteType)
-            dbg("🔄 SPA Push → Replace: 같은 경로, 쿼리만 변경")
-            return
-        }
-        
-        // ✅ SPA Push에서도 앞으로가기 스택 제거하지 않음
-        dbg("💾 SPA Push - 앞으로가기 스택 보존")
-        
-        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
-        pageHistory.append(newRecord)
-        setCurrentPageIndex(pageHistory.count - 1, reason: "SPA Push")
-        
-        // 인접 중복 제거 실행
-        removeAdjacentDuplicates()
-        
-        dbg("🌐 SPA 새 페이지: \(siteType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
-        
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleSPAReplaceState(url: URL, title: String, siteType: String) {
-        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
-            return
-        }
-        
-        var rec = pageHistory[currentPageIndex]
-        rec.url = url
-        rec.updateTitle(title)
-        rec.siteType = siteType
-        rec.navigationType = .spaNavigation
-        pageHistory[currentPageIndex] = rec
-        
-        dbg("🌐 SPA 페이지 교체: \(siteType) '\(rec.title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
-        
-        stateModel?.syncCurrentURL(url)
-    }
-    
-    private func handleSPAPopState(url: URL, title: String, siteType: String) {
-        // 홈 클릭 처리 중이면 무시
-        if isInHomeNavigationHandling() {
-            dbg("🏠 홈 클릭 처리 중 - SPA Pop 무시: \(url.absoluteString)")
-            return
-        }
-        
-        // 옛날 기록 찾지 말고 무조건 새 페이지 추가
-        dbg("🌐 SPA Pop - 무조건 새 페이지 추가: \(url.absoluteString)")
-        handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
-    }
-    
-    private func handleSPAIframePush(url: URL, title: String, siteType: String) {
-        handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)", navigationType: .normal)
-    }
-    
-    private func handleSPADOMChange(url: URL, title: String, siteType: String) {
-        handleSPAPopState(url: url, title: title, siteType: "dom_\(siteType)")
-    }
-    
-    // MARK: - 새로고침 윈도 관리
-    
+    // 🆕 새로고침 윈도 관리 (단축)
     private func startReloadWindow() {
         isInReloadWindow = true
         reloadWindowStartTime = Date()
-        dbg("🔄 새로고침 윈도 시작")
+        dbg("🔄 새로고침 윈도 시작 (0.5초)")
         
+        // 자동 해제
         DispatchQueue.main.asyncAfter(deadline: .now() + reloadWindowDuration) { [weak self] in
             self?.endReloadWindow()
         }
@@ -651,56 +275,418 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // MARK: - 페이지 유사성 체크 (네비게이션용)
-    
-    private func areSimilarPages(_ url1: URL?, _ url2: URL?) -> Bool {
-        guard let url1 = url1, let url2 = url2 else { return false }
-        
-        // 같은 호스트인지 확인
-        guard url1.host == url2.host else { return false }
-        
-        // 경로가 동일하면 유사
-        if url1.path == url2.path { return true }
-        
-        // 루트 경로들 (홈페이지들)
-        let isRoot1 = url1.path == "/" || url1.path.isEmpty
-        let isRoot2 = url2.path == "/" || url2.path.isEmpty
-        if isRoot1 && isRoot2 { return true }
-        
-        // 첫 번째 경로 컴포넌트만 비교 (같은 섹션)
-        let components1 = url1.pathComponents.dropFirst() // '/' 제거
-        let components2 = url2.pathComponents.dropFirst()
-        
-        return components1.prefix(1) == components2.prefix(1) and 
-               components1.count <= 2 and components2.count <= 2
+    // ✅ 홈 클릭 처리 상태 관리 (SPA 로직 차단)
+    private func startHomeNavigationHandling() {
+        isHandlingHomeNavigation = true
+        homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
+        dbg("🏠 홈 클릭 처리 시작 - SPA 로직 1초간 차단")
     }
     
+    private func isInHomeNavigationHandling() -> Bool {
+        guard isHandlingHomeNavigation, let endTime = homeNavigationEndTime else { return false }
+        
+        if Date() > endTime {
+            isHandlingHomeNavigation = false
+            homeNavigationEndTime = nil
+            dbg("🏠 홈 클릭 처리 완료 - SPA 로직 차단 해제")
+            return false
+        }
+        
+        return true
+    }
+    
+    // MARK: - ✅ 인접 중복 제거 (현재 페이지 ± 1 위치만 체크)
+    
+    private func removeAdjacentDuplicates() {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return }
+        
+        let currentRecord = pageHistory[currentPageIndex]
+        let currentNormalizedURL = normalizeURLForDuplicateCheck(currentRecord.url)
+        var removedCount = 0
+        
+        // 1️⃣ 바로 앞 페이지 체크 (currentPageIndex - 1)
+        if currentPageIndex > 0 {
+            let prevIndex = currentPageIndex - 1
+            let prevRecord = pageHistory[prevIndex]
+            let prevNormalizedURL = normalizeURLForDuplicateCheck(prevRecord.url)
+            
+            if currentNormalizedURL == prevNormalizedURL {
+                dbg("🔄 인접 중복 제거 (앞): '\(prevRecord.title)' [인덱스: \(prevIndex)]")
+                pageHistory.remove(at: prevIndex)
+                currentPageIndex -= 1  // 인덱스 조정
+                removedCount += 1
+            }
+        }
+        
+        // 2️⃣ 바로 뒤 페이지 체크 (currentPageIndex + 1) - 앞 페이지 제거로 인덱스 변경 반영
+        if currentPageIndex < pageHistory.count - 1 {
+            let nextIndex = currentPageIndex + 1
+            let nextRecord = pageHistory[nextIndex]
+            let nextNormalizedURL = normalizeURLForDuplicateCheck(nextRecord.url)
+            
+            if currentNormalizedURL == nextNormalizedURL {
+                dbg("🔄 인접 중복 제거 (뒤): '\(nextRecord.title)' [인덱스: \(nextIndex)]")
+                pageHistory.remove(at: nextIndex)
+                removedCount += 1
+            }
+        }
+        
+        if removedCount > 0 {
+            updateNavigationState()
+            dbg("🔄 인접 중복 제거 완료: \(removedCount)개 제거, 남은 히스토리: \(pageHistory.count)개")
+        }
+    }
+    
+    // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (간소화)
+    
+    func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
+        // ✅ 홈 클릭 처리 중이면 SPA 로직 차단
+        if isInHomeNavigationHandling() {
+            dbg("🏠 홈 클릭 처리 중 - SPA \(type) 무시: \(url.absoluteString)")
+            return
+        }
+        
+        // 🆕 새로고침 윈도에서 replace만 차단 (push는 허용)
+        if isInActiveReloadWindow() && type == "replace" {
+            dbg("🔄 새로고침 윈도 중 SPA replace 무시: \(url.absoluteString)")
+            return
+        }
+        
+        // SPA 네비게이션 플래그 설정
+        isSPANavigation = true
+        lastSPANavigationTime = Date()
+        
+        dbg("🌐 SPA \(type) 감지: \(siteType) | \(url.absoluteString) | '\(title)'")
+        
+        // 🆕 새로고침 감지 로직
+        if type == "push" || type == "replace" {
+            if let currentRecord = currentPageRecord,
+               PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
+                // 동일한 정규화 URL → 새로고침으로 처리
+                handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
+                return
+            }
+        }
+        
+        // 🆕 홈 클릭 감지 (사이트 루트로의 이동)
+        let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
+        
+        switch navigationType {
+        case .navHome:
+            handleHomeNavigation(url: url, title: title, siteType: siteType)
+            
+        case .reloadSoft, .reloadHard:
+            handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
+            
+        default:
+            // 기존 SPA 네비게이션 로직
+            handleRegularSPANavigation(type: type, url: url, title: title, siteType: siteType, navigationType: navigationType)
+        }
+        
+        // 전역 히스토리에도 추가 (중복 및 로그인 관련 제외)
+        if type != "title" && !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { $0.url == url }) {
+            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+        }
+        
+        // 1초 후 플래그 해제 (단축)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isSPANavigation = false
+        }
+    }
+    
+    // 🆕 네비게이션 타입 감지
+    private func detectNavigationType(url: URL, type: String, siteType: String) -> NavigationType {
+        // 홈 클릭 감지 (루트 경로로의 이동)
+        if url.path == "/" || url.path.isEmpty {
+            if let currentRecord = currentPageRecord,
+               url.host == currentRecord.url.host &&
+               currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
+                return .navHome
+            }
+        }
+        
+        // 리로드 감지 (동일 정규화 URL)
+        if let currentRecord = currentPageRecord,
+           PageRecord.normalizeURL(currentRecord.url) == PageRecord.normalizeURL(url) {
+            return type == "replace" ? .reloadSoft : .reloadHard
+        }
+        
+        // 보드 내 첫 페이지 이동 감지 (같은 호스트, 다른 경로지만 리스트형)
+        if siteType.contains("list") || siteType.contains("page_1") {
+            return .navListFirst
+        }
+        
+        return .normal
+    }
+    
+    // 🆕 새로고침 처리 (무조건 replace, ID 유지)
+    private func handleRefreshNavigation(url: URL, title: String, type: String, siteType: String) {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
+            dbg("❌ 새로고침 실패: 유효하지 않은 현재 인덱스")
+            return
+        }
+        
+        // ✅ 기존 레코드의 ID 유지하며 현재 위치의 페이지 기록을 교체
+        var rec = pageHistory[currentPageIndex]
+        rec.url = url
+        rec.updateTitle(title)
+        rec.siteType = siteType
+        rec.navigationType = (type == "replace") ? .reloadSoft : .reloadHard // ✅ enum 사용
+        pageHistory[currentPageIndex] = rec
+        
+        // 새로고침 윈도 시작
+        startReloadWindow()
+        
+        dbg("🔄 새로고침 감지 - 현재 페이지 교체: '\(title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    // ✅ **수정**: 홈 클릭 처리 - 정상적인 새 페이지 추가 후 SPA 차단
+    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
+        dbg("🏠 홈 클릭 감지: \(url.absoluteString)")
+        
+        // SPA 로직 차단 시작
+        startHomeNavigationHandling()
+        
+        // Forward 스택 제거 (명시적 push이므로)
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🗑️ 홈 클릭 - forward 스택 \(removedCount)개 제거")
+        }
+        
+        // 새 홈 페이지 추가
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: .navHome)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // ✅ 인접 중복 제거 실행
+        removeAdjacentDuplicates()
+        
+        updateNavigationState()
+        
+        dbg("🏠 홈 클릭 - 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    // 기존 SPA 네비게이션 로직
+    private func handleRegularSPANavigation(type: String, url: URL, title: String, siteType: String, navigationType: NavigationType) {
+        switch type {
+        case "push":
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: navigationType)
+            
+        case "replace":
+            handleSPAReplaceState(url: url, title: title, siteType: siteType)
+            
+        case "pop", "hash":
+            handleSPAPopState(url: url, title: title, siteType: siteType)
+            
+        case "iframe_push":
+            handleSPAIframePush(url: url, title: title, siteType: siteType)
+            
+        case "title":
+            updateCurrentPageTitle(title)
+            
+        case "dom":
+            handleSPADOMChange(url: url, title: title, siteType: siteType)
+            
+        default:
+            dbg("🌐 알 수 없는 SPA 네비게이션 타입: \(type)")
+        }
+    }
+    
+    private func handleSPAPushState(url: URL, title: String, siteType: String, navigationType: NavigationType) {
+        // ✅ 명확한 replace 기준: 경로는 같고 쿼리만 다른 경우
+        if let currentRecord = currentPageRecord,
+           currentRecord.url.host == url.host,
+           currentRecord.url.path == url.path,
+           currentRecord.url.query != url.query {
+            // 같은 경로에서 쿼리만 변경 → replace 처리
+            handleSPAReplaceState(url: url, title: title, siteType: siteType)
+            dbg("🔄 SPA Push → Replace: 같은 경로, 쿼리만 변경")
+            return
+        }
+        
+        // Forward 스택 제거: 오직 명시적 "push"에서만
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            let removedCount = pageHistory.count - currentPageIndex - 1
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+            dbg("🗑️ SPA Push - forward 스택 \(removedCount)개 제거")
+        }
+        
+        let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // ✅ 인접 중복 제거 실행
+        removeAdjacentDuplicates()
+        
+        updateNavigationState()
+        dbg("🌐 SPA 새 페이지: \(siteType) '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    private func handleSPAReplaceState(url: URL, title: String, siteType: String) {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
+            return
+        }
+        
+        // ✅ 기존 레코드의 ID 유지하며 필드만 업데이트
+        var rec = pageHistory[currentPageIndex]
+        rec.url = url
+        rec.updateTitle(title)
+        rec.siteType = siteType
+        rec.navigationType = .spaNavigation // ✅ enum 사용
+        pageHistory[currentPageIndex] = rec
+        
+        dbg("🌐 SPA 페이지 교체: \(siteType) '\(rec.title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
+        
+        // StateModel URL 동기화
+        stateModel?.syncCurrentURL(url)
+    }
+    
+    private func handleSPAPopState(url: URL, title: String, siteType: String) {
+        // ✅ **수정**: 히스토리 내에서 해당 URL 찾기 (강화된 정규화 + 가장 최근 것 우선)
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        let matchingIndices = pageHistory.enumerated().compactMap { index, record in
+            normalizeURLForDuplicateCheck(record.url) == normalizedURL ? index : nil
+        }
+        
+        if let foundIndex = matchingIndices.last { // ✅ 가장 최근에 추가된 페이지 선택
+            // 히스토리 내 이동
+            currentPageIndex = foundIndex
+            
+            // 제목 및 메타데이터 업데이트
+            var updatedRecord = pageHistory[currentPageIndex]
+            updatedRecord.updateTitle(title)
+            updatedRecord.updateAccess()
+            updatedRecord.siteType = siteType
+            pageHistory[currentPageIndex] = updatedRecord
+            
+            updateNavigationState()
+            dbg("🌐 SPA 히스토리 이동 (최신 우선): \(siteType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            
+            // StateModel URL 동기화
+            stateModel?.syncCurrentURL(url)
+        } else {
+            // 히스토리에 없으면 새로 추가
+            handleSPAPushState(url: url, title: title, siteType: siteType, navigationType: .normal)
+        }
+    }
+    
+    private func handleSPAIframePush(url: URL, title: String, siteType: String) {
+        // iframe 내부 네비게이션은 보통 게시글 읽기 등이므로 일반 push와 동일하게 처리
+        handleSPAPushState(url: url, title: title, siteType: "iframe_\(siteType)", navigationType: .normal)
+    }
+    
+    private func handleSPADOMChange(url: URL, title: String, siteType: String) {
+        // DOM 변경으로 인한 URL 변화는 보통 SPA 앱에서 발생
+        // popstate나 hashchange와 유사하게 처리
+        handleSPAPopState(url: url, title: title, siteType: "dom_\(siteType)")
+    }
+    
+    // ✅ 개선된 URL 유사성 로직 - 더 명확한 기준
+    private func areSimilarURLs(_ a: URL, _ b: URL) -> Bool {
+        guard a.host == b.host else { return false }
+        
+        // 경로가 동일하면 유사
+        if a.path == b.path { return true }
+        
+        // ✅ 리스트/상세 같은 얕은 경로만 유사로 판단 (더 보수적)
+        let componentsA = a.pathComponents.dropFirst() // '/' 제거
+        let componentsB = b.pathComponents.dropFirst()
+        
+        // 첫 번째 경로 컴포넌트만 비교 (예: /board/123 vs /board/456)
+        return componentsA.prefix(1) == componentsB.prefix(1) && 
+               componentsA.count <= 2 && componentsB.count <= 2 // 깊은 경로는 제외
+    }
+    
+    // SPA 네비게이션 활성 상태 확인 (단축)
+    private func isSPANavigationActive() -> Bool {
+        if isSPANavigation { return true }
+        
+        if let lastTime = lastSPANavigationTime {
+            let elapsed = Date().timeIntervalSince(lastTime)
+            return elapsed < 1.0 // ✅ 1.5초 → 1.0초로 단축
+        }
+        
+        return false
+    }
+    
+    // MARK: - 🔒 로그인 리다이렉트 체인 관리
+    
+    private func startLoginRedirectTracking(url: URL) {
+        isInLoginFlow = true
+        loginRedirectChain = [url]
+        loginRedirectStartTime = Date()
+        dbg("🔒 로그인 플로우 시작: \(url.absoluteString)")
+    }
+    
+    private func addToLoginRedirectChain(url: URL) {
+        if isInLoginFlow {
+            loginRedirectChain.append(url)
+            dbg("🔒 로그인 리다이렉트 체인 추가: \(url.absoluteString) (총 \(loginRedirectChain.count)개)")
+        }
+    }
+    
+    private func finishLoginRedirectTracking(finalURL: URL) {
+        if isInLoginFlow {
+            dbg("🔒 로그인 플로우 완료: \(loginRedirectChain.count)개 리다이렉트 → \(finalURL.absoluteString)")
+            
+            // 로그인 체인의 중간 페이지들을 히스토리에서 제거
+            cleanupLoginRedirectPages()
+            
+            isInLoginFlow = false
+            loginRedirectChain.removeAll()
+            loginRedirectStartTime = nil
+        }
+    }
+    
+    private func cleanupLoginRedirectPages() {
+        let originalCount = pageHistory.count
+        
+        // 로그인 관련 페이지들을 히스토리에서 제거
+        pageHistory.removeAll { record in
+            record.isLoginRelated || 
+            record.isTemporary || 
+            loginRedirectChain.contains(record.url)
+        }
+        
+        // 현재 인덱스 조정
+        if currentPageIndex >= pageHistory.count {
+            currentPageIndex = max(0, pageHistory.count - 1)
+        }
+        
+        let removedCount = originalCount - pageHistory.count
+        if removedCount > 0 {
+            updateNavigationState()
+            dbg("🔒 로그인 관련 페이지 \(removedCount)개 제거, 남은 히스토리: \(pageHistory.count)개")
+        }
+    }
+    
+    // MARK: - 새로운 페이지 기록 시스템 (강화된 중복 제거)
+    
     func addNewPage(url: URL, title: String = "") {
-        // 🔧 강화된 히스토리 네비게이션 중 새 페이지 추가 금지
+        // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
         if isHistoryNavigationActive() {
-            dbg("🔄 히스토리 네비게이션 중 - 새 페이지 추가 금지")
+            dbg("🔄 히스토리 네비 중 - 새 페이지 추가 금지")
             return
         }
         
-        // 🔧 조용한 새로고침 중에도 새 페이지 추가 금지
-        if let stateModel = stateModel, stateModel.isSilentRefresh {
-            dbg("🤫 조용한 새로고침 중 - 새 페이지 추가 금지")
-            return
-        }
-        
-        // 🔧 웹뷰 플래그 체크로 추가 보호
-        if let stateModel = stateModel, stateModel.isNavigatingFromWebView {
-            dbg("🚩 WebView 네비게이션 플래그 중 - 새 페이지 추가 금지")
-            return
-        }
-        
-        // SPA 네비게이션 중인지 체크
+        // 🌐 SPA 네비게이션 중인지 체크
         if isSPANavigationActive() {
             dbg("🌐 SPA 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
             return
         }
         
-        // 로그인 관련 URL 감지 및 추적
+        // 🔒 로그인 관련 URL 감지 및 추적
         if PageRecord.isLoginRelatedURL(url) {
             if !isInLoginFlow {
                 startLoginRedirectTracking(url: url)
@@ -708,52 +694,69 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 addToLoginRedirectChain(url: url)
             }
             
+            // 로그인 페이지는 히스토리에 추가하지 않음
             dbg("🔒 로그인 페이지 히스토리 제외: \(url.absoluteString)")
             return
         }
         
-        // 로그인 플로우가 진행 중이면서 일반 페이지에 도착한 경우
+        // 🔒 로그인 플로우가 진행 중이면서 일반 페이지에 도착한 경우
         if isInLoginFlow && !PageRecord.isLoginRelatedURL(url) {
             finishLoginRedirectTracking(finalURL: url)
         }
         
-        // 보수적인 연속 중복 체크 (정말로 같은 페이지이고 빠른 시간 내에 연속으로 온 경우만)
+        // ✅ **연속 중복 체크**: 바로 앞 페이지와 같은 정규화 URL인지 확인
         if !pageHistory.isEmpty,
-           let lastRecord = pageHistory.last {
-            let timeDifference = Date().timeIntervalSince(lastRecord.timestamp)
-            let isSimilarPage = arePagesSimilarByPattern(lastRecord.url, url)
-            
-            // 정규식 패턴으로 같은 페이지이고 5초 이내에 연속으로 온 경우만 중복으로 처리
-            if isSimilarPage && timeDifference < 5.0 {
-                updateCurrentPageTitle(title)
-                dbg("🔄 정규식 연속 중복 감지 - 제목만 업데이트: '\(title)' (시간차: \(String(format: "%.1f", timeDifference))초)")
-                return
-            }
+           let lastRecord = pageHistory.last,
+           normalizeURLForDuplicateCheck(lastRecord.url) == normalizeURLForDuplicateCheck(url) {
+            // 제목만 업데이트하고 새 기록 추가하지 않음
+            updateCurrentPageTitle(title)
+            dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' | \(normalizeURLForDuplicateCheck(url))")
+            return
         }
         
-        // ✅ 새 페이지 추가 시에도 앞으로가기 스택 제거하지 않음
-        dbg("💾 새 페이지 추가 - 앞으로가기 스택 보존")
+        // 현재 위치 이후의 forward 기록 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+        }
         
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
-        setCurrentPageIndex(pageHistory.count - 1, reason: "새 페이지 추가")
+        currentPageIndex = pageHistory.count - 1
         
-        // 인접 중복 제거 실행
+        // ✅ 인접 중복 제거 실행
         removeAdjacentDuplicates()
         
+        updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
         
-        // 전역 히스토리에도 추가 (보수적 중복 체크)
-        if !PageRecord.isLoginRelatedURL(url) {
-            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
-            let alreadyExists = Self.globalHistory.contains { historyEntry in
-                normalizeURLForDuplicateCheck(historyEntry.url) == currentNormalizedURL
-            }
-            
-            if !alreadyExists {
-                Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
-            }
+        // 전역 히스토리에도 추가 (로그인 관련 제외 + 중복 체크)
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        if !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { 
+            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
+        }) {
+            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
+    }
+    
+    // ✅ **중복 체크용 강화된 URL 정규화** (쿼리/해시 제거)
+    private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        
+        // HTTPS 우선 정규화
+        if components?.scheme == "http" {
+            components?.scheme = "https"
+        }
+        
+        // 트레일링 슬래시 제거
+        if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
+            components?.path = String(path.dropLast())
+        }
+        
+        // ✅ **핵심**: 쿼리 파라미터와 해시 완전 제거 (중복 체크용)
+        components?.query = nil
+        components?.fragment = nil
+        
+        return components?.url?.absoluteString ?? url.absoluteString
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -772,8 +775,52 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return nil }
         return pageHistory[currentPageIndex]
     }
+
+    // MARK: - 세션 저장/복원
     
-    // MARK: - 네비게이션 메서드
+    func saveSession() -> WebViewSession? {
+        guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
+            dbg("💾 세션 저장 실패: 히스토리 없음")
+            return nil
+        }
+        
+        // 🔒 로그인 관련 페이지는 세션에서 제외
+        let filteredHistory = pageHistory.filter { !$0.isLoginRelated && !$0.isTemporary }
+        
+        if filteredHistory.isEmpty {
+            dbg("💾 세션 저장 실패: 유효한 히스토리 없음 (로그인 페이지만 있음)")
+            return nil
+        }
+        
+        // 현재 인덱스를 필터링된 히스토리에 맞게 조정
+        let adjustedIndex = min(max(0, currentPageIndex), filteredHistory.count - 1)
+        
+        let session = WebViewSession(pageRecords: filteredHistory, currentIndex: adjustedIndex)
+        dbg("💾 세션 저장: \(filteredHistory.count)개 페이지 (원본 \(pageHistory.count)개), 현재 인덱스 \(adjustedIndex)")
+        return session
+    }
+
+    func restoreSession(_ session: WebViewSession) {
+        dbg("🔄 === 세션 복원 시작 ===")
+        isRestoringSession = true
+        
+        pageHistory = session.pageRecords
+        currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
+        
+        updateNavigationState()
+        
+        if !pageHistory.isEmpty {
+            dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
+        } else {
+            dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
+        }
+    }
+    
+    func finishSessionRestore() {
+        isRestoringSession = false
+    }
+
+    // MARK: - 🎯 **완전 독립형 네비게이션 메서드**
     
     func navigateBack() -> PageRecord? {
         guard canGoBack, currentPageIndex > 0 else { 
@@ -782,14 +829,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         isHistoryNavigation = true
-        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
-        setCurrentPageIndex(currentPageIndex - 1, reason: "뒤로가기")
+        currentPageIndex -= 1
         
         if let record = currentPageRecord {
             var mutableRecord = record
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            updateNavigationState()
             dbg("⬅️ 뒤로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             return record
         }
@@ -804,14 +851,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         isHistoryNavigation = true
-        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
-        setCurrentPageIndex(currentPageIndex + 1, reason: "앞으로가기")
+        currentPageIndex += 1
         
         if let record = currentPageRecord {
             var mutableRecord = record
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            updateNavigationState()
             dbg("➡️ 앞으로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             return record
         }
@@ -823,100 +870,90 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         guard index >= 0, index < pageHistory.count else { return nil }
         
         isHistoryNavigation = true
-        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
-        setCurrentPageIndex(index, reason: "인덱스 네비게이션")
+        currentPageIndex = index
         
         if let record = currentPageRecord {
             var mutableRecord = record
             mutableRecord.updateAccess()
             pageHistory[currentPageIndex] = mutableRecord
             
+            updateNavigationState()
             dbg("🎯 인덱스 네비게이션: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             return record
         }
         
         return nil
     }
-    
-    // MARK: - 세션 저장/복원
-    
-    func saveSession() -> WebViewSession? {
-        guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
-            dbg("💾 세션 저장 실패: 히스토리 없음")
-            return nil
-        }
-        
-        let filteredHistory = pageHistory.filter { !$0.isLoginRelated && !$0.isTemporary }
-        
-        if filteredHistory.isEmpty {
-            dbg("💾 세션 저장 실패: 유효한 히스토리 없음")
-            return nil
-        }
-        
-        let adjustedIndex = min(max(0, currentPageIndex), filteredHistory.count - 1)
-        
-        let session = WebViewSession(pageRecords: filteredHistory, currentIndex: adjustedIndex)
-        dbg("💾 세션 저장: \(filteredHistory.count)개 페이지, 현재 인덱스 \(adjustedIndex)")
-        return session
+
+    func clearHistory() {
+        Self.globalHistory.removeAll()
+        Self.saveGlobalHistory()
+        pageHistory.removeAll()
+        currentPageIndex = -1
+        resetNavigationFlags()
+        updateNavigationState()
+        dbg("🧹 전체 히스토리 삭제")
     }
 
-    func restoreSession(_ session: WebViewSession) {
-        dbg("🔄 === 세션 복원 시작 ===")
-        isRestoringSession = true
+    // MARK: - ✅ 간소화된 네비게이션 상태 관리
+    
+    func resetNavigationFlags() {
+        isHistoryNavigation = false
+        historyNavigationStartTime = nil
+        swipeDetectedTargetIndex = nil
+        swipeConfirmationTimer?.invalidate()
+        swipeConfirmationTimer = nil
+        redirectionChain.removeAll()
+        redirectionStartTime = nil
         
-        pageHistory = session.pageRecords
-        setCurrentPageIndex(max(0, min(session.currentIndex, pageHistory.count - 1)), reason: "세션 복원")
+        // 🌐 SPA 상태 리셋
+        isSPANavigation = false
+        lastSPANavigationTime = nil
         
-        if !pageHistory.isEmpty {
-            dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
-        } else {
-            dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
-        }
+        // 🔒 로그인 플로우 리셋
+        isInLoginFlow = false
+        loginRedirectChain.removeAll()
+        loginRedirectStartTime = nil
+        
+        // 🆕 새로고침 윈도 리셋
+        endReloadWindow()
+        
+        // ✅ 홈 클릭 상태 리셋
+        isHandlingHomeNavigation = false
+        homeNavigationEndTime = nil
     }
     
-    func finishSessionRestore() {
-        isRestoringSession = false
-    }
-    
-    // MARK: - 페이지 검색 (최근 페이지만)
-    
-    func findPageIndex(for url: URL) -> Int? {
-        let normalizedURL = normalizeURLForDuplicateCheck(url)
-        
-        // 마지막 5개 페이지에서만 찾기 (옛날 기록 무시)
-        let recentRange = max(0, pageHistory.count - 5)..<pageHistory.count
-        
-        for index in recentRange.reversed() {
-            let record = pageHistory[index]
-            if normalizeURLForDuplicateCheck(record.url) == normalizedURL {
-                dbg("🔍 최근 페이지 검색: \(url.absoluteString) → 인덱스 \(index)")
-                return index
+    func isHistoryNavigationActive() -> Bool {
+        if isHistoryNavigation {
+            if let startTime = historyNavigationStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                if elapsed > 1.0 { // ✅ 2.0초 → 1.0초로 단축
+                    isHistoryNavigation = false
+                    historyNavigationStartTime = nil
+                    return false
+                }
+                return true
             }
         }
-        
-        dbg("🔍 최근 페이지 없음: \(url.absoluteString)")
-        return nil
+        return false
     }
     
     // MARK: - 스와이프 제스처 처리
+    
+    func findPageIndex(for url: URL) -> Int? {
+        // ✅ **수정**: 강화된 정규화로 페이지 찾기 (가장 최근 것 우선)
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        let matchingIndices = pageHistory.enumerated().compactMap { index, record in
+            normalizeURLForDuplicateCheck(record.url) == normalizedURL ? index : nil
+        }
+        return matchingIndices.last // 가장 최근에 추가된 페이지 반환
+    }
     
     func handleSwipeGestureDetected(to url: URL) {
         guard !isHistoryNavigationActive() else {
             return
         }
         
-        // 홈 클릭 처리 중이면 지연 처리
-        if isInHomeNavigationHandling() {
-            dbg("🏠 홈 클릭 처리 중 - 스와이프 감지 지연: \(url.absoluteString)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                if !self.isInHomeNavigationHandling() {
-                    self.handleSwipeGestureDetected(to: url)
-                }
-            }
-            return
-        }
-        
-        // 최근 페이지만 찾기
         if let foundIndex = findPageIndex(for: url) {
             if foundIndex != currentPageIndex {
                 swipeDetectedTargetIndex = foundIndex
@@ -925,11 +962,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 swipeConfirmationTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
                     _ = self?.confirmSwipeGesture()
                 }
-                
-                dbg("👆 스와이프 감지: 타겟 인덱스 \(foundIndex) (현재 \(currentPageIndex))")
             }
-        } else {
-            dbg("👆 스와이프 감지 - 최근 페이지 없음: \(url.absoluteString)")
         }
     }
     
@@ -944,149 +977,28 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         return nil
     }
-    
-    // MARK: - 상태 관리 헬퍼
-    
-    func clearHistory() {
-        Self.globalHistory.removeAll()
-        Self.saveGlobalHistory()
-        pageHistory.removeAll()
-        setCurrentPageIndex(-1, reason: "히스토리 삭제")
-        resetNavigationFlags()
-        dbg("🧹 전체 히스토리 삭제")
-    }
-    
-    func resetNavigationFlags() {
-        isHistoryNavigation = false
-        historyNavigationStartTime = nil
-        swipeDetectedTargetIndex = nil
-        swipeConfirmationTimer?.invalidate()
-        swipeConfirmationTimer = nil
-        redirectionChain.removeAll()
-        redirectionStartTime = nil
-        
-        isSPANavigation = false
-        lastSPANavigationTime = nil
-        
-        isInLoginFlow = false
-        loginRedirectChain.removeAll()
-        loginRedirectStartTime = nil
-        
-        endReloadWindow()
-        
-        isHandlingHomeNavigation = false
-        homeNavigationEndTime = nil
-    }
-    
-    func isHistoryNavigationActive() -> Bool {
-        if isHistoryNavigation {
-            if let startTime = historyNavigationStartTime {
-                let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed > 3.0 {  // ✅ 1초 → 3초로 연장 (조용한 새로고침 대응)
-                    isHistoryNavigation = false
-                    historyNavigationStartTime = nil
-                    dbg("⏰ 히스토리 네비게이션 타임아웃 (3초)")
-                    return false
-                }
-                return true
-            } else {
-                // startTime이 없으면 플래그만 있는 상태, 즉시 해제
-                isHistoryNavigation = false
-                return false
-            }
-        }
-        return false
-    }
-    
-    private func isSPANavigationActive() -> Bool {
-        if isSPANavigation { return true }
-        
-        if let lastTime = lastSPANavigationTime {
-            let elapsed = Date().timeIntervalSince(lastTime)
-            return elapsed < 1.0
-        }
-        
-        return false
-    }
-    
-    // MARK: - 로그인 리다이렉트 관리
-    
-    private func startLoginRedirectTracking(url: URL) {
-        isInLoginFlow = true
-        loginRedirectChain = [url]
-        loginRedirectStartTime = Date()
-        dbg("🔒 로그인 플로우 시작: \(url.absoluteString)")
-    }
-    
-    private func addToLoginRedirectChain(url: URL) {
-        if isInLoginFlow {
-            loginRedirectChain.append(url)
-            dbg("🔒 로그인 리다이렉트 체인 추가: \(url.absoluteString)")
-        }
-    }
-    
-    private func finishLoginRedirectTracking(finalURL: URL) {
-        if isInLoginFlow {
-            dbg("🔒 로그인 플로우 완료: \(loginRedirectChain.count)개 리다이렉트 → \(finalURL.absoluteString)")
-            
-            cleanupLoginRedirectPages()
-            
-            isInLoginFlow = false
-            loginRedirectChain.removeAll()
-            loginRedirectStartTime = nil
-        }
-    }
-    
-    private func cleanupLoginRedirectPages() {
-        let originalCount = pageHistory.count
-        
-        pageHistory.removeAll { record in
-            record.isLoginRelated or 
-            record.isTemporary or 
-            loginRedirectChain.contains(record.url)
-        }
-        
-        if currentPageIndex >= pageHistory.count {
-            setCurrentPageIndex(max(0, pageHistory.count - 1), reason: "로그인 페이지 정리")
-        }
-        
-        let removedCount = originalCount - pageHistory.count
-        if removedCount > 0 {
-            dbg("🔒 로그인 관련 페이지 \(removedCount)개 제거")
-        }
-    }
-    
-    // MARK: - WKNavigationDelegate
+
+    // MARK: - WKNavigationDelegate (간소화)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         stateModel?.handleLoadingStart()
         
         let startURL = webView.url
         
-        // 자동 스와이프 감지
+        // ✅ 자동 스와이프 감지
         if let startURL = startURL, 
            !isRestoringSession, 
            !isHistoryNavigationActive(),
            stateModel?.currentURL != startURL {
             
-            if isInHomeNavigationHandling() {
-                dbg("🏠 홈 클릭 처리 중 - 자동 스와이프 지연 처리")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    if !self.isInHomeNavigationHandling() {
-                        self.handleSwipeGestureDetected(to: startURL)
-                    }
-                }
-            } else {
-                handleSwipeGestureDetected(to: startURL)
-                dbg("🔍 자동 스와이프 감지 실행: \(startURL.absoluteString)")
-            }
+            handleSwipeGestureDetected(to: startURL)
         }
         
         // 리다이렉트 체인 관리
         if let url = startURL {
             let now = Date()
             
-            if redirectionChain.isEmpty or redirectionStartTime == nil or 
+            if redirectionChain.isEmpty || redirectionStartTime == nil || 
                now.timeIntervalSince(redirectionStartTime!) > 3.0 {
                 redirectionChain = [url]
                 redirectionStartTime = now
@@ -1094,6 +1006,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 redirectionChain.append(url)
             }
             
+            // 🔒 로그인 리다이렉트 체인에도 추가
             if isInLoginFlow {
                 addToLoginRedirectChain(url: url)
             }
@@ -1122,20 +1035,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     stateModel?.syncCurrentURL(finalURL)
                 }
                 
-                // ✅ 히스토리 네비게이션 완료 후 1.5초 후 플래그 리셋 (조용한 새로고침 완료 대기)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.resetNavigationFlags()
-                    self.dbg("🔄 히스토리 네비게이션 플래그 지연 리셋 완료")
                 }
                 
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
             } else {
+                // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
                 addNewPage(url: finalURL, title: title)
                 stateModel?.syncCurrentURL(finalURL)
                 dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
             
+            // 리다이렉트 체인 정리
             redirectionChain.removeAll()
             redirectionStartTime = nil
         }
@@ -1175,15 +1088,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         stateModel?.handleDidCommitNavigation(webView)
     }
-    
+
     // MARK: - 전역 히스토리 관리
     
     private static func saveGlobalHistory() {
+        // 🔒 로그인 관련 항목은 전역 히스토리에서도 제외
         let filteredHistory = globalHistory.filter { !PageRecord.isLoginRelatedURL($0.url) }
         
         if let data = try? JSONEncoder().encode(filteredHistory) {
             UserDefaults.standard.set(data, forKey: "globalHistory")
-            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(filteredHistory.count)개")
+            TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(filteredHistory.count)개 (원본 \(globalHistory.count)개)")
         }
     }
 
@@ -1194,7 +1108,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 로드: \(loaded.count)개")
         }
     }
-    
+
     // MARK: - 기존 호환성 API
     
     var historyURLs: [String] {
@@ -1224,9 +1138,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
+        let loginState = isInLoginFlow ? "🔒Login" : ""
+        let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(homeState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState) \(msg)")
     }
 
     // MARK: - 메모리 정리
@@ -1235,7 +1151,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 }
 
-// MARK: - 방문기록 페이지 뷰
+// MARK: - 방문기록 페이지 뷰 (네비게이션 타입 표시 추가)
 extension WebViewDataModel {
     public struct HistoryPage: View {
         @ObservedObject var dataModel: WebViewDataModel
@@ -1345,7 +1261,7 @@ extension WebViewDataModel {
     }
 }
 
-// MARK: - 세션 히스토리 행 뷰
+// MARK: - 세션 히스토리 행 뷰 (네비게이션 타입 표시 추가)
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
@@ -1383,6 +1299,7 @@ struct SessionHistoryRowView: View {
                         .fontWeight(isCurrent ? .bold : .regular)
                         .lineLimit(1)
                     
+                    // 🌐 사이트 타입 표시
                     if let siteType = record.siteType {
                         Text("[\(siteType)]")
                             .font(.caption2)
@@ -1393,6 +1310,7 @@ struct SessionHistoryRowView: View {
                             .cornerRadius(4)
                     }
                     
+                    // 🆕 네비게이션 타입 표시
                     if record.navigationType != .normal {
                         Text(record.navigationType.rawValue)
                             .font(.caption2)
@@ -1416,6 +1334,7 @@ struct SessionHistoryRowView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
+                    // 🔒 로그인 관련 표시
                     if record.isLoginRelated {
                         Text("🔒로그인")
                             .font(.caption2)
