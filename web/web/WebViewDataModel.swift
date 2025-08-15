@@ -231,56 +231,44 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // MARK: - 정규식 기반 강화된 URL 정규화
+    // MARK: - 약한 중복제거를 위한 URL 정규화 (의미있는 차이는 보존)
     
     private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         
-        // HTTPS 우선 정규화
+        // 1. HTTP/HTTPS 정규화만 (다른 건 그대로 보존)
         if components?.scheme == "http" {
             components?.scheme = "https"
         }
         
-        // 트레일링 슬래시 제거
+        // 2. 트레일링 슬래시만 제거 (루트 경로 제외)
         if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
             components?.path = String(path.dropLast())
         }
         
-        // 쿼리 파라미터와 해시 완전 제거
-        components?.query = nil
-        components?.fragment = nil
-        
-        // 정규식 기반 추가 정규화
-        var normalizedString = components?.url?.absoluteString ?? url.absoluteString
-        
-        // 추적 파라미터 등 제거
-        let patternsToRemove = [
-            "\\?utm_[^&]*",           // utm 파라미터
-            "\\?fbclid=[^&]*",        // Facebook 추적
-            "\\?gclid=[^&]*",         // Google 추적  
-            "\\?sessionid=[^&]*",     // 세션 ID
-            "\\?PHPSESSID=[^&]*",     // PHP 세션
-            "\\?jsessionid=[^&]*",    // Java 세션
-            "\\?_ga=[^&]*",           // Google Analytics
-            "\\?ref=[^&]*",           // 레퍼러
-            "\\?source=[^&]*",        // 소스 추적
-            "\\?campaign=[^&]*",      // 캠페인 추적
-            "/\\?$",                  // 끝의 물음표
-            "/$"                      // 끝의 슬래시 (루트 제외)
-        ]
-        
-        for pattern in patternsToRemove {
-            normalizedString = normalizedString.replacingOccurrences(
-                of: pattern, 
-                with: "", 
-                options: .regularExpression
-            )
+        // 3. 의미없는 추적 파라미터만 제거, 나머지는 보존
+        if var queryItems = components?.queryItems, !queryItems.isEmpty {
+            // 정말 의미없는 추적 파라미터만 제거
+            let trackingParams = Set([
+                "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                "fbclid", "gclid", "_ga", "ref", "source"
+            ])
+            
+            queryItems = queryItems.filter { item in
+                !trackingParams.contains(item.name.lowercased())
+            }
+            
+            // 의미있는 파라미터가 남아있으면 보존, 없으면 완전 제거
+            components?.queryItems = queryItems.isEmpty ? nil : queryItems
         }
         
-        return normalizedString
+        // 4. 해시는 그대로 보존 (SPA에서 중요함)
+        // components?.fragment = 그대로 보존
+        
+        return components?.url?.absoluteString ?? url.absoluteString
     }
     
-    // MARK: - 인접 중복 제거 (URL 기반)
+    // MARK: - 보수적인 인접 중복 제거 (정말로 같은 페이지일 때만)
     
     private func removeAdjacentDuplicates() {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return }
@@ -289,35 +277,45 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let currentNormalizedURL = normalizeURLForDuplicateCheck(currentRecord.url)
         var removedCount = 0
         
-        // 바로 앞 페이지 체크
+        // 바로 앞 페이지 체크 - 정말로 거의 같은 URL이고 시간차이가 짧을 때만
         if currentPageIndex > 0 {
             let prevIndex = currentPageIndex - 1
             let prevRecord = pageHistory[prevIndex]
             let prevNormalizedURL = normalizeURLForDuplicateCheck(prevRecord.url)
             
-            if currentNormalizedURL == prevNormalizedURL {
-                dbg("🔄 인접 중복 제거 (앞): '\(prevRecord.title)' [인덱스: \(prevIndex)]")
+            // 추가 조건: 시간차이가 3초 이내이고 URL이 정말 같을 때만
+            let timeDifference = currentRecord.timestamp.timeIntervalSince(prevRecord.timestamp)
+            let isSameNormalizedURL = currentNormalizedURL == prevNormalizedURL
+            let isQuickNavigation = timeDifference < 3.0
+            
+            if isSameNormalizedURL && isQuickNavigation {
+                dbg("🔄 인접 중복 제거 (앞): '\(prevRecord.title)' [인덱스: \(prevIndex)] (시간차: \(String(format: "%.1f", timeDifference))초)")
                 pageHistory.remove(at: prevIndex)
                 setCurrentPageIndex(currentPageIndex - 1, reason: "앞 페이지 중복 제거")
                 removedCount += 1
             }
         }
         
-        // 바로 뒤 페이지 체크
+        // 바로 뒤 페이지 체크 - 정말로 거의 같은 URL이고 시간차이가 짧을 때만
         if currentPageIndex < pageHistory.count - 1 {
             let nextIndex = currentPageIndex + 1
             let nextRecord = pageHistory[nextIndex]
             let nextNormalizedURL = normalizeURLForDuplicateCheck(nextRecord.url)
             
-            if currentNormalizedURL == nextNormalizedURL {
-                dbg("🔄 인접 중복 제거 (뒤): '\(nextRecord.title)' [인덱스: \(nextIndex)]")
+            // 추가 조건: 시간차이가 3초 이내이고 URL이 정말 같을 때만
+            let timeDifference = nextRecord.timestamp.timeIntervalSince(currentRecord.timestamp)
+            let isSameNormalizedURL = currentNormalizedURL == nextNormalizedURL
+            let isQuickNavigation = timeDifference < 3.0
+            
+            if isSameNormalizedURL && isQuickNavigation {
+                dbg("🔄 인접 중복 제거 (뒤): '\(nextRecord.title)' [인덱스: \(nextIndex)] (시간차: \(String(format: "%.1f", timeDifference))초)")
                 pageHistory.remove(at: nextIndex)
                 removedCount += 1
             }
         }
         
         if removedCount > 0 {
-            dbg("🔄 인접 중복 제거 완료: \(removedCount)개 제거")
+            dbg("🔄 보수적 중복 제거 완료: \(removedCount)개 제거")
         }
     }
     
@@ -353,9 +351,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             handleRegularSPANavigation(type: type, url: url, title: title, siteType: siteType, navigationType: navigationType)
         }
         
-        // 전역 히스토리에 추가
-        if type != "title" && !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { $0.url == url }) {
-            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+        // 전역 히스토리에 추가 (보수적 중복 체크)
+        if type != "title" && !PageRecord.isLoginRelatedURL(url) {
+            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
+            let alreadyExists = Self.globalHistory.contains { historyEntry in
+                normalizeURLForDuplicateCheck(historyEntry.url) == currentNormalizedURL
+            }
+            
+            if !alreadyExists {
+                Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+            }
         }
         
         // 1초 후 플래그 해제
@@ -631,13 +636,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             finishLoginRedirectTracking(finalURL: url)
         }
         
-        // 간단한 연속 중복 체크
+        // 보수적인 연속 중복 체크 (정말로 같은 페이지이고 빠른 시간 내에 연속으로 온 경우만)
         if !pageHistory.isEmpty,
-           let lastRecord = pageHistory.last,
-           normalizeURLForDuplicateCheck(lastRecord.url) == normalizeURLForDuplicateCheck(url) {
-            updateCurrentPageTitle(title)
-            dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)'")
-            return
+           let lastRecord = pageHistory.last {
+            let lastNormalizedURL = normalizeURLForDuplicateCheck(lastRecord.url)
+            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
+            let timeDifference = Date().timeIntervalSince(lastRecord.timestamp)
+            
+            // 정말로 같은 URL이고 3초 이내에 연속으로 온 경우만 중복으로 처리
+            if lastNormalizedURL == currentNormalizedURL && timeDifference < 3.0 {
+                updateCurrentPageTitle(title)
+                dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' (시간차: \(String(format: "%.1f", timeDifference))초)")
+                return
+            }
         }
         
         // ✅ **원래대로**: 새 페이지 추가 시 당연히 앞으로가기 스택 제거
@@ -656,12 +667,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
         
-        // 전역 히스토리에도 추가
-        let normalizedURL = normalizeURLForDuplicateCheck(url)
-        if !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { 
-            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
-        }) {
-            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+        // 전역 히스토리에도 추가 (보수적 중복 체크)
+        if !PageRecord.isLoginRelatedURL(url) {
+            let currentNormalizedURL = normalizeURLForDuplicateCheck(url)
+            let alreadyExists = Self.globalHistory.contains { historyEntry in
+                normalizeURLForDuplicateCheck(historyEntry.url) == currentNormalizedURL
+            }
+            
+            if !alreadyExists {
+                Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+            }
         }
     }
     
