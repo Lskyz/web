@@ -167,11 +167,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 historyNavigationStartTime = Date()
             } else {
                 historyNavigationStartTime = nil
+                // 🔧 **새로 추가**: 히스토리 네비게이션 완료 후 잠깐 새 페이지 추가 차단
+                historyNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
             }
         }
     }
     
     private var historyNavigationStartTime: Date?
+    private var historyNavigationEndTime: Date? // 🔧 히스토리 네비게이션 완료 후 차단 시간
     
     // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
@@ -711,7 +714,11 @@ private func startHomeNavigationHandling() {
     func addNewPage(url: URL, title: String = "") {
         // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
         if isHistoryNavigationActive() {
-            dbg("🔄 히스토리 네비 중 - 새 페이지 추가 금지")
+            if isHistoryNavigation {
+                dbg("🔄 히스토리 네비게이션 진행 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+            } else {
+                dbg("🔄 히스토리 네비게이션 완료 후 대기 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+            }
             return
         }
         
@@ -958,6 +965,7 @@ func saveSession() -> WebViewSession? {
     func resetNavigationFlags() {
         isHistoryNavigation = false
         historyNavigationStartTime = nil
+        historyNavigationEndTime = nil // 🔧 히스토리 네비게이션 완료 후 차단 시간도 리셋
         swipeDetectedTargetIndex = nil
         swipeConfirmationTimer?.invalidate()
         swipeConfirmationTimer = nil
@@ -982,6 +990,7 @@ func saveSession() -> WebViewSession? {
     }
     
     func isHistoryNavigationActive() -> Bool {
+        // 히스토리 네비게이션 중인지 체크
         if isHistoryNavigation {
             if let startTime = historyNavigationStartTime {
                 let elapsed = Date().timeIntervalSince(startTime)
@@ -993,6 +1002,16 @@ func saveSession() -> WebViewSession? {
                 return true
             }
         }
+        
+        // 🔧 **새로 추가**: 히스토리 네비게이션 완료 후 차단 시간 체크
+        if let endTime = historyNavigationEndTime {
+            if Date() <= endTime {
+                return true // 아직 차단 시간 내
+            } else {
+                historyNavigationEndTime = nil // 차단 시간 만료
+            }
+        }
+        
         return false
     }
     
@@ -1112,6 +1131,7 @@ func saveSession() -> WebViewSession? {
                 
             } else {
                 // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
+                // 🔧 **핵심 수정**: 히스토리 네비게이션이 아닌 경우에만 새 페이지 추가
                 addNewPage(url: finalURL, title: title)
                 stateModel?.syncCurrentURL(finalURL)
                 dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
@@ -1210,8 +1230,9 @@ func saveSession() -> WebViewSession? {
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
+        let historyState = isHistoryNavigation ? "📖History" : (historyNavigationEndTime != nil ? "⏳Wait" : "")
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState)\(historyState) \(msg)")
     }
 
     // MARK: - 메모리 정리
