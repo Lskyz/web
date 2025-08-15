@@ -644,7 +644,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (연속 중복 제거 완화 + 홈클릭 가드)
+    // MARK: - 새로운 페이지 기록 시스템 (연속 중복 제거 완화 + 홈클릭 가드 + 조용한 새로고침 차단)
     
     func addNewPage(url: URL, title: String = "") {
         // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지 (과거 점프 방지)
@@ -656,6 +656,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // 🌐 SPA 네비게이션 중인지 체크
         if isSPANavigationActive() {
             dbg("🌐 SPA 네비게이션 활성 중 - 일반 페이지 추가 건너뜀")
+            return
+        }
+        
+        // 🤫 **추가**: 조용한 새로고침 중에도 새 페이지 추가 차단 (forward 스택 보호)
+        if let stateModel = stateModel, stateModel.isSilentRefresh {
+            dbg("🤫 조용한 새로고침 중 - 새 페이지 추가 차단 (forward 스택 보호)")
             return
         }
         
@@ -933,9 +939,10 @@ func saveSession() -> WebViewSession? {
         if isHistoryNavigation {
             if let startTime = historyNavigationStartTime {
                 let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed > 1.0 { // ✅ 2.0초 → 1.0초로 단축
+                if elapsed > 3.0 { // ✅ 1.0초 → 3.0초로 연장 (충분한 보호 시간)
                     isHistoryNavigation = false
                     historyNavigationStartTime = nil
+                    dbg("🔄 히스토리 네비게이션 플래그 만료 (3초 경과)")
                     return false
                 }
                 return true
@@ -1050,7 +1057,7 @@ func saveSession() -> WebViewSession? {
                     stateModel?.syncCurrentURL(finalURL)
                 }
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.resetNavigationFlags()
                 }
                 
