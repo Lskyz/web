@@ -1188,7 +1188,7 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             } else {
                 updateCurrentPageTitle(title)
                 if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
-                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(String(isHistoryNavigation)), endTime:\(String(historyNavigationEndTime != nil)), startTime:\(String(historyNavigationStartTime != nil))]")
+                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
             }
         }
 
@@ -1199,39 +1199,6 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     if !wasRestoringSession { stateModel?.triggerNavigationFinished() }
     dbg("✅ 네비게이션 완료")
 }
-
-            } else {
-                // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
-                // 🔧 **핵심 수정**: 모든 히스토리 관련 상태를 체크
-                let isHistoryRelated = isHistoryNavigation || 
-                                      historyNavigationEndTime != nil ||
-                                      (historyNavigationStartTime != nil)
-                
-                if !isHistoryRelated {
-                    addNewPage(url: finalURL, title: title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                } else {
-                    // 히스토리 네비게이션 관련 상태에서는 제목만 업데이트
-                    updateCurrentPageTitle(title)
-                    if stateModel?.currentURL != finalURL {
-                        stateModel?.syncCurrentURL(finalURL)
-                    }
-                    dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
-                }
-            }
-            
-            // 리다이렉트 체인 정리
-            redirectionChain.removeAll()
-            redirectionStartTime = nil
-        }
-        
-        if !wasRestoringSession {
-            stateModel?.triggerNavigationFinished()
-        }
-        
-        dbg("✅ 네비게이션 완료")
-    }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
