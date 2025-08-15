@@ -1,6 +1,6 @@
 //
-//  WebViewHelpers.swift
-//  오디오, 에러페이지, 인증서, 파일 업다운, 데스크탑모드, 쿠키 구현체들
+//  WebViewHelper.swift
+//  CustomWebView의 모든 기능 구현체들을 완전 분리 (SPA 제외)
 //
 
 import SwiftUI
@@ -28,6 +28,39 @@ func configureAudioSessionForMixing() {
 func deactivateAudioSession() {
     let session = AVAudioSession.sharedInstance()
     try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+}
+
+// MARK: - 투명 처리 구현체
+func setupTransparentWebView(_ webView: WKWebView) {
+    webView.isOpaque = false
+    webView.backgroundColor = .clear
+    webView.scrollView.backgroundColor = .clear
+    webView.scrollView.isOpaque = false
+    webView.scrollView.contentInsetAdjustmentBehavior = .never 
+    webView.scrollView.keyboardDismissMode = .interactive
+    webView.scrollView.contentInset = .zero
+    webView.scrollView.scrollIndicatorInsets = .zero
+}
+
+func maintainTransparentWebView(_ webView: WKWebView) {
+    if webView.isOpaque { webView.isOpaque = false }
+    if webView.backgroundColor != .clear { webView.backgroundColor = .clear }
+    if webView.scrollView.backgroundColor != .clear { webView.scrollView.backgroundColor = .clear }
+    webView.scrollView.isOpaque = false
+}
+
+// MARK: - Pull to Refresh 구현체
+func setupPullToRefresh(for webView: WKWebView, target: Any, action: Selector) {
+    let refreshControl = UIRefreshControl()
+    refreshControl.addTarget(target, action: action, for: .valueChanged)
+    webView.scrollView.refreshControl = refreshControl
+}
+
+@objc func handleRefresh(_ sender: UIRefreshControl, webView: WKWebView?) {
+    webView?.reload()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        sender.endRefreshing()
+    }
 }
 
 // MARK: - 비디오 스크립트 구현체
@@ -328,39 +361,6 @@ func updateOverlay(progress: Double, overlayProgress: UIProgressView?, overlayPe
 
 func hideOverlay(overlayContainer: UIVisualEffectView?) {
     UIView.animate(withDuration: 0.2) { overlayContainer?.alpha = 0.0 }
-}
-
-// MARK: - 투명 처리 구현체
-func setupTransparentWebView(_ webView: WKWebView) {
-    webView.isOpaque = false
-    webView.backgroundColor = .clear
-    webView.scrollView.backgroundColor = .clear
-    webView.scrollView.isOpaque = false
-    webView.scrollView.contentInsetAdjustmentBehavior = .never 
-    webView.scrollView.keyboardDismissMode = .interactive
-    webView.scrollView.contentInset = .zero
-    webView.scrollView.scrollIndicatorInsets = .zero
-}
-
-func maintainTransparentWebView(_ webView: WKWebView) {
-    if webView.isOpaque { webView.isOpaque = false }
-    if webView.backgroundColor != .clear { webView.backgroundColor = .clear }
-    if webView.scrollView.backgroundColor != .clear { webView.scrollView.backgroundColor = .clear }
-    webView.scrollView.isOpaque = false
-}
-
-// MARK: - Pull to Refresh 구현체
-func setupPullToRefresh(for webView: WKWebView, target: Any, action: Selector) {
-    let refreshControl = UIRefreshControl()
-    refreshControl.addTarget(target, action: action, for: .valueChanged)
-    webView.scrollView.refreshControl = refreshControl
-}
-
-@objc func handleRefresh(_ sender: UIRefreshControl, webView: WKWebView?) {
-    webView?.reload()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-        sender.endRefreshing()
-    }
 }
 
 // MARK: - 쿠키 동기화 구현체
