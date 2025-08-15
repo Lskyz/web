@@ -713,7 +713,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // ✅ **강화된 forward 스택 보호**: 모든 히스토리 관련 상태에서 forward 스택 보호
         let isInHistoryRelatedState = isHistoryNavigation || 
-                                     historyNavigationEndTime != nil ||
+                                     homeNavigationEndTime != nil ||
                                      (historyNavigationStartTime != nil) ||
                                      isInHomeNavigationHandling() ||
                                      (stateModel?.isNavigatingFromWebView == true) ||
@@ -739,6 +739,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             removeAdjacentDuplicates()
         } else {
             dbg("🛡️ 히스토리 관련 상태 - 인접 중복 제거 생략")
+        }거 생략")
         }
         
         updateNavigationState()
@@ -1105,7 +1106,7 @@ func saveSession() -> WebViewSession? {
             } else {
                 // ✅ **강화된 히스토리 관련 상태 체크**: 모든 히스토리 관련 플래그 확인
                 let isHistoryRelated = isHistoryNavigation || 
-                                      historyNavigationEndTime != nil ||
+                                      homeNavigationEndTime != nil ||
                                       (historyNavigationStartTime != nil) ||
                                       isInHomeNavigationHandling() ||
                                       (stateModel?.isNavigatingFromWebView == true) ||
