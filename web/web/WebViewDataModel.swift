@@ -275,12 +275,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return true
     }
     
-    // ✅ 홈 클릭 처리 상태 관리 (SPA 로직 차단)
-    private func startHomeNavigationHandling() {
-        isHandlingHomeNavigation = true
-        homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
-        dbg("🏠 홈 클릭 처리 시작 - SPA 로직 1초간 차단")
-    }
+   // ✅ 홈 클릭 처리 상태 관리 (SPA 로직 차단)
+private func startHomeNavigationHandling() {
+    // 🔧 사후 점프(race) 방지: 스와이프 타이머/히스토리 플래그 즉시 무효화
+    isHistoryNavigation = false
+    historyNavigationStartTime = nil
+    swipeDetectedTargetIndex = nil
+    swipeConfirmationTimer?.invalidate()
+    swipeConfirmationTimer = nil
+
+    isHandlingHomeNavigation = true
+    homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
+    dbg("🏠 홈 클릭 처리 시작 - SPA 로직 1초간 차단 (스와이프/히스토리 플래그 해제)")
+}
+
     
     private func isInHomeNavigationHandling() -> Bool {
         guard isHandlingHomeNavigation, let endTime = homeNavigationEndTime else { return false }
@@ -982,53 +990,63 @@ func saveSession() -> WebViewSession? {
     }
     
     private func confirmSwipeGesture() -> PageRecord? {
-        guard let targetIndex = swipeDetectedTargetIndex else { return nil }
-        
-        if let record = navigateToIndex(targetIndex) {
-            swipeDetectedTargetIndex = nil
-            dbg("👆 스와이프 제스처 확정: 인덱스=\(currentPageIndex)/\(pageHistory.count)")
-            return record
-        }
-        
+    // 🔧 홈 처리 구간에서는 사후 점프 방지 위해 확정을 무시
+    guard !isInHomeNavigationHandling() else {
+        swipeDetectedTargetIndex = nil
+        dbg("👆 스와이프 확정 무시 (홈 처리 중)")
         return nil
     }
 
+    guard let targetIndex = swipeDetectedTargetIndex else { return nil }
+    
+    if let record = navigateToIndex(targetIndex) {
+        swipeDetectedTargetIndex = nil
+        dbg("👆 스와이프 제스처 확정: 인덱스=\(currentPageIndex)/\(pageHistory.count)")
+        return record
+    }
+    
+    return nil
+}
+
+
     // MARK: - WKNavigationDelegate (간소화)
     
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        stateModel?.handleLoadingStart()
+   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    stateModel?.handleLoadingStart()
+    
+    let startURL = webView.url
+    
+    // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지)
+    if let startURL = startURL, 
+       !isRestoringSession, 
+       !isHistoryNavigationActive(),
+       !isInHomeNavigationHandling(),            // ⬅️ 추가된 가드
+       stateModel?.currentURL != startURL {
         
-        let startURL = webView.url
-        
-        // ✅ 자동 스와이프 감지
-        if let startURL = startURL, 
-           !isRestoringSession, 
-           !isHistoryNavigationActive(),
-           stateModel?.currentURL != startURL {
-            
-            handleSwipeGestureDetected(to: startURL)
-        }
-        
-        // 리다이렉트 체인 관리
-        if let url = startURL {
-            let now = Date()
-            
-            if redirectionChain.isEmpty || redirectionStartTime == nil || 
-               now.timeIntervalSince(redirectionStartTime!) > 3.0 {
-                redirectionChain = [url]
-                redirectionStartTime = now
-            } else {
-                redirectionChain.append(url)
-            }
-            
-            // 🔒 로그인 리다이렉트 체인에도 추가
-            if isInLoginFlow {
-                addToLoginRedirectChain(url: url)
-            }
-        }
-        
-        dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
+        handleSwipeGestureDetected(to: startURL)
     }
+    
+    // 리다이렉트 체인 관리
+    if let url = startURL {
+        let now = Date()
+        
+        if redirectionChain.isEmpty || redirectionStartTime == nil || 
+           now.timeIntervalSince(redirectionStartTime!) > 3.0 {
+            redirectionChain = [url]
+            redirectionStartTime = now
+        } else {
+            redirectionChain.append(url)
+        }
+        
+        // 🔒 로그인 리다이렉트 체인에도 추가
+        if isInLoginFlow {
+            addToLoginRedirectChain(url: url)
+        }
+    }
+    
+    dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
+}
+
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         stateModel?.handleLoadingFinish()
