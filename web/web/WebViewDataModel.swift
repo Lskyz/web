@@ -677,9 +677,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func addNewPage(url: URL, title: String = "") {
-        // 히스토리 네비게이션 중 새 페이지 추가 금지
+        // 🔧 강화된 히스토리 네비게이션 중 새 페이지 추가 금지
         if isHistoryNavigationActive() {
-            dbg("🔄 히스토리 네비 중 - 새 페이지 추가 금지")
+            dbg("🔄 히스토리 네비게이션 중 - 새 페이지 추가 금지")
+            return
+        }
+        
+        // 🔧 조용한 새로고침 중에도 새 페이지 추가 금지
+        if let stateModel = stateModel, stateModel.isSilentRefresh {
+            dbg("🤫 조용한 새로고침 중 - 새 페이지 추가 금지")
+            return
+        }
+        
+        // 🔧 웹뷰 플래그 체크로 추가 보호
+        if let stateModel = stateModel, stateModel.isNavigatingFromWebView {
+            dbg("🚩 WebView 네비게이션 플래그 중 - 새 페이지 추가 금지")
             return
         }
         
@@ -771,6 +783,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         isHistoryNavigation = true
+        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
         setCurrentPageIndex(currentPageIndex - 1, reason: "뒤로가기")
         
         if let record = currentPageRecord {
@@ -792,6 +805,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         isHistoryNavigation = true
+        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
         setCurrentPageIndex(currentPageIndex + 1, reason: "앞으로가기")
         
         if let record = currentPageRecord {
@@ -810,6 +824,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         guard index >= 0, index < pageHistory.count else { return nil }
         
         isHistoryNavigation = true
+        historyNavigationStartTime = Date()  // ✅ 시작 시간 설정
         setCurrentPageIndex(index, reason: "인덱스 네비게이션")
         
         if let record = currentPageRecord {
@@ -968,12 +983,17 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if isHistoryNavigation {
             if let startTime = historyNavigationStartTime {
                 let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed > 1.0 {
+                if elapsed > 3.0 {  // ✅ 1초 → 3초로 연장 (조용한 새로고침 대응)
                     isHistoryNavigation = false
                     historyNavigationStartTime = nil
+                    dbg("⏰ 히스토리 네비게이션 타임아웃 (3초)")
                     return false
                 }
                 return true
+            } else {
+                // startTime이 없으면 플래그만 있는 상태, 즉시 해제
+                isHistoryNavigation = false
+                return false
             }
         }
         return false
@@ -1103,8 +1123,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     stateModel?.syncCurrentURL(finalURL)
                 }
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // ✅ 히스토리 네비게이션 완료 후 1.5초 후 플래그 리셋 (조용한 새로고침 완료 대기)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     self.resetNavigationFlags()
+                    self.dbg("🔄 히스토리 네비게이션 플래그 지연 리셋 완료")
                 }
                 
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
