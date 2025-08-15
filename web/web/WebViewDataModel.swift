@@ -1,4 +1,9 @@
-//
+// ✅ **수정**: 홈 클릭 처리 - 정상적인 새 페이지 추가 후 SPA 차단
+    private func handleHomeNavigation(url: URL, title: String, siteType: String) {
+        dbg("🏠 홈 클릭 감지: \(url.absoluteString)")
+        
+        // Forward 스택 제거 (명시적 push이므로)
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {//
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
@@ -471,8 +476,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     private func handleSPAPopState(url: URL, title: String, siteType: String) {
-        // 히스토리 내에서 해당 URL 찾기
-        if let foundIndex = pageHistory.firstIndex(where: { areSimilarURLs($0.url, url) }) {
+        // ✅ **수정**: 히스토리 내에서 해당 URL 찾기 (강화된 정규화 + 가장 최근 것 우선)
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        let matchingIndices = pageHistory.enumerated().compactMap { index, record in
+            normalizeURLForDuplicateCheck(record.url) == normalizedURL ? index : nil
+        }
+        
+        if let foundIndex = matchingIndices.last { // ✅ 가장 최근에 추가된 페이지 선택
             // 히스토리 내 이동
             currentPageIndex = foundIndex
             
@@ -484,7 +494,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             pageHistory[currentPageIndex] = updatedRecord
             
             updateNavigationState()
-            dbg("🌐 SPA 히스토리 이동: \(siteType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            dbg("🌐 SPA 히스토리 이동 (최신 우선): \(siteType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             
             // StateModel URL 동기화
             stateModel?.syncCurrentURL(url)
@@ -584,7 +594,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (간소화된 필터링)
+    // MARK: - 새로운 페이지 기록 시스템 (강화된 중복 제거)
     
     func addNewPage(url: URL, title: String = "") {
         // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
@@ -617,30 +627,31 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             finishLoginRedirectTracking(finalURL: url)
         }
         
-        // 🛡️ 간소화된 중복 필터 (버킷 버전만 유지)
-        if recentlyVisitedInBucket(url) {
-            dbg("🛡️ 버킷 최근 동일 정규화 URL - replace로 전환")
-            handleRefreshNavigation(url: url, title: title, type: "replace", siteType: "dup")
-            return
-        }
-        
-        // 🆕 새로고침 감지 (정규화 URL 비교)
+        // ✅ **강화된 중복 체크 1**: 연속 중복 (바로 앞 페이지와 같은 정규화 URL)
         if !pageHistory.isEmpty,
            let lastRecord = pageHistory.last,
-           PageRecord.normalizeURL(lastRecord.url) == PageRecord.normalizeURL(url) {
-            // 새로고침으로 인한 동일 페이지 → 교체만 수행
-            handleRefreshNavigation(url: url, title: title, type: "hard", siteType: "refresh")
-            return
-        }
-        
-        // ✅ 연속 중복 URL 체크 (완전히 같은 URL인 경우 제목만 업데이트)
-        if !pageHistory.isEmpty,
-           let lastRecord = pageHistory.last,
-           lastRecord.url.absoluteString == url.absoluteString {
-            // 완전히 같은 URL이면 제목만 업데이트하고 새 기록 추가하지 않음
+           normalizeURLForDuplicateCheck(lastRecord.url) == normalizeURLForDuplicateCheck(url) {
+            // 제목만 업데이트하고 새 기록 추가하지 않음
             updateCurrentPageTitle(title)
-            dbg("🔄 중복 URL 감지 - 제목만 업데이트: '\(title)' | \(url.absoluteString)")
+            dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' | \(normalizeURLForDuplicateCheck(url))")
             return
+        }
+        
+        // ✅ **강화된 중복 체크 2**: 전체 히스토리에서 동일 URL 찾기
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        if let existingIndex = pageHistory.lastIndex(where: { 
+            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
+        }) {
+            // 기존 페이지 제거하고 새로운 위치에 추가 (최신 방문으로 갱신)
+            let existingRecord = pageHistory[existingIndex]
+            pageHistory.remove(at: existingIndex)
+            
+            // 현재 인덱스 조정
+            if currentPageIndex > existingIndex {
+                currentPageIndex -= 1
+            }
+            
+            dbg("🔄 기존 중복 제거: '\(existingRecord.title)' [인덱스: \(existingIndex)]")
         }
         
         // 현재 위치 이후의 forward 기록 제거
@@ -656,9 +667,32 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
         
         // 전역 히스토리에도 추가 (로그인 관련 제외 + 중복 체크)
-        if !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { $0.url.absoluteString == url.absoluteString }) {
+        if !PageRecord.isLoginRelatedURL(url) && !Self.globalHistory.contains(where: { 
+            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
+        }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
+    }
+    
+    // ✅ **새로 추가**: 중복 체크용 강화된 URL 정규화
+    private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        
+        // HTTPS 우선 정규화
+        if components?.scheme == "http" {
+            components?.scheme = "https"
+        }
+        
+        // 트레일링 슬래시 제거
+        if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
+            components?.path = String(path.dropLast())
+        }
+        
+        // ✅ **핵심**: 쿼리 파라미터와 해시 완전 제거 (중복 체크용)
+        components?.query = nil
+        components?.fragment = nil
+        
+        return components?.url?.absoluteString ?? url.absoluteString
     }
     
     func updateCurrentPageTitle(_ title: String) {
@@ -839,7 +873,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 스와이프 제스처 처리
     
     func findPageIndex(for url: URL) -> Int? {
-        return pageHistory.firstIndex { $0.url == url }
+        // ✅ **수정**: 강화된 정규화로 페이지 찾기 (가장 최근 것 우선)
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        let matchingIndices = pageHistory.enumerated().compactMap { index, record in
+            normalizeURLForDuplicateCheck(record.url) == normalizedURL ? index : nil
+        }
+        return matchingIndices.last // 가장 최근에 추가된 페이지 반환
     }
     
     func handleSwipeGestureDetected(to url: URL) {
