@@ -777,28 +777,43 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     // MARK: - 세션 저장/복원
-    
-    func saveSession() -> WebViewSession? {
-        guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
-            dbg("💾 세션 저장 실패: 히스토리 없음")
-            return nil
-        }
-        
-        // 🔒 로그인 관련 페이지는 세션에서 제외
-        let filteredHistory = pageHistory.filter { !$0.isLoginRelated && !$0.isTemporary }
-        
-        if filteredHistory.isEmpty {
-            dbg("💾 세션 저장 실패: 유효한 히스토리 없음 (로그인 페이지만 있음)")
-            return nil
-        }
-        
-        // 현재 인덱스를 필터링된 히스토리에 맞게 조정
-        let adjustedIndex = min(max(0, currentPageIndex), filteredHistory.count - 1)
-        
-        let session = WebViewSession(pageRecords: filteredHistory, currentIndex: adjustedIndex)
-        dbg("💾 세션 저장: \(filteredHistory.count)개 페이지 (원본 \(pageHistory.count)개), 현재 인덱스 \(adjustedIndex)")
-        return session
+
+func saveSession() -> WebViewSession? {
+    guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
+        dbg("💾 세션 저장 실패: 히스토리 없음")
+        return nil
     }
+    
+    // 🔒 로그인/임시 페이지는 세션에서 제외
+    let filteredHistory = pageHistory.filter { !$0.isLoginRelated && !$0.isTemporary }
+    
+    if filteredHistory.isEmpty {
+        dbg("💾 세션 저장 실패: 유효한 히스토리 없음 (로그인/임시 페이지만 있음)")
+        return nil
+    }
+    
+    // ✅ 핵심 수정:
+    // 필터링 전의 currentPageRecord가 필터링 후 배열에서 어디에 있는지 'id' 기준으로 찾는다.
+    // id 매칭이 실패하면 정규화 URL로 재탐색하고, 그래도 없으면 맨 마지막을 가리킨다.
+    let adjustedIndex: Int = {
+        guard let curr = currentPageRecord else {
+            return max(0, filteredHistory.count - 1)
+        }
+        if let idxByID = filteredHistory.firstIndex(where: { $0.id == curr.id }) {
+            return idxByID
+        }
+        let norm = normalizeURLForDuplicateCheck(curr.url)
+        if let idxByURL = filteredHistory.lastIndex(where: { normalizeURLForDuplicateCheck($0.url) == norm }) {
+            return idxByURL
+        }
+        return max(0, filteredHistory.count - 1)
+    }()
+    
+    let session = WebViewSession(pageRecords: filteredHistory, currentIndex: adjustedIndex)
+    dbg("💾 세션 저장: \(filteredHistory.count)개 페이지 (원본 \(pageHistory.count)개), 현재 인덱스 \(adjustedIndex)")
+    return session
+}
+
 
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
