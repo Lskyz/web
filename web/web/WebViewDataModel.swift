@@ -326,8 +326,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         swipeConfirmationTimer = nil
 
         isHandlingHomeNavigation = true
-        homeNavigationEndTime = Date().addingTimeInterval(2.0) // ✅ 1초 → 2초로 연장
-        dbg("🏠 홈 클릭 처리 시작 - 스와이프/히스토리 플래그 해제 (과거 점프 방지, 2초간)")
+        homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
+        dbg("🏠 홈 클릭 처리 시작 - 스와이프/히스토리 플래그 해제 (과거 점프 방지)")
     }
     
     private func isInHomeNavigationHandling() -> Bool {
@@ -711,15 +711,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        // ✅ **강화된 forward 스택 보호**: 모든 히스토리 관련 상태에서 forward 스택 보호
-        let isInHistoryRelatedState = isHistoryNavigation || 
-                                     homeNavigationEndTime != nil ||
-                                     (historyNavigationStartTime != nil) ||
-                                     isInHomeNavigationHandling() ||
-                                     (stateModel?.isNavigatingFromWebView == true) ||
-                                     (stateModel?.isSilentRefresh == true)
+        // ✅ **핵심 수정**: 히스토리 네비게이션 중에는 forward 스택 제거 금지
+        let isInHistoryNav = isHistoryNavigationActive() || 
+                           (stateModel?.isNavigatingFromWebView == true) ||
+                           (stateModel?.isSilentRefresh == true)
         
-        if !isInHistoryRelatedState {
+        if !isInHistoryNav {
             // 현재 위치 이후의 forward 기록 제거 (일반 네비게이션에서만)
             if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
                 let removedCount = pageHistory.count - currentPageIndex - 1
@@ -727,19 +724,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 dbg("🗑️ forward 스택 \(removedCount)개 제거 (일반 네비게이션)")
             }
         } else {
-            dbg("🛡️ 히스토리 관련 상태 - forward 스택 보호")
+            dbg("🔄 히스토리 네비게이션 중 - forward 스택 보호")
         }
         
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
-        // ✅ 인접 중복 제거 실행 (히스토리 관련 상태에서는 안전하게 생략)
-        if !isInHistoryRelatedState {
+        // ✅ 인접 중복 제거 실행 (히스토리 네비게이션 중에는 안전)
+        if !isInHistoryNav {
             removeAdjacentDuplicates()
         } else {
-            dbg("🛡️ 히스토리 관련 상태 - 인접 중복 제거 생략")
-        }거 생략")
+            dbg("🔄 히스토리 네비게이션 중 - 인접 중복 제거 생략")
         }
         
         updateNavigationState()
@@ -949,21 +945,16 @@ func saveSession() -> WebViewSession? {
         // 🆕 새로고침 윈도 리셋
         endReloadWindow()
         
-        // ✅ **수정**: 홈 클릭 상태는 자연 만료되도록 보호 (리셋하지 않음)
-        // isHandlingHomeNavigation = false
-        // homeNavigationEndTime = nil
-        
-        dbg("🔄 네비게이션 플래그 리셋 (홈 차단 시간은 자연 만료 대기)")
+        // ✅ 홈 클릭 상태 리셋
+        isHandlingHomeNavigation = false
+        homeNavigationEndTime = nil
     }
     
     func isHistoryNavigationActive() -> Bool {
-        // ✅ **강화된 히스토리 네비게이션 상태 체크**: 모든 관련 플래그 확인
-        
-        // 1️⃣ 기본 히스토리 네비게이션 플래그
         if isHistoryNavigation {
             if let startTime = historyNavigationStartTime {
                 let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed > 3.0 {
+                if elapsed > 3.0 { // ✅ 1.0초 → 3.0초로 연장 (충분한 보호 시간)
                     isHistoryNavigation = false
                     historyNavigationStartTime = nil
                     dbg("🔄 히스토리 네비게이션 플래그 만료 (3초 경과)")
@@ -972,22 +963,6 @@ func saveSession() -> WebViewSession? {
                 return true
             }
         }
-        
-        // 2️⃣ 홈 클릭 차단 시간 체크
-        if isInHomeNavigationHandling() {
-            return true
-        }
-        
-        // 3️⃣ 히스토리 시작 시간이 있으면 활성으로 간주
-        if historyNavigationStartTime != nil {
-            return true
-        }
-        
-        // 4️⃣ 홈 네비게이션 종료 시간이 있으면 활성으로 간주
-        if homeNavigationEndTime != nil {
-            return true
-        }
-        
         return false
     }
     
@@ -1104,22 +1079,10 @@ func saveSession() -> WebViewSession? {
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
             } else {
-                // ✅ **강화된 히스토리 관련 상태 체크**: 모든 히스토리 관련 플래그 확인
-                let isHistoryRelated = isHistoryNavigation || 
-                                      homeNavigationEndTime != nil ||
-                                      (historyNavigationStartTime != nil) ||
-                                      isInHomeNavigationHandling() ||
-                                      (stateModel?.isNavigatingFromWebView == true) ||
-                                      (stateModel?.isSilentRefresh == true)
-                
-                if !isHistoryRelated {
-                    addNewPage(url: finalURL, title: title)
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                } else {
-                    dbg("🔄 히스토리 관련 상태 감지 - 새 페이지 추가 차단: '\(title)'")
-                    stateModel?.syncCurrentURL(finalURL)
-                }
+                // ✅ 정상적인 새 페이지 추가
+                addNewPage(url: finalURL, title: title)
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
             
             // 리다이렉트 체인 정리
