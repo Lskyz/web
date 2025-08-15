@@ -56,7 +56,7 @@ func setupPullToRefresh(for webView: WKWebView, target: Any, action: Selector) {
     webView.scrollView.refreshControl = refreshControl
 }
 
-@objc func handleRefresh(_ sender: UIRefreshControl, webView: WKWebView?) {
+func handleWebViewRefresh(_ sender: UIRefreshControl, webView: WKWebView?) {
     webView?.reload()
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
         sender.endRefreshing()
@@ -224,7 +224,7 @@ func handleSSLChallenge(webView: WKWebView, challenge: URLAuthenticationChalleng
         }
 
         DispatchQueue.main.async {
-            guard let topVC = topMostViewController() else {
+            guard let topVC = getTopViewController() else {
                 completionHandler(.performDefaultHandling, nil)
                 return
             }
@@ -263,7 +263,7 @@ func handleSSLChallenge(webView: WKWebView, challenge: URLAuthenticationChalleng
     completionHandler(.performDefaultHandling, nil)
 }
 
-func topMostViewController() -> UIViewController? {
+func getTopViewController() -> UIViewController? {
     guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
           let window = windowScene.windows.first,
           let root = window.rootViewController else { return nil }
