@@ -1,6 +1,7 @@
 //
 //  WebViewStateModel.swift
 //  🎯 **캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침**
+//  ✅ 히스토리 네비게이션 중 새 페이지 추가 차단 강화
 //
 
 import Foundation
@@ -390,8 +391,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("❌ 뒤로가기 실패: DataModel에서 nil 반환")
         }
         
-        // ✅ **중요**: 플래그 리셋하여 이후 주소창 입력이 정상 작동하도록 함
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // ✅ **수정**: 플래그 리셋 시간을 2초로 연장 (조용한 새로고침 완료 대기)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.isNavigatingFromWebView = false
             self.dbg("🔄 뒤로가기 플래그 리셋 완료")
         }
@@ -425,8 +426,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("❌ 앞으로가기 실패: DataModel에서 nil 반환")
         }
         
-        // ✅ **중요**: 플래그 리셋하여 이후 주소창 입력이 정상 작동하도록 함
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // ✅ **수정**: 플래그 리셋 시간을 2초로 연장 (조용한 새로고침 완료 대기)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.isNavigatingFromWebView = false
             self.dbg("🔄 앞으로가기 플래그 리셋 완료")
         }
