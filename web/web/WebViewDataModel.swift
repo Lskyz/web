@@ -396,8 +396,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // ✅ **수정**: 홈 클릭도 더 신중하게 forward 스택 제거
         // 현재 페이지가 같은 사이트의 홈이 아닐 때만 제거
-        let shouldClearForwardStack = currentPageRecord?.url.host != url.host || 
-                                     !(currentPageRecord?.url.path == "/" || currentPageRecord?.url.path.isEmpty)
+        let shouldClearForwardStack: Bool
+        if let currentRecord = currentPageRecord {
+            let isDifferentHost = currentRecord.url.host != url.host
+            let isNotCurrentlyOnHomePage = !(currentRecord.url.path == "/" || currentRecord.url.path.isEmpty)
+            shouldClearForwardStack = isDifferentHost || isNotCurrentlyOnHomePage
+        } else {
+            shouldClearForwardStack = true
+        }
         
         if shouldClearForwardStack && currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
