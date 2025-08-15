@@ -1,8 +1,8 @@
 //
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (홈클릭 일반화 + 중복체크 완화)
-//  🎯 핵심 방어 로직만 유지
-//  ✅ 홈클릭을 일반 게시물로 처리 + 연속중복방지 완화
+//  🎯 핵심 방어 로직만 유지 + Forward 스택 보호 강화
+//  ✅ 홈클릭을 일반 게시물로 처리 + 연속중복방지 완화 + 뒤로가기 후 Forward 스택 보호
 //
 
 import Foundation
@@ -144,7 +144,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewDataModel (정리된 버전)
+// MARK: - WebViewDataModel (정리된 버전 + Forward 스택 보호 강화)
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
@@ -171,6 +171,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     private var historyNavigationStartTime: Date?
+    
+    // 🛡️ **새로 추가**: Forward 스택 보호 전용 플래그 (더 오래 유지)
+    private var forwardStackProtectionActive: Bool = false
+    private var forwardStackProtectionStartTime: Date?
+    private let forwardStackProtectionDuration: TimeInterval = 10.0 // 10초간 보호
     
     // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
@@ -223,6 +228,37 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     override init() {
         super.init()
         Self.loadGlobalHistory()
+    }
+    
+    // 🛡️ **새로 추가**: Forward 스택 보호 관리
+    
+    private func activateForwardStackProtection() {
+        forwardStackProtectionActive = true
+        forwardStackProtectionStartTime = Date()
+        dbg("🛡️ Forward 스택 보호 활성화 (10초간)")
+        
+        // 자동 해제
+        DispatchQueue.main.asyncAfter(deadline: .now() + forwardStackProtectionDuration) { [weak self] in
+            self?.deactivateForwardStackProtection()
+        }
+    }
+    
+    private func deactivateForwardStackProtection() {
+        forwardStackProtectionActive = false
+        forwardStackProtectionStartTime = nil
+        dbg("🛡️ Forward 스택 보호 해제")
+    }
+    
+    private func isForwardStackProtectionActive() -> Bool {
+        guard forwardStackProtectionActive, let startTime = forwardStackProtectionStartTime else { return false }
+        let elapsed = Date().timeIntervalSince(startTime)
+        
+        if elapsed > forwardStackProtectionDuration {
+            deactivateForwardStackProtection()
+            return false
+        }
+        
+        return true
     }
     
     // 🎯 **완전 독립형 네비게이션 상태 관리**
@@ -484,11 +520,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // Forward 스택 제거: 오직 명시적 "push"에서만
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
-            let removedCount = pageHistory.count - currentPageIndex - 1
-            pageHistory.removeSubrange((currentPageIndex + 1)...)
-            dbg("🗑️ SPA Push - forward 스택 \(removedCount)개 제거")
+        // 🛡️ **핵심 수정**: Forward 스택 제거 조건 강화
+        let shouldRemoveForwardStack = !isHistoryNavigationActive() && 
+                                     !isForwardStackProtectionActive() &&
+                                     !(stateModel?.isNavigatingFromWebView == true) &&
+                                     !(stateModel?.isSilentRefresh == true)
+        
+        if shouldRemoveForwardStack {
+            // Forward 스택 제거: 오직 명시적 "push"에서만
+            if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+                let removedCount = pageHistory.count - currentPageIndex - 1
+                pageHistory.removeSubrange((currentPageIndex + 1)...)
+                dbg("🗑️ SPA Push - forward 스택 \(removedCount)개 제거")
+            }
+        } else {
+            dbg("🛡️ SPA Push - forward 스택 보호 중 (제거 안함)")
         }
         
         let newRecord = PageRecord(url: url, title: title, siteType: siteType, navigationType: navigationType)
@@ -644,7 +690,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (연속 중복 제거 완화 + 홈클릭 가드 + 조용한 새로고침 차단)
+    // MARK: - 🛡️ **강화된 새 페이지 기록 시스템** (Forward 스택 보호)
     
     func addNewPage(url: URL, title: String = "") {
         // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지 (과거 점프 방지)
@@ -711,31 +757,33 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        // ✅ **핵심 수정**: 히스토리 네비게이션 중에는 forward 스택 제거 금지
-        let isInHistoryNav = isHistoryNavigationActive() || 
-                           (stateModel?.isNavigatingFromWebView == true) ||
-                           (stateModel?.isSilentRefresh == true)
+        // 🛡️ **핵심 수정**: Forward 스택 제거 조건 대폭 강화
+        let shouldRemoveForwardStack = !isHistoryNavigationActive() && 
+                                     !isForwardStackProtectionActive() &&
+                                     !(stateModel?.isNavigatingFromWebView == true) &&
+                                     !(stateModel?.isSilentRefresh == true) &&
+                                     !isInHomeNavigationHandling()
         
-        if !isInHistoryNav {
-            // 현재 위치 이후의 forward 기록 제거 (일반 네비게이션에서만)
+        if shouldRemoveForwardStack {
+            // 현재 위치 이후의 forward 기록 제거 (엄격한 조건에서만)
             if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
                 let removedCount = pageHistory.count - currentPageIndex - 1
                 pageHistory.removeSubrange((currentPageIndex + 1)...)
                 dbg("🗑️ forward 스택 \(removedCount)개 제거 (일반 네비게이션)")
             }
         } else {
-            dbg("🔄 히스토리 네비게이션 중 - forward 스택 보호")
+            dbg("🛡️ forward 스택 보호 중 - 제거 안함")
         }
         
         let newRecord = PageRecord(url: url, title: title)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
-        // ✅ 인접 중복 제거 실행 (히스토리 네비게이션 중에는 안전)
-        if !isInHistoryNav {
+        // ✅ 인접 중복 제거 실행 (보호 중에도 안전)
+        if shouldRemoveForwardStack {
             removeAdjacentDuplicates()
         } else {
-            dbg("🔄 히스토리 네비게이션 중 - 인접 중복 제거 생략")
+            dbg("🛡️ 보호 중 - 인접 중복 제거 생략")
         }
         
         updateNavigationState()
@@ -847,7 +895,7 @@ func saveSession() -> WebViewSession? {
         isRestoringSession = false
     }
 
-    // MARK: - 🎯 **완전 독립형 네비게이션 메서드**
+    // MARK: - 🎯 **완전 독립형 네비게이션 메서드** + Forward 스택 보호
     
     func navigateBack() -> PageRecord? {
         guard canGoBack, currentPageIndex > 0 else { 
@@ -856,6 +904,9 @@ func saveSession() -> WebViewSession? {
         }
         
         isHistoryNavigation = true
+        // 🛡️ **핵심 추가**: 뒤로가기 시 Forward 스택 보호 활성화
+        activateForwardStackProtection()
+        
         currentPageIndex -= 1
         
         if let record = currentPageRecord {
@@ -864,7 +915,7 @@ func saveSession() -> WebViewSession? {
             pageHistory[currentPageIndex] = mutableRecord
             
             updateNavigationState()
-            dbg("⬅️ 뒤로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            dbg("⬅️ 뒤로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] + Forward 스택 보호")
             return record
         }
         
@@ -878,6 +929,9 @@ func saveSession() -> WebViewSession? {
         }
         
         isHistoryNavigation = true
+        // 🛡️ **핵심 추가**: 앞으로가기 시에도 Forward 스택 보호 활성화 (추가 조작 방지)
+        activateForwardStackProtection()
+        
         currentPageIndex += 1
         
         if let record = currentPageRecord {
@@ -886,7 +940,7 @@ func saveSession() -> WebViewSession? {
             pageHistory[currentPageIndex] = mutableRecord
             
             updateNavigationState()
-            dbg("➡️ 앞으로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            dbg("➡️ 앞으로가기: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] + Forward 스택 보호")
             return record
         }
         
@@ -897,6 +951,9 @@ func saveSession() -> WebViewSession? {
         guard index >= 0, index < pageHistory.count else { return nil }
         
         isHistoryNavigation = true
+        // 🛡️ **핵심 추가**: 인덱스 네비게이션 시에도 Forward 스택 보호 활성화
+        activateForwardStackProtection()
+        
         currentPageIndex = index
         
         if let record = currentPageRecord {
@@ -905,7 +962,7 @@ func saveSession() -> WebViewSession? {
             pageHistory[currentPageIndex] = mutableRecord
             
             updateNavigationState()
-            dbg("🎯 인덱스 네비게이션: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            dbg("🎯 인덱스 네비게이션: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] + Forward 스택 보호")
             return record
         }
         
@@ -922,7 +979,7 @@ func saveSession() -> WebViewSession? {
         dbg("🧹 전체 히스토리 삭제")
     }
 
-    // MARK: - ✅ 간소화된 네비게이션 상태 관리
+    // MARK: - ✅ 간소화된 네비게이션 상태 관리 + Forward 스택 보호 리셋
     
     func resetNavigationFlags() {
         isHistoryNavigation = false
@@ -948,6 +1005,9 @@ func saveSession() -> WebViewSession? {
         // ✅ 홈 클릭 상태 리셋
         isHandlingHomeNavigation = false
         homeNavigationEndTime = nil
+        
+        // 🛡️ **새로 추가**: Forward 스택 보호 리셋
+        deactivateForwardStackProtection()
     }
     
     func isHistoryNavigationActive() -> Bool {
@@ -1178,8 +1238,9 @@ func saveSession() -> WebViewSession? {
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
+        let protectionState = isForwardStackProtectionActive() ? "🛡️Protected" : ""
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState)\(protectionState) \(msg)")
     }
 
     // MARK: - 메모리 정리
