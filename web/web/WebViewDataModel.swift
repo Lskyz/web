@@ -313,6 +313,36 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
+    // ✅ 홈 클릭 처리 상태 관리 (과거 점프 방지)
+    private var isHandlingHomeNavigation: Bool = false
+    private var homeNavigationEndTime: Date?
+    
+    private func startHomeNavigationHandling() {
+        // 🔧 사후 점프(race) 방지: 스와이프 타이머/히스토리 플래그 즉시 무효화
+        isHistoryNavigation = false
+        historyNavigationStartTime = nil
+        swipeDetectedTargetIndex = nil
+        swipeConfirmationTimer?.invalidate()
+        swipeConfirmationTimer = nil
+
+        isHandlingHomeNavigation = true
+        homeNavigationEndTime = Date().addingTimeInterval(1.0) // 1초간 차단
+        dbg("🏠 홈 클릭 처리 시작 - 스와이프/히스토리 플래그 해제 (과거 점프 방지)")
+    }
+    
+    private func isInHomeNavigationHandling() -> Bool {
+        guard isHandlingHomeNavigation, let endTime = homeNavigationEndTime else { return false }
+        
+        if Date() > endTime {
+            isHandlingHomeNavigation = false
+            homeNavigationEndTime = nil
+            dbg("🏠 홈 클릭 처리 완료 - 가드 해제")
+            return false
+        }
+        
+        return true
+    }
+
     // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (홈클릭 일반화)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
@@ -338,15 +368,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
         }
         
-        // 🆕 네비게이션 타입 감지 (홈클릭 감지 로직 완화)
+        // 🆕 네비게이션 타입 감지 (홈클릭 감지)
         let navigationType = detectNavigationType(url: url, type: type, siteType: siteType)
+        
+        // ✅ 홈 클릭 감지 시 과거 점프 방지 가드 실행
+        if navigationType == .navHome {
+            startHomeNavigationHandling()
+            dbg("🏠 홈 클릭 감지 - 과거 점프 방지 가드 실행: \(url.absoluteString)")
+        }
         
         switch navigationType {
         case .reloadSoft, .reloadHard:
             handleRefreshNavigation(url: url, title: title, type: type, siteType: siteType)
             
         default:
-            // ✅ 홈클릭도 일반 SPA 네비게이션으로 처리
+            // ✅ 홈클릭도 일반 SPA 네비게이션으로 처리 (가드는 이미 실행됨)
             handleRegularSPANavigation(type: type, url: url, title: title, siteType: siteType, navigationType: navigationType)
         }
         
@@ -361,14 +397,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // 🆕 네비게이션 타입 감지 (홈클릭 감지 완화)
+    // 🆕 네비게이션 타입 감지 (홈클릭 감지)
     private func detectNavigationType(url: URL, type: String, siteType: String) -> NavigationType {
-        // ✅ 홈 클릭 감지 로직 완화 - 단순히 타입만 설정하고 일반 처리
+        // 홈 클릭 감지 (루트 경로로의 이동)
         if url.path == "/" || url.path.isEmpty {
             if let currentRecord = currentPageRecord,
                url.host == currentRecord.url.host &&
                currentRecord.url.path != "/" && !currentRecord.url.path.isEmpty {
-                return .navHome  // 타입만 설정, 특별 처리 안함
+                return .navHome
             }
         }
         
@@ -877,6 +913,10 @@ func saveSession() -> WebViewSession? {
         
         // 🆕 새로고침 윈도 리셋
         endReloadWindow()
+        
+        // ✅ 홈 클릭 상태 리셋
+        isHandlingHomeNavigation = false
+        homeNavigationEndTime = nil
     }
     
     func isHistoryNavigationActive() -> Bool {
@@ -923,6 +963,13 @@ func saveSession() -> WebViewSession? {
     }
     
     private func confirmSwipeGesture() -> PageRecord? {
+        // 🔧 홈 처리 구간에서는 사후 점프 방지 위해 확정을 무시
+        guard !isInHomeNavigationHandling() else {
+            swipeDetectedTargetIndex = nil
+            dbg("👆 스와이프 확정 무시 (홈 처리 중)")
+            return nil
+        }
+
         guard let targetIndex = swipeDetectedTargetIndex else { return nil }
         
         if let record = navigateToIndex(targetIndex) {
@@ -941,10 +988,11 @@ func saveSession() -> WebViewSession? {
     
     let startURL = webView.url
     
-    // ✅ 자동 스와이프 감지 (히스토리 네비게이션 중에는 금지)
+    // ✅ 자동 스와이프 감지 (히스토리 네비게이션 및 홈 처리 중에는 금지)
     if let startURL = startURL, 
        !isRestoringSession, 
        !isHistoryNavigationActive(),
+       !isInHomeNavigationHandling(),            // ⬅️ 홈 처리 중 가드 추가
        stateModel?.currentURL != startURL {
         
         handleSwipeGestureDetected(to: startURL)
@@ -1097,8 +1145,9 @@ func saveSession() -> WebViewSession? {
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
+        let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState) \(msg)")
     }
 
     // MARK: - 메모리 정리
