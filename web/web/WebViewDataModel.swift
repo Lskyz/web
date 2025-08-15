@@ -1064,10 +1064,19 @@ func saveSession() -> WebViewSession? {
                 dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
                 
             } else {
-                // ✅ 정상적인 새 페이지 추가 (간소화된 체크)
-                addNewPage(url: finalURL, title: title)
-                stateModel?.syncCurrentURL(finalURL)
-                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                // ✅ **강화된 체크**: 히스토리 네비게이션이 아닌 경우에만 새 페이지 추가
+                let isActualHistoryNavigation = isHistoryNavigationActive() || 
+                                               (stateModel?.isNavigatingFromWebView == true) ||
+                                               (stateModel?.isSilentRefresh == true)
+                
+                if !isActualHistoryNavigation {
+                    addNewPage(url: finalURL, title: title)
+                    stateModel?.syncCurrentURL(finalURL)
+                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                } else {
+                    dbg("🔄 히스토리 네비게이션 중 - 새 페이지 추가 건너뜀: '\(title)'")
+                    stateModel?.syncCurrentURL(finalURL)
+                }
             }
             
             // 리다이렉트 체인 정리
