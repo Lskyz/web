@@ -432,17 +432,26 @@ private func startHomeNavigationHandling() {
         return .normal
     }
     
-    // 🔧 **새로 추가**: 홈페이지 URL 감지 로직
+    // 🔧 **수정된 홈페이지 URL 감지 로직** - 쿼리 파라미터가 있으면 홈페이지가 아님
     private func isHomepageURL(_ url: URL) -> Bool {
         let path = url.path
-        // 루트 경로거나, 슬래시만 있거나, 빈 경로이거나, index 관련 파일
+        let query = url.query
+        
+        // 🔧 **핵심 수정**: 쿼리 파라미터가 있으면 홈페이지가 아님 (게시글 등)
+        if let query = query, !query.isEmpty {
+            return false
+        }
+        
+        // 루트 경로거나, 슬래시만 있거나, 빈 경로만 홈페이지로 취급
         return path == "/" || 
-               path.isEmpty || 
-               path == "/index" ||
-               path == "/index.html" ||
-               path == "/index.php" ||
+               path.isEmpty ||
                path == "/main" ||
                path == "/home"
+        
+        // 🔧 **제거**: index.php 등은 쿼리가 없을 때만 홈페이지로 취급
+        // path == "/index" ||
+        // path == "/index.html" ||
+        // path == "/index.php" ||
     }
     
     // 🆕 새로고침 처리 (무조건 replace, ID 유지)
@@ -739,7 +748,7 @@ private func startHomeNavigationHandling() {
             swipeDetectedTargetIndex = nil
             swipeConfirmationTimer?.invalidate()
             swipeConfirmationTimer = nil
-            dbg("🏠 홈페이지 감지 - 스와이프 상태 정리")
+            dbg("🏠 홈페이지 감지 - 스와이프 상태 정리: \(url.absoluteString) (path: \(url.path), query: \(url.query ?? "없음"))")
         }
         
         // 🔒 로그인 관련 URL 감지 및 추적
@@ -766,7 +775,7 @@ private func startHomeNavigationHandling() {
            normalizeURLForDuplicateCheck(lastRecord.url) == normalizeURLForDuplicateCheck(url) {
             // 제목만 업데이트하고 새 기록 추가하지 않음
             updateCurrentPageTitle(title)
-            dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' | \(normalizeURLForDuplicateCheck(url))")
+            dbg("🔄 연속 중복 감지 - 제목만 업데이트: '\(title)' | 정규화: \(normalizeURLForDuplicateCheck(url))")
             return
         }
         
@@ -783,7 +792,7 @@ private func startHomeNavigationHandling() {
         removeAdjacentDuplicates()
         
         updateNavigationState()
-        dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
+        dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개) | 정규화: \(normalizeURLForDuplicateCheck(url))")
         
         // 전역 히스토리에도 추가 (로그인 관련 제외 + 중복 체크)
         let normalizedURL = normalizeURLForDuplicateCheck(url)
@@ -794,7 +803,7 @@ private func startHomeNavigationHandling() {
         }
     }
     
-    // ✅ **중복 체크용 강화된 URL 정규화** (쿼리/해시 제거)
+    // ✅ **수정된 중복 체크용 URL 정규화** - 게시글 구분이 가능하도록 핵심 파라미터 유지
     private func normalizeURLForDuplicateCheck(_ url: URL) -> String {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         
@@ -808,8 +817,24 @@ private func startHomeNavigationHandling() {
             components?.path = String(path.dropLast())
         }
         
-        // ✅ **핵심**: 쿼리 파라미터와 해시 완전 제거 (중복 체크용)
-        components?.query = nil
+        // 🔧 **핵심 수정**: 게시글 구분을 위한 핵심 파라미터는 유지
+        if let queryItems = components?.queryItems {
+            // 게시글/페이지 식별에 중요한 파라미터들만 유지
+            let importantParams = ["document_srl", "wr_id", "no", "id", "mid", "page"]
+            let filteredItems = queryItems.filter { item in
+                importantParams.contains(item.name)
+            }
+            
+            if !filteredItems.isEmpty {
+                // 중요한 파라미터가 있으면 정렬해서 유지
+                components?.queryItems = filteredItems.sorted { $0.name < $1.name }
+            } else {
+                // 중요한 파라미터가 없으면 모든 쿼리 제거 (기존 로직)
+                components?.query = nil
+            }
+        }
+        
+        // 해시는 무시 (같은 페이지로 취급)
         components?.fragment = nil
         
         return components?.url?.absoluteString ?? url.absoluteString
