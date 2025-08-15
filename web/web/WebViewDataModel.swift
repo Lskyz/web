@@ -1516,6 +1516,3 @@ extension DateFormatter {
         return formatter
     }()
 }
-
-
-세션중간에 홈클릭하면 새페이지추가가 안되는 이유가뭐야?
