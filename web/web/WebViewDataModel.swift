@@ -1,11 +1,11 @@
-/*
- *  WebViewDataModel.swift
- *  🎯 단순화된 정상 히스토리 시스템
- *  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
- *  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
- *  🔧 세션 점프 이슈 해결 - 현재 인덱스 고정
- *  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
- */
+//
+//  WebViewDataModel.swift
+//  🎯 단순화된 정상 히스토리 시스템
+//  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
+//  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
+//  🔧 세션 점프 이슈 해결 - 현재 인덱스 고정
+//  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
+//
 
 import Foundation
 import SwiftUI
@@ -178,7 +178,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // 홈페이지 감지는 각 케이스에서 개별적으로 처리
+        // 홈페이지 감지 (단순하게) - 변수 제거
         
         switch type {
         case "push":
