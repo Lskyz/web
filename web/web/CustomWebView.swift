@@ -1,9 +1,10 @@
-//
+
 //  CustomWebView.swift
 //
 //  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
 //  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
 //  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
+//  🔧 **제목 덮어쓰기 문제 해결** - titleObserver URL 검증 추가
 //
 
 import SwiftUI
@@ -91,7 +92,7 @@ struct CustomWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         controller.addUserScript(makeVideoScript())
         controller.addUserScript(makeDesktopModeScript())
-        controller.addUserScript(makeEnhancedSPANavigationScript())
+        controller.addUserScript(WebViewDataModel.makeSPANavigationScript()) // 🔧 수정: 단순화된 버전 사용
         controller.add(context.coordinator, name: "playVideo")
         controller.add(context.coordinator, name: "setZoom")
         controller.add(context.coordinator, name: "spaNavigation")
@@ -247,177 +248,6 @@ struct CustomWebView: UIViewRepresentable {
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
-    }
-
-    // MARK: - 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 (새로운 버전)
-    private func makeEnhancedSPANavigationScript() -> WKUserScript {
-        let scriptSource = """
-        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅
-        (function() {
-            'use strict';
-
-            console.log('🌐 완전형 SPA 네비게이션 훅 초기화');
-
-            const originalPushState = history.pushState;
-            const originalReplaceState = history.replaceState;
-
-            let currentSPAState = {
-                url: window.location.href,
-                title: document.title,
-                timestamp: Date.now(),
-                state: history.state
-            };
-
-            const EXCLUDE_PATTERNS = [
-                /\\/login/i, /\\/signin/i, /\\/auth/i, /\\/oauth/i, /\\/sso/i,
-                /\\/redirect/i, /\\/callback/i, /\\/nid\\.naver\\.com/i,
-                /\\/accounts\\.google\\.com/i, /\\/facebook\\.com\\/login/i,
-                /\\/twitter\\.com\\/oauth/i, /returnUrl=/i, /redirect_uri=/i, /continue=/i
-            ];
-
-            function shouldExcludeFromHistory(url) {
-                return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
-            }
-
-            // ===== 범용 커뮤니티 패턴 매칭 =====
-            function detectSiteType(url) {
-                const urlObj = new URL(url, window.location.origin);
-                const host = urlObj.hostname.toLowerCase();
-                const path = (urlObj.pathname + urlObj.search + urlObj.hash).toLowerCase();
-
-                let pattern = 'unknown';
-
-                // 숫자형 단일 경로
-                if (path.match(/^\\/\\d+$/)) {
-                    pattern = '1level_numeric';
-                } else if (path.match(/^\\/[^/]+\\/\\d+$/)) {
-                    pattern = '2level_numeric';
-                } else if (path.match(/^\\/[^/]+\\/[^/]+\\/\\d+$/)) {
-                    pattern = '3level_numeric';
-                }
-
-                // 파라미터 기반
-                else if (path.match(/[?&]no=\\d+/)) {
-                    pattern = 'param_no_numeric';
-                } else if (path.match(/[?&]id=[^&]+&no=\\d+/)) {
-                    pattern = 'param_id_no_numeric';
-                } else if (path.match(/[?&]wr_id=\\d+/)) {
-                    pattern = 'param_wrid_numeric';
-                } else if (path.match(/[?&]id=[^&]+&page=\\d+/)) {
-                    pattern = 'param_id_page_numeric';
-                } else if (path.match(/[?&]bo_table=[^&]+&wr_id=\\d+/)) {
-                    pattern = 'param_botable_wrid';
-                }
-
-                // php/html 파일명
-                else if (path.match(/\\/[^/]+\\.php[?#]?/)) {
-                    pattern = 'file_php';
-                } else if (path.match(/\\/[^/]+\\.html[?#]?/)) {
-                    pattern = 'file_html';
-                }
-
-                // 해시 라우팅
-                else if (path.match(/#\\/[^/]+$/)) {
-                    pattern = 'hash_1level';
-                } else if (path.match(/#\\/[^/]+\\/\\d+$/)) {
-                    pattern = 'hash_2level_numeric';
-                } else if (path.match(/#\\/[^/]+\\?[^=]+=/)) {
-                    pattern = 'hash_query';
-                }
-
-                // 쿼리스트링 범용
-                else if (path.match(/\\?[^=]+=[^&]+$/)) {
-                    pattern = 'query_single';
-                } else if (path.match(/\\?[^=]+=[^&]+&[^=]+=[^&]+/)) {
-                    pattern = 'query_multi';
-                }
-
-                // 혼합 숫자+문자
-                else if (path.match(/\\/\\d+\\/[^/]+\\/[^/]+/)) {
-                    pattern = 'numeric_first_mixed';
-                }
-
-                // 루트
-                else if (path === '/' || path === '') {
-                    pattern = 'root';
-                }
-
-                return `${host}_${pattern}`;
-            }
-
-            function notifyNavigation(type, url, title, state) {
-                if (shouldExcludeFromHistory(url)) {
-                    console.log(`🔒 히스토리 제외: ${url} (${type})`);
-                    return;
-                }
-
-                const siteType = detectSiteType(url);
-
-                const message = {
-                    type: type,
-                    url: url,
-                    title: title || document.title,
-                    state: state,
-                    timestamp: Date.now(),
-                    userAgent: navigator.userAgent,
-                    referrer: document.referrer,
-                    siteType: siteType,
-                    shouldExclude: false
-                };
-
-                if (window.webkit?.messageHandlers?.spaNavigation) {
-                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
-                    console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
-                }
-            }
-
-            // ===== History API 후킹 =====
-            history.pushState = function(state, title, url) {
-                const result = originalPushState.apply(this, arguments);
-                handleUrlChange('push', url, title, state);
-                return result;
-            };
-
-            history.replaceState = function(state, title, url) {
-                const result = originalReplaceState.apply(this, arguments);
-                handleUrlChange('replace', url, title, state);
-                return result;
-            };
-
-            // ===== URL 변경 처리 =====
-            function handleUrlChange(type, url, title, state) {
-                const newURL = new URL(url || window.location.href, window.location.origin).href;
-                if (newURL !== currentSPAState.url) {
-                    currentSPAState = {
-                        url: newURL,
-                        title: title || document.title,
-                        timestamp: Date.now(),
-                        state: state
-                    };
-                    setTimeout(() => {
-                        notifyNavigation(type, newURL, document.title, state);
-                    }, 150);
-                }
-            }
-
-            // ===== popstate / hashchange 감지 =====
-            window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
-            window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
-
-            // ===== DOM 변경 감지 =====
-            const observer = new MutationObserver(() => {
-                const currentURL = window.location.href;
-                if (currentURL !== currentSPAState.url) {
-                    handleUrlChange('dom', currentURL, document.title, history.state);
-                }
-            });
-
-            observer.observe(document.body, { childList: true, subtree: true });
-
-            console.log('✅ 완전형 SPA 네비게이션 훅 설정 완료');
-        })();
-        """
-        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
     // MARK: - Coordinator
@@ -1029,11 +859,17 @@ struct CustomWebView: UIViewRepresentable {
                 }
             }
 
+            // 🔧 **제목 덮어쓰기 문제 해결**: titleObserver URL 검증 추가
             titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let title = change.newValue, let title = title, !title.isEmpty else { return }
+                guard let self = self, 
+                      let title = change.newValue, 
+                      let title = title, 
+                      !title.isEmpty,
+                      let currentURL = webView.url else { return }
 
                 DispatchQueue.main.async {
-                    self.parent.stateModel.updateCurrentPageTitle(title)
+                    // 🔧 **핵심 수정**: URL 기반으로 제목 업데이트
+                    self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
                 }
             }
         }
