@@ -1,4 +1,4 @@
-
+//
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
@@ -615,17 +615,13 @@ private func startHomeNavigationHandling() {
         
         // ✅ 기존 레코드의 ID 유지하며 필드만 업데이트
         var rec = pageHistory[currentPageIndex]
-        let oldTitle = rec.title
-        let oldURL = rec.url.absoluteString
-        
-        // 🔧 **핵심 수정**: URL과 제목 동시 업데이트 시 로깅 강화
         rec.url = url
         rec.updateTitle(title)
         rec.siteType = siteType
         rec.navigationType = .spaNavigation // ✅ enum 사용
         pageHistory[currentPageIndex] = rec
         
-        dbg("🌐 SPA 페이지 교체: \(siteType) [ID: \(String(rec.id.uuidString.prefix(8)))] [제목: '\(oldTitle)' → '\(title)'] [URL: \(oldURL) → \(url.absoluteString)]")
+        dbg("🌐 SPA 페이지 교체: \(siteType) '\(rec.title)' [ID: \(String(rec.id.uuidString.prefix(8)))]")
         
         // StateModel URL 동기화
         stateModel?.syncCurrentURL(url)
@@ -642,22 +638,15 @@ private func startHomeNavigationHandling() {
             // 히스토리 내 이동
             currentPageIndex = foundIndex
             
-            // 🔧 **핵심 수정**: 제목 업데이트 시 URL 확인
+            // 제목 및 메타데이터 업데이트
             var updatedRecord = pageHistory[currentPageIndex]
-            let oldTitle = updatedRecord.title
-            
-            if normalizeURLForDuplicateCheck(updatedRecord.url) == normalizedURL {
-                updatedRecord.updateTitle(title)
-                updatedRecord.updateAccess()
-                updatedRecord.siteType = siteType
-                pageHistory[currentPageIndex] = updatedRecord
-                
-                dbg("🌐 SPA 히스토리 이동 (최신 우선): \(siteType) '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)] [제목: '\(oldTitle)' → '\(title)']")
-            } else {
-                dbg("⚠️ SPA Pop - URL 불일치로 제목 업데이트 건너뜀")
-            }
+            updatedRecord.updateTitle(title)
+            updatedRecord.updateAccess()
+            updatedRecord.siteType = siteType
+            pageHistory[currentPageIndex] = updatedRecord
             
             updateNavigationState()
+            dbg("🌐 SPA 히스토리 이동 (최신 우선): \(siteType) '\(updatedRecord.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             
             // StateModel URL 동기화
             stateModel?.syncCurrentURL(url)
@@ -892,19 +881,9 @@ private func startHomeNavigationHandling() {
             return 
         }
         
-        // 🔧 **핵심 수정**: 현재 페이지의 URL과 제목 변경하려는 페이지가 일치하는지 확인
-        let currentRecord = pageHistory[currentPageIndex]
-        
-        // ✅ 안전장치: 현재 인덱스의 페이지만 업데이트
-        var updatedRecord = currentRecord
-        let oldTitle = updatedRecord.title
+        var updatedRecord = pageHistory[currentPageIndex]
         updatedRecord.updateTitle(title)
         pageHistory[currentPageIndex] = updatedRecord
-        
-        // 🔍 디버깅: 제목 업데이트 로그
-        if oldTitle != title {
-            dbg("📝 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(currentPageIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
-        }
     }
     
     var currentPageRecord: PageRecord? {
@@ -1237,17 +1216,10 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             dbg("🏠 홈 완료 - 새 페이지 강제 기록: '\(title)' (총 \(pageHistory.count)개)")
 
         } else if isHistoryNavigationActive() {
-            // 🔧 **핵심 수정**: 히스토리 네비게이션 시 현재 페이지 URL 확인 후 제목 업데이트
-            if let currentRecord = currentPageRecord,
-               normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
-                updateCurrentPageTitle(title)
-                dbg("🔄 히스토리 네비게이션 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
-            } else {
-                dbg("⚠️ 히스토리 네비게이션 - URL 불일치: 현재=\(currentPageRecord?.url.absoluteString ?? "nil"), 최종=\(finalURL.absoluteString)")
-            }
-            
+            updateCurrentPageTitle(title)
             if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.resetNavigationFlags() }
+            dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
 
         } else {
             let isHistoryRelated = isHistoryNavigation ||
@@ -1259,16 +1231,9 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
                 stateModel?.syncCurrentURL(finalURL)
                 dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             } else {
-                // 🔧 **핵심 수정**: 히스토리 관련 상태에서도 URL 확인 후 제목 업데이트
-                if let currentRecord = currentPageRecord,
-                   normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
-                    updateCurrentPageTitle(title)
-                    dbg("🔄 히스토리 관련 상태 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
-                } else {
-                    dbg("⚠️ 히스토리 관련 상태 - URL 불일치로 제목 업데이트 건너뜀")
-                }
-                
+                updateCurrentPageTitle(title)
                 if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
+                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
             }
         }
 
