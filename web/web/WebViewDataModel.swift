@@ -4,6 +4,7 @@
 //  🎯 핵심 방어 로직만 유지
 //  ✅ 홈클릭 마지막세션 문제 + 인접 중복제거 강화
 //  🔧 홈 클릭 히스토리 문제 수정: 항상 새 페이지로 추가
+//  🆕 사용자 클릭과 자동 네비게이션 구분 추가
 //
 
 import Foundation
@@ -176,6 +177,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var historyNavigationStartTime: Date?
     private var historyNavigationEndTime: Date? // 🔧 히스토리 네비게이션 완료 후 차단 시간
     
+    // 🆕 **핵심 추가**: 사용자 클릭 추적
+    private var isUserTriggeredNavigation: Bool = false
+    private var userNavigationEndTime: Date?
+    
     // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
     private var reloadWindowStartTime: Date?
@@ -247,6 +252,26 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             
             dbg("🎯 독립형 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
         }
+    }
+    
+    // 🆕 **핵심 추가**: 사용자 클릭 추적 메서드
+    private func startUserTriggeredNavigation() {
+        isUserTriggeredNavigation = true
+        userNavigationEndTime = Date().addingTimeInterval(3.0) // 3초간 사용자 네비게이션으로 간주
+        dbg("👆 사용자 클릭 네비게이션 시작 - 히스토리 차단 우회 3초")
+    }
+    
+    private func isInUserTriggeredNavigation() -> Bool {
+        guard isUserTriggeredNavigation, let endTime = userNavigationEndTime else { return false }
+        
+        if Date() > endTime {
+            isUserTriggeredNavigation = false
+            userNavigationEndTime = nil
+            dbg("👆 사용자 클릭 네비게이션 완료")
+            return false
+        }
+        
+        return true
     }
     
     // 🆕 새로고침 윈도 관리 (단축)
@@ -724,20 +749,26 @@ private func startHomeNavigationHandling() {
     // MARK: - 새로운 페이지 기록 시스템 (강화된 중복 제거)
     
     func addNewPage(url: URL, title: String = "") {
-        // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
-        if isHistoryNavigationActive() {
-            if isHistoryNavigation {
-                dbg("🔄 히스토리 네비게이션 진행 중 - 새 페이지 추가 차단: \(url.absoluteString)")
-            } else {
-                dbg("🔄 히스토리 네비게이션 완료 후 대기 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+        // 🆕 **핵심 수정**: 사용자 클릭 네비게이션은 히스토리 차단을 우회
+        if isInUserTriggeredNavigation() {
+            dbg("👆 사용자 클릭 네비게이션 - 히스토리 차단 우회하여 페이지 추가: \(url.absoluteString)")
+            // 사용자 클릭인 경우 히스토리 차단 무시하고 페이지 추가
+        } else {
+            // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
+            if isHistoryNavigationActive() {
+                if isHistoryNavigation {
+                    dbg("🔄 히스토리 네비게이션 진행 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+                } else {
+                    dbg("🔄 히스토리 네비게이션 완료 후 대기 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+                }
+                return
             }
-            return
-        }
-        
-        // 🔧 **새로 추가**: 추가 히스토리 상태 체크 (더 엄격하게)
-        if isHistoryNavigation || historyNavigationEndTime != nil {
-            dbg("🔄 히스토리 관련 상태 - 새 페이지 추가 차단: \(url.absoluteString)")
-            return
+            
+            // 🔧 **새로 추가**: 추가 히스토리 상태 체크 (더 엄격하게)
+            if isHistoryNavigation || historyNavigationEndTime != nil {
+                dbg("🔄 히스토리 관련 상태 - 새 페이지 추가 차단: \(url.absoluteString)")
+                return
+            }
         }
         
         // 🌐 SPA 네비게이션 중인지 체크
@@ -1007,6 +1038,10 @@ func saveSession() -> WebViewSession? {
         redirectionChain.removeAll()
         redirectionStartTime = nil
         
+        // 🆕 사용자 네비게이션 상태 리셋
+        isUserTriggeredNavigation = false
+        userNavigationEndTime = nil
+        
         // 🌐 SPA 상태 리셋
         isSPANavigation = false
         lastSPANavigationTime = nil
@@ -1097,6 +1132,18 @@ func saveSession() -> WebViewSession? {
     return nil
 }
 
+
+    // MARK: - 🆕 **핵심 추가**: WKNavigationDelegate 메서드에서 사용자 클릭 감지
+    
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // 🆕 **핵심**: 사용자가 링크를 클릭한 경우 히스토리 차단 우회 플래그 설정
+        if navigationAction.navigationType == .linkActivated {
+            startUserTriggeredNavigation()
+            dbg("👆 사용자 링크 클릭 감지 - 히스토리 차단 우회 플래그 설정")
+        }
+        
+        decisionHandler(.allow)
+    }
 
     // MARK: - WKNavigationDelegate (간소화)
     
@@ -1279,6 +1326,7 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
+        let userState = isInUserTriggeredNavigation() ? "👆User" : ""
         
         // 🔧 **수정**: 히스토리 상태를 더 명확하게 표시
         let historyState: String = {
@@ -1292,7 +1340,7 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         }()
         
         let historyCount = "[\(pageHistory.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState)\(historyState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(loginState)\(reloadState)\(homeState)\(historyState)\(userState) \(msg)")
     }
 
     // MARK: - 메모리 정리
