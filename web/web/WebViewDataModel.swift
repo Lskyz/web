@@ -177,16 +177,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
+        // 홈페이지 감지 (단순하게)
+        let isHomePage = isHomepageURL(url)
+        
         switch type {
         case "push":
-            // 모든 push는 새 페이지
-            addNewPage(url: url, title: title, navigationType: .spaNavigation)
+            // 모든 push는 새 페이지 (홈페이지든 일반페이지든)
+            addNewPage(url: url, title: title)
         case "replace":
             // replace는 현재 페이지 교체
             replaceCurrentPage(url: url, title: title, siteType: siteType)
         case "pop", "hash", "dom":
-            // 모든 이동은 새 페이지로 처리 (단순하게)
-            addNewPage(url: url, title: title, navigationType: .spaNavigation)
+            // 홈페이지면 새 페이지, 아니면 새 페이지 (단순하게)
+            addNewPage(url: url, title: title)
         case "title":
             // 제목 변경만 별도 처리
             updateCurrentPageTitle(title)
@@ -200,9 +203,193 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
+    private func isHomepageURL(_ url: URL) -> Bool {
+        let path = url.path
+        let query = url.query
+        
+        // 쿼리 파라미터가 있으면 홈페이지가 아님
+        if let query = query, !query.isEmpty {
+            return false
+        }
+        
+        return path == "/" || path.isEmpty || path == "/main" || path == "/home"
+    }
+    
+    // MARK: - 🌐 **SPA 훅 JavaScript 스크립트** (CustomWebView에서 사용)
+    
+    static func makeSPANavigationScript() -> WKUserScript {
+        let scriptSource = """
+        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅
+        (function() {
+            'use strict';
+
+            console.log('🌐 SPA 네비게이션 훅 초기화');
+
+            const originalPushState = history.pushState;
+            const originalReplaceState = history.replaceState;
+
+            let currentSPAState = {
+                url: window.location.href,
+                title: document.title,
+                timestamp: Date.now(),
+                state: history.state
+            };
+
+            const EXCLUDE_PATTERNS = [
+                /\\/login/i, /\\/signin/i, /\\/auth/i, /\\/oauth/i, /\\/sso/i,
+                /\\/redirect/i, /\\/callback/i, /\\/nid\\.naver\\.com/i,
+                /\\/accounts\\.google\\.com/i, /\\/facebook\\.com\\/login/i,
+                /\\/twitter\\.com\\/oauth/i, /returnUrl=/i, /redirect_uri=/i, /continue=/i
+            ];
+
+            function shouldExcludeFromHistory(url) {
+                return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
+            }
+
+            // ===== 범용 커뮤니티 패턴 매칭 =====
+            function detectSiteType(url) {
+                const urlObj = new URL(url, window.location.origin);
+                const host = urlObj.hostname.toLowerCase();
+                const path = (urlObj.pathname + urlObj.search + urlObj.hash).toLowerCase();
+
+                let pattern = 'unknown';
+
+                // 숫자형 단일 경로
+                if (path.match(/^\\/\\d+$/)) {
+                    pattern = '1level_numeric';
+                } else if (path.match(/^\\/[^/]+\\/\\d+$/)) {
+                    pattern = '2level_numeric';
+                } else if (path.match(/^\\/[^/]+\\/[^/]+\\/\\d+$/)) {
+                    pattern = '3level_numeric';
+                }
+
+                // 파라미터 기반
+                else if (path.match(/[?&]no=\\d+/)) {
+                    pattern = 'param_no_numeric';
+                } else if (path.match(/[?&]id=[^&]+&no=\\d+/)) {
+                    pattern = 'param_id_no_numeric';
+                } else if (path.match(/[?&]wr_id=\\d+/)) {
+                    pattern = 'param_wrid_numeric';
+                } else if (path.match(/[?&]id=[^&]+&page=\\d+/)) {
+                    pattern = 'param_id_page_numeric';
+                } else if (path.match(/[?&]bo_table=[^&]+&wr_id=\\d+/)) {
+                    pattern = 'param_botable_wrid';
+                }
+
+                // php/html 파일명
+                else if (path.match(/\\/[^/]+\\.php[?#]?/)) {
+                    pattern = 'file_php';
+                } else if (path.match(/\\/[^/]+\\.html[?#]?/)) {
+                    pattern = 'file_html';
+                }
+
+                // 해시 라우팅
+                else if (path.match(/#\\/[^/]+$/)) {
+                    pattern = 'hash_1level';
+                } else if (path.match(/#\\/[^/]+\\/\\d+$/)) {
+                    pattern = 'hash_2level_numeric';
+                } else if (path.match(/#\\/[^/]+\\?[^=]+=/)) {
+                    pattern = 'hash_query';
+                }
+
+                // 쿼리스트링 범용
+                else if (path.match(/\\?[^=]+=[^&]+$/)) {
+                    pattern = 'query_single';
+                } else if (path.match(/\\?[^=]+=[^&]+&[^=]+=[^&]+/)) {
+                    pattern = 'query_multi';
+                }
+
+                // 혼합 숫자+문자
+                else if (path.match(/\\/\\d+\\/[^/]+\\/[^/]+/)) {
+                    pattern = 'numeric_first_mixed';
+                }
+
+                // 루트
+                else if (path === '/' || path === '') {
+                    pattern = 'root';
+                }
+
+                return `${host}_${pattern}`;
+            }
+
+            function notifyNavigation(type, url, title, state) {
+                if (shouldExcludeFromHistory(url)) {
+                    console.log(`🔒 히스토리 제외: ${url} (${type})`);
+                    return;
+                }
+
+                const siteType = detectSiteType(url);
+
+                const message = {
+                    type: type,
+                    url: url,
+                    title: title || document.title,
+                    state: state,
+                    timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
+                    referrer: document.referrer,
+                    siteType: siteType,
+                    shouldExclude: false
+                };
+
+                if (window.webkit?.messageHandlers?.spaNavigation) {
+                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
+                    console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
+                }
+            }
+
+            // ===== History API 후킹 =====
+            history.pushState = function(state, title, url) {
+                const result = originalPushState.apply(this, arguments);
+                handleUrlChange('push', url, title, state);
+                return result;
+            };
+
+            history.replaceState = function(state, title, url) {
+                const result = originalReplaceState.apply(this, arguments);
+                handleUrlChange('replace', url, title, state);
+                return result;
+            };
+
+            // ===== URL 변경 처리 =====
+            function handleUrlChange(type, url, title, state) {
+                const newURL = new URL(url || window.location.href, window.location.origin).href;
+                if (newURL !== currentSPAState.url) {
+                    currentSPAState = {
+                        url: newURL,
+                        title: title || document.title,
+                        timestamp: Date.now(),
+                        state: state
+                    };
+                    setTimeout(() => {
+                        notifyNavigation(type, newURL, document.title, state);
+                    }, 150);
+                }
+            }
+
+            // ===== popstate / hashchange 감지 =====
+            window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
+            window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
+
+            // ===== DOM 변경 감지 =====
+            const observer = new MutationObserver(() => {
+                const currentURL = window.location.href;
+                if (currentURL !== currentSPAState.url) {
+                    handleUrlChange('dom', currentURL, document.title, history.state);
+                }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            console.log('✅ SPA 네비게이션 훅 설정 완료');
+        })();
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+    
     private func replaceCurrentPage(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            addNewPage(url: url, title: title, navigationType: .reload)
+            addNewPage(url: url, title: title)
             return
         }
         
@@ -213,11 +400,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         record.navigationType = .reload
         pageHistory[currentPageIndex] = record
         
-        dbg("🔄 SPA Replace - 현재 페이지 교체:
+        dbg("🔄 SPA Replace - 현재 페이지 교체: '\(title)'")
+        stateModel?.syncCurrentURL(url)
+    }
     
     // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직**
     
-    func addNewPage(url: URL, title: String = "", navigationType: NavigationType = .normal) {
+    func addNewPage(url: URL, title: String = "") {
         // 🔒 로그인 관련은 완전 무시
         if PageRecord.isLoginRelatedURL(url) {
             dbg("🔒 로그인 페이지 히스토리 제외: \(url.absoluteString)")
@@ -239,7 +428,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             dbg("🗑️ forward 스택 \(removedCount)개 제거")
         }
         
-        let newRecord = PageRecord(url: url, title: title, navigationType: navigationType)
+        let newRecord = PageRecord(url: url, title: title, navigationType: .normal)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
@@ -314,23 +503,24 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return nil
     }
     
-    // MARK: - 🏄‍♂️ **스와이프 제스처 처리** (과거 점프 완전 제거)
+    // MARK: - 🏄‍♂️ **스와이프 제스처 처리** (과거 점프 완전 방지)
     
     func handleSwipeGestureDetected(to url: URL) {
-        // ✅ **단순화**: 스와이프도 그냥 새 페이지로 추가
-        // 히스토리에서 찾아서 점프하는 로직 완전 제거
-        addNewPage(url: url, title: "", navigationType: .normal)
+        // ✅ **절대 원칙**: 히스토리에서 찾더라도 무조건 새 페이지로 추가
+        // 세션 점프 완전 방지
+        addNewPage(url: url, title: "")
         stateModel?.syncCurrentURL(url)
-        dbg("👆 스와이프 - 새 페이지로 추가: \(url.absoluteString)")
+        dbg("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
     func findPageIndex(for url: URL) -> Int? {
-        // 히스토리에서 같은 URL 찾기 (미리보기용만 - 점프하지 않음)
+        // ⚠️ **주의**: 이 함수는 미리보기/캐시용만 사용
+        // 절대로 이 결과로 navigateToIndex 하지 말 것!
         let normalizedURL = PageRecord.normalizeURL(url)
         let matchingIndices = pageHistory.enumerated().compactMap { index, record in
             record.normalizedURL() == normalizedURL ? index : nil
         }
-        return matchingIndices.last // 가장 최근 것 반환 (참고용만)
+        return matchingIndices.last // 참고용만 - 점프 금지!
     }
     
     // MARK: - 세션 저장/복원
@@ -372,17 +562,17 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         dbg("🧹 전체 히스토리 삭제")
     }
     
-    // MARK: - 네비게이션 타입 추적
-    private var pendingNavigationType: WKNavigationType = .other
-    private var pendingNavigationURL: URL?
+    func resetNavigationFlags() {
+        dbg("🔄 네비게이션 플래그 리셋")
+    }
+    
+    func isHistoryNavigationActive() -> Bool {
+        return false
+    }
     
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // 네비게이션 타입 저장
-        pendingNavigationType = navigationAction.navigationType
-        pendingNavigationURL = navigationAction.request.url
-        
         // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
         switch navigationAction.navigationType {
         case .linkActivated, .formSubmitted, .formResubmitted:
@@ -392,10 +582,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // 네이티브 히스토리 네비게이션 완전 차단하고 우리 시스템 사용
             decisionHandler(.cancel)
             return
-        case .reload:
-            dbg("🔄 새로고침 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
         default:
-            dbg("🤖 기타 네비게이션: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            break
         }
         
         decisionHandler(.allow)
@@ -408,11 +596,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // 🚫 **자동 스와이프 감지 타이머 완전 제거**
         // 이 로직이 세션 점프를 유발할 수 있음
-        // if let startURL = startURL, 
-        //    !isRestoringSession, 
-        //    stateModel?.currentURL != startURL {
-        //    handleSwipeGestureDetected(to: startURL) // ← 이게 문제!
-        // }
         
         dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
     }
@@ -427,16 +610,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 finishSessionRestore()
                 dbg("🔄 복원 완료: '\(title)'")
             } else {
-                // ✅ **완전한 히스토리 구축 로직 사용**
-                let isReload = (pendingNavigationType == .reload)
-                buildHistory(url: finalURL, title: title, navigationType: pendingNavigationType, isReload: isReload)
+                // ✅ **단순 로직**: 모든 완료된 네비게이션은 새 페이지로 추가
+                addNewPage(url: finalURL, title: title)
                 stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
         }
-        
-        // 네비게이션 타입 초기화
-        pendingNavigationType = .other
-        pendingNavigationURL = nil
         
         stateModel?.triggerNavigationFinished()
         dbg("✅ 네비게이션 완료")
