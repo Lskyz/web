@@ -1,4 +1,4 @@
-//
+/
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
@@ -1237,13 +1237,22 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             dbg("🏠 홈 완료 - 새 페이지 강제 기록: '\(title)' (총 \(pageHistory.count)개)")
 
         } else if isHistoryNavigationActive() {
-            // 🔧 **핵심 수정**: 히스토리 네비게이션 시 현재 페이지 URL 확인 후 제목 업데이트
-            if let currentRecord = currentPageRecord,
-               normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
-                updateCurrentPageTitle(title)
-                dbg("🔄 히스토리 네비게이션 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            // 🔧 **핵심 수정**: 실제 해당 URL을 가진 페이지 찾아서 제목 업데이트
+            let normalizedFinalURL = normalizeURLForDuplicateCheck(finalURL)
+            
+            // 히스토리에서 해당 URL과 일치하는 페이지 찾기
+            if let matchingIndex = pageHistory.firstIndex(where: { 
+                normalizeURLForDuplicateCheck($0.url) == normalizedFinalURL 
+            }) {
+                // 찾은 페이지의 제목 업데이트
+                var updatedRecord = pageHistory[matchingIndex]
+                let oldTitle = updatedRecord.title
+                updatedRecord.updateTitle(title)
+                pageHistory[matchingIndex] = updatedRecord
+                
+                dbg("🔄 히스토리 네비게이션 - 정확한 페이지 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
             } else {
-                dbg("⚠️ 히스토리 네비게이션 - URL 불일치: 현재=\(currentPageRecord?.url.absoluteString ?? "nil"), 최종=\(finalURL.absoluteString)")
+                dbg("⚠️ 히스토리 네비게이션 - 일치하는 페이지 없음: \(finalURL.absoluteString)")
             }
             
             if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
@@ -1259,13 +1268,20 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
                 stateModel?.syncCurrentURL(finalURL)
                 dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             } else {
-                // 🔧 **핵심 수정**: 히스토리 관련 상태에서도 URL 확인 후 제목 업데이트
-                if let currentRecord = currentPageRecord,
-                   normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
-                    updateCurrentPageTitle(title)
-                    dbg("🔄 히스토리 관련 상태 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
+                // 🔧 **핵심 수정**: 히스토리 관련 상태에서도 정확한 페이지 찾아서 제목 업데이트
+                let normalizedFinalURL = normalizeURLForDuplicateCheck(finalURL)
+                
+                if let matchingIndex = pageHistory.firstIndex(where: { 
+                    normalizeURLForDuplicateCheck($0.url) == normalizedFinalURL 
+                }) {
+                    var updatedRecord = pageHistory[matchingIndex]
+                    let oldTitle = updatedRecord.title
+                    updatedRecord.updateTitle(title)
+                    pageHistory[matchingIndex] = updatedRecord
+                    
+                    dbg("🔄 히스토리 관련 상태 - 정확한 페이지 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex)]")
                 } else {
-                    dbg("⚠️ 히스토리 관련 상태 - URL 불일치로 제목 업데이트 건너뜀")
+                    dbg("⚠️ 히스토리 관련 상태 - 일치하는 페이지 없음으로 제목 업데이트 건너뜀")
                 }
                 
                 if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
