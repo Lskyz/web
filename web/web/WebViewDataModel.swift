@@ -1,4 +1,4 @@
-//
+/
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
@@ -885,33 +885,7 @@ private func startHomeNavigationHandling() {
         return components?.url?.absoluteString ?? url.absoluteString
     }
     
-    // 🆕 **새로 추가**: URL 기반 정확한 제목 업데이트 메서드
-    private func updatePageTitleByURL(_ url: URL, title: String) {
-        guard !title.isEmpty else { return }
-        
-        let normalizedURL = normalizeURLForDuplicateCheck(url)
-        
-        // 히스토리에서 해당 URL과 일치하는 페이지 찾기
-        if let matchingIndex = pageHistory.firstIndex(where: { 
-            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
-        }) {
-            // 찾은 페이지의 제목 업데이트
-            var updatedRecord = pageHistory[matchingIndex]
-            let oldTitle = updatedRecord.title
-            updatedRecord.updateTitle(title)
-            pageHistory[matchingIndex] = updatedRecord
-            
-            dbg("🎯 URL 기반 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
-        } else {
-            dbg("⚠️ URL 기반 제목 업데이트 실패: 일치하는 페이지 없음 - \(url.absoluteString)")
-        }
-    }
-        // 🚫 **핵심 수정**: 이 메서드는 복원 시에만 사용하도록 제한
-        guard isRestoringSession else {
-            dbg("🚫 updateCurrentPageTitle 차단: 복원 중이 아님 - '\(title)'")
-            return
-        }
-        
+    func updateCurrentPageTitle(_ title: String) {
         guard currentPageIndex >= 0, 
               currentPageIndex < pageHistory.count,
               !title.isEmpty else { 
@@ -929,7 +903,7 @@ private func startHomeNavigationHandling() {
         
         // 🔍 디버깅: 제목 업데이트 로그
         if oldTitle != title {
-            dbg("📝 제목 업데이트(복원 전용): '\(oldTitle)' → '\(title)' [인덱스: \(currentPageIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+            dbg("📝 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(currentPageIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
         }
     }
     
@@ -1248,7 +1222,6 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let isHome = isHomepageURL(finalURL)
 
         if isRestoringSession {
-            // 🔧 **수정**: 복원 시에만 updateCurrentPageTitle 사용
             updateCurrentPageTitle(title)
             finishSessionRestore()
             dbg("🔄 복원 완료: '\(title)'")
@@ -1264,22 +1237,13 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             dbg("🏠 홈 완료 - 새 페이지 강제 기록: '\(title)' (총 \(pageHistory.count)개)")
 
         } else if isHistoryNavigationActive() {
-            // 🔧 **핵심 수정**: 실제 해당 URL을 가진 페이지 찾아서 제목 업데이트
-            let normalizedFinalURL = normalizeURLForDuplicateCheck(finalURL)
-            
-            // 히스토리에서 해당 URL과 일치하는 페이지 찾기
-            if let matchingIndex = pageHistory.firstIndex(where: { 
-                normalizeURLForDuplicateCheck($0.url) == normalizedFinalURL 
-            }) {
-                // 찾은 페이지의 제목 업데이트
-                var updatedRecord = pageHistory[matchingIndex]
-                let oldTitle = updatedRecord.title
-                updatedRecord.updateTitle(title)
-                pageHistory[matchingIndex] = updatedRecord
-                
-                dbg("🔄 히스토리 네비게이션 - 정확한 페이지 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+            // 🔧 **핵심 수정**: 히스토리 네비게이션 시 현재 페이지 URL 확인 후 제목 업데이트
+            if let currentRecord = currentPageRecord,
+               normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
+                updateCurrentPageTitle(title)
+                dbg("🔄 히스토리 네비게이션 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
             } else {
-                dbg("⚠️ 히스토리 네비게이션 - 일치하는 페이지 없음: \(finalURL.absoluteString)")
+                dbg("⚠️ 히스토리 네비게이션 - URL 불일치: 현재=\(currentPageRecord?.url.absoluteString ?? "nil"), 최종=\(finalURL.absoluteString)")
             }
             
             if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
@@ -1295,20 +1259,13 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
                 stateModel?.syncCurrentURL(finalURL)
                 dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             } else {
-                // 🔧 **핵심 수정**: 히스토리 관련 상태에서도 정확한 페이지 찾아서 제목 업데이트
-                let normalizedFinalURL = normalizeURLForDuplicateCheck(finalURL)
-                
-                if let matchingIndex = pageHistory.firstIndex(where: { 
-                    normalizeURLForDuplicateCheck($0.url) == normalizedFinalURL 
-                }) {
-                    var updatedRecord = pageHistory[matchingIndex]
-                    let oldTitle = updatedRecord.title
-                    updatedRecord.updateTitle(title)
-                    pageHistory[matchingIndex] = updatedRecord
-                    
-                    dbg("🔄 히스토리 관련 상태 - 정확한 페이지 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex)]")
+                // 🔧 **핵심 수정**: 히스토리 관련 상태에서도 URL 확인 후 제목 업데이트
+                if let currentRecord = currentPageRecord,
+                   normalizeURLForDuplicateCheck(currentRecord.url) == normalizeURLForDuplicateCheck(finalURL) {
+                    updateCurrentPageTitle(title)
+                    dbg("🔄 히스토리 관련 상태 - 동일 페이지 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
                 } else {
-                    dbg("⚠️ 히스토리 관련 상태 - 일치하는 페이지 없음으로 제목 업데이트 건너뜀")
+                    dbg("⚠️ 히스토리 관련 상태 - URL 불일치로 제목 업데이트 건너뜀")
                 }
                 
                 if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
@@ -1645,4 +1602,4 @@ extension DateFormatter {
         formatter.timeStyle = .short
         return formatter
     }()
-} 
+}
