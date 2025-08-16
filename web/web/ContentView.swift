@@ -95,8 +95,8 @@ struct ContentView: View {
 
     // ✨ 투명한 흰색 유리 효과 설정
     private let whiteGlassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
-    private let whiteGlassTintOpacity: CGFloat = 0.08   // 매우 미세한 흰색 틴트
-    private let whiteGlassIntensity: CGFloat = 0.98     // 거의 완전한 투명도
+    private let whiteGlassTintOpacity: CGFloat = 0.20   // 매우 미세한 흰색 틴트
+    private let whiteGlassIntensity: CGFloat = 0.80     // 거의 완전한 투명도
     
     @State private var keyboardHeight: CGFloat = 0
     
