@@ -1,9 +1,10 @@
-//
+/
 //  WebViewDataModel.swift
 //  🎯 **단순화된 정상 히스토리 시스템** 
 //  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
 //  🔧 세션 점프 이슈 해결 - 현재 인덱스 고정
+//  🔧 **제목 덮어쓰기 문제 해결** - URL 검증 추가
 //
 
 import Foundation
@@ -191,8 +192,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // 홈페이지면 새 페이지, 아니면 새 페이지 (단순하게)
             addNewPage(url: url, title: title)
         case "title":
-            // 제목 변경만 별도 처리
-            updateCurrentPageTitle(title)
+            // 🔧 **수정**: URL 기반 제목 업데이트 사용
+            updatePageTitle(for: url, title: title)
         default:
             dbg("🌐 알 수 없는 SPA 타입: \(type)")
         }
@@ -416,7 +417,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // ✅ **핵심 로직**: 현재 페이지와 같으면 제목만 업데이트
         if let currentRecord = currentPageRecord,
            currentRecord.normalizedURL() == PageRecord.normalizeURL(url) {
-            updateCurrentPageTitle(title)
+            updatePageTitle(for: url, title: title)
             dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
             return
         }
@@ -441,6 +442,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
+    // MARK: - 🔧 **제목 덮어쓰기 문제 해결**: URL 검증 추가된 제목 업데이트
+    
     func updateCurrentPageTitle(_ title: String) {
         guard currentPageIndex >= 0, 
               currentPageIndex < pageHistory.count,
@@ -448,10 +451,46 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return 
         }
         
+        // 🔧 **핵심 수정**: StateModel의 현재 URL과 매칭되는 레코드만 업데이트
+        if let stateModelURL = stateModel?.currentURL {
+            let currentRecord = pageHistory[currentPageIndex]
+            let currentNormalizedURL = currentRecord.normalizedURL()
+            let stateNormalizedURL = PageRecord.normalizeURL(stateModelURL)
+            
+            // URL이 일치하지 않으면 제목 업데이트 거부
+            if currentNormalizedURL != stateNormalizedURL {
+                dbg("⚠️ 제목 업데이트 거부: 인덱스[\(currentPageIndex)] URL 불일치")
+                dbg("   현재레코드: \(currentNormalizedURL)")
+                dbg("   StateModel: \(stateNormalizedURL)")
+                return
+            }
+        }
+        
         var updatedRecord = pageHistory[currentPageIndex]
         updatedRecord.updateTitle(title)
         pageHistory[currentPageIndex] = updatedRecord
-        dbg("📝 제목 업데이트: '\(title)'")
+        dbg("📝 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
+    }
+    
+    // 🔧 **새로 추가**: URL 기반 제목 업데이트 메서드
+    func updatePageTitle(for url: URL, title: String) {
+        guard !title.isEmpty else { return }
+        
+        let normalizedURL = PageRecord.normalizeURL(url)
+        
+        // 해당 URL을 가진 가장 최근 레코드 찾기
+        for i in stride(from: pageHistory.count - 1, through: 0, by: -1) {
+            let record = pageHistory[i]
+            if record.normalizedURL() == normalizedURL {
+                var updatedRecord = record
+                updatedRecord.updateTitle(title)
+                pageHistory[i] = updatedRecord
+                dbg("📝 URL 기반 제목 업데이트: '\(title)' [인덱스: \(i)] URL: \(url.absoluteString)")
+                return
+            }
+        }
+        
+        dbg("⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - \(url.absoluteString)")
     }
     
     var currentPageRecord: PageRecord? {
@@ -627,7 +666,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         if let finalURL = webView.url {
             if isRestoringSession {
-                updateCurrentPageTitle(title)
+                // 🔧 **수정**: 복원 중에는 URL 기반으로 안전하게 업데이트
+                updatePageTitle(for: finalURL, title: title)
                 finishSessionRestore()
                 dbg("🔄 복원 완료: '\(title)'")
             } else {
