@@ -3,26 +3,54 @@ import AVKit
 import WebKit
 
 // ============================================================
-// UIKit의 UIVisualEffectView(블러)를 SwiftUI에서 쓰기 위한 래퍼
-// - 배경은 .clear 유지 (흰 박스/여백 방지)
-// - 재질(blurStyle)은 호출부에서 지정
+// ✨ 투명한 흰색 유리 효과 (Clean White Glass)
+// - 매우 투명한 블러와 미세한 흰색 틴트
+// - 부드러운 테두리와 깔끔한 투명도
 // ============================================================
-struct VisualEffectBlur: UIViewRepresentable {
+struct WhiteGlassBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
     var cornerRadius: CGFloat = 0
-
+    var intensity: CGFloat = 1.0
+    
     func makeUIView(context: Context) -> UIVisualEffectView {
         let effect = UIBlurEffect(style: blurStyle)
-        let v = UIVisualEffectView(effect: effect)
-        v.clipsToBounds = true
-        v.layer.cornerRadius = cornerRadius
-        v.backgroundColor = .clear
-        return v
+        let effectView = UIVisualEffectView(effect: effect)
+        effectView.clipsToBounds = true
+        effectView.layer.cornerRadius = cornerRadius
+        effectView.backgroundColor = .clear
+        
+        // ✨ 투명한 흰색 유리 효과
+        setupWhiteGlassEffect(effectView)
+        
+        return effectView
     }
+    
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        uiView.effect = UIBlurEffect(style: blurStyle)
+        let effect = UIBlurEffect(style: blurStyle)
+        uiView.effect = effect
         uiView.layer.cornerRadius = cornerRadius
         uiView.backgroundColor = .clear
+        uiView.alpha = intensity
+    }
+    
+    private func setupWhiteGlassEffect(_ effectView: UIVisualEffectView) {
+        // ✨ 미세한 흰색 그라데이션 레이어
+        let gradientLayer = CAGradientLayer()
+        gradientLayer.colors = [
+            UIColor.white.withAlphaComponent(0.1).cgColor,
+            UIColor.white.withAlphaComponent(0.05).cgColor,
+            UIColor.clear.cgColor
+        ]
+        gradientLayer.locations = [0.0, 0.8, 1.0]
+        gradientLayer.startPoint = CGPoint(x: 0.0, y: 0.0)
+        gradientLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        
+        effectView.contentView.layer.addSublayer(gradientLayer)
+        
+        // 레이어 크기 자동 조정
+        DispatchQueue.main.async {
+            gradientLayer.frame = effectView.bounds
+        }
     }
 }
 
@@ -56,75 +84,78 @@ struct ContentView: View {
     @State private var errorTitle = ""
 
     // ============================================================
-    // ✨ 변경: 가장 투명한 블러 + 흰색 틴트 (은은한 그라데이션 효과)
+    // ✨ 투명한 흰색 유리 효과 설정
     // ============================================================
-    private let outerHorizontalPadding: CGFloat = 24     // 주소창/툴바 외부 좌우 여백(=폭 제어)
-    private let barCornerRadius: CGFloat       = 22
+    private let outerHorizontalPadding: CGFloat = 24
+    private let barCornerRadius: CGFloat       = 20      // 적당한 둥글기
     private let barVPadding: CGFloat           = 12
     private let iconSize: CGFloat              = 23
-    private let textFont: Font                 = .system(size: 18, weight: .semibold)
+    private let textFont: Font                 = .system(size: 18, weight: .medium)
     private let toolbarSpacing: CGFloat        = 22
 
-    // ✨ 핵심 수정: 가장 투명한 블러 + 흰색 틴트로 은은한 효과
-    private let glassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
-    private let glassTintOpacity: CGFloat = 0.25  // 흰색 틴트 25%
+    // ✨ 투명한 흰색 유리 효과 설정
+    private let whiteGlassMaterial: UIBlurEffect.Style = .systemUltraThinMaterial  // 가장 투명한 블러
+    private let whiteGlassTintOpacity: CGFloat = 0.08   // 매우 미세한 흰색 틴트
+    private let whiteGlassIntensity: CGFloat = 0.98     // 거의 완전한 투명도
     
     @State private var keyboardHeight: CGFloat = 0
+    
     var body: some View {
-    mainContentView
-        .onAppear(perform: onAppearHandler)
-        .onReceive(currentState.$currentURL, perform: onURLChange)
-        .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
-        .onReceive(errorNotificationPublisher, perform: onErrorReceived)
-        .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
-        .sheet(isPresented: $showHistorySheet, content: historySheet)
-        .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
-        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-        .fullScreenCover(isPresented: $showDebugView, content: debugView)
+        mainContentView
+            .onAppear(perform: onAppearHandler)
+            .onReceive(currentState.$currentURL, perform: onURLChange)
+            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+            .sheet(isPresented: $showHistorySheet, content: historySheet)
+            .fullScreenCover(isPresented: $showTabManager, content: tabManagerView)
+            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+            .fullScreenCover(isPresented: $showDebugView, content: debugView)
 
-        // ✅ 주소창/툴바만 키보드 높이만큼 위로 이동
-        .safeAreaInset(edge: .bottom) {
-            bottomUIContent()
-                .offset(y: -keyboardHeight)
-                .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
-        }
+            // ✅ 주소창/툴바만 키보드 높이만큼 위로 이동
+            .safeAreaInset(edge: .bottom) {
+                bottomUIContent()
+                    .offset(y: -keyboardHeight)
+                    .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
+            }
 
-        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
+            // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
 
-        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
-.onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-    guard
-        let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-        let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-    else { return }
+            // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+                guard
+                    let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                    let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+                else { return }
 
-    // 현재 키 윈도우
-    let window = UIApplication.shared.connectedScenes
-        .compactMap { $0 as? UIWindowScene }
-        .flatMap { $0.windows }
-        .first { $0.isKeyWindow }
+                // 현재 키 윈도우
+                let window = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .flatMap { $0.windows }
+                    .first { $0.isKeyWindow }
 
-    let bounds   = window?.bounds ?? UIScreen.main.bounds
-    // 좌표계를 윈도우 기준으로 변환
-    let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
-    // 화면과 키보드의 실제 겹치는 높이
-    let overlap  = max(0, bounds.intersection(kbFrame).height)
-    let bottomSA = window?.safeAreaInsets.bottom ?? 0
+                let bounds   = window?.bounds ?? UIScreen.main.bounds
+                // 좌표계를 윈도우 기준으로 변환
+                let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
+                // 화면과 키보드의 실제 겹치는 높이
+                let overlap  = max(0, bounds.intersection(kbFrame).height)
+                let bottomSA = window?.safeAreaInsets.bottom ?? 0
 
-    // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
-    let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
+                // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
+                let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
 
-    withAnimation(.easeInOut(duration: duration)) {
-        keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
+                withAnimation(.easeInOut(duration: duration)) {
+                    keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
+                }
+            }
+
+            // ✅ 완전 숨김 이벤트에서 확정적으로 0
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                keyboardHeight = 0
+            }
     }
-}
-
-// ✅ 완전 숨김 이벤트에서 확정적으로 0
-.onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-    keyboardHeight = 0
-}
-}    
+    
     // MARK: - 컴포넌트 분해
     
     private var currentState: WebViewStateModel {
@@ -221,10 +252,10 @@ struct ContentView: View {
                 desktopModeControls
             }
         }
-        .background(glassBackground)
-        .overlay(glassOverlay)
+        .background(whiteGlassBackground)
+        .overlay(whiteGlassOverlay)
         .padding(.horizontal, outerHorizontalPadding)
-        .transition(.opacity)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
     
     private var addressBarMainContent: some View {
@@ -284,7 +315,7 @@ struct ContentView: View {
             .focused($isTextFieldFocused)
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
-            .onSubmit(onTextFieldSubmit)  // ✅ 수정: perform: 레이블 제거
+            .onSubmit(onTextFieldSubmit)
             .overlay(textFieldClearButton)
     }
     
@@ -406,8 +437,8 @@ struct ContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, barVPadding)
-        .background(glassBackground)
-        .overlay(glassOverlay)
+        .background(whiteGlassBackground)
+        .overlay(whiteGlassOverlay)
         .padding(.horizontal, outerHorizontalPadding)
         .contentShape(Rectangle())
         .onTapGesture(perform: onToolbarTap)
@@ -422,18 +453,31 @@ struct ContentView: View {
         .disabled(!enabled)
     }
     
-    private var glassBackground: some View {
+    // ✨ 투명한 흰색 유리 배경
+    private var whiteGlassBackground: some View {
         ZStack {
-            VisualEffectBlur(blurStyle: glassMaterial, cornerRadius: barCornerRadius)
+            WhiteGlassBlur(
+                blurStyle: whiteGlassMaterial, 
+                cornerRadius: barCornerRadius,
+                intensity: whiteGlassIntensity
+            )
+            
+            // 매우 미세한 흰색 틴트
             RoundedRectangle(cornerRadius: barCornerRadius)
-                .fill(Color.white.opacity(glassTintOpacity))
+                .fill(Color.white.opacity(whiteGlassTintOpacity))
         }
     }
     
-    private var glassOverlay: some View {
+    // ✨ 투명한 흰색 유리 테두리
+    private var whiteGlassOverlay: some View {
         Group {
-            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.12), lineWidth: 0.75)
-            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.black.opacity(0.08), lineWidth: 0.25)
+            // 외부 하이라이트 (매우 미세)
+            RoundedRectangle(cornerRadius: barCornerRadius)
+                .strokeBorder(.white.opacity(0.2), lineWidth: 0.5)
+            
+            // 내부 그림자 효과 (극미세)
+            RoundedRectangle(cornerRadius: barCornerRadius)
+                .strokeBorder(.black.opacity(0.03), lineWidth: 0.5)
         }
     }
     
@@ -466,7 +510,7 @@ struct ContentView: View {
         
         // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
         if !showAddressBar {
-            withAnimation {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 showAddressBar = true
                 allowTopOverlap = false
             }
@@ -474,7 +518,7 @@ struct ContentView: View {
             // 3초 후 자동으로 숨기기
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
-                    withAnimation {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                         showAddressBar = false
                         allowTopOverlap = true
                     }
@@ -604,7 +648,7 @@ struct ContentView: View {
         }
         let delta = offset - previousOffset
         if delta < -30 && showAddressBar {
-            withAnimation {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 showAddressBar = false
                 isTextFieldFocused = false
             }
@@ -614,7 +658,7 @@ struct ContentView: View {
     }
     
     private func onContentTap() {
-        withAnimation {
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             if showAddressBar {
                 showAddressBar = false
                 isTextFieldFocused = false
@@ -659,7 +703,7 @@ struct ContentView: View {
     
     private func onToolbarTap() {
         if !showAddressBar {
-            withAnimation {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 showAddressBar = true
                 allowTopOverlap = false
             }
@@ -695,10 +739,15 @@ struct ContentView: View {
             return
         }
         if delta > 4 && showAddressBar {
-            withAnimation { showAddressBar = false; isTextFieldFocused = false }
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
+                showAddressBar = false
+                isTextFieldFocused = false 
+            }
             allowTopOverlap = true
         } else if delta < -12 && !showAddressBar {
-            withAnimation { showAddressBar = true }
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { 
+                showAddressBar = true 
+            }
             allowTopOverlap = false
         }
         lastWebContentOffsetY = yOffset
