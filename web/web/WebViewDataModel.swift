@@ -1,4 +1,4 @@
-
+//
 //  WebViewDataModel.swift
 //  🌐 통합된 SPA 네비게이션 관리 (쿨다운/포스트머지 제거)
 //  🎯 핵심 방어 로직만 유지
@@ -885,7 +885,33 @@ private func startHomeNavigationHandling() {
         return components?.url?.absoluteString ?? url.absoluteString
     }
     
-    func updateCurrentPageTitle(_ title: String) {
+    // 🆕 **새로 추가**: URL 기반 정확한 제목 업데이트 메서드
+    private func updatePageTitleByURL(_ url: URL, title: String) {
+        guard !title.isEmpty else { return }
+        
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        
+        // 히스토리에서 해당 URL과 일치하는 페이지 찾기
+        if let matchingIndex = pageHistory.firstIndex(where: { 
+            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
+        }) {
+            // 찾은 페이지의 제목 업데이트
+            var updatedRecord = pageHistory[matchingIndex]
+            let oldTitle = updatedRecord.title
+            updatedRecord.updateTitle(title)
+            pageHistory[matchingIndex] = updatedRecord
+            
+            dbg("🎯 URL 기반 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(matchingIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+        } else {
+            dbg("⚠️ URL 기반 제목 업데이트 실패: 일치하는 페이지 없음 - \(url.absoluteString)")
+        }
+    }
+        // 🚫 **핵심 수정**: 이 메서드는 복원 시에만 사용하도록 제한
+        guard isRestoringSession else {
+            dbg("🚫 updateCurrentPageTitle 차단: 복원 중이 아님 - '\(title)'")
+            return
+        }
+        
         guard currentPageIndex >= 0, 
               currentPageIndex < pageHistory.count,
               !title.isEmpty else { 
@@ -903,7 +929,7 @@ private func startHomeNavigationHandling() {
         
         // 🔍 디버깅: 제목 업데이트 로그
         if oldTitle != title {
-            dbg("📝 제목 업데이트: '\(oldTitle)' → '\(title)' [인덱스: \(currentPageIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
+            dbg("📝 제목 업데이트(복원 전용): '\(oldTitle)' → '\(title)' [인덱스: \(currentPageIndex), ID: \(String(updatedRecord.id.uuidString.prefix(8)))]")
         }
     }
     
@@ -1222,6 +1248,7 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let isHome = isHomepageURL(finalURL)
 
         if isRestoringSession {
+            // 🔧 **수정**: 복원 시에만 updateCurrentPageTitle 사용
             updateCurrentPageTitle(title)
             finishSessionRestore()
             dbg("🔄 복원 완료: '\(title)'")
