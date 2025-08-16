@@ -503,6 +503,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return nil
     }
     
+    func navigateToIndex(_ index: Int) -> PageRecord? {
+        guard index >= 0, index < pageHistory.count else { 
+            dbg("❌ navigateToIndex 실패: 잘못된 인덱스 \(index), 범위: 0..<\(pageHistory.count)")
+            return nil 
+        }
+        
+        currentPageIndex = index
+        
+        if let record = currentPageRecord {
+            var mutableRecord = record
+            mutableRecord.updateAccess()
+            pageHistory[currentPageIndex] = mutableRecord
+            
+            updateNavigationState()
+            dbg("🎯 인덱스 네비게이션: '\(record.title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
+            return record
+        }
+        
+        return nil
+    }
+    
     // MARK: - 🏄‍♂️ **스와이프 제스처 처리** (과거 점프 완전 방지)
     
     func handleSwipeGestureDetected(to url: URL) {
