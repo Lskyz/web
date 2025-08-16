@@ -1,10 +1,10 @@
-
+//
 //  CustomWebView.swift
 //
 //  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
 //  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
 //  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
-//  🔧 **제목 덮어쓰기 문제 해결** - titleObserver URL 검증 추가
+//  🔧 제목 덮어쓰기 문제 해결 - titleObserver URL 검증 추가
 //
 
 import SwiftUI
