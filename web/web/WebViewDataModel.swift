@@ -5,6 +5,7 @@
 //  ✅ 홈클릭 마지막세션 문제 + 인접 중복제거 강화
 //  🔧 홈 클릭 히스토리 문제 수정: 항상 새 페이지로 추가
 //  🆕 사용자 클릭과 자동 네비게이션 구분 추가
+//  💪 **강화**: 모든 사용자 클릭 시 새 페이지 추가 보장
 //
 
 import Foundation
@@ -20,6 +21,7 @@ enum NavigationType: String, Codable, CaseIterable {
     case navListFirst = "navListFirst"
     case spaNavigation = "spaNavigation"
     case loginRedirect = "loginRedirect"
+    case userClick = "userClick"  // 🆕 사용자 클릭 전용 타입
 }
 
 // MARK: - 페이지 식별자 (제목, 주소, 시간 포함)
@@ -177,9 +179,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var historyNavigationStartTime: Date?
     private var historyNavigationEndTime: Date? // 🔧 히스토리 네비게이션 완료 후 차단 시간
     
-    // 🆕 **핵심 추가**: 사용자 클릭 추적
+    // 💪 **강화된 사용자 클릭 추적**
     private var isUserTriggeredNavigation: Bool = false
     private var userNavigationEndTime: Date?
+    private var userClickURL: URL? // 🆕 사용자가 클릭한 정확한 URL 추적
+    private var isStrongUserClick: Bool = false // 🆕 강력한 사용자 클릭 플래그 (절대 차단 안됨)
     
     // 🆕 새로고침 윈도 관리 (단축)
     private var isInReloadWindow: Bool = false
@@ -254,11 +258,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // 🆕 **핵심 추가**: 사용자 클릭 추적 메서드
-    private func startUserTriggeredNavigation() {
+    // 💪 **강화된 사용자 클릭 추적 메서드들**
+    
+    private func startUserTriggeredNavigation(url: URL? = nil, isStrong: Bool = false) {
         isUserTriggeredNavigation = true
-        userNavigationEndTime = Date().addingTimeInterval(3.0) // 3초간 사용자 네비게이션으로 간주
-        dbg("👆 사용자 클릭 네비게이션 시작 - 히스토리 차단 우회 3초")
+        userNavigationEndTime = Date().addingTimeInterval(5.0) // 3초 → 5초로 연장
+        userClickURL = url
+        isStrongUserClick = isStrong
+        
+        if isStrong {
+            dbg("💪 **강력한** 사용자 클릭 네비게이션 시작 - 모든 차단 우회 5초: \(url?.absoluteString ?? "nil")")
+        } else {
+            dbg("👆 일반 사용자 클릭 네비게이션 시작 - 히스토리 차단 우회 5초: \(url?.absoluteString ?? "nil")")
+        }
     }
     
     private func isInUserTriggeredNavigation() -> Bool {
@@ -267,11 +279,25 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if Date() > endTime {
             isUserTriggeredNavigation = false
             userNavigationEndTime = nil
+            userClickURL = nil
+            isStrongUserClick = false
             dbg("👆 사용자 클릭 네비게이션 완료")
             return false
         }
         
         return true
+    }
+    
+    private func isStrongUserTriggeredNavigation() -> Bool {
+        return isInUserTriggeredNavigation() && isStrongUserClick
+    }
+    
+    private func isUserClickURL(_ url: URL) -> Bool {
+        guard let clickedURL = userClickURL else { return false }
+        
+        // 정확한 URL 매칭 또는 정규화 URL 매칭
+        return clickedURL == url || 
+               normalizeURLForDuplicateCheck(clickedURL) == normalizeURLForDuplicateCheck(url)
     }
     
     // 🆕 새로고침 윈도 관리 (단축)
@@ -380,6 +406,12 @@ private func startHomeNavigationHandling() {
     // MARK: - 🌐 **통합된 SPA 네비게이션 처리** (간소화)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
+        // 💪 강력한 사용자 클릭은 SPA 차단을 무시
+        if isStrongUserTriggeredNavigation() {
+            dbg("💪 강력한 사용자 클릭 - SPA 로직 완전 우회: \(url.absoluteString)")
+            return
+        }
+        
         // ✅ 홈 클릭 처리 중이면 SPA 로직 차단
         if isInHomeNavigationHandling() {
             dbg("🏠 홈 클릭 처리 중 - SPA \(type) 무시: \(url.absoluteString)")
@@ -746,29 +778,37 @@ private func startHomeNavigationHandling() {
         }
     }
     
-    // MARK: - 새로운 페이지 기록 시스템 (강화된 중복 제거)
+    // MARK: - 💪 **강화된 새로운 페이지 기록 시스템** - 모든 사용자 클릭 보장
     
     func addNewPage(url: URL, title: String = "") {
-        // 🆕 **핵심 수정**: 사용자 클릭 네비게이션은 히스토리 차단을 우회
-        if isInUserTriggeredNavigation() {
-            dbg("👆 사용자 클릭 네비게이션 - 히스토리 차단 우회하여 페이지 추가: \(url.absoluteString)")
-            // 사용자 클릭인 경우 히스토리 차단 무시하고 페이지 추가
-        } else {
-            // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지
-            if isHistoryNavigationActive() {
-                if isHistoryNavigation {
-                    dbg("🔄 히스토리 네비게이션 진행 중 - 새 페이지 추가 차단: \(url.absoluteString)")
-                } else {
-                    dbg("🔄 히스토리 네비게이션 완료 후 대기 중 - 새 페이지 추가 차단: \(url.absoluteString)")
-                }
-                return
+        // 💪 **최우선**: 강력한 사용자 클릭은 모든 차단을 무시
+        if isStrongUserTriggeredNavigation() && isUserClickURL(url) {
+            dbg("💪 **강력한** 사용자 클릭 - 모든 차단 무시하고 새 페이지 강제 추가: \(url.absoluteString)")
+            forceAddNewPage(url: url, title: title, navigationType: .userClick)
+            return
+        }
+        
+        // 🆕 **중요**: 일반 사용자 클릭도 히스토리 차단을 우회
+        if isInUserTriggeredNavigation() && isUserClickURL(url) {
+            dbg("👆 사용자 클릭 URL 매칭 - 히스토리 차단 우회하여 페이지 추가: \(url.absoluteString)")
+            forceAddNewPage(url: url, title: title, navigationType: .userClick)
+            return
+        }
+        
+        // 🛡️ 핵심 차단: 히스토리 네비게이션 중 새 페이지 추가 금지 (사용자 클릭이 아닌 경우)
+        if isHistoryNavigationActive() {
+            if isHistoryNavigation {
+                dbg("🔄 히스토리 네비게이션 진행 중 - 새 페이지 추가 차단: \(url.absoluteString)")
+            } else {
+                dbg("🔄 히스토리 네비게이션 완료 후 대기 중 - 새 페이지 추가 차단: \(url.absoluteString)")
             }
-            
-            // 🔧 **새로 추가**: 추가 히스토리 상태 체크 (더 엄격하게)
-            if isHistoryNavigation || historyNavigationEndTime != nil {
-                dbg("🔄 히스토리 관련 상태 - 새 페이지 추가 차단: \(url.absoluteString)")
-                return
-            }
+            return
+        }
+        
+        // 🔧 **새로 추가**: 추가 히스토리 상태 체크 (더 엄격하게)
+        if isHistoryNavigation || historyNavigationEndTime != nil {
+            dbg("🔄 히스토리 관련 상태 - 새 페이지 추가 차단: \(url.absoluteString)")
+            return
         }
         
         // 🌐 SPA 네비게이션 중인지 체크
@@ -777,6 +817,52 @@ private func startHomeNavigationHandling() {
             return
         }
         
+        // 일반적인 새 페이지 추가 로직
+        performAddNewPage(url: url, title: title, navigationType: .normal)
+    }
+    
+    // 💪 **새로 추가**: 강제 페이지 추가 (모든 차단 무시)
+    private func forceAddNewPage(url: URL, title: String, navigationType: NavigationType) {
+        // 🔧 홈페이지 URL 감지 시 스와이프 상태 즉시 정리
+        if isHomepageURL(url) {
+            swipeDetectedTargetIndex = nil
+            swipeConfirmationTimer?.invalidate()
+            swipeConfirmationTimer = nil
+            dbg("🏠 홈페이지 감지 - 스와이프 상태 정리: \(url.absoluteString) (path: \(url.path), query: \(url.query ?? "없음"))")
+        }
+        
+        // 🔒 로그인 관련 URL은 여전히 제외
+        if PageRecord.isLoginRelatedURL(url) {
+            dbg("🔒 사용자 클릭이지만 로그인 페이지는 히스토리 제외: \(url.absoluteString)")
+            return
+        }
+        
+        // Forward 스택 제거
+        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
+            pageHistory.removeSubrange((currentPageIndex + 1)...)
+        }
+        
+        let newRecord = PageRecord(url: url, title: title, navigationType: navigationType)
+        pageHistory.append(newRecord)
+        currentPageIndex = pageHistory.count - 1
+        
+        // ✅ 인접 중복 제거 실행
+        removeAdjacentDuplicates()
+        
+        updateNavigationState()
+        dbg("💪 **강제** 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
+        
+        // 전역 히스토리에도 추가
+        let normalizedURL = normalizeURLForDuplicateCheck(url)
+        if !Self.globalHistory.contains(where: { 
+            normalizeURLForDuplicateCheck($0.url) == normalizedURL 
+        }) {
+            Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
+        }
+    }
+    
+    // 🔧 **기존 로직을 분리한 일반 페이지 추가**
+    private func performAddNewPage(url: URL, title: String, navigationType: NavigationType) {
         // 🔧 홈페이지 URL 감지 시 스와이프 상태 즉시 정리
         if isHomepageURL(url) {
             swipeDetectedTargetIndex = nil
@@ -818,7 +904,7 @@ private func startHomeNavigationHandling() {
             pageHistory.removeSubrange((currentPageIndex + 1)...)
         }
         
-        let newRecord = PageRecord(url: url, title: title)
+        let newRecord = PageRecord(url: url, title: title, navigationType: navigationType)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
         
@@ -1038,9 +1124,11 @@ func saveSession() -> WebViewSession? {
         redirectionChain.removeAll()
         redirectionStartTime = nil
         
-        // 🆕 사용자 네비게이션 상태 리셋
+        // 💪 **강화된 사용자 네비게이션 상태 리셋**
         isUserTriggeredNavigation = false
         userNavigationEndTime = nil
+        userClickURL = nil
+        isStrongUserClick = false
         
         // 🌐 SPA 상태 리셋
         isSPANavigation = false
@@ -1133,13 +1221,41 @@ func saveSession() -> WebViewSession? {
 }
 
 
-    // MARK: - 🆕 **핵심 추가**: WKNavigationDelegate 메서드에서 사용자 클릭 감지
+    // MARK: - 💪 **강화된 WKNavigationDelegate** - 모든 사용자 클릭 감지
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // 🆕 **핵심**: 사용자가 링크를 클릭한 경우 히스토리 차단 우회 플래그 설정
-        if navigationAction.navigationType == .linkActivated {
-            startUserTriggeredNavigation()
-            dbg("👆 사용자 링크 클릭 감지 - 히스토리 차단 우회 플래그 설정")
+        // 💪 **핵심 강화**: 모든 사용자 트리거를 감지하고 강력한 플래그 설정
+        switch navigationAction.navigationType {
+        case .linkActivated:
+            // 링크 클릭 - 가장 강력한 사용자 액션
+            startUserTriggeredNavigation(url: navigationAction.request.url, isStrong: true)
+            dbg("💪 **강력한** 사용자 링크 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            
+        case .formSubmitted:
+            // 폼 제출 - 강력한 사용자 액션
+            startUserTriggeredNavigation(url: navigationAction.request.url, isStrong: true)
+            dbg("💪 **강력한** 사용자 폼 제출 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            
+        case .formResubmitted:
+            // 폼 재제출 - 강력한 사용자 액션
+            startUserTriggeredNavigation(url: navigationAction.request.url, isStrong: true)
+            dbg("💪 **강력한** 사용자 폼 재제출 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            
+        case .reload:
+            // 새로고침 - 일반 사용자 액션
+            startUserTriggeredNavigation(url: navigationAction.request.url, isStrong: false)
+            dbg("👆 사용자 새로고침 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            
+        case .backForward:
+            // 뒤로/앞으로 - 히스토리 네비게이션이므로 사용자 플래그 설정하지 않음
+            dbg("🔄 뒤로/앞으로 네비게이션 감지 - 사용자 플래그 설정 안함")
+            
+        case .other:
+            // 기타 - 프로그래매틱 네비게이션일 가능성이 높음
+            dbg("🤖 기타 네비게이션 감지 - 사용자 플래그 설정 안함")
+            
+        @unknown default:
+            dbg("❓ 알 수 없는 네비게이션 타입")
         }
         
         decisionHandler(.allow)
@@ -1159,12 +1275,13 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
         swipeConfirmationTimer = nil
     }
 
-    // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지 + 홈페이지 URL도 제외)
+    // ✅ 자동 스와이프 감지 (홈 처리 중에는 금지 + 홈페이지 URL도 제외 + 강력한 사용자 클릭도 제외)
     if let startURL = startURL, 
        !isRestoringSession, 
        !isHistoryNavigationActive(),
        !isInHomeNavigationHandling(),            // 홈 처리 중에는 금지
        !isHomepageURL(startURL),                 // 홈페이지 URL은 스와이프 감지 제외
+       !isStrongUserTriggeredNavigation(),       // 💪 강력한 사용자 클릭은 스와이프 감지 제외
        stateModel?.currentURL != startURL {
         
         handleSwipeGestureDetected(to: startURL)
@@ -1192,6 +1309,7 @@ func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKN
     
     dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
 }
+
 func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     stateModel?.handleLoadingFinish()
     let title = webView.title ?? webView.url?.host ?? "제목 없음"
@@ -1222,18 +1340,26 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             dbg("🔄 히스토리 네비게이션 완료: '\(title)' [인덱스: \(currentPageIndex)/\(pageHistory.count)]")
 
         } else {
-            let isHistoryRelated = isHistoryNavigation ||
-                                   historyNavigationEndTime != nil ||
-                                   (historyNavigationStartTime != nil)
-
-            if !isHistoryRelated {
-                addNewPage(url: finalURL, title: title)
+            // 💪 **핵심 개선**: 사용자 클릭 URL 매칭 시 무조건 새 페이지 추가
+            if isInUserTriggeredNavigation() && isUserClickURL(finalURL) {
+                addNewPage(url: finalURL, title: title) // 이미 내부에서 강제 추가 로직 처리됨
                 stateModel?.syncCurrentURL(finalURL)
-                dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                dbg("💪 사용자 클릭 URL 매칭 - 새 페이지 강제 추가: '\(title)' (총 \(pageHistory.count)개)")
             } else {
-                updateCurrentPageTitle(title)
-                if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
-                dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
+                // 기존 히스토리 관련 체크
+                let isHistoryRelated = isHistoryNavigation ||
+                                       historyNavigationEndTime != nil ||
+                                       (historyNavigationStartTime != nil)
+
+                if !isHistoryRelated {
+                    addNewPage(url: finalURL, title: title)
+                    stateModel?.syncCurrentURL(finalURL)
+                    dbg("🆕 새 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                } else {
+                    updateCurrentPageTitle(title)
+                    if stateModel?.currentURL != finalURL { stateModel?.syncCurrentURL(finalURL) }
+                    dbg("🔄 히스토리 관련 상태 - 제목만 업데이트: '\(title)' [history:\(isHistoryNavigation), endTime:\(historyNavigationEndTime != nil), startTime:\(historyNavigationStartTime != nil)]")
+                }
             }
         }
 
@@ -1326,7 +1452,7 @@ func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let loginState = isInLoginFlow ? "🔒Login" : ""
         let reloadState = isInActiveReloadWindow() ? "🔄Reload" : ""
         let homeState = isInHomeNavigationHandling() ? "🏠Home" : ""
-        let userState = isInUserTriggeredNavigation() ? "👆User" : ""
+        let userState = isInUserTriggeredNavigation() ? (isStrongUserClick ? "💪Strong" : "👆User") : ""
         
         // 🔧 **수정**: 히스토리 상태를 더 명확하게 표시
         let historyState: String = {
@@ -1470,6 +1596,7 @@ struct SessionHistoryRowView: View {
         case .reloadSoft, .reloadHard: return "arrow.clockwise"
         case .navListFirst: return "list.bullet"
         case .spaNavigation: return "sparkles"
+        case .userClick: return "hand.tap.fill"  // 💪 사용자 클릭 아이콘
         default: return "circle"
         }
     }
@@ -1480,6 +1607,7 @@ struct SessionHistoryRowView: View {
         case .reloadSoft, .reloadHard: return .orange
         case .navListFirst: return .purple
         case .spaNavigation: return .blue
+        case .userClick: return .red  // 💪 사용자 클릭 색상
         default: return .gray
         }
     }
