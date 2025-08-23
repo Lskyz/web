@@ -97,6 +97,40 @@ struct PageRecord: Codable, Identifiable, Hashable {
     }
 }
 
+// 🔧 [추가] 검색 전용 유틸 (정규화/식별)
+extension PageRecord {
+    static func isSearchURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        let engines = ["google.com","bing.com","yahoo.com","duckduckgo.com","baidu.com"]
+        guard engines.contains(where: { host.contains($0) }) else { return false }
+        guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = comps.queryItems else { return false }
+        return items.contains { ["q","p","query","search"].contains($0.name) }
+    }
+
+    static func normalizeSearchURL(_ url: URL) -> String {
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        if comps?.scheme == "http" { comps?.scheme = "https" }
+
+        let host = url.host?.lowercased() ?? ""
+        if host.contains("google.com") {
+            if let items = comps?.queryItems {
+                let filtered = items.filter { $0.name == "q" }
+                comps?.queryItems = filtered.isEmpty ? nil : filtered
+            }
+        } else if host.contains("bing.com") {
+            comps?.queryItems = comps?.queryItems?.filter { $0.name == "q" }
+        } else if host.contains("yahoo.com") {
+            comps?.queryItems = comps?.queryItems?.filter { $0.name == "p" }
+        } else {
+            comps?.queryItems = comps?.queryItems?.filter { ["q","query","search","p"].contains($0.name) }
+        }
+
+        comps?.fragment = nil
+        return comps?.url?.absoluteString ?? url.absoluteString
+    }
+}
+
 // MARK: - 세션 저장/복원
 struct WebViewSession: Codable {
     let pageRecords: [PageRecord]
@@ -149,10 +183,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var restoreQueue: [Int] = [] // 목표 인덱스 큐
     private(set) var expectedNormalizedURL: String? = nil
     
-    // 🔍 **구글 검색 SPA 역행 방지**: push 직후 pop 패턴 감지
+    // 🔍 구글 검색 SPA 역행 방지 (기존)
     private var lastPushTimestamp: Date = .distantPast
     private var lastPushURL: URL?
-    private let pushPopThresholdSeconds: TimeInterval = 0.5 // push 후 0.5초 내 pop은 의심
+    private let pushPopThresholdSeconds: TimeInterval = 0.5
+    
+    // ✅ [추가] 전환 스냅샷: push 직후 역행 pop 1회만 무시
+    private var recentSearchTransition: (fromNormalized: String, toNormalized: String, at: Date)?
+    
+    // ✅ [추가] pop 무시 윈도우
+    private static let searchPopIgnoreWindow: TimeInterval = 1.0
     
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
@@ -234,39 +274,31 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func isHistoryNavigationActive() -> Bool {
-        return isRestoring
+        return isRestoring || !restoreQueue.isEmpty
     }
     
     // MARK: - 🔍 **구글 검색 SPA 역행 방지 로직**
     
-    /// 구글 검색 쿼리 추출 (q 파라미터)
+    // 보조: 구글 q 비교 (참고용)
     private func extractGoogleSearchQuery(from url: URL) -> String? {
         guard url.host?.contains("google") == true,
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let queryItems = components.queryItems else { return nil }
-        
-        return queryItems.first(where: { $0.name == "q" })?.value
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let items = comps.queryItems else { return nil }
+        return items.first(where: { $0.name == "q" })?.value
     }
-    
-    /// 현재 페이지와 pop 대상의 구글 검색 쿼리 비교
+
     private func isSameGoogleSearchQuery(popURL: URL) -> Bool {
-        guard let currentRecord = currentPageRecord else { return false }
-        
-        let currentQuery = extractGoogleSearchQuery(from: currentRecord.url)
-        let popQuery = extractGoogleSearchQuery(from: popURL)
-        
-        return currentQuery != nil && popQuery != nil && currentQuery == popQuery
+        guard let cur = currentPageRecord else { return false }
+        let a = extractGoogleSearchQuery(from: cur.url)
+        let b = extractGoogleSearchQuery(from: popURL)
+        return a != nil && b != nil && a == b
     }
-    
-    /// push 직후 pop 패턴 감지 (구글 특성)
+
     private func isRecentPushPopPattern(popURL: URL) -> Bool {
-        let timeSincePush = Date().timeIntervalSince(lastPushTimestamp)
-        let withinThreshold = timeSincePush <= pushPopThresholdSeconds
-        
-        // push된 URL과 현재 pop URL이 다른 경우만 패턴으로 감지
-        let isDifferentFromPush = lastPushURL?.absoluteString != popURL.absoluteString
-        
-        return withinThreshold && isDifferentFromPush
+        let dt = Date().timeIntervalSince(lastPushTimestamp)
+        let within = dt <= pushPopThresholdSeconds
+        let different = lastPushURL?.absoluteString != popURL.absoluteString
+        return within && different
     }
     
     // MARK: - 🌐 **SPA 네비게이션 처리** (큐 기반 복원 적용)
@@ -282,58 +314,80 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         switch type {
         case "push":
-            // 🔍 **구글 검색 push 추적**: 최근 push 정보 기록
             lastPushTimestamp = Date()
             lastPushURL = url
             dbg("🔍 Push 추적: \(url.absoluteString)")
-            
-            // 🎯 **복원 중에는 새 페이지 추가 금지**
-            if isRestoring {
-                dbg("🤫 복원 중 SPA push 무시: \(url.absoluteString)")
+
+            if isHistoryNavigationActive() {
+                dbg("🤫 복원(활성) 중 SPA push 무시: \(url.absoluteString)")
                 return
             }
-            // 모든 push는 새 페이지 (홈페이지든 일반페이지든)
             addNewPage(url: url, title: title)
+
+            // [추가] 검색 push면 전환 스냅샷 저장
+            if PageRecord.isSearchURL(url) {
+                let toNorm = PageRecord.normalizeSearchURL(url)
+                let fromNorm: String = {
+                    if let cur = currentPageRecord, PageRecord.isSearchURL(cur.url) {
+                        return PageRecord.normalizeSearchURL(cur.url)
+                    }
+                    return ""
+                }()
+                recentSearchTransition = (fromNormalized: fromNorm, toNormalized: toNorm, at: Date())
+            }
             
         case "replace":
             // replace는 현재 페이지 교체 (복원 중이어도 허용)
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
         case "pop":
-            // 🔍 **구글 검색 역행 방지 로직 추가**
-            
-            // 1️⃣ 현재 페이지와 동일한 구글 검색 쿼리면 복원 금지
+            // [가드1] 검색 자기 자신 pop 무시
+            if PageRecord.isSearchURL(url) {
+                let newNorm = PageRecord.normalizeSearchURL(url)
+                if let cur = currentPageRecord,
+                   PageRecord.isSearchURL(cur.url),
+                   PageRecord.normalizeSearchURL(cur.url) == newNorm {
+                    dbg("🔕 SPA pop 무시 - 현재 검색과 동일")
+                    recentSearchTransition = nil
+                    return
+                }
+
+                // [가드2] push 직후 역행 pop 1회 무시
+                if let snap = recentSearchTransition {
+                    let dt = Date().timeIntervalSince(snap.at)
+                    if dt <= Self.searchPopIgnoreWindow && newNorm == snap.fromNormalized {
+                        dbg("🔕 SPA pop 무시 - push 직후 역행(\(String(format: "%.3f", dt))s)")
+                        recentSearchTransition = nil
+                        return
+                    }
+                }
+            }
+
+            // [보조] 구글 q만 동일해도 무시
             if isSameGoogleSearchQuery(popURL: url) {
-                dbg("🔍 SPA pop 무시: 동일 구글 검색 쿼리 (자기 자신 점프 방지)")
+                dbg("🔕 SPA pop 무시 - 동일 구글 검색 쿼리")
                 return
             }
-            
-            // 2️⃣ push 직후 pop 패턴이면 역행 무시
-            if isRecentPushPopPattern(popURL: url) {
-                dbg("🔍 SPA pop 무시: push 직후 역행 패턴 감지 (\(Date().timeIntervalSince(lastPushTimestamp))초 전 push)")
-                return
-            }
-            
-            // 🎯 **기존 로직**: pop에서 기존 엔트리 탐색 후 큐 기반 복원 시도
+
+            // 기존 엔트리 복원 or 새 페이지
             if let existingIndex = findPageIndex(for: url) {
-                dbg("🔄 SPA pop - 기존 히스토리 항목 발견, 큐에 추가: \(existingIndex)")
-                
-                // 직렬화 큐에 추가 (새 항목 생성 안함)
+                dbg("🔄 SPA pop - 기존 히스토리 항목, 큐 추가: \(existingIndex)")
                 enqueueRestore(to: existingIndex)
-                
             } else {
-                // 기존 항목이 없으면 새 페이지 추가 (복원 중이 아닐 때만)
-                if !isRestoring {
+                if !isHistoryNavigationActive() {
                     addNewPage(url: url, title: title)
                     dbg("🔄 SPA pop - 새 페이지 추가")
                 } else {
-                    dbg("🤫 복원 중 SPA pop 무시: \(url.absoluteString)")
+                    dbg("🤫 복원(활성) 중 SPA pop 무시: \(url.absoluteString)")
                 }
             }
+
+            // [마무리] 스냅샷 소멸
+            recentSearchTransition = nil
             
         case "hash", "dom":
             // 홈페이지면 새 페이지, 아니면 현재 페이지 교체
-            if isHomepageURL(url) && !isRestoring {
+            if isHomepageURL(url) && !isHistoryNavigationActive() {
                 addNewPage(url: url, title: title)
             } else {
                 replaceCurrentPage(url: url, title: title, siteType: siteType)
@@ -348,7 +402,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         
         // 🎯 **복원 중에는 전역 히스토리 추가 금지**
-        if type != "title" && !isRestoring && !Self.globalHistory.contains(where: { $0.url == url }) {
+        if type != "title" && !isHistoryNavigationActive() && !Self.globalHistory.contains(where: { $0.url == url }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
     }
@@ -539,7 +593,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     private func replaceCurrentPage(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
-            if !isRestoring {
+            if !isHistoryNavigationActive() {
                 addNewPage(url: url, title: title)
             }
             return
@@ -559,15 +613,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (큐 기반 복원 적용)**
     
     func addNewPage(url: URL, title: String = "") {
-        // 🔒 로그인 관련은 완전 무시
         if PageRecord.isLoginRelatedURL(url) {
             dbg("🔒 로그인 페이지 히스토리 제외: \(url.absoluteString)")
             return
         }
         
-        // 🎯 **복원 중에는 새 페이지 추가 금지**
-        if isRestoring {
-            dbg("🤫 복원 중 새 페이지 추가 차단: \(url.absoluteString)")
+        // ✅ 큐 활성도 포함해서 차단
+        if isHistoryNavigationActive() {
+            dbg("🤫 복원(활성) 중 새 페이지 추가 차단: \(url.absoluteString)")
             return
         }
         
@@ -720,7 +773,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func handleSwipeGestureDetected(to url: URL) {
         // ✅ **절대 원칙**: 히스토리에서 찾더라도 무조건 새 페이지로 추가
         // 세션 점프 완전 방지
-        if !isRestoring {
+        if !isHistoryNavigationActive() {
             addNewPage(url: url, title: "")
             stateModel?.syncCurrentURL(url)
             dbg("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
@@ -779,15 +832,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func resetNavigationFlags() {
-        // 큐 초기화 및 복원 상태 리셋
         isRestoring = false
         expectedNormalizedURL = nil
         restoreQueue.removeAll()
-        
-        // 🔍 구글 검색 추적 상태도 리셋
+
         lastPushTimestamp = .distantPast
         lastPushURL = nil
-        
+        recentSearchTransition = nil   // ✅ [추가]
+
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
     
