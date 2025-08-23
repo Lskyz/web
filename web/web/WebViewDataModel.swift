@@ -6,7 +6,7 @@
 //  🔧 연타 레이스 방지 - 1-in-flight 직렬화 큐 시스템
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
 //  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
-//  🔍 구글 검색 SPA 역행 네비게이션 방지 추가
+//  🔍 구글 검색 SPA 역행 네비게이션 방지 추가 + pop 무시 강화
 //
 
 import Foundation
@@ -53,6 +53,15 @@ struct PageRecord: Codable, Identifiable, Hashable {
         lastAccessed = Date()
     }
     
+    // 🔧 **비교키 단일화**: 검색이면 검색 정규화, 아니면 일반 정규화
+    static func comparableKey(for url: URL) -> String {
+        return isSearchURL(url) ? normalizeSearchURL(url) : normalizeURL(url)
+    }
+    
+    func normalizedURL() -> String {
+        return Self.comparableKey(for: self.url)
+    }
+    
     // URL 정규화 (게시글 구분용 핵심 파라미터 유지)
     static func normalizeURL(_ url: URL) -> String {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -81,10 +90,6 @@ struct PageRecord: Codable, Identifiable, Hashable {
         return components?.url?.absoluteString ?? url.absoluteString
     }
     
-    func normalizedURL() -> String {
-        return Self.normalizeURL(self.url)
-    }
-    
     // 로그인 관련 URL 감지
     static func isLoginRelatedURL(_ url: URL) -> Bool {
         let urlString = url.absoluteString.lowercased()
@@ -97,7 +102,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
     }
 }
 
-// 🔧 [추가] 검색 전용 유틸 (정규화/식별)
+// 🔧 검색 전용 유틸 (정규화/식별)
 extension PageRecord {
     static func isSearchURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
@@ -197,10 +202,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var lastPushURL: URL?
     private let pushPopThresholdSeconds: TimeInterval = 0.5
     
-    // ✅ [추가] 전환 스냅샷: push 직후 역행 pop 1회만 무시
+    // ✅ **강화된 검색 전환 스냅샷**: push 직후 검색 전/후로의 pop 1회 무시
     private var recentSearchTransition: (fromNormalized: String, toNormalized: String, at: Date)?
     
-    // ✅ [추가] pop 무시 윈도우
+    // ✅ pop 무시 윈도우 (1초로 확대)
     private static let searchPopIgnoreWindow: TimeInterval = 1.0
     
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
@@ -259,6 +264,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         updateNavigationState()
         
         let targetRecord = pageHistory[targetIndex]
+        // 🔧 **수정**: comparableKey 사용
         expectedNormalizedURL = targetRecord.normalizedURL()
         
         dbg("🔄 복원 시작: 인덱스 \(targetIndex) → '\(targetRecord.title)' (큐 남은 건수: \(restoreQueue.count))")
@@ -310,7 +316,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return within && different
     }
     
-    // MARK: - 🌐 **SPA 네비게이션 처리** (큐 기반 복원 적용)
+    // MARK: - 🌐 **SPA 네비게이션 처리** (강화된 pop 무시)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
         dbg("🌐 SPA \(type): \(siteType) | \(url.absoluteString)")
@@ -333,16 +339,17 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
             addNewPage(url: url, title: title)
 
-            // [추가] 검색 push면 전환 스냅샷 저장
+            // 🔧 **수정**: 검색 push 시 이전/다음 스냅샷 정확히 저장
             if PageRecord.isSearchURL(url) {
                 let toNorm = PageRecord.normalizeSearchURL(url)
                 let fromNorm: String = {
-                    if let cur = currentPageRecord, PageRecord.isSearchURL(cur.url) {
-                        return PageRecord.normalizeSearchURL(cur.url)
+                    if let cur = currentPageRecord {
+                        return PageRecord.comparableKey(for: cur.url)
                     }
                     return ""
                 }()
                 recentSearchTransition = (fromNormalized: fromNorm, toNormalized: toNorm, at: Date())
+                dbg("📸 검색 전환 스냅샷 저장: '\(fromNorm)' → '\(toNorm)'")
             }
             
         case "replace":
@@ -350,6 +357,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
         case "pop":
+            // 🔧 **강화된 pop 무시 로직**
+            
             // [가드1] 검색 자기 자신 pop 무시
             if PageRecord.isSearchURL(url) {
                 let newNorm = PageRecord.normalizeSearchURL(url)
@@ -360,12 +369,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     recentSearchTransition = nil
                     return
                 }
+            }
 
-                // [가드2] push 직후 역행 pop 1회 무시
-                if let snap = recentSearchTransition {
-                    let dt = Date().timeIntervalSince(snap.at)
-                    if dt <= Self.searchPopIgnoreWindow && newNorm == snap.fromNormalized {
-                        dbg("🔕 SPA pop 무시 - push 직후 역행(\(String(format: "%.3f", dt))s)")
+            // 🔧 **핵심 강화**: 검색 push 직후, '검색 전/후 스냅샷'으로의 회귀 pop 1회 무시
+            if let snap = recentSearchTransition {
+                let dt = Date().timeIntervalSince(snap.at)
+                if dt <= Self.searchPopIgnoreWindow {
+                    let popKey = PageRecord.comparableKey(for: url)
+                    if popKey == snap.fromNormalized || popKey == snap.toNormalized {
+                        dbg("🔕 SPA pop 무시 - 검색 전/후 스냅샷 회귀(\(String(format: "%.3f", dt))s)")
                         recentSearchTransition = nil
                         return
                     }
@@ -635,7 +647,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         // ✅ **핵심 로직**: 현재 페이지와 같으면 제목만 업데이트
         if let currentRecord = currentPageRecord,
-           currentRecord.normalizedURL() == PageRecord.normalizeURL(url) {
+           currentRecord.normalizedURL() == PageRecord.comparableKey(for: url) {
             updatePageTitle(for: url, title: title)
             dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
             return
@@ -674,7 +686,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if let stateModelURL = stateModel?.currentURL {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = currentRecord.normalizedURL()
-            let stateNormalizedURL = PageRecord.normalizeURL(stateModelURL)
+            let stateNormalizedURL = PageRecord.comparableKey(for: stateModelURL)
             
             // URL이 일치하지 않으면 제목 업데이트 거부
             if currentNormalizedURL != stateNormalizedURL {
@@ -695,7 +707,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func updatePageTitle(for url: URL, title: String) {
         guard !title.isEmpty else { return }
         
-        let normalizedURL = PageRecord.normalizeURL(url)
+        let normalizedURL = PageRecord.comparableKey(for: url)
         
         // 해당 URL을 가진 가장 최근 레코드 찾기
         for i in stride(from: pageHistory.count - 1, through: 0, by: -1) {
@@ -794,7 +806,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func findPageIndex(for url: URL) -> Int? {
         // ⚠️ **주의**: 이 함수는 미리보기/캐시용만 사용
         // 절대로 이 결과로 navigateToIndex 하지 말 것!
-        let normalizedURL = PageRecord.normalizeURL(url)
+        let normalizedURL = PageRecord.comparableKey(for: url)
         let matchingIndices = pageHistory.enumerated().compactMap { index, record in
             record.normalizedURL() == normalizedURL ? index : nil
         }
@@ -847,7 +859,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
         lastPushTimestamp = .distantPast
         lastPushURL = nil
-        recentSearchTransition = nil   // ✅ [추가]
+        recentSearchTransition = nil   // ✅ 스냅샷도 리셋
 
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
@@ -903,7 +915,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
                 
                 if let expectedNormalized = expectedNormalizedURL {
-                    let actualNormalized = PageRecord.normalizeURL(finalURL)
+                    // 🔧 **수정**: comparableKey 사용
+                    let actualNormalized = PageRecord.comparableKey(for: finalURL)
                     
                     if expectedNormalized == actualNormalized {
                         // URL이 예상과 일치 - 제목만 업데이트
