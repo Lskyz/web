@@ -6,6 +6,7 @@
 //  🔧 연타 레이스 방지 - 1-in-flight 직렬화 큐 시스템
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
 //  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
+//  🔍 구글 검색 SPA 역행 네비게이션 방지 추가
 //
 
 import Foundation
@@ -148,6 +149,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var restoreQueue: [Int] = [] // 목표 인덱스 큐
     private(set) var expectedNormalizedURL: String? = nil
     
+    // 🔍 **구글 검색 SPA 역행 방지**: push 직후 pop 패턴 감지
+    private var lastPushTimestamp: Date = .distantPast
+    private var lastPushURL: URL?
+    private let pushPopThresholdSeconds: TimeInterval = 0.5 // push 후 0.5초 내 pop은 의심
+    
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
     
@@ -231,6 +237,38 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return isRestoring
     }
     
+    // MARK: - 🔍 **구글 검색 SPA 역행 방지 로직**
+    
+    /// 구글 검색 쿼리 추출 (q 파라미터)
+    private func extractGoogleSearchQuery(from url: URL) -> String? {
+        guard url.host?.contains("google") == true,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else { return nil }
+        
+        return queryItems.first(where: { $0.name == "q" })?.value
+    }
+    
+    /// 현재 페이지와 pop 대상의 구글 검색 쿼리 비교
+    private func isSameGoogleSearchQuery(popURL: URL) -> Bool {
+        guard let currentRecord = currentPageRecord else { return false }
+        
+        let currentQuery = extractGoogleSearchQuery(from: currentRecord.url)
+        let popQuery = extractGoogleSearchQuery(from: popURL)
+        
+        return currentQuery != nil && popQuery != nil && currentQuery == popQuery
+    }
+    
+    /// push 직후 pop 패턴 감지 (구글 특성)
+    private func isRecentPushPopPattern(popURL: URL) -> Bool {
+        let timeSincePush = Date().timeIntervalSince(lastPushTimestamp)
+        let withinThreshold = timeSincePush <= pushPopThresholdSeconds
+        
+        // push된 URL과 현재 pop URL이 다른 경우만 패턴으로 감지
+        let isDifferentFromPush = lastPushURL?.absoluteString != popURL.absoluteString
+        
+        return withinThreshold && isDifferentFromPush
+    }
+    
     // MARK: - 🌐 **SPA 네비게이션 처리** (큐 기반 복원 적용)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
@@ -244,6 +282,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         switch type {
         case "push":
+            // 🔍 **구글 검색 push 추적**: 최근 push 정보 기록
+            lastPushTimestamp = Date()
+            lastPushURL = url
+            dbg("🔍 Push 추적: \(url.absoluteString)")
+            
             // 🎯 **복원 중에는 새 페이지 추가 금지**
             if isRestoring {
                 dbg("🤫 복원 중 SPA push 무시: \(url.absoluteString)")
@@ -257,7 +300,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
         case "pop":
-            // 🎯 **pop에서 기존 엔트리 탐색 후 큐 기반 복원 시도**
+            // 🔍 **구글 검색 역행 방지 로직 추가**
+            
+            // 1️⃣ 현재 페이지와 동일한 구글 검색 쿼리면 복원 금지
+            if isSameGoogleSearchQuery(popURL: url) {
+                dbg("🔍 SPA pop 무시: 동일 구글 검색 쿼리 (자기 자신 점프 방지)")
+                return
+            }
+            
+            // 2️⃣ push 직후 pop 패턴이면 역행 무시
+            if isRecentPushPopPattern(popURL: url) {
+                dbg("🔍 SPA pop 무시: push 직후 역행 패턴 감지 (\(Date().timeIntervalSince(lastPushTimestamp))초 전 push)")
+                return
+            }
+            
+            // 🎯 **기존 로직**: pop에서 기존 엔트리 탐색 후 큐 기반 복원 시도
             if let existingIndex = findPageIndex(for: url) {
                 dbg("🔄 SPA pop - 기존 히스토리 항목 발견, 큐에 추가: \(existingIndex)")
                 
@@ -726,6 +783,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         isRestoring = false
         expectedNormalizedURL = nil
         restoreQueue.removeAll()
+        
+        // 🔍 구글 검색 추적 상태도 리셋
+        lastPushTimestamp = .distantPast
+        lastPushURL = nil
+        
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
     
