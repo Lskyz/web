@@ -4,6 +4,7 @@
 //  ✅ 히스토리 네비게이션 중 새 페이지 추가 차단 강화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 히스토리 복원 플래그 DataModel 연동
+//  🛡️ 폴백 메커니즘 및 안정성 강화 추가
 //
 
 import Foundation
@@ -18,7 +19,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewStateModel (캐싱 기반 부드러운 네비게이션)
+// MARK: - WebViewStateModel (캐싱 기반 부드러운 네비게이션 + 폴백 강화)
 final class WebViewStateModel: NSObject, ObservableObject {
 
     var tabID: UUID?
@@ -38,20 +39,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
 
-            // ✅ 웹뷰 로드 조건 개선 - 즉석 네비게이션 시 로드하지 않음
-            let shouldLoad = url != oldValue && 
-                           !dataModel.isRestoringSession &&
-                           !isNavigatingFromWebView &&
-                           !dataModel.isHistoryNavigationActive() &&
-                           !isInstantNavigation // 📸 즉석 네비게이션 시 로드 방지
-            
-            if shouldLoad {
-                if let webView = webView {
-                    webView.load(URLRequest(url: url))
-                } else {
-                    dbg("⚠️ 웹뷰가 없어서 로드 불가")
-                }
-            }
+            // 🛡️ **폴백 강화**: 로드 조건 검사 및 폴백 메커니즘
+            handleURLChange(url: url, oldURL: oldValue)
         }
     }
     
@@ -63,6 +52,11 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // 🎯 **새로 추가**: 조용한 새로고침 플래그 (로딩 인디케이터 숨김)
     internal var isSilentRefresh: Bool = false
+    
+    // 🛡️ **새로 추가**: 폴백 추적 및 강제 로딩
+    private var fallbackAttempts: [String: Int] = [:]
+    private var lastFailedURL: URL?
+    private var navigationTimeoutTimer: Timer?
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -122,6 +116,205 @@ final class WebViewStateModel: NSObject, ObservableObject {
         setupDataModelObservation()
     }
     
+    // MARK: - 🛡️ **새로 추가**: URL 변경 처리 및 폴백 메커니즘
+    
+    private func handleURLChange(url: URL, oldURL: URL?) {
+        let urlKey = url.absoluteString
+        
+        // URL 변경 감지 및 디버그 로그
+        if url != oldURL {
+            dbg("📍 URL 변경 감지: \(url.absoluteString)")
+        }
+        
+        // 로드 조건 검사
+        let loadingConditions = evaluateLoadingConditions(url: url, oldURL: oldURL)
+        
+        // 🛡️ 조건별 처리 및 폴백
+        if loadingConditions.shouldLoad {
+            // 정상 로딩 경로
+            performWebViewLoad(url: url, reason: "정상조건")
+            resetFallbackAttempts(for: urlKey)
+        } else {
+            // 로딩이 차단된 경우 - 구체적 원인 로깅 및 폴백 시도
+            dbg("🚫 로딩 차단됨: \(loadingConditions.blockingReasons.joined(separator: ", "))")
+            
+            // 🛡️ 폴백 메커니즘 실행
+            attemptFallbackLoading(url: url, blockingReasons: loadingConditions.blockingReasons)
+        }
+    }
+    
+    private func evaluateLoadingConditions(url: URL, oldURL: URL?) -> (shouldLoad: Bool, blockingReasons: [String]) {
+        var blockingReasons: [String] = []
+        
+        // URL 동일성 체크
+        if url == oldURL {
+            blockingReasons.append("URL동일")
+        }
+        
+        // 세션 복원 중
+        if dataModel.isRestoringSession {
+            blockingReasons.append("세션복원중")
+        }
+        
+        // 웹뷰 내부 네비게이션
+        if isNavigatingFromWebView {
+            blockingReasons.append("웹뷰내부네비")
+        }
+        
+        // 히스토리 네비게이션 활성
+        if dataModel.isHistoryNavigationActive() {
+            blockingReasons.append("히스토리네비활성")
+        }
+        
+        // 즉석 네비게이션
+        if isInstantNavigation {
+            blockingReasons.append("즉석네비")
+        }
+        
+        let shouldLoad = blockingReasons.isEmpty
+        return (shouldLoad: shouldLoad, blockingReasons: blockingReasons)
+    }
+    
+    private func attemptFallbackLoading(url: URL, blockingReasons: [String]) {
+        let urlKey = url.absoluteString
+        let currentAttempts = fallbackAttempts[urlKey] ?? 0
+        
+        // 🛡️ 최대 3회까지 폴백 시도
+        guard currentAttempts < 3 else {
+            dbg("❌ 폴백 시도 한계 초과: \(url.absoluteString)")
+            return
+        }
+        
+        fallbackAttempts[urlKey] = currentAttempts + 1
+        dbg("🔄 폴백 시도 \(currentAttempts + 1)/3: \(blockingReasons.joined(separator: ","))")
+        
+        // 🛡️ 상황별 폴백 전략
+        if blockingReasons.contains("히스토리네비활성") {
+            // 히스토리 네비게이션 중이면 큐 완료 후 재시도
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.retryURLLoad(url: url, reason: "히스토리네비완료대기")
+            }
+        } else if blockingReasons.contains("세션복원중") {
+            // 세션 복원 중이면 복원 완료 후 재시도
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.retryURLLoad(url: url, reason: "세션복원완료대기")
+            }
+        } else if blockingReasons.contains("웹뷰내부네비") || blockingReasons.contains("즉석네비") {
+            // 내부 네비게이션 플래그 리셋 후 재시도
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                self.isNavigatingFromWebView = false
+                self.isInstantNavigation = false
+                self.retryURLLoad(url: url, reason: "플래그리셋후")
+            }
+        } else {
+            // 기타 경우 강제 로딩
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.performWebViewLoad(url: url, reason: "강제로딩", force: true)
+            }
+        }
+    }
+    
+    private func retryURLLoad(url: URL, reason: String) {
+        // 현재 URL과 일치하는 경우에만 재시도
+        guard currentURL == url else {
+            dbg("🔄 재시도 취소: URL 불일치 (\(reason))")
+            return
+        }
+        
+        // 로딩 조건 재평가
+        let conditions = evaluateLoadingConditions(url: url, oldURL: nil)
+        if conditions.shouldLoad {
+            performWebViewLoad(url: url, reason: "재시도(\(reason))")
+            resetFallbackAttempts(for: url.absoluteString)
+        } else {
+            dbg("🔄 재시도 실패: 여전히 차단됨 - \(conditions.blockingReasons.joined(separator: ","))")
+            // 한 번 더 폴백 시도
+            attemptFallbackLoading(url: url, blockingReasons: conditions.blockingReasons)
+        }
+    }
+    
+    private func performWebViewLoad(url: URL, reason: String, force: Bool = false) {
+        guard let webView = webView else {
+            dbg("⚠️ 웹뷰가 없어서 로드 불가 (\(reason))")
+            return
+        }
+        
+        // 🛡️ 웹뷰 상태 검증
+        let webViewState = validateWebViewState(webView: webView)
+        if !webViewState.isHealthy && !force {
+            dbg("⚠️ 웹뷰 상태 불량 - 복구 시도 (\(reason))")
+            // 웹뷰 복구 시도
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.performWebViewLoad(url: url, reason: "\(reason)+복구", force: true)
+            }
+            return
+        }
+        
+        // 실제 로딩 수행
+        webView.load(URLRequest(url: url))
+        dbg("🌐 웹뷰 로딩 시작: \(url.absoluteString) (\(reason))")
+        
+        // 🛡️ 네비게이션 타임아웃 설정 (10초)
+        setupNavigationTimeout(for: url)
+    }
+    
+    private func validateWebViewState(webView: WKWebView) -> (isHealthy: Bool, issues: [String]) {
+        var issues: [String] = []
+        
+        // 기본 상태 체크
+        if webView.isLoading && webView.estimatedProgress == 0.0 {
+            issues.append("무한로딩")
+        }
+        
+        // URL 불일치 체크
+        if let webViewURL = webView.url, let currentURL = currentURL {
+            let webViewNormalized = PageRecord.normalizeURL(webViewURL)
+            let currentNormalized = PageRecord.normalizeURL(currentURL)
+            if webViewNormalized != currentNormalized {
+                issues.append("URL불일치")
+            }
+        }
+        
+        let isHealthy = issues.isEmpty
+        if !isHealthy {
+            dbg("🩺 웹뷰 상태 검증: \(issues.joined(separator: ","))")
+        }
+        
+        return (isHealthy: isHealthy, issues: issues)
+    }
+    
+    private func setupNavigationTimeout(for url: URL) {
+        // 이전 타이머 정리
+        navigationTimeoutTimer?.invalidate()
+        
+        // 새 타이머 설정
+        navigationTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            guard let self = self, self.currentURL == url else { return }
+            
+            // 타임아웃 처리
+            self.dbg("⏰ 네비게이션 타임아웃: \(url.absoluteString)")
+            self.handleNavigationTimeout(for: url)
+        }
+    }
+    
+    private func handleNavigationTimeout(for url: URL) {
+        // 웹뷰 상태 재검증
+        guard let webView = webView else { return }
+        let validation = validateWebViewState(webView: webView)
+        
+        if !validation.isHealthy {
+            dbg("🔧 타임아웃 후 웹뷰 복구 시도")
+            // 강제 새로고침
+            webView.reload()
+        }
+        
+        lastFailedURL = url
+    }
+    
+    private func resetFallbackAttempts(for urlKey: String) {
+        fallbackAttempts.removeValue(forKey: urlKey)
+    }
+    
     // MARK: - 🎯 **핵심 추가**: 웹뷰 네이티브 네비게이션 완전 제어
     
     private func setupWebViewNavigation(_ webView: WKWebView) {
@@ -155,6 +348,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // MARK: - DataModel과의 통신 메서드들
     
     func handleLoadingStart() {
+        // 네비게이션 타이머 정리 (로딩이 시작되었으므로)
+        navigationTimeoutTimer?.invalidate()
+        
         // 🎯 조용한 새로고침 시에는 로딩 인디케이터 표시 안함
         if !isInstantNavigation && !isSilentRefresh {
             isLoading = true
@@ -162,6 +358,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func handleLoadingFinish() {
+        // 네비게이션 타이머 정리
+        navigationTimeoutTimer?.invalidate()
+        
         // 🎯 조용한 새로고침 종료
         if !isInstantNavigation && !isSilentRefresh {
             isLoading = false
@@ -173,6 +372,12 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("🤫 조용한 새로고침 완료")
         }
         
+        // 🛡️ 성공적인 로딩 후 상태 정리
+        if let currentURL = currentURL {
+            resetFallbackAttempts(for: currentURL.absoluteString)
+            lastFailedURL = nil
+        }
+        
         // ✨ 데스크탑 모드일 때 줌 레벨 재적용
         if isDesktopMode {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -182,10 +387,19 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func handleLoadingError() {
+        // 네비게이션 타이머 정리
+        navigationTimeoutTimer?.invalidate()
+        
         if !isInstantNavigation && !isSilentRefresh {
             isLoading = false
         }
         isSilentRefresh = false
+        
+        // 🛡️ 에러 발생 시 폴백 시도
+        if let currentURL = currentURL {
+            lastFailedURL = currentURL
+            dbg("❌ 로딩 에러 발생, 폴백 고려: \(currentURL.absoluteString)")
+        }
     }
     
     func syncCurrentURL(_ url: URL) {
@@ -285,6 +499,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     // ✨ 로딩 중지 메서드
     func stopLoading() {
+        navigationTimeoutTimer?.invalidate()
         webView?.stopLoading()
         isLoading = false
         isSilentRefresh = false
@@ -293,6 +508,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     func clearHistory() {
         dataModel.clearHistory()
+        // 폴백 상태도 정리
+        fallbackAttempts.removeAll()
+        lastFailedURL = nil
     }
 
     // ✨ 데스크탑 모드 토글 메서드
@@ -341,7 +559,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - 🎯 **큐 기반 부드러운 히스토리 네비게이션** (DataModel 연동)
+    // MARK: - 🎯 **큐 기반 부드러운 히스토리 네비게이션** (DataModel 연동 + 폴백 강화)
     
     func goBack() {
         guard canGoBack else { 
@@ -403,13 +621,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 🎯 **새로 추가**: 큐 기반 복원을 위한 메서드
+    // 🎯 **새로 추가**: 큐 기반 복원을 위한 메서드 (폴백 강화)
     func performQueuedRestore(to url: URL) {
-        // 📸 **중요**: 캐시 활용 부드러운 로딩
+        // 📸 **중요**: 캐시 활용 부드러운 로딩 (폴백 포함)
         performSmoothNavigation(to: url, webView: webView, direction: .back)
     }
     
-    // 🎯 **새로 추가**: 캐싱 기반 부드러운 네비게이션 구현
+    // 🎯 **새로 추가**: 캐싱 기반 부드러운 네비게이션 구현 (폴백 강화)
     private enum NavigationDirection {
         case back, forward
     }
@@ -417,13 +635,30 @@ final class WebViewStateModel: NSObject, ObservableObject {
     private func performSmoothNavigation(to url: URL, webView: WKWebView?, direction: NavigationDirection) {
         guard let webView = webView else {
             dbg("⚠️ 웹뷰 없음 - 부드러운 네비게이션 스킵")
+            // 🛡️ 폴백: 웹뷰가 없어도 URL은 동기화
+            syncCurrentURL(url)
             return
         }
+        
+        // 🛡️ 웹뷰 상태 사전 검증
+        let webViewValidation = validateWebViewState(webView: webView)
         
         // 1️⃣ 조용한 새로고침 플래그 설정 (로딩 인디케이터 숨김)
         setSilentRefresh(true)
         
         // 2️⃣ CustomWebView의 캐시에서 스냅샷 확인 및 즉시 표시 알림
+        let cacheResult = showCachedPageIfAvailable(for: url, direction: direction)
+        
+        // 3️⃣ 백그라운드에서 조용히 실제 페이지 로드 (폴백 포함)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.performBackgroundLoad(webView: webView, url: url, 
+                                     cacheAvailable: cacheResult, 
+                                     webViewHealthy: webViewValidation.isHealthy)
+        }
+    }
+    
+    private func showCachedPageIfAvailable(for url: URL, direction: NavigationDirection) -> Bool {
+        // 캐시 표시 요청
         NotificationCenter.default.post(
             name: .init("ShowCachedPageBeforeLoad"),
             object: nil,
@@ -433,11 +668,72 @@ final class WebViewStateModel: NSObject, ObservableObject {
             ]
         )
         
-        // 3️⃣ 백그라운드에서 조용히 실제 페이지 로드
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            webView.load(URLRequest(url: url))
-            self.dbg("🤫 백그라운드 조용한 로드 시작: \(url.absoluteString)")
+        // 🛡️ TODO: 실제 캐시 존재 여부를 확인하여 반환
+        // 지금은 항상 true 반환 (CustomWebView에서 처리)
+        return true
+    }
+    
+    private func performBackgroundLoad(webView: WKWebView, url: URL, cacheAvailable: Bool, webViewHealthy: Bool) {
+        dbg("🤫 백그라운드 조용한 로드 시작: \(url.absoluteString)")
+        
+        // 🛡️ 웹뷰가 건강하지 않은 경우 복구 시도
+        if !webViewHealthy {
+            dbg("⚠️ 웹뷰 상태 불량, 복구 후 로드")
+            // 잠시 대기 후 재시도
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                self.performBackgroundLoad(webView: webView, url: url, cacheAvailable: cacheAvailable, webViewHealthy: true)
+            }
+            return
         }
+        
+        // 실제 로딩 수행
+        webView.load(URLRequest(url: url))
+        
+        // 🛡️ 백그라운드 로딩 성공 여부 모니터링
+        monitorBackgroundLoading(for: url)
+    }
+    
+    private func monitorBackgroundLoading(for url: URL) {
+        // 5초 후 백그라운드 로딩 결과 확인
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            guard let webView = self.webView,
+                  self.currentURL == url else { return }
+            
+            // 실제 웹뷰 URL과 기대 URL 비교
+            if let actualURL = webView.url {
+                let expectedNormalized = PageRecord.normalizeURL(url)
+                let actualNormalized = PageRecord.normalizeURL(actualURL)
+                
+                if expectedNormalized != actualNormalized && !webView.isLoading {
+                    self.dbg("⚠️ 백그라운드 로딩 URL 불일치 감지")
+                    self.dbg("   기대: \(expectedNormalized)")
+                    self.dbg("   실제: \(actualNormalized)")
+                    
+                    // 🛡️ 폴백: 강제 재로딩
+                    self.performForcedNavigation(to: url)
+                }
+            } else if !webView.isLoading {
+                self.dbg("⚠️ 백그라운드 로딩 실패: 웹뷰 URL이 nil")
+                
+                // 🛡️ 폴백: 강제 재로딩
+                self.performForcedNavigation(to: url)
+            }
+        }
+    }
+    
+    private func performForcedNavigation(to url: URL) {
+        dbg("🔧 강제 네비게이션 실행: \(url.absoluteString)")
+        
+        guard let webView = webView else { return }
+        
+        // 조용한 새로고침 해제
+        setSilentRefresh(false)
+        
+        // 강제 로딩
+        webView.load(URLRequest(url: url))
+        
+        // 타임아웃 설정
+        setupNavigationTimeout(for: url)
     }
     
     // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (캐싱 적용)
@@ -472,6 +768,12 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     func reload() { 
         guard let webView = webView else { return }
+        
+        // 🛡️ 새로고침 시 상태 정리
+        fallbackAttempts.removeAll()
+        lastFailedURL = nil
+        setSilentRefresh(false)
+        
         webView.reload()
     }
 
@@ -519,7 +821,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     func loadURLIfReady() {
         if let url = currentURL, let webView = webView {
-            webView.load(URLRequest(url: url))
+            performWebViewLoad(url: url, reason: "loadURLIfReady", force: true)
         }
     }
 
@@ -548,11 +850,14 @@ final class WebViewStateModel: NSObject, ObservableObject {
         let silentState = isSilentRefresh ? "[🤫SILENT]" : ""
         let restoreState = dataModel.isHistoryNavigationActive() ? "[🔄RESTORE]" : ""
         let queueState = dataModel.queueCount > 0 ? "[Q:\(dataModel.queueCount)]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState)\(silentState)\(restoreState)\(queueState) \(msg)")
+        let fallbackState = !fallbackAttempts.isEmpty ? "[🛡️FB:\(fallbackAttempts.count)]" : ""
+        
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState)\(silentState)\(restoreState)\(queueState)\(fallbackState) \(msg)")
     }
     
     // MARK: - 메모리 정리
     deinit {
+        navigationTimeoutTimer?.invalidate()
         cancellables.removeAll()
     }
 }
