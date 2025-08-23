@@ -119,11 +119,20 @@ extension PageRecord {
                 comps?.queryItems = filtered.isEmpty ? nil : filtered
             }
         } else if host.contains("bing.com") {
-            comps?.queryItems = comps?.queryItems?.filter { $0.name == "q" }
+            if let items = comps?.queryItems {
+                let filtered = items.filter { $0.name == "q" }
+                comps?.queryItems = filtered.isEmpty ? nil : filtered
+            }
         } else if host.contains("yahoo.com") {
-            comps?.queryItems = comps?.queryItems?.filter { $0.name == "p" }
+            if let items = comps?.queryItems {
+                let filtered = items.filter { $0.name == "p" }
+                comps?.queryItems = filtered.isEmpty ? nil : filtered
+            }
         } else {
-            comps?.queryItems = comps?.queryItems?.filter { ["q","query","search","p"].contains($0.name) }
+            if let items = comps?.queryItems {
+                let filtered = items.filter { ["q","query","search","p"].contains($0.name) }
+                comps?.queryItems = filtered.isEmpty ? nil : filtered
+            }
         }
 
         comps?.fragment = nil
