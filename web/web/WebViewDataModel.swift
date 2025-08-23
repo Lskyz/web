@@ -391,7 +391,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             if let snap = recentSearchTransition {
                 let dt = Date().timeIntervalSince(snap.at)
                 if dt <= Self.searchPopIgnoreWindow {
-                    let popKey = PageRecord.normalizeURL(for: url)
+                    let popKey = PageRecord.normalizeURL(url)
                     if popKey == snap.fromNormalized || popKey == snap.toNormalized {
                         dbg("🔕 SPA pop 무시 - 검색 전/후 스냅샷 회귀(\(String(format: "%.3f", dt))s)")
                         recentSearchTransition = nil
