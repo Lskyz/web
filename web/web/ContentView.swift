@@ -94,7 +94,7 @@ class PIPWebViewContainer: ObservableObject {
     }
 }
 
-/// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
+/// 웹 브라우저의 메인 콘텐츠 뷰 - 🧩 완전 통합 설정 시스템
 struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
@@ -125,6 +125,9 @@ struct ContentView: View {
     
     // 🎬 **PIP 웹뷰 보존 컨테이너**
     @StateObject private var pipContainer = PIPWebViewContainer.shared
+    
+    // 🧩 **핵심 추가: 통합 사이트 메뉴 매니저**
+    @StateObject private var siteMenuManager = SiteMenuManager()
 
     // ============================================================
     // ✨ 투명한 흰색 유리 효과 설정
@@ -205,6 +208,18 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
                 keyboardHeight = 0
             }
+            
+            // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
+            .siteMenuOverlay(
+                manager: siteMenuManager,
+                currentState: currentState,
+                tabs: $tabs,
+                selectedTabIndex: $selectedTabIndex,
+                outerHorizontalPadding: outerHorizontalPadding,
+                showAddressBar: showAddressBar,
+                whiteGlassBackground: AnyView(whiteGlassBackground),
+                whiteGlassOverlay: AnyView(whiteGlassOverlay)
+            )
     }
     
     // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
@@ -407,10 +422,6 @@ struct ContentView: View {
             if currentState.isLoading {
                 progressBarView
             }
-            
-            if currentState.isDesktopMode {
-                desktopModeControls
-            }
         }
         .background(whiteGlassBackground)
         .overlay(whiteGlassOverlay)
@@ -431,15 +442,17 @@ struct ContentView: View {
     
     private var desktopModeButton: some View {
         Button(action: {
-            currentState.toggleDesktopMode()
-            TabPersistenceManager.debugMessages.append("🖥️ 강화된 데스크탑 모드: \(currentState.isDesktopMode ? "ON (Windows)" : "OFF")")
+            // 🧩 **변경**: SiteMenuManager 사용
+            siteMenuManager.setCurrentStateModel(currentState)
+            siteMenuManager.toggleDesktopMode()
+            TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드: \(siteMenuManager.getDesktopModeEnabled() ? "ON" : "OFF")")
         }) {
             HStack(spacing: 4) {
-                Image(systemName: currentState.isDesktopMode ? "display" : "iphone")
+                Image(systemName: siteMenuManager.getDesktopModeEnabled() ? "display" : "iphone")
                     .font(.system(size: 14))
-                    .foregroundColor(currentState.isDesktopMode ? .blue : .primary)
+                    .foregroundColor(siteMenuManager.getDesktopModeEnabled() ? .blue : .primary)
                 
-                if currentState.isDesktopMode {
+                if siteMenuManager.getDesktopModeEnabled() {
                     Text("PC")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.blue)
@@ -447,8 +460,8 @@ struct ContentView: View {
             }
             .frame(width: 26, height: 20)
         }
-        .scaleEffect(currentState.isDesktopMode ? 1.1 : 1.0)
-        .animation(.easeInOut(duration: 0.2), value: currentState.isDesktopMode)
+        .scaleEffect(siteMenuManager.getDesktopModeEnabled() ? 1.1 : 1.0)
+        .animation(.easeInOut(duration: 0.2), value: siteMenuManager.getDesktopModeEnabled())
     }
     
     @ViewBuilder
@@ -520,69 +533,6 @@ struct ContentView: View {
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
     
-    private var desktopModeControls: some View {
-        VStack(spacing: 8) {
-            zoomSlider
-            zoomPresetButtons
-        }
-        .transition(.opacity.combined(with: .move(edge: .top)))
-        .animation(.easeInOut(duration: 0.3), value: currentState.isDesktopMode)
-    }
-    
-    private var zoomSlider: some View {
-        HStack {
-            Image(systemName: "minus.magnifyingglass")
-                .font(.system(size: 12))
-                .foregroundColor(.blue)
-            
-            Slider(
-                value: Binding(
-                    get: { currentState.currentZoomLevel },
-                    set: { newValue in
-                        currentState.setZoomLevel(newValue)
-                        TabPersistenceManager.debugMessages.append("🔍 줌 변경: \(String(format: "%.1f", newValue))x")
-                    }
-                ),
-                in: 0.3...3.0,
-                step: 0.1
-            )
-            .accentColor(.blue)
-            
-            Image(systemName: "plus.magnifyingglass")
-                .font(.system(size: 12))
-                .foregroundColor(.blue)
-            
-            Text("\(String(format: "%.1f", currentState.currentZoomLevel))x")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.blue)
-                .frame(width: 35)
-        }
-        .padding(.horizontal, 14)
-    }
-    
-    private var zoomPresetButtons: some View {
-        HStack(spacing: 12) {
-            ForEach([0.5, 0.75, 1.0, 1.5, 2.0], id: \.self) { preset in
-                Button(action: {
-                    currentState.setZoomLevel(preset)
-                    TabPersistenceManager.debugMessages.append("🎯 줌 프리셋: \(String(format: "%.1f", preset))x")
-                }) {
-                    Text("\(String(format: "%.1f", preset))x")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(abs(currentState.currentZoomLevel - preset) < 0.05 ? .white : .blue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(abs(currentState.currentZoomLevel - preset) < 0.05 ? Color.blue : Color.blue.opacity(0.1))
-                        )
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 4)
-    }
-    
     private var toolbarView: some View {
         HStack(spacing: 0) {
             HStack(spacing: toolbarSpacing) {
@@ -591,6 +541,16 @@ struct ContentView: View {
                 toolbarButton("arrow.clockwise", action: { currentState.reload() }, enabled: true)
                 toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                
+                // 🧩 **핵심 추가**: 퍼즐 버튼 (자물쇠 버튼 앞에 위치)
+                toolbarButton("puzzlepiece.extension", action: { 
+                    siteMenuManager.setCurrentStateModel(currentState)
+                    siteMenuManager.toggleSiteMenu()
+                    TabPersistenceManager.debugMessages.append("🧩 사이트 메뉴 토글")
+                }, enabled: true, color: siteMenuManager.showSiteMenu ? .blue : .primary)
+                
+                // 🔒 **보안 정보 버튼** (기존 위치 유지, 정보 표시용)
+                securityInfoButton
                 
                 // 🎬 **PIP 버튼 추가 (조건부 표시)**
                 if pipManager.isPIPActive {
@@ -608,6 +568,20 @@ struct ContentView: View {
         .padding(.horizontal, outerHorizontalPadding)
         .contentShape(Rectangle())
         .onTapGesture(perform: onToolbarTap)
+    }
+    
+    // 🔒 **보안 정보 버튼**
+    @ViewBuilder
+    private var securityInfoButton: some View {
+        Button(action: {
+            // 보안 정보 표시 (추후 확장 가능)
+            TabPersistenceManager.debugMessages.append("🔒 보안 정보 표시")
+        }) {
+            let securityInfo = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
+            Image(systemName: securityInfo.icon)
+                .font(.system(size: iconSize))
+                .foregroundColor(securityInfo.color)
+        }
     }
     
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
@@ -658,6 +632,10 @@ struct ContentView: View {
         
         // 🎬 **PIP 상태 초기 동기화**
         TabPersistenceManager.debugMessages.append("🎬 ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
+        
+        // 🧩 **SiteMenuManager 초기화**
+        siteMenuManager.setCurrentStateModel(currentState)
+        siteMenuManager.refreshDownloads()
     }
     
     private func onURLChange(url: URL?) {
@@ -842,6 +820,11 @@ struct ContentView: View {
             } else {
                 showAddressBar = true
             }
+        }
+        
+        // 🧩 **추가**: 콘텐츠 탭 시 사이트 메뉴 닫기
+        if siteMenuManager.showSiteMenu {
+            siteMenuManager.closeSiteMenu()
         }
     }
     
