@@ -40,29 +40,43 @@ class WebViewPool: ObservableObject {
     // PIP 보호 웹뷰들 (PIP 중이면 해체 금지)
     private var pipProtectedWebViews: Set<UUID> = []
     
-    // 재사용 대기 웹뷰들 (탭이 닫혔지만 재사용 가능)
+    // 재사용 대기 웹뷰들 (탭이 닫혔지만 재사용 가능) - LRU 순서 관리
     private var pooledWebViews: [UUID: WKWebView] = [:]
+    private var lruOrder: [UUID] = [] // 가장 최근 사용된 순서 (마지막이 가장 최근)
     
     private let maxPoolSize = 10 // 최대 풀 크기
     
     private init() {
-        TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 초기화")
+        TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 초기화 (LRU 정책)")
     }
     
     // 웹뷰 등록 (탭 생성 시)
     func registerWebView(_ webView: WKWebView, for tabID: UUID) {
         activeWebViews[tabID] = webView
+        updateLRU(tabID) // LRU 업데이트
         TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 웹뷰 조회
     func getWebView(for tabID: UUID) -> WKWebView? {
-        return activeWebViews[tabID]
+        if let webView = activeWebViews[tabID] {
+            updateLRU(tabID) // 사용할 때마다 LRU 업데이트
+            return webView
+        }
+        return nil
+    }
+    
+    // LRU 순서 업데이트
+    private func updateLRU(_ tabID: UUID) {
+        // 기존 위치에서 제거 후 맨 뒤에 추가
+        lruOrder.removeAll { $0 == tabID }
+        lruOrder.append(tabID)
     }
     
     // PIP 보호 설정 (PIP 시작 시)
     func protectWebViewForPIP(_ tabID: UUID) {
         pipProtectedWebViews.insert(tabID)
+        updateLRU(tabID) // PIP 시작도 사용으로 간주
         TabPersistenceManager.debugMessages.append("🛡️ PIP 보호 설정: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
@@ -77,7 +91,7 @@ class WebViewPool: ObservableObject {
         return pipProtectedWebViews.contains(tabID)
     }
     
-    // 탭 닫기 시 웹뷰 처리
+    // 탭 닫기 시 웹뷰 처리 (스마트 LRU 정책)
     func handleTabClose(_ tabID: UUID) -> Bool {
         guard let webView = activeWebViews[tabID] else {
             TabPersistenceManager.debugMessages.append("⚠️ 닫을 웹뷰 없음: 탭 \(String(tabID.uuidString.prefix(8)))")
@@ -87,30 +101,61 @@ class WebViewPool: ObservableObject {
         // PIP 보호 중이면 닫기 거부, 풀로 이동
         if isPIPProtected(tabID) {
             activeWebViews.removeValue(forKey: tabID)
-            pooledWebViews[tabID] = webView
+            addToPool(tabID: tabID, webView: webView)
             TabPersistenceManager.debugMessages.append("🛡️ PIP 보호로 탭 닫기 거부, 풀로 이동: 탭 \(String(tabID.uuidString.prefix(8)))")
             return false // 닫기 거부
         }
         
-        // 일반 상황: 풀에 저장 (용량 허용 시)
+        // 일반 상황: 스마트 풀 관리
         activeWebViews.removeValue(forKey: tabID)
-        
-        if pooledWebViews.count < maxPoolSize {
-            pooledWebViews[tabID] = webView
-            TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 저장: 탭 \(String(tabID.uuidString.prefix(8))) (풀 크기: \(pooledWebViews.count))")
-        } else {
-            // 풀이 가득 차면 해체
-            cleanupWebView(webView)
-            TabPersistenceManager.debugMessages.append("💀 웹뷰 해체 (풀 가득참): 탭 \(String(tabID.uuidString.prefix(8)))")
-        }
+        addToPool(tabID: tabID, webView: webView)
         
         return true // 닫기 허용
+    }
+    
+    // 스마트 풀 추가 (LRU 기반 교체)
+    private func addToPool(tabID: UUID, webView: WKWebView) {
+        // 풀이 가득 찬 경우 - 가장 오래 사용되지 않은 것 제거
+        if pooledWebViews.count >= maxPoolSize {
+            evictLeastRecentlyUsed()
+        }
+        
+        // 새 웹뷰를 풀에 추가
+        pooledWebViews[tabID] = webView
+        updateLRU(tabID)
+        
+        TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 저장: 탭 \(String(tabID.uuidString.prefix(8))) (풀 크기: \(pooledWebViews.count)/\(maxPoolSize))")
+    }
+    
+    // LRU 기반 제거 (가장 오래된 것부터)
+    private func evictLeastRecentlyUsed() {
+        // PIP 보호되지 않은 가장 오래된 웹뷰 찾기
+        for oldTabID in lruOrder {
+            if pooledWebViews[oldTabID] != nil && !isPIPProtected(oldTabID) {
+                // 찾았다! 제거
+                if let oldWebView = pooledWebViews.removeValue(forKey: oldTabID) {
+                    cleanupWebView(oldWebView)
+                    lruOrder.removeAll { $0 == oldTabID }
+                    TabPersistenceManager.debugMessages.append("♻️ LRU 제거: 탭 \(String(oldTabID.uuidString.prefix(8))) (오래된 순서)")
+                    return
+                }
+            }
+        }
+        
+        // PIP 보호되지 않은 웹뷰가 없으면 강제로 가장 오래된 것 제거 (비상 상황)
+        if let oldestTabID = lruOrder.first,
+           let oldWebView = pooledWebViews.removeValue(forKey: oldestTabID) {
+            cleanupWebView(oldWebView)
+            lruOrder.removeFirst()
+            TabPersistenceManager.debugMessages.append("⚠️ 강제 LRU 제거: 탭 \(String(oldestTabID.uuidString.prefix(8))) (비상)")
+        }
     }
     
     // 탭 복원 시 웹뷰 재사용
     func reuseWebView(for tabID: UUID) -> WKWebView? {
         if let pooledWebView = pooledWebViews.removeValue(forKey: tabID) {
             activeWebViews[tabID] = pooledWebView
+            updateLRU(tabID)
             TabPersistenceManager.debugMessages.append("♻️ 웹뷰 재사용: 탭 \(String(tabID.uuidString.prefix(8))) (풀 크기: \(pooledWebViews.count))")
             return pooledWebView
         }
@@ -122,20 +167,41 @@ class WebViewPool: ObservableObject {
         webView.stopLoading()
         webView.loadHTMLString("", baseURL: nil)
         webView.removeFromSuperview()
+        
+        // 메모리 정리
+        webView.configuration.userContentController.removeAllUserScripts()
+        webView.scrollView.delegate = nil
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
     }
     
     // 풀 전체 정리 (메모리 부족 시)
     func clearPool() {
-        for webView in pooledWebViews.values {
-            cleanupWebView(webView)
+        for (tabID, webView) in pooledWebViews {
+            if !isPIPProtected(tabID) { // PIP 보호된 건 제외
+                cleanupWebView(webView)
+            }
         }
-        pooledWebViews.removeAll()
-        TabPersistenceManager.debugMessages.append("🧹 웹뷰 풀 전체 정리")
+        
+        // PIP 보호된 것만 남기고 모두 제거
+        let protectedTabs = pooledWebViews.filter { isPIPProtected($0.key) }
+        pooledWebViews = protectedTabs
+        lruOrder = lruOrder.filter { protectedTabs.keys.contains($0) }
+        
+        TabPersistenceManager.debugMessages.append("🧹 웹뷰 풀 정리 (PIP 보호된 \(protectedTabs.count)개 유지)")
     }
     
-    // 디버그 정보
+    // 디버그 정보 (LRU 순서 포함)
     func debugInfo() -> String {
-        return "활성: \(activeWebViews.count), 풀: \(pooledWebViews.count), PIP보호: \(pipProtectedWebViews.count)"
+        let protectedCount = pipProtectedWebViews.count
+        let poolUsage = "\(pooledWebViews.count)/\(maxPoolSize)"
+        return "활성: \(activeWebViews.count), 풀: \(poolUsage), PIP보호: \(protectedCount)"
+    }
+    
+    // 상세 LRU 정보
+    func debugLRUInfo() -> String {
+        let recentTabs = lruOrder.suffix(3).map { String($0.uuidString.prefix(4)) }
+        return "최근 사용: [\(recentTabs.joined(separator: ", "))]"
     }
 }
 
@@ -852,6 +918,10 @@ struct TabManager: View {
                     Text("웹뷰 풀: \(WebViewPool.shared.debugInfo())")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(.blue)
+                    
+                    Text("LRU: \(WebViewPool.shared.debugLRUInfo())")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.cyan)
                     
                     if PIPManager.shared.isPIPActive {
                         Text("🎬 PIP 활성: 탭 \(String(PIPManager.shared.currentPIPTab?.uuidString.prefix(8) ?? "없음"))")
