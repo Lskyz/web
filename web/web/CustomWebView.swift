@@ -6,6 +6,7 @@
 //  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
 //  🔧 제목 덮어쓰기 문제 해결 - titleObserver URL 검증 추가
 //  📁 다운로드 기능 헬퍼 통합 완료 - 단방향 의존성 구현
+//  🏊‍♂️ 웹뷰 풀 실제 연동 완료 - 생성/등록/재사용/정리
 //
 
 import SwiftUI
@@ -82,82 +83,103 @@ struct CustomWebView: UIViewRepresentable {
         // ✅ 오디오 세션 활성화 (헬퍼 호출)
         configureAudioSessionForMixing()
 
-        // WKWebView 설정
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPictureMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
-        config.websiteDataStore = WKWebsiteDataStore.default()
-        config.processPool = WKProcessPool()
-
-        // 📁 **다운로드 기능 헬퍼 통합**: iOS 14+ 다운로드 설정 강화
-        if #available(iOS 14.0, *) {
-            config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-            // ✅ 다운로드 허용 설정 추가
-            config.preferences.javaScriptCanOpenWindowsAutomatically = true
-            config.allowsInlineMediaPlayback = true
+        // 🏊‍♂️ **핵심 1: 웹뷰 풀에서 재사용 시도**
+        var webView: WKWebView?
+        if let tabID = stateModel.tabID {
+            webView = WebViewPool.shared.reuseWebView(for: tabID)
+            TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 재사용 시도: 탭 \(String(tabID.uuidString.prefix(8)))")
         }
+        
+        // 재사용할 웹뷰가 없으면 새로 생성
+        if webView == nil {
+            // WKWebView 설정
+            let config = WKWebViewConfiguration()
+            config.allowsInlineMediaPlayback = true
+            config.allowsPictureInPictureMediaPlayback = true
+            config.mediaTypesRequiringUserActionForPlaybook = []
+            config.websiteDataStore = WKWebsiteDataStore.default()
+            config.processPool = WKProcessPool()
 
-        // 사용자 스크립트/메시지 핸들러 (헬퍼 호출)
-        let controller = WKUserContentController()
-        controller.addUserScript(makeVideoScript())
-        controller.addUserScript(makeDesktopModeScript())
-        controller.addUserScript(WebViewDataModel.makeSPANavigationScript()) // 🔧 수정: 단순화된 버전 사용
-        controller.addUserScript(makeImageSaveScript()) // 📷 이미지 저장 스크립트 추가
-        controller.add(context.coordinator, name: "playVideo")
-        controller.add(context.coordinator, name: "setZoom")
-        controller.add(context.coordinator, name: "spaNavigation")
-        controller.add(context.coordinator, name: "saveImage") // 📷 이미지 저장 핸들러 추가
-        config.userContentController = controller
+            // 📁 **다운로드 기능 헬퍼 통합**: iOS 14+ 다운로드 설정 강화
+            if #available(iOS 14.0, *) {
+                config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+                // ✅ 다운로드 허용 설정 추가
+                config.preferences.javaScriptCanOpenWindowsAutomatically = true
+                config.allowsInlineMediaPlayback = true
+            }
 
-        // WKWebView 생성
-        let webView = WKWebView(frame: .zero, configuration: config)
+            // 사용자 스크립트/메시지 핸들러 (헬퍼 호출)
+            let controller = WKUserContentController()
+            controller.addUserScript(makeVideoScript())
+            controller.addUserScript(makeDesktopModeScript())
+            controller.addUserScript(WebViewDataModel.makeSPANavigationScript()) // 🔧 수정: 단순화된 버전 사용
+            controller.addUserScript(makeImageSaveScript()) // 📷 이미지 저장 스크립트 추가
+            controller.add(context.coordinator, name: "playVideo")
+            controller.add(context.coordinator, name: "setZoom")
+            controller.add(context.coordinator, name: "spaNavigation")
+            controller.add(context.coordinator, name: "saveImage") // 📷 이미지 저장 핸들러 추가
+            config.userContentController = controller
+
+            // WKWebView 생성
+            webView = WKWebView(frame: .zero, configuration: config)
+            TabPersistenceManager.debugMessages.append("🆕 새 웹뷰 생성: 탭 \(String(stateModel.tabID?.uuidString.prefix(8) ?? "unknown"))")
+        }
+        
+        guard let finalWebView = webView else {
+            fatalError("🚨 웹뷰 생성/재사용 실패")
+        }
+        
+        // 🏊‍♂️ **핵심 2: 웹뷰 풀에 등록**
+        if let tabID = stateModel.tabID {
+            WebViewPool.shared.registerWebView(finalWebView, for: tabID)
+            TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
+        }
         
         // 🎯 네이티브 제스처 완전 비활성화
-        webView.allowsBackForwardNavigationGestures = false
+        finalWebView.allowsBackForwardNavigationGestures = false
         
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.scrollView.decelerationRate = .normal
+        finalWebView.scrollView.contentInsetAdjustmentBehavior = .never
+        finalWebView.scrollView.decelerationRate = .normal
 
         // ✅ 하단 UI 겹치기를 위한 투명 처리 (헬퍼 호출)
-        setupTransparentWebView(webView)
+        setupTransparentWebView(finalWebView)
 
         // ✨ Delegate 연결
-        webView.uiDelegate = context.coordinator
+        finalWebView.uiDelegate = context.coordinator
         
         // 📁 **수정**: NavigationDelegate는 DataModel이 처리 (WKNavigationDelegate 구현체)
-        webView.navigationDelegate = stateModel.dataModel
+        finalWebView.navigationDelegate = stateModel.dataModel
         
         // 📁 **다운로드 기능 헬퍼 호출**: iOS 14+ 다운로드 설정
         if #available(iOS 14.0, *) {
-            setupWebViewDownloads(webView: webView, stateModel: stateModel)
+            setupWebViewDownloads(webView: finalWebView, stateModel: stateModel)
             TabPersistenceManager.debugMessages.append("📁 다운로드 기능 활성화 완료 (iOS 14+)")
         }
         
-        context.coordinator.webView = webView
-        stateModel.webView = webView
+        context.coordinator.webView = finalWebView
+        stateModel.webView = finalWebView
         
         // ✨ 초기 사용자 에이전트 설정 (헬퍼 호출)
-        updateUserAgentIfNeeded(webView: webView, stateModel: stateModel)
+        updateUserAgentIfNeeded(webView: finalWebView, stateModel: stateModel)
 
         // 📸 스냅샷 기반 제스처 설정 (커스텀 시스템과 완전 동기화)
-        context.coordinator.setupSyncedSwipeGesture(for: webView)
+        context.coordinator.setupSyncedSwipeGesture(for: finalWebView)
 
         // 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템 설정
-        context.coordinator.setupCachedPagePreview(for: webView)
+        context.coordinator.setupCachedPagePreview(for: finalWebView)
 
         // Pull to Refresh (헬퍼 호출)
-        setupPullToRefresh(for: webView, target: context.coordinator, action: #selector(Coordinator.handleRefresh(_:)))
-        webView.scrollView.delegate = context.coordinator
+        setupPullToRefresh(for: finalWebView, target: context.coordinator, action: #selector(Coordinator.handleRefresh(_:)))
+        finalWebView.scrollView.delegate = context.coordinator
 
         // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
-        context.coordinator.setupLoadingObservers(for: webView)
+        context.coordinator.setupLoadingObservers(for: finalWebView)
 
         // 초기 로드
         if let url = stateModel.currentURL {
-            webView.load(URLRequest(url: url))
+            finalWebView.load(URLRequest(url: url))
         } else {
-            webView.load(URLRequest(url: URL(string: "about:blank")!))
+            finalWebView.load(URLRequest(url: URL(string: "about:blank")!))
         }
 
         // 외부 제어용 Notification 옵저버 등록
@@ -195,7 +217,7 @@ struct CustomWebView: UIViewRepresentable {
         )
 
         // 📁 **다운로드 오버레이 헬퍼 호출**
-        installDownloadOverlay(on: webView, 
+        installDownloadOverlay(on: finalWebView, 
                               overlayContainer: &context.coordinator.overlayContainer,
                               overlayTitleLabel: &context.coordinator.overlayTitleLabel,
                               overlayPercentLabel: &context.coordinator.overlayPercentLabel,
@@ -219,7 +241,17 @@ struct CustomWebView: UIViewRepresentable {
                                                name: .WebViewDownloadFailed,
                                                object: nil)
 
-        return webView
+        // 🎬 **PIP 관련 옵저버 등록**
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handlePIPStart(_:)),
+                                               name: .init("StartPIPForTab"),
+                                               object: nil)
+        NotificationCenter.default.addObserver(context.coordinator,
+                                               selector: #selector(Coordinator.handlePIPStop(_:)),
+                                               name: .init("StopPIPForTab"),
+                                               object: nil)
+
+        return finalWebView
     }
 
     // MARK: - updateUIView
@@ -241,6 +273,13 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - teardown
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        // 🏊‍♂️ **핵심 3: 웹뷰 해체 시 풀로 이동 (PIP 보호 고려)**
+        if let tabID = coordinator.parent.stateModel.tabID {
+            // 탭 닫기 처리 (PIP 보호 확인)
+            _ = WebViewPool.shared.handleTabClose(tabID)
+            TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 해체 - 풀 처리: 탭 \(String(tabID.uuidString.prefix(8)))")
+        }
+
         // KVO 옵저버 제거
         coordinator.removeLoadingObservers(for: uiView)
 
@@ -263,6 +302,7 @@ struct CustomWebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "saveImage")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
@@ -323,6 +363,27 @@ struct CustomWebView: UIViewRepresentable {
         deinit {
             removeLoadingObservers(for: webView)
             NotificationCenter.default.removeObserver(self)
+        }
+
+        // MARK: - 🎬 **PIP 이벤트 핸들러 추가**
+        
+        @objc func handlePIPStart(_ notification: Notification) {
+            guard let userInfo = notification.userInfo,
+                  let tabID = userInfo["tabID"] as? UUID,
+                  let url = userInfo["url"] as? URL,
+                  tabID == parent.stateModel.tabID else { return }
+            
+            // PIP 시작 - PIPManager에 알림
+            PIPManager.shared.startPIP(for: tabID, with: url)
+            TabPersistenceManager.debugMessages.append("🎬 PIP 시작 요청 수신: 탭 \(String(tabID.uuidString.prefix(8)))")
+        }
+        
+        @objc func handlePIPStop(_ notification: Notification) {
+            guard let tabID = parent.stateModel.tabID else { return }
+            
+            // PIP 종료 - PIPManager에 알림
+            PIPManager.shared.stopPIP()
+            TabPersistenceManager.debugMessages.append("🎬 PIP 종료 요청 수신: 탭 \(String(tabID.uuidString.prefix(8)))")
         }
 
         // MARK: - 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템
@@ -924,6 +985,12 @@ struct CustomWebView: UIViewRepresentable {
                     DispatchQueue.main.async {
                         self.parent.playerURL = url
                         self.parent.showAVPlayer = true
+                        
+                        // 🎬 **PIP 시작 알림 추가**
+                        if let tabID = self.parent.stateModel.tabID {
+                            PIPManager.shared.startPIP(for: tabID, with: url)
+                            TabPersistenceManager.debugMessages.append("🎬 비디오 재생으로 PIP 시작: 탭 \(String(tabID.uuidString.prefix(8)))")
+                        }
                     }
                 }
             } else if message.name == "setZoom" {
