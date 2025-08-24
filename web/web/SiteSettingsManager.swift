@@ -577,22 +577,25 @@ enum SiteMenuSystem {
         }
         
         static func getMemoryUsage() -> (used: Double, total: Double) {
-            let info = mach_task_basic_info()
-            var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
-            
-            let result = withUnsafeMutablePointer(to: &count) {
-                $0.withMemoryRebound(to: mach_msg_type_number_t.self, capacity: 1) { count in
-                    task_info(mach_task_self(), task_flavor_t(MACH_TASK_BASIC_INFO), 
-                             UnsafeMutablePointer<integer_t>.init(OpaquePointer(&info)), count)
-                }
-            }
-            
-            if result == KERN_SUCCESS {
-                let usedMB = Double(info.resident_size) / 1024 / 1024
-                return (used: usedMB, total: Double(ProcessInfo.processInfo.physicalMemory) / 1024 / 1024)
-            }
-            
-            return (used: 0, total: 0)
+    var info = mach_task_basic_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size) / 4
+
+    let kr: kern_return_t = withUnsafeMutablePointer(to: &info) { infoPtr in
+        infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+            task_info(
+                mach_task_self_,
+                task_flavor_t(MACH_TASK_BASIC_INFO),
+                intPtr,
+                &count
+            )
+        }
+    }
+
+    let totalMB = Double(ProcessInfo.processInfo.physicalMemory) / 1024.0 / 1024.0
+    guard kr == KERN_SUCCESS else { return (0, totalMB) }
+
+    let usedMB = Double(info.resident_size) / 1024.0 / 1024.0
+    return (usedMB, totalMB)
         }
     }
     
@@ -2318,45 +2321,61 @@ extension View {
         whiteGlassBackground: AnyView,
         whiteGlassOverlay: AnyView
     ) -> some View {
-        self
-            .overlay {
-                if manager.showSiteMenu {
-                    SiteMenuSystem.UI.SiteMenuOverlay(
-                        manager: manager,
-                        currentState: currentState,
-                        outerHorizontalPadding: outerHorizontalPadding,
-                        showAddressBar: showAddressBar,
-                        whiteGlassBackground: whiteGlassBackground,
-                        whiteGlassOverlay: whiteGlassOverlay,
-                        tabs: tabs,
-                        selectedTabIndex: selectedTabIndex
-                    )
-                }
-            }
-            .sheet(isPresented: $manager.showDownloadsList) {
-                NavigationView {
-                    SiteMenuSystem.UI.DownloadsListView(manager: manager)
-                }
-            }
-            .sheet(isPresented: $manager.showHistoryFilterManager) {
-                NavigationView {
-                    SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager)
-                }
-            }
-            .sheet(isPresented: $manager.showPrivacySettings) {
-                NavigationView {
-                    SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
-                }
-            }
-            .sheet(isPresented: $manager.showSitePermissions) {
-                NavigationView {
-                    SiteMenuSystem.UI.SitePermissionsView(manager: manager)
-                }
-            }
-            .sheet(isPresented: $manager.showPerformanceSettings) {
-                NavigationView {
-                    SiteMenuSystem.UI.PerformanceSettingsView(manager: manager)
-                }
+        return self
+    .overlay {
+        if manager.showSiteMenu {
+            SiteMenuSystem.UI.SiteMenuOverlay(
+                manager: manager,
+                currentState: currentState,
+                outerHorizontalPadding: outerHorizontalPadding,
+                showAddressBar: showAddressBar,
+                whiteGlassBackground: whiteGlassBackground,
+                whiteGlassOverlay: whiteGlassOverlay,
+                tabs: tabs,
+                selectedTabIndex: selectedTabIndex
+            )
+        }
+    }
+    .sheet(
+        isPresented: Binding(
+            get: { manager.showDownloadsList },
+            set: { manager.showDownloadsList = $0 }
+        )
+    ) {
+        NavigationView { SiteMenuSystem.UI.DownloadsListView(manager: manager) }
+    }
+    .sheet(
+        isPresented: Binding(
+            get: { manager.showHistoryFilterManager },
+            set: { manager.showHistoryFilterManager = $0 }
+        )
+    ) {
+        NavigationView { SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager) }
+    }
+    .sheet(
+        isPresented: Binding(
+            get: { manager.showPrivacySettings },
+            set: { manager.showPrivacySettings = $0 }
+        )
+    ) {
+        NavigationView { SiteMenuSystem.UI.PrivacySettingsView(manager: manager) }
+    }
+    .sheet(
+        isPresented: Binding(
+            get: { manager.showSitePermissions },
+            set: { manager.showSitePermissions = $0 }
+        )
+    ) {
+        NavigationView { SiteMenuSystem.UI.SitePermissionsView(manager: manager) }
+    }
+    .sheet(
+        isPresented: Binding(
+            get: { manager.showPerformanceSettings },
+            set: { manager.showPerformanceSettings = $0 }
+        )
+    ) {
+        NavigationView { SiteMenuSystem.UI.PerformanceSettingsView(manager: manager) }
+    }
             }
     }
 }
