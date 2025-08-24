@@ -148,25 +148,11 @@ class PIPManager: ObservableObject {
     @Published var isPIPActive: Bool = false
     
     private init() {
-        // PIP 상태 변경 알림 구독
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(pipDidStart),
-            name: AVPictureInPictureController.pictureInPictureControllerWillStartPictureInPictureNotification,
-            object: nil
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(pipDidStop),
-            name: AVPictureInPictureController.pictureInPictureControllerDidStopPictureInPictureNotification,
-            object: nil
-        )
-        
         TabPersistenceManager.debugMessages.append("🎬 PIP 관리자 초기화")
     }
     
-    @objc private func pipDidStart() {
+    // PIP 시작 직접 호출
+    func pipDidStart() {
         isPIPActive = true
         
         // 현재 PIP 탭의 웹뷰 보호
@@ -177,7 +163,8 @@ class PIPManager: ObservableObject {
         TabPersistenceManager.debugMessages.append("🎬 PIP 시작됨, 웹뷰 보호 설정")
     }
     
-    @objc private func pipDidStop() {
+    // PIP 중지 직접 호출
+    func pipDidStop() {
         isPIPActive = false
         
         // 웹뷰 보호 해제
@@ -195,8 +182,8 @@ class PIPManager: ObservableObject {
         currentPIPTab = tabID
         pipPlayerURL = url
         
-        // 웹뷰 보호 설정
-        WebViewPool.shared.protectWebViewForPIP(tabID)
+        // PIP 시작 상태 설정
+        pipDidStart()
         
         TabPersistenceManager.debugMessages.append("🎬 PIP 시작 요청: 탭 \(String(tabID.uuidString.prefix(8)))")
         
@@ -210,18 +197,15 @@ class PIPManager: ObservableObject {
     
     // PIP 중지
     func stopPIP() {
-        if let pipTab = currentPIPTab {
-            WebViewPool.shared.unprotectWebViewFromPIP(pipTab)
-        }
-        
         TabPersistenceManager.debugMessages.append("🎬 PIP 중지 요청")
+        
+        // PIP 중지 상태 설정
+        pipDidStop()
         
         NotificationCenter.default.post(name: .init("StopPIPForTab"), object: nil)
     }
     
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    // deinit는 필요 없음 (알림 구독하지 않음)
 }
 
 // MARK: - WebTab: 브라우저 탭 모델 (웹뷰 풀 연동)
