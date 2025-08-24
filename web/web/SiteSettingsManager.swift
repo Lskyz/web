@@ -1973,12 +1973,12 @@ enum SiteMenuSystem {
                     
                     Spacer()
                     
-                    Toggle("", isOn: .constant(isEnabled))
-                        .labelsHidden()
-                        .scaleEffect(0.8)
-                        .onChange(of: isEnabled) { newValue in
-                            action(newValue)
-                        }
+                    Toggle("", isOn: Binding(
+                    get: { isEnabled },
+                    set: { action($0) }   // 변경사항을 상위로 전달
+                    ))
+                   .labelsHidden()
+                   .scaleEffect(0.8)
                 }
             }
             
