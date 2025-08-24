@@ -79,6 +79,9 @@ struct ContentView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var errorTitle = ""
+    
+    // 🎬 **PIP 관리자 상태 감지 추가**
+    @StateObject private var pipManager = PIPManager.shared
 
     // ============================================================
     // ✨ 투명한 흰색 유리 효과 설정
@@ -108,6 +111,14 @@ struct ContentView: View {
             .sheet(isPresented: $showTabManager, content: tabManagerView)
             .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
             .fullScreenCover(isPresented: $showDebugView, content: debugView)
+            
+            // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
+            .onChange(of: pipManager.isPIPActive) { isPIPActive in
+                handlePIPStateChange(isPIPActive)
+            }
+            .onChange(of: pipManager.currentPIPTab) { currentPIPTab in
+                handlePIPTabChange(currentPIPTab)
+            }
 
             // ✅ 주소창/툴바만 키보드 높이만큼 위로 이동
             .safeAreaInset(edge: .bottom) {
@@ -153,6 +164,35 @@ struct ContentView: View {
             }
     }
     
+    // MARK: - 🎬 **PIP 상태 변경 핸들러들 추가**
+    
+    private func handlePIPStateChange(_ isPIPActive: Bool) {
+        TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
+        
+        if isPIPActive {
+            // PIP 시작됨 - 현재 탭의 웹뷰 보호
+            if tabs.indices.contains(selectedTabIndex) {
+                let currentTabID = tabs[selectedTabIndex].id
+                WebViewPool.shared.protectWebViewForPIP(currentTabID)
+                TabPersistenceManager.debugMessages.append("🛡️ PIP 시작으로 웹뷰 보호: 탭 \(String(currentTabID.uuidString.prefix(8)))")
+            }
+        } else {
+            // PIP 종료됨 - 모든 웹뷰 보호 해제
+            for tab in tabs {
+                WebViewPool.shared.unprotectWebViewFromPIP(tab.id)
+            }
+            TabPersistenceManager.debugMessages.append("🔓 PIP 종료로 모든 웹뷰 보호 해제")
+        }
+    }
+    
+    private func handlePIPTabChange(_ currentPIPTab: UUID?) {
+        if let pipTab = currentPIPTab {
+            TabPersistenceManager.debugMessages.append("🎬 PIP 탭 변경: 탭 \(String(pipTab.uuidString.prefix(8)))")
+        } else {
+            TabPersistenceManager.debugMessages.append("🎬 PIP 탭 해제")
+        }
+    }
+    
     // MARK: - 컴포넌트 분해
     
     private var currentState: WebViewStateModel {
@@ -175,10 +215,40 @@ struct ContentView: View {
                 } else {
                     dashboardView
                 }
+                
+                // 🎬 **PIP 상태 표시 오버레이 (선택사항)**
+                if pipManager.isPIPActive {
+                    pipStatusOverlay
+                }
             }
         } else {
             dashboardView
         }
+    }
+    
+    // 🎬 **PIP 상태 표시 오버레이**
+    @ViewBuilder
+    private var pipStatusOverlay: some View {
+        VStack {
+            HStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    Image(systemName: "pip.fill")
+                        .font(.caption)
+                    Text("PIP 활성")
+                        .font(.caption2)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
+                .foregroundColor(.green)
+                .cornerRadius(16)
+                .padding(.trailing)
+                .padding(.top, 60)
+            }
+            Spacer()
+        }
+        .allowsHitTesting(false) // 터치 이벤트 차단 방지
     }
     
     @ViewBuilder
@@ -187,11 +257,26 @@ struct ContentView: View {
             stateModel: state,
             playerURL: Binding(
                 get: { tabs[selectedTabIndex].playerURL },
-                set: { tabs[selectedTabIndex].playerURL = $0 }
+                set: { 
+                    tabs[selectedTabIndex].playerURL = $0
+                    
+                    // 🎬 **PIP URL 동기화**
+                    if let url = $0, tabs[selectedTabIndex].showAVPlayer {
+                        pipManager.pipPlayerURL = url
+                    }
+                }
             ),
             showAVPlayer: Binding(
                 get: { tabs[selectedTabIndex].showAVPlayer },
-                set: { tabs[selectedTabIndex].showAVPlayer = $0 }
+                set: { 
+                    tabs[selectedTabIndex].showAVPlayer = $0
+                    
+                    // 🎬 **PIP 상태와 AVPlayer 표시 동기화**
+                    if !$0 && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
+                        // AVPlayer가 숨겨지고 현재 탭이 PIP 탭이면 PIP 중지
+                        pipManager.stopPIP()
+                    }
+                }
             ),
             onScroll: { y in
                 handleWebViewScroll(yOffset: y)
@@ -429,6 +514,12 @@ struct ContentView: View {
                 toolbarButton("arrow.clockwise", action: { currentState.reload() }, enabled: true)
                 toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                
+                // 🎬 **PIP 버튼 추가 (조건부 표시)**
+                if pipManager.isPIPActive {
+                    toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                }
+                
                 toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
             }
             .frame(maxWidth: .infinity, alignment: .center)
@@ -487,6 +578,9 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)")
         }
         TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
+        
+        // 🎬 **PIP 상태 초기 동기화**
+        TabPersistenceManager.debugMessages.append("🎬 ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
     }
     
     private func onURLChange(url: URL?) {
@@ -619,8 +713,19 @@ struct ContentView: View {
     
     private var avPlayerBinding: Binding<Bool> {
         Binding(
-            get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
-            set: { if tabs.indices.contains(selectedTabIndex) { tabs[selectedTabIndex].showAVPlayer = $0 } }
+            get: { 
+                tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false 
+            },
+            set: { newValue in
+                if tabs.indices.contains(selectedTabIndex) { 
+                    tabs[selectedTabIndex].showAVPlayer = newValue
+                    
+                    // 🎬 **핵심**: AVPlayer 숨김 시 PIP도 중지
+                    if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
+                        pipManager.stopPIP()
+                    }
+                }
+            }
         )
     }
     
