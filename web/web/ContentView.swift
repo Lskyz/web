@@ -54,6 +54,46 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
 }
 
+// MARK: - 🎬 **PIP 보존용 웹뷰 컨테이너**
+class PIPWebViewContainer: ObservableObject {
+    static let shared = PIPWebViewContainer()
+    
+    // PIP 중인 웹뷰들을 보존 (탭 ID별로)
+    private var preservedWebViews: [UUID: AnyView] = [:]
+    
+    private init() {
+        TabPersistenceManager.debugMessages.append("🎬 PIP 웹뷰 컨테이너 초기화")
+    }
+    
+    // PIP 시작 시 웹뷰 보존
+    func preserveWebView(for tabID: UUID, webView: AnyView) {
+        preservedWebViews[tabID] = webView
+        TabPersistenceManager.debugMessages.append("🎬 웹뷰 보존: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // 보존된 웹뷰 가져오기
+    func getPreservedWebView(for tabID: UUID) -> AnyView? {
+        return preservedWebViews[tabID]
+    }
+    
+    // PIP 종료 시 웹뷰 보존 해제
+    func removePreservedWebView(for tabID: UUID) {
+        preservedWebViews.removeValue(forKey: tabID)
+        TabPersistenceManager.debugMessages.append("🎬 웹뷰 보존 해제: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // 특정 탭이 PIP 보존 중인지 확인
+    func isWebViewPreserved(for tabID: UUID) -> Bool {
+        return preservedWebViews.keys.contains(tabID)
+    }
+    
+    // 모든 보존 해제
+    func clearAll() {
+        preservedWebViews.removeAll()
+        TabPersistenceManager.debugMessages.append("🎬 모든 웹뷰 보존 해제")
+    }
+}
+
 /// 웹 브라우저의 메인 콘텐츠 뷰 - 단순화된 페이지 기록 시스템
 struct ContentView: View {
     // MARK: - 속성 정의
@@ -82,6 +122,9 @@ struct ContentView: View {
     
     // 🎬 **PIP 관리자 상태 감지 추가**
     @StateObject private var pipManager = PIPManager.shared
+    
+    // 🎬 **PIP 웹뷰 보존 컨테이너**
+    @StateObject private var pipContainer = PIPWebViewContainer.shared
 
     // ============================================================
     // ✨ 투명한 흰색 유리 효과 설정
@@ -164,24 +207,30 @@ struct ContentView: View {
             }
     }
     
-    // MARK: - 🎬 **PIP 상태 변경 핸들러들 추가**
+    // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
     
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
         
         if isPIPActive {
-            // PIP 시작됨 - 현재 탭의 웹뷰 보호
+            // PIP 시작됨 - 현재 탭의 웹뷰 보호 및 보존
             if tabs.indices.contains(selectedTabIndex) {
                 let currentTabID = tabs[selectedTabIndex].id
                 WebViewPool.shared.protectWebViewForPIP(currentTabID)
-                TabPersistenceManager.debugMessages.append("🛡️ PIP 시작으로 웹뷰 보호: 탭 \(String(currentTabID.uuidString.prefix(8)))")
+                
+                // 🎬 **핵심**: 현재 웹뷰를 보존
+                let currentWebView = createWebContentView(state: tabs[selectedTabIndex].stateModel)
+                pipContainer.preserveWebView(for: currentTabID, webView: AnyView(currentWebView))
+                
+                TabPersistenceManager.debugMessages.append("🛡️ PIP 시작으로 웹뷰 보호+보존: 탭 \(String(currentTabID.uuidString.prefix(8)))")
             }
         } else {
-            // PIP 종료됨 - 모든 웹뷰 보호 해제
+            // PIP 종료됨 - 모든 웹뷰 보호 해제 및 보존 해제
             for tab in tabs {
                 WebViewPool.shared.unprotectWebViewFromPIP(tab.id)
+                pipContainer.removePreservedWebView(for: tab.id)
             }
-            TabPersistenceManager.debugMessages.append("🔓 PIP 종료로 모든 웹뷰 보호 해제")
+            TabPersistenceManager.debugMessages.append("🔓 PIP 종료로 모든 웹뷰 보호+보존 해제")
         }
     }
     
@@ -211,7 +260,15 @@ struct ContentView: View {
             
             ZStack {
                 if state.currentURL != nil {
-                    webContentView(state: state)
+                    // 🎬 **핵심**: PIP 보존 웹뷰가 있으면 우선 사용
+                    if let preservedWebView = pipContainer.getPreservedWebView(for: tabs[selectedTabIndex].id) {
+                        preservedWebView
+                            .onAppear {
+                                TabPersistenceManager.debugMessages.append("🎬 보존된 PIP 웹뷰 사용: 탭 \(String(tabs[selectedTabIndex].id.uuidString.prefix(8)))")
+                            }
+                    } else {
+                        webContentView(state: state)
+                    }
                 } else {
                     dashboardView
                 }
@@ -253,28 +310,52 @@ struct ContentView: View {
     
     @ViewBuilder
     private func webContentView(state: WebViewStateModel) -> some View {
+        createWebContentView(state: state)
+            .overlay(scrollOffsetOverlay)
+            .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onContentTap)
+    }
+    
+    // 🎬 **웹뷰 생성 함수 분리 (보존용)**
+    @ViewBuilder
+    private func createWebContentView(state: WebViewStateModel) -> some View {
         CustomWebView(
             stateModel: state,
             playerURL: Binding(
-                get: { tabs[selectedTabIndex].playerURL },
-                set: { 
-                    tabs[selectedTabIndex].playerURL = $0
-                    
-                    // 🎬 **PIP URL 동기화**
-                    if let url = $0, tabs[selectedTabIndex].showAVPlayer {
-                        pipManager.pipPlayerURL = url
+                get: { 
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        return tabs[index].playerURL
+                    }
+                    return nil
+                },
+                set: { newValue in
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[index].playerURL = newValue
+                        
+                        // 🎬 **PIP URL 동기화**
+                        if let url = newValue, tabs[index].showAVPlayer {
+                            pipManager.pipPlayerURL = url
+                        }
                     }
                 }
             ),
             showAVPlayer: Binding(
-                get: { tabs[selectedTabIndex].showAVPlayer },
-                set: { 
-                    tabs[selectedTabIndex].showAVPlayer = $0
-                    
-                    // 🎬 **PIP 상태와 AVPlayer 표시 동기화**
-                    if !$0 && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
-                        // AVPlayer가 숨겨지고 현재 탭이 PIP 탭이면 PIP 중지
-                        pipManager.stopPIP()
+                get: { 
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        return tabs[index].showAVPlayer
+                    }
+                    return false
+                },
+                set: { newValue in
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[index].showAVPlayer = newValue
+                        
+                        // 🎬 **PIP 상태와 AVPlayer 표시 동기화**
+                        if !newValue && pipManager.currentPIPTab == tabs[index].id {
+                            // AVPlayer가 숨겨지고 현재 탭이 PIP 탭이면 PIP 중지
+                            pipManager.stopPIP()
+                        }
                     }
                 }
             ),
@@ -285,10 +366,6 @@ struct ContentView: View {
         .id(state.tabID)
         // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지
         .ignoresSafeArea(.container, edges: [.bottom])
-        .overlay(scrollOffsetOverlay)
-        .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onContentTap)
     }
     
     private var dashboardView: some View {
