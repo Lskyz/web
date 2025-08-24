@@ -2321,61 +2321,70 @@ extension View {
         whiteGlassBackground: AnyView,
         whiteGlassOverlay: AnyView
     ) -> some View {
-        return self
-    .overlay {
-        if manager.showSiteMenu {
-            SiteMenuSystem.UI.SiteMenuOverlay(
-                manager: manager,
-                currentState: currentState,
-                outerHorizontalPadding: outerHorizontalPadding,
-                showAddressBar: showAddressBar,
-                whiteGlassBackground: whiteGlassBackground,
-                whiteGlassOverlay: whiteGlassOverlay,
-                tabs: tabs,
-                selectedTabIndex: selectedTabIndex
-            )
-        }
-    }
-    .sheet(
-        isPresented: Binding(
-            get: { manager.showDownloadsList },
-            set: { manager.showDownloadsList = $0 }
-        )
-    ) {
-        NavigationView { SiteMenuSystem.UI.DownloadsListView(manager: manager) }
-    }
-    .sheet(
-        isPresented: Binding(
-            get: { manager.showHistoryFilterManager },
-            set: { manager.showHistoryFilterManager = $0 }
-        )
-    ) {
-        NavigationView { SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager) }
-    }
-    .sheet(
-        isPresented: Binding(
-            get: { manager.showPrivacySettings },
-            set: { manager.showPrivacySettings = $0 }
-        )
-    ) {
-        NavigationView { SiteMenuSystem.UI.PrivacySettingsView(manager: manager) }
-    }
-    .sheet(
-        isPresented: Binding(
-            get: { manager.showSitePermissions },
-            set: { manager.showSitePermissions = $0 }
-        )
-    ) {
-        NavigationView { SiteMenuSystem.UI.SitePermissionsView(manager: manager) }
-    }
-    .sheet(
-        isPresented: Binding(
-            get: { manager.showPerformanceSettings },
-            set: { manager.showPerformanceSettings = $0 }
-        )
-    ) {
-        NavigationView { SiteMenuSystem.UI.PerformanceSettingsView(manager: manager) }
-    }
+        self
+            .overlay {
+                if manager.showSiteMenu {
+                    SiteMenuSystem.UI.SiteMenuOverlay(
+                        manager: manager,
+                        currentState: currentState,
+                        outerHorizontalPadding: outerHorizontalPadding,
+                        showAddressBar: showAddressBar,
+                        whiteGlassBackground: whiteGlassBackground,
+                        whiteGlassOverlay: whiteGlassOverlay,
+                        tabs: tabs,
+                        selectedTabIndex: selectedTabIndex
+                    )
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showDownloadsList },
+                    set: { manager.showDownloadsList = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.DownloadsListView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showHistoryFilterManager },
+                    set: { manager.showHistoryFilterManager = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPrivacySettings },
+                    set: { manager.showPrivacySettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showSitePermissions },
+                    set: { manager.showSitePermissions = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.SitePermissionsView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPerformanceSettings },
+                    set: { manager.showPerformanceSettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PerformanceSettingsView(manager: manager)
+                }
             }
     }
 }
