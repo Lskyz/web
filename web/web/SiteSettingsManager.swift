@@ -505,18 +505,12 @@ enum SiteMenuSystem {
         }
         
         static func deleteFile(_ download: DownloadItem) -> [DownloadItem] {
-            var downloads = removeDownload(download)
-            
-            if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: fileURL)
-                } catch {
-                    print("파일 삭제 실패: \(error)")
-                }
-            }
-            
-            return downloads
-        }
+    let downloads = removeDownload(download)
+    if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
+        do { try FileManager.default.removeItem(at: fileURL) } catch { print("파일 삭제 실패: \(error)") }
+    }
+    return downloads
+}
         
         static func clearAll() -> [DownloadItem] {
             saveDownloads([])
