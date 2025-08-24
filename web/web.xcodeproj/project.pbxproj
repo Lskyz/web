@@ -18,6 +18,7 @@
 		336424482E3B6EB700A5963D /* MyBrowserAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336424472E3B6EB700A5963D /* MyBrowserAppApp.swift */; };
 		33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C8EF7A2E3EFBC100A48206 /* tabview.swift */; };
 		33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */; };
+		33D47D3E2E54348A005DFD69 /* ads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D47D3D2E54348A005DFD69 /* ads.swift */; };
 		33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */; };
 /* End PBXBuildFile section */
 
@@ -54,6 +55,7 @@
 		336424472E3B6EB700A5963D /* MyBrowserAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyBrowserAppApp.swift; sourceTree = "<group>"; };
 		33C8EF7A2E3EFBC100A48206 /* tabview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tabview.swift; sourceTree = "<group>"; };
 		33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHelper.swift; sourceTree = "<group>"; };
+		33D47D3D2E54348A005DFD69 /* ads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ads.swift; sourceTree = "<group>"; };
 		33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewDataModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -112,6 +114,7 @@
 				332230912E3D88F700EB7526 /* avp.swift */,
 				33C8EF7A2E3EFBC100A48206 /* tabview.swift */,
 				33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */,
+				33D47D3D2E54348A005DFD69 /* ads.swift */,
 				33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */,
 				3322308C2E3B71DB00EB7526 /* exportOptions.plist */,
 				3364241F2E3B6D5700A5963D /* Assets.xcassets */,
@@ -262,6 +265,7 @@
 			files = (
 				33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */,
 				332230922E3D88F700EB7526 /* avp.swift in Sources */,
+				33D47D3E2E54348A005DFD69 /* ads.swift in Sources */,
 				33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */,
 				336424482E3B6EB700A5963D /* MyBrowserAppApp.swift in Sources */,
 				3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */,
