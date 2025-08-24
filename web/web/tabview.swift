@@ -152,14 +152,14 @@ class PIPManager: ObservableObject {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(pipDidStart),
-            name: .AVPictureInPictureControllerWillStartPictureInPicture,
+            name: AVPictureInPictureController.pictureInPictureControllerWillStartPictureInPictureNotification,
             object: nil
         )
         
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(pipDidStop),
-            name: .AVPictureInPictureControllerDidStopPictureInPicture,
+            name: AVPictureInPictureController.pictureInPictureControllerDidStopPictureInPictureNotification,
             object: nil
         )
         
@@ -389,7 +389,7 @@ enum TabPersistenceManager {
                 )
                 
                 // 🏊‍♂️ 웹뷰 풀에서 재사용 시도
-                if let reusedWebView = WebViewPool.shared.reuseWebView(for: rid) {
+                if WebViewPool.shared.reuseWebView(for: rid) != nil {
                     debugMessages.append("♻️ 웹뷰 재사용됨: \(String(rid.uuidString.prefix(8)))")
                 }
                 
@@ -870,7 +870,7 @@ struct TabManager: View {
                         .foregroundColor(.blue)
                     
                     if PIPManager.shared.isPIPActive {
-                        Text("🎬 PIP 활성: 탭 \(PIPManager.shared.currentPIPTab?.uuidString.prefix(8) ?? "없음")")
+                        Text("🎬 PIP 활성: 탭 \(String(PIPManager.shared.currentPIPTab?.uuidString.prefix(8) ?? "없음"))")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundColor(.green)
                     }
