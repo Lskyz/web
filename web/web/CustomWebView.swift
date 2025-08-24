@@ -96,7 +96,7 @@ struct CustomWebView: UIViewRepresentable {
             let config = WKWebViewConfiguration()
             config.allowsInlineMediaPlayback = true
             config.allowsPictureInPictureMediaPlayback = true
-            config.mediaTypesRequiringUserActionForPlaybook = []
+            config.mediaTypesRequiringUserActionForPlayback = []
             config.websiteDataStore = WKWebsiteDataStore.default()
             config.processPool = WKProcessPool()
 
@@ -1228,7 +1228,7 @@ struct CustomWebView: UIViewRepresentable {
         
         /// 이미지 공유
         private func shareImage(from url: URL) {
-            URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            URLSession.shared.dataTask(with: url) { data, response, error in
                 DispatchQueue.main.async {
                     guard let data = data, let image = UIImage(data: data) else {
                         TabPersistenceManager.debugMessages.append("📷 이미지 공유 실패")
