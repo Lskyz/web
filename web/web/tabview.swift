@@ -838,6 +838,9 @@ struct TabManager: View {
     @State private var showDebugView = false
     @State private var showHistorySheet = false
     
+    // 🎬 **PIP 관리자 상태 감지 추가**
+    @StateObject private var pipManager = PIPManager.shared
+    
     private var currentTabID: UUID? { initialStateModel.tabID }
 
     var body: some View {
@@ -923,8 +926,8 @@ struct TabManager: View {
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(.cyan)
                     
-                    if PIPManager.shared.isPIPActive {
-                        Text("🎬 PIP 활성: 탭 \(String(PIPManager.shared.currentPIPTab?.uuidString.prefix(8) ?? "없음"))")
+                    if pipManager.isPIPActive {
+                        Text("🎬 PIP 활성: 탭 \(String(pipManager.currentPIPTab?.uuidString.prefix(8) ?? "없음"))")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundColor(.green)
                     }
@@ -985,8 +988,8 @@ struct TabManager: View {
                         .font(.headline)
                         .lineLimit(1)
                     
-                    // 🛡️ PIP 보호 표시
-                    if tab.isPIPProtected {
+                    // 🛡️ **진짜 PIP 보호 표시**
+                    if pipManager.isPIPActive && pipManager.currentPIPTab == tab.id {
                         Text("🛡️PIP")
                             .font(.caption2.bold())
                             .padding(.horizontal, 6)
@@ -1042,9 +1045,11 @@ struct TabManager: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(tab.isPIPProtected ? Color.green.opacity(0.6) : 
-                           (tab.id == currentTabID ? Color.orange.opacity(0.6) : Color.clear), 
-                           lineWidth: 1.5)
+                    .stroke(
+                        pipManager.isPIPActive && pipManager.currentPIPTab == tab.id ? Color.green.opacity(0.6) : 
+                        (tab.id == currentTabID ? Color.orange.opacity(0.6) : Color.clear), 
+                        lineWidth: 1.5
+                    )
             )
         }
         .buttonStyle(.plain)
@@ -1052,14 +1057,17 @@ struct TabManager: View {
     
     @ViewBuilder
     private func tabCloseButton(tab: WebTab) -> some View {
+        // 🛡️ **진짜 PIP 보호 상태 표시**
+        let isPIPProtected = pipManager.isPIPActive && pipManager.currentPIPTab == tab.id
+        
         Button(action: { closeTab(tab) }) {
-            Image(systemName: tab.isPIPProtected ? "lock.shield" : "xmark")
+            Image(systemName: isPIPProtected ? "lock.shield" : "xmark")
                 .font(.headline)
                 .foregroundColor(.white)
                 .frame(width: 32, height: 32)
-                .background(Circle().fill(tab.isPIPProtected ? Color.orange : Color.red))
+                .background(Circle().fill(isPIPProtected ? Color.orange : Color.red))
         }
-        .accessibilityLabel(tab.isPIPProtected ? "PIP 보호됨" : "탭 닫기")
+        .accessibilityLabel(isPIPProtected ? "PIP 보호됨" : "탭 닫기")
     }
     
     @ViewBuilder
@@ -1161,20 +1169,27 @@ struct TabManager: View {
         debugMessages = TabPersistenceManager.debugMessages
         
         toastMessage = "웹뷰 풀 정리 완료"
-        showToast = true
+        withAnimation { showToast = true }
     }
 
     private func closeTab(_ tab: WebTab) {
         guard let closingIndex = tabs.firstIndex(of: tab) else { return }
         
-        // 🏊‍♂️ 웹뷰 풀에서 탭 닫기 처리 (PIP 보호 확인)
+        // 🎬 **핵심**: 먼저 PIPManager에서 직접 체크 (이게 진짜 보호!)
+        if pipManager.isPIPActive && pipManager.currentPIPTab == tab.id {
+            TabPersistenceManager.debugMessages.append("🛡️ PIP 활성 탭 닫기 거부: \(String(tab.id.uuidString.prefix(8)))")
+            toastMessage = "🎬 PIP 재생 중인 탭은 닫을 수 없습니다"
+            withAnimation { showToast = true }
+            return // ← 완전히 차단!
+        }
+        
+        // 🏊‍♂️ 추가로 웹뷰 풀에서도 체크
         let canClose = WebViewPool.shared.handleTabClose(tab.id)
         
         if !canClose {
-            // PIP 보호로 탭 닫기 거부됨
-            TabPersistenceManager.debugMessages.append("🛡️ PIP 보호로 탭 닫기 거부: \(String(tab.id.uuidString.prefix(8)))")
-            toastMessage = "PIP 재생 중인 탭은 닫을 수 없습니다"
-            showToast = true
+            TabPersistenceManager.debugMessages.append("🛡️ 웹뷰 풀 보호로 탭 닫기 거부: \(String(tab.id.uuidString.prefix(8)))")
+            toastMessage = "🏊‍♂️ 보호된 탭은 닫을 수 없습니다"
+            withAnimation { showToast = true }
             return
         }
         
@@ -1191,7 +1206,7 @@ struct TabManager: View {
             tabs = newList
             if let idx = tabs.firstIndex(of: dashboard) { onTabSelected(idx) }
             DispatchQueue.main.async { dismiss() }
-            TabPersistenceManager.debugMessages.append("탭 닫힘(마지막): 새 대시보드 생성 → 선택")
+            TabPersistenceManager.debugMessages.append("탭 닫힌(마지막): 새 대시보드 생성 → 선택")
             debugMessages = TabPersistenceManager.debugMessages
             return
         }
@@ -1209,7 +1224,7 @@ struct TabManager: View {
 
         onTabSelected(targetIndex)
         DispatchQueue.main.async { dismiss() }
-        TabPersistenceManager.debugMessages.append("탭 닫힘: ID \(String(tab.id.uuidString.prefix(8))) → 복귀 인덱스 \(targetIndex)")
+        TabPersistenceManager.debugMessages.append("탭 닫힌: ID \(String(tab.id.uuidString.prefix(8))) → 복귀 인덱스 \(targetIndex)")
         debugMessages = TabPersistenceManager.debugMessages
     }
 }
