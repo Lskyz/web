@@ -2105,13 +2105,7 @@ class SiteMenuManager: ObservableObject {
     @Published var showPerformanceSettings: Bool = false
     
     // MARK: - Settings State
-    @Published var popupBlocked: Bool = true {
-        didSet {
-            if popupBlocked != oldValue {
-                _ = SiteMenuSystem.Settings.togglePopupBlocking()
-            }
-        }
-    }
+    @Published var popupBlocked: Bool = SiteMenuSystem.Settings.getPopupBlockedState()
     
     // MARK: - Desktop Mode State
     private weak var currentStateModel: WebViewStateModel?
