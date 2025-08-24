@@ -2225,12 +2225,10 @@ class SiteMenuManager: ObservableObject {
     
     // MARK: - Settings Actions
     func togglePopupBlocking() {
-        popupBlocked = SiteMenuSystem.Settings.togglePopupBlocking()
-        
-        if !popupBlocked {
-            SiteMenuSystem.Settings.resetPopupBlockedCount()
-        }
-    }
+    _ = SiteMenuSystem.Settings.togglePopupBlocking() // 스토어만 토글
+    popupBlocked = SiteMenuSystem.Settings.getPopupBlockedState() // 상태 싱크
+    if !popupBlocked { SiteMenuSystem.Settings.resetPopupBlockedCount() }
+}
     
     // MARK: - Downloads Actions
     func addDownload(filename: String, url: String, size: String = "알 수 없음", fileURL: URL? = nil) {
