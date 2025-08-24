@@ -30,7 +30,201 @@ struct WebTabSessionSnapshot: Codable {
     let currentIndex: Int
 }
 
-// MARK: - WebTab: 브라우저 탭 모델 (새 시스템 적용)
+// MARK: - 🏊‍♂️ **웹뷰 풀 관리자: 웹뷰 재사용 및 PIP 보호**
+class WebViewPool: ObservableObject {
+    static let shared = WebViewPool()
+    
+    // 활성 웹뷰들 (탭 ID별로 관리)
+    private var activeWebViews: [UUID: WKWebView] = [:]
+    
+    // PIP 보호 웹뷰들 (PIP 중이면 해체 금지)
+    private var pipProtectedWebViews: Set<UUID> = []
+    
+    // 재사용 대기 웹뷰들 (탭이 닫혔지만 재사용 가능)
+    private var pooledWebViews: [UUID: WKWebView] = [:]
+    
+    private let maxPoolSize = 10 // 최대 풀 크기
+    
+    private init() {
+        TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 초기화")
+    }
+    
+    // 웹뷰 등록 (탭 생성 시)
+    func registerWebView(_ webView: WKWebView, for tabID: UUID) {
+        activeWebViews[tabID] = webView
+        TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // 웹뷰 조회
+    func getWebView(for tabID: UUID) -> WKWebView? {
+        return activeWebViews[tabID]
+    }
+    
+    // PIP 보호 설정 (PIP 시작 시)
+    func protectWebViewForPIP(_ tabID: UUID) {
+        pipProtectedWebViews.insert(tabID)
+        TabPersistenceManager.debugMessages.append("🛡️ PIP 보호 설정: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // PIP 보호 해제 (PIP 종료 시)
+    func unprotectWebViewFromPIP(_ tabID: UUID) {
+        pipProtectedWebViews.remove(tabID)
+        TabPersistenceManager.debugMessages.append("🔓 PIP 보호 해제: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // PIP 보호 상태 확인
+    func isPIPProtected(_ tabID: UUID) -> Bool {
+        return pipProtectedWebViews.contains(tabID)
+    }
+    
+    // 탭 닫기 시 웹뷰 처리
+    func handleTabClose(_ tabID: UUID) -> Bool {
+        guard let webView = activeWebViews[tabID] else {
+            TabPersistenceManager.debugMessages.append("⚠️ 닫을 웹뷰 없음: 탭 \(String(tabID.uuidString.prefix(8)))")
+            return true // 닫기 허용
+        }
+        
+        // PIP 보호 중이면 닫기 거부, 풀로 이동
+        if isPIPProtected(tabID) {
+            activeWebViews.removeValue(forKey: tabID)
+            pooledWebViews[tabID] = webView
+            TabPersistenceManager.debugMessages.append("🛡️ PIP 보호로 탭 닫기 거부, 풀로 이동: 탭 \(String(tabID.uuidString.prefix(8)))")
+            return false // 닫기 거부
+        }
+        
+        // 일반 상황: 풀에 저장 (용량 허용 시)
+        activeWebViews.removeValue(forKey: tabID)
+        
+        if pooledWebViews.count < maxPoolSize {
+            pooledWebViews[tabID] = webView
+            TabPersistenceManager.debugMessages.append("🏊‍♂️ 웹뷰 풀 저장: 탭 \(String(tabID.uuidString.prefix(8))) (풀 크기: \(pooledWebViews.count))")
+        } else {
+            // 풀이 가득 차면 해체
+            cleanupWebView(webView)
+            TabPersistenceManager.debugMessages.append("💀 웹뷰 해체 (풀 가득참): 탭 \(String(tabID.uuidString.prefix(8)))")
+        }
+        
+        return true // 닫기 허용
+    }
+    
+    // 탭 복원 시 웹뷰 재사용
+    func reuseWebView(for tabID: UUID) -> WKWebView? {
+        if let pooledWebView = pooledWebViews.removeValue(forKey: tabID) {
+            activeWebViews[tabID] = pooledWebView
+            TabPersistenceManager.debugMessages.append("♻️ 웹뷰 재사용: 탭 \(String(tabID.uuidString.prefix(8))) (풀 크기: \(pooledWebViews.count))")
+            return pooledWebView
+        }
+        return nil
+    }
+    
+    // 웹뷰 완전 정리
+    private func cleanupWebView(_ webView: WKWebView) {
+        webView.stopLoading()
+        webView.loadHTMLString("", baseURL: nil)
+        webView.removeFromSuperview()
+    }
+    
+    // 풀 전체 정리 (메모리 부족 시)
+    func clearPool() {
+        for webView in pooledWebViews.values {
+            cleanupWebView(webView)
+        }
+        pooledWebViews.removeAll()
+        TabPersistenceManager.debugMessages.append("🧹 웹뷰 풀 전체 정리")
+    }
+    
+    // 디버그 정보
+    func debugInfo() -> String {
+        return "활성: \(activeWebViews.count), 풀: \(pooledWebViews.count), PIP보호: \(pipProtectedWebViews.count)"
+    }
+}
+
+// MARK: - 🎬 **PIP 관리자: 탭 간 PIP 유지**
+class PIPManager: ObservableObject {
+    static let shared = PIPManager()
+    
+    @Published var currentPIPTab: UUID? = nil
+    @Published var pipPlayerURL: URL? = nil
+    @Published var isPIPActive: Bool = false
+    
+    private init() {
+        // PIP 상태 변경 알림 구독
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pipDidStart),
+            name: .AVPictureInPictureControllerWillStartPictureInPicture,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pipDidStop),
+            name: .AVPictureInPictureControllerDidStopPictureInPicture,
+            object: nil
+        )
+        
+        TabPersistenceManager.debugMessages.append("🎬 PIP 관리자 초기화")
+    }
+    
+    @objc private func pipDidStart() {
+        isPIPActive = true
+        
+        // 현재 PIP 탭의 웹뷰 보호
+        if let pipTab = currentPIPTab {
+            WebViewPool.shared.protectWebViewForPIP(pipTab)
+        }
+        
+        TabPersistenceManager.debugMessages.append("🎬 PIP 시작됨, 웹뷰 보호 설정")
+    }
+    
+    @objc private func pipDidStop() {
+        isPIPActive = false
+        
+        // 웹뷰 보호 해제
+        if let pipTab = currentPIPTab {
+            WebViewPool.shared.unprotectWebViewFromPIP(pipTab)
+        }
+        
+        currentPIPTab = nil
+        pipPlayerURL = nil
+        TabPersistenceManager.debugMessages.append("🎬 PIP 종료됨, 웹뷰 보호 해제")
+    }
+    
+    // PIP 시작 (탭 ID와 함께 저장)
+    func startPIP(for tabID: UUID, with url: URL) {
+        currentPIPTab = tabID
+        pipPlayerURL = url
+        
+        // 웹뷰 보호 설정
+        WebViewPool.shared.protectWebViewForPIP(tabID)
+        
+        TabPersistenceManager.debugMessages.append("🎬 PIP 시작 요청: 탭 \(String(tabID.uuidString.prefix(8)))")
+        
+        // 실제 PIP 시작은 AVPlayerView에서 처리
+        NotificationCenter.default.post(
+            name: .init("StartPIPForTab"),
+            object: nil,
+            userInfo: ["tabID": tabID, "url": url]
+        )
+    }
+    
+    // PIP 중지
+    func stopPIP() {
+        if let pipTab = currentPIPTab {
+            WebViewPool.shared.unprotectWebViewFromPIP(pipTab)
+        }
+        
+        TabPersistenceManager.debugMessages.append("🎬 PIP 중지 요청")
+        
+        NotificationCenter.default.post(name: .init("StopPIPForTab"), object: nil)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+}
+
+// MARK: - WebTab: 브라우저 탭 모델 (웹뷰 풀 연동)
 struct WebTab: Identifiable, Equatable {
     let id: UUID
     let stateModel: WebViewStateModel
@@ -41,6 +235,16 @@ struct WebTab: Identifiable, Equatable {
     var currentURL: URL? { stateModel.currentURL }
     var historyURLs: [String] { stateModel.historyURLs }
     var currentHistoryIndex: Int { stateModel.currentHistoryIndex }
+    
+    // 🏊‍♂️ **웹뷰 풀 상태**
+    var isWebViewPooled: Bool {
+        return WebViewPool.shared.getWebView(for: id) != nil
+    }
+    
+    // 🛡️ **PIP 보호 상태**
+    var isPIPProtected: Bool {
+        return WebViewPool.shared.isPIPProtected(id)
+    }
 
     // MARK: 기본 생성자 (새 탭)
     init(url: URL? = nil) {
@@ -80,6 +284,24 @@ struct WebTab: Identifiable, Equatable {
 
         self.stateModel = model
     }
+    
+    // 🎬 **PIP 시작 메서드**
+    mutating func startPIP(with url: URL) {
+        playerURL = url
+        showAVPlayer = true
+        PIPManager.shared.startPIP(for: id, with: url)
+        TabPersistenceManager.debugMessages.append("🎬 탭 \(String(id.uuidString.prefix(8))) PIP 시작")
+    }
+    
+    // 🎬 **PIP 중지 메서드**  
+    mutating func stopPIP() {
+        showAVPlayer = false
+        playerURL = nil
+        if PIPManager.shared.currentPIPTab == id {
+            PIPManager.shared.stopPIP()
+        }
+        TabPersistenceManager.debugMessages.append("🎬 탭 \(String(id.uuidString.prefix(8))) PIP 중지")
+    }
 
     static func == (lhs: WebTab, rhs: WebTab) -> Bool {
         lhs.id == rhs.id
@@ -115,13 +337,13 @@ struct WebTab: Identifiable, Equatable {
     }
 }
 
-// MARK: - TabPersistenceManager: 탭 저장/복원 관리 (새 시스템 적용)
+// MARK: - TabPersistenceManager: 탭 저장/복원 관리 (웹뷰 풀 정보 추가)
 enum TabPersistenceManager {
     private static let key = "savedTabs"
     private static let bookmarkKey = "savedBookmarks"
     static var debugMessages: [String] = []
 
-    // MARK: 탭 저장 (단순화)
+    // MARK: 탭 저장 (웹뷰 풀 상태 고려)
     static func saveTabs(_ tabs: [WebTab]) {
         tabs.forEach { tab in
             if tab.stateModel.tabID != tab.id {
@@ -134,6 +356,7 @@ enum TabPersistenceManager {
         
         let pageCounts = snapshots.map { "\($0.pageRecords.count)페이지" }
         debugMessages.append("저장 시도: 탭 \(tabs.count)개 [\(pageCounts.joined(separator: ", "))]")
+        debugMessages.append("웹뷰 풀 상태: \(WebViewPool.shared.debugInfo())")
         
         do {
             let data = try JSONEncoder().encode(snapshots)
@@ -144,7 +367,7 @@ enum TabPersistenceManager {
         }
     }
 
-    // MARK: 탭 복원 (단순화)
+    // MARK: 탭 복원 (웹뷰 풀에서 재사용 시도)
     static func loadTabs() -> [WebTab] {
         guard let data = UserDefaults.standard.data(forKey: key) else {
             debugMessages.append("복원 실패: UserDefaults에 데이터 없음")
@@ -165,11 +388,17 @@ enum TabPersistenceManager {
                     "탭 복원 준비: ID \(String(rid.uuidString.prefix(8))), \(pageRecords.count)개 페이지, idx \(idx)"
                 )
                 
+                // 🏊‍♂️ 웹뷰 풀에서 재사용 시도
+                if let reusedWebView = WebViewPool.shared.reuseWebView(for: rid) {
+                    debugMessages.append("♻️ 웹뷰 재사용됨: \(String(rid.uuidString.prefix(8)))")
+                }
+                
                 return WebTab(restoredID: rid, pageRecords: pageRecords, currentIndex: idx)
             }
             
             let restoredCounts = tabs.map { "\($0.historyURLs.count)페이지" }
             debugMessages.append("복원 완료: [\(restoredCounts.joined(separator: ", "))]")
+            debugMessages.append("웹뷰 풀 상태: \(WebViewPool.shared.debugInfo())")
             
             return tabs
         } catch {
@@ -207,7 +436,7 @@ enum TabPersistenceManager {
     }
 }
 
-// MARK: - DashboardView: URL 없는 탭의 홈 화면 (✅ 단일 네비게이션 함수로 통합)
+// MARK: - DashboardView: URL 없는 탭의 홈 화면 (단일 네비게이션 함수로 통합)
 struct DashboardView: View {
     @State private var bookmarks: [Bookmark] = TabPersistenceManager.loadBookmarks()
     @State private var showAddBookmarkAlert: Bool = false
@@ -358,6 +587,10 @@ struct DashboardView: View {
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("히스토리: \(WebViewDataModel.globalHistory.count)개")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text("웹뷰 풀: \(WebViewPool.shared.debugInfo())")
                         .font(.caption)
                         .foregroundColor(.gray)
                     
@@ -542,7 +775,7 @@ struct RecentPageCard: View {
     }
 }
 
-// MARK: - 🛡️ TabManager: 완전 격리 처리 (키보드 여백 해결)
+// MARK: - 🛡️ TabManager: 웹뷰 풀 및 PIP 보호 정보 추가
 struct TabManager: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var tabs: [WebTab]
@@ -632,6 +865,16 @@ struct TabManager: View {
             
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    Text("웹뷰 풀: \(WebViewPool.shared.debugInfo())")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.blue)
+                    
+                    if PIPManager.shared.isPIPActive {
+                        Text("🎬 PIP 활성: 탭 \(PIPManager.shared.currentPIPTab?.uuidString.prefix(8) ?? "없음")")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.green)
+                    }
+                    
                     ForEach(Array(debugMessages.suffix(5).enumerated()), id: \.offset) { _, message in
                         Text(message)
                             .font(.system(.caption, design: .monospaced))
@@ -645,7 +888,7 @@ struct TabManager: View {
                     }
                 }
             }
-            .frame(maxHeight: 100)
+            .frame(maxHeight: 120)
             .padding()
             .background(Color(UIColor.secondarySystemBackground).opacity(0.7))
             .cornerRadius(10)
@@ -687,13 +930,36 @@ struct TabManager: View {
                     Text(tab.currentURL?.host ?? "대시보드")
                         .font(.headline)
                         .lineLimit(1)
-                    if tab.id == currentTabID {
-                        Text("현재")
+                    
+                    // 🛡️ PIP 보호 표시
+                    if tab.isPIPProtected {
+                        Text("🛡️PIP")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.15))
+                            .foregroundColor(.green)
+                            .cornerRadius(4)
+                    }
+                    
+                    // 🏊‍♂️ 웹뷰 풀 상태 표시
+                    if tab.isWebViewPooled {
+                        Text("🏊‍♂️풀")
                             .font(.caption2.bold())
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.blue.opacity(0.15))
                             .foregroundColor(.blue)
+                            .cornerRadius(4)
+                    }
+                    
+                    if tab.id == currentTabID {
+                        Text("현재")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15))
+                            .foregroundColor(.orange)
                             .cornerRadius(4)
                     }
                 }
@@ -722,7 +988,9 @@ struct TabManager: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(tab.id == currentTabID ? Color.blue.opacity(0.6) : Color.clear, lineWidth: 1.5)
+                    .stroke(tab.isPIPProtected ? Color.green.opacity(0.6) : 
+                           (tab.id == currentTabID ? Color.orange.opacity(0.6) : Color.clear), 
+                           lineWidth: 1.5)
             )
         }
         .buttonStyle(.plain)
@@ -731,13 +999,13 @@ struct TabManager: View {
     @ViewBuilder
     private func tabCloseButton(tab: WebTab) -> some View {
         Button(action: { closeTab(tab) }) {
-            Image(systemName: "xmark")
+            Image(systemName: tab.isPIPProtected ? "lock.shield" : "xmark")
                 .font(.headline)
                 .foregroundColor(.white)
                 .frame(width: 32, height: 32)
-                .background(Circle().fill(Color.red))
+                .background(Circle().fill(tab.isPIPProtected ? Color.orange : Color.red))
         }
-        .accessibilityLabel("탭 닫기")
+        .accessibilityLabel(tab.isPIPProtected ? "PIP 보호됨" : "탭 닫기")
     }
     
     @ViewBuilder
@@ -746,6 +1014,7 @@ struct TabManager: View {
             Spacer()
             HStack(spacing: 18) {
                 FloatingCircleButton(symbol: "plus") { addNewTabAndExit() }
+                FloatingCircleButton(symbol: "trash.fill") { clearWebViewPool() }
                 FloatingCircleButton(symbol: "chevron.down") {
                     dismiss()
                     TabPersistenceManager.debugMessages.append("목록 닫기")
@@ -830,9 +1099,31 @@ struct TabManager: View {
             debugMessages = TabPersistenceManager.debugMessages
         }
     }
+    
+    // 🧹 웹뷰 풀 정리
+    private func clearWebViewPool() {
+        WebViewPool.shared.clearPool()
+        TabPersistenceManager.debugMessages.append("🧹 웹뷰 풀 전체 정리 완료")
+        debugMessages = TabPersistenceManager.debugMessages
+        
+        toastMessage = "웹뷰 풀 정리 완료"
+        showToast = true
+    }
 
     private func closeTab(_ tab: WebTab) {
         guard let closingIndex = tabs.firstIndex(of: tab) else { return }
+        
+        // 🏊‍♂️ 웹뷰 풀에서 탭 닫기 처리 (PIP 보호 확인)
+        let canClose = WebViewPool.shared.handleTabClose(tab.id)
+        
+        if !canClose {
+            // PIP 보호로 탭 닫기 거부됨
+            TabPersistenceManager.debugMessages.append("🛡️ PIP 보호로 탭 닫기 거부: \(String(tab.id.uuidString.prefix(8)))")
+            toastMessage = "PIP 재생 중인 탭은 닫을 수 없습니다"
+            showToast = true
+            return
+        }
+        
         let wasCurrent = (tab.id == initialStateModel.tabID)
         let indexOfCurrentBefore = tabs.firstIndex(where: { $0.id == initialStateModel.tabID }) ?? 0
 
@@ -1035,6 +1326,8 @@ struct DebugLogRowView: View {
         if message.contains("🆕") { return .green }
         if message.contains("⬅️") || message.contains("➡️") { return .blue }
         if message.contains("🔧") || message.contains("🔄") { return .orange }
+        if message.contains("🏊‍♂️") { return .cyan }
+        if message.contains("🛡️") { return .green }
         return .primary
     }
     
@@ -1045,6 +1338,8 @@ struct DebugLogRowView: View {
         if message.contains("➡️") { return "arrow.right.circle" }
         if message.contains("🌐") { return "globe" }
         if message.contains("📄") { return "doc" }
+        if message.contains("🏊‍♂️") { return "figure.pool.swim" }
+        if message.contains("🛡️") { return "shield.fill" }
         return "info.circle"
     }
     
