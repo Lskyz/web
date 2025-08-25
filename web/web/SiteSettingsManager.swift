@@ -62,27 +62,6 @@ struct DownloadItem: Identifiable, Codable {
     }
 }
 
-struct SitePermission: Identifiable, Codable {
-    var id = UUID()
-    let domain: String
-    var allowsJavaScript: Bool
-    var allowsPopups: Bool
-    var allowsImages: Bool
-    var allowsNotifications: Bool
-    let createdAt: Date
-    var lastModified: Date
-
-    init(domain: String) {
-        self.domain = domain
-        self.allowsJavaScript = true
-        self.allowsPopups = false
-        self.allowsImages = true
-        self.allowsNotifications = false
-        self.createdAt = Date()
-        self.lastModified = Date()
-    }
-}
-
 // MARK: - 🚫 Enhanced PopupBlockManager with Notification System
 class PopupBlockManager: ObservableObject {
     static let shared = PopupBlockManager()
@@ -329,52 +308,6 @@ enum SiteMenuSystem {
         static func clearWebsiteData() {
             let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
             WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: Date.distantPast) { }
-        }
-    }
-    
-    // MARK: - 🌐 Site Permissions Module
-    enum SitePermissions {
-        private static let permissionsKey = "sitePermissions"
-        
-        static func getPermissions() -> [SitePermission] {
-            guard let data = UserDefaults.standard.data(forKey: permissionsKey) else { return [] }
-            do {
-                return try JSONDecoder().decode([SitePermission].self, from: data)
-            } catch {
-                print("사이트 권한 로드 실패: \(error)")
-                return []
-            }
-        }
-        
-        static func savePermissions(_ permissions: [SitePermission]) {
-            do {
-                let data = try JSONEncoder().encode(permissions)
-                UserDefaults.standard.set(data, forKey: permissionsKey)
-            } catch {
-                print("사이트 권한 저장 실패: \(error)")
-            }
-        }
-        
-        static func getPermission(for domain: String) -> SitePermission? {
-            return getPermissions().first { $0.domain == domain }
-        }
-        
-        static func setPermission(_ permission: SitePermission) -> [SitePermission] {
-            var permissions = getPermissions()
-            if let index = permissions.firstIndex(where: { $0.domain == permission.domain }) {
-                permissions[index] = permission
-            } else {
-                permissions.append(permission)
-            }
-            savePermissions(permissions)
-            return permissions
-        }
-        
-        static func removePermission(for domain: String) -> [SitePermission] {
-            var permissions = getPermissions()
-            permissions.removeAll { $0.domain == domain }
-            savePermissions(permissions)
-            return permissions
         }
     }
     
@@ -974,17 +907,6 @@ enum SiteMenuSystem {
                     
                     HStack {
                         menuOptionRow(
-                            icon: "gear.badge",
-                            title: "사이트 설정",
-                            subtitle: "권한 관리",
-                            color: .green
-                        ) {
-                            manager.showSitePermissions = true
-                        }
-                        
-                        Spacer()
-                        
-                        menuOptionRow(
                             icon: "speedometer",
                             title: "성능",
                             subtitle: "메모리 & 캐시",
@@ -992,6 +914,12 @@ enum SiteMenuSystem {
                         ) {
                             manager.showPerformanceSettings = true
                         }
+                        
+                        Spacer()
+                        
+                        // 빈 공간을 위한 투명 버튼
+                        Color.clear
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -2035,124 +1963,6 @@ enum SiteMenuSystem {
             }
         }
         
-        // MARK: - Site Permissions View
-        struct SitePermissionsView: View {
-            @ObservedObject var manager: SiteMenuManager
-            @Environment(\.dismiss) private var dismiss
-            
-            var body: some View {
-                List {
-                    Section("사이트별 권한") {
-                        if manager.sitePermissions.isEmpty {
-                            VStack(spacing: 16) {
-                                Image(systemName: "gear.badge")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.secondary)
-                                
-                                Text("설정된 사이트별 권한이 없습니다")
-                                    .font(.headline)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("웹사이트를 방문하여 권한을 설정할 수 있습니다")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                        } else {
-                            ForEach(manager.sitePermissions) { permission in
-                                sitePermissionRow(permission)
-                            }
-                            .onDelete(perform: deleteSitePermissions)
-                        }
-                    }
-                }
-                .navigationTitle("사이트 권한")
-                .navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
-                }
-            }
-            
-            @ViewBuilder
-            private func sitePermissionRow(_ permission: SitePermission) -> some View {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "globe")
-                            .foregroundColor(.blue)
-                        
-                        Text(permission.domain)
-                            .font(.headline)
-                        
-                        Spacer()
-                        
-                        Text(RelativeDateTimeFormatter().localizedString(for: permission.lastModified, relativeTo: Date()))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    VStack(spacing: 4) {
-                        permissionToggle("JavaScript", icon: "curlybraces", isEnabled: permission.allowsJavaScript) { enabled in
-                            var updatedPermission = permission
-                            updatedPermission.allowsJavaScript = enabled
-                            updatedPermission.lastModified = Date()
-                            manager.updateSitePermission(updatedPermission)
-                        }
-                        
-                        permissionToggle("팝업", icon: "rectangle.on.rectangle", isEnabled: permission.allowsPopups) { enabled in
-                            var updatedPermission = permission
-                            updatedPermission.allowsPopups = enabled
-                            updatedPermission.lastModified = Date()
-                            manager.updateSitePermission(updatedPermission)
-                        }
-                        
-                        permissionToggle("이미지", icon: "photo", isEnabled: permission.allowsImages) { enabled in
-                            var updatedPermission = permission
-                            updatedPermission.allowsImages = enabled
-                            updatedPermission.lastModified = Date()
-                            manager.updateSitePermission(updatedPermission)
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            
-            @ViewBuilder
-            private func permissionToggle(_ title: String, icon: String, isEnabled: Bool, action: @escaping (Bool) -> Void) -> some View {
-                HStack {
-                    Image(systemName: icon)
-                        .foregroundColor(isEnabled ? .green : .gray)
-                        .frame(width: 20)
-                    
-                    Text(title)
-                        .font(.subheadline)
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: Binding(
-                    get: { isEnabled },
-                    set: { action($0) }   // 변경사항을 상위로 전달
-                    ))
-                   .labelsHidden()
-                   .scaleEffect(0.8)
-                }
-            }
-            
-            private func deleteSitePermissions(at offsets: IndexSet) {
-                for index in offsets {
-                    let permission = manager.sitePermissions[index]
-                    manager.removeSitePermission(for: permission.domain)
-                }
-            }
-        }
-        
         // MARK: - Performance Settings View
         struct PerformanceSettingsView: View {
             @ObservedObject var manager: SiteMenuManager
@@ -2264,7 +2074,6 @@ class SiteMenuManager: ObservableObject {
     @Published var showDownloadsList: Bool = false  
     @Published var showHistoryFilterManager: Bool = false
     @Published var showPrivacySettings: Bool = false
-    @Published var showSitePermissions: Bool = false
     @Published var showPerformanceSettings: Bool = false
     
     // MARK: - 🚫 Popup Alert State
@@ -2292,9 +2101,6 @@ class SiteMenuManager: ObservableObject {
             SiteMenuSystem.History.setFilteringEnabled(isHistoryFilteringEnabled)
         }
     }
-    
-    // MARK: - Site Permissions State
-    @Published var sitePermissions: [SitePermission] = []
     
     // MARK: - Performance State
     @Published var imageCompressionEnabled: Bool = false {
@@ -2326,7 +2132,6 @@ class SiteMenuManager: ObservableObject {
         downloads = SiteMenuSystem.Downloads.loadExistingDownloads()
         historyFilters = SiteMenuSystem.History.getFilters()
         isHistoryFilteringEnabled = SiteMenuSystem.History.getFilteringEnabled()
-        sitePermissions = SiteMenuSystem.SitePermissions.getPermissions()
         imageCompressionEnabled = SiteMenuSystem.Performance.getImageCompressionEnabled()
         memoryThreshold = SiteMenuSystem.Performance.getMemoryThreshold()
         webViewPoolSize = SiteMenuSystem.Performance.getWebViewPoolSize()
@@ -2463,15 +2268,6 @@ class SiteMenuManager: ObservableObject {
         historyFilters = SiteMenuSystem.History.clearAllFilters()
     }
     
-    // MARK: - Site Permissions Actions
-    func updateSitePermission(_ permission: SitePermission) {
-        sitePermissions = SiteMenuSystem.SitePermissions.setPermission(permission)
-    }
-    
-    func removeSitePermission(for domain: String) {
-        sitePermissions = SiteMenuSystem.SitePermissions.removePermission(for: domain)
-    }
-    
     // MARK: - Performance Actions
     func clearWebViewPool() {
         SiteMenuSystem.Performance.clearWebViewPool()
@@ -2552,16 +2348,6 @@ extension View {
             ) {
                 NavigationView {
                     SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
-                }
-            }
-            .sheet(
-                isPresented: Binding(
-                    get: { manager.showSitePermissions },
-                    set: { manager.showSitePermissions = $0 }
-                )
-            ) {
-                NavigationView {
-                    SiteMenuSystem.UI.SitePermissionsView(manager: manager)
                 }
             }
             .sheet(
