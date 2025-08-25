@@ -7,6 +7,7 @@
 //  🔧 제목 덮어쓰기 문제 해결 - titleObserver URL 검증 추가
 //  📁 다운로드 기능 헬퍼 통합 완료 - 단방향 의존성 구현
 //  🏊‍♂️ 웹뷰 풀 실제 연동 완료 - 생성/등록/재사용/정리
+//  🚫 팝업 차단 시스템 완전 통합
 //
 
 import SwiftUI
@@ -94,7 +95,7 @@ struct CustomWebView: UIViewRepresentable {
         if webView == nil {
             // WKWebView 설정
             let config = WKWebViewConfiguration()
-            config.allowsInlineMediaPlayback = true
+            config.allowsInlineMediaPlaybook = true
             config.allowsPictureInPictureMediaPlayback = true
             config.mediaTypesRequiringUserActionForPlayback = []
             config.websiteDataStore = WKWebsiteDataStore.default()
@@ -1064,8 +1065,25 @@ struct CustomWebView: UIViewRepresentable {
             handleSSLChallenge(webView: webView, challenge: challenge, stateModel: parent.stateModel, completionHandler: completionHandler)
         }
 
-        // MARK: - 새 창 요청 처리
+        // MARK: - 🚫 **핵심 추가: 팝업 차단 시스템 통합**
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            
+            let sourceURL = webView.url
+            let targetURL = navigationAction.request.url
+            
+            // 🚫 **팝업 차단 확인**
+            if PopupBlockManager.shared.shouldBlockPopup(from: sourceURL, targetURL: targetURL) {
+                // 팝업 차단 및 알림 발송
+                PopupBlockManager.shared.blockPopup(from: sourceURL, targetURL: targetURL)
+                
+                TabPersistenceManager.debugMessages.append("🚫 팝업 차단됨: \(targetURL?.absoluteString ?? "알 수 없음")")
+                
+                // 팝업 차단 - nil 반환으로 새 창 생성 방지
+                return nil
+            }
+            
+            // 팝업 허용 - 현재 웹뷰에서 로드
+            TabPersistenceManager.debugMessages.append("✅ 팝업 허용: \(targetURL?.absoluteString ?? "알 수 없음")")
             webView.load(navigationAction.request)
             return nil
         }
@@ -1316,4 +1334,19 @@ struct CustomWebView: UIViewRepresentable {
             hideOverlay(overlayContainer: overlayContainer)
         }
     }
+}
+
+// MARK: - 🔧 Helper Function for Top View Controller
+func getTopViewController() -> UIViewController? {
+    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first else {
+        return nil
+    }
+    
+    var topController = window.rootViewController
+    while let presentedController = topController?.presentedViewController {
+        topController = presentedController
+    }
+    
+    return topController
 }
