@@ -1,27 +1,4 @@
-//
-//  CustomWebView.swift
-//
-//  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
-//  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
-//  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
-//  🔧 제목 덮어쓰기 문제 해결 - titleObserver URL 검증 추가
-//  📁 다운로드 기능 헬퍼 통합 완료 - 단방향 의존성 구현
-//  🏊‍♂️ 웹뷰 풀 실제 연동 완료 - 생성/등록/재사용/정리
-//  🚫 팝업 차단 시스템 완전 통합
-//  🛡️ 캐시 실패 복구 시스템 추가 - 미리보기 무한 표시 방지
-//  🐛 상태 불일치 감지 디버그 로그 추가
-//
-
-import SwiftUI
-import WebKit
-import AVFoundation
-import UIKit
-import UniformTypeIdentifiers
-import Foundation
-import Security
-import Photos
-
-// MARK: - 고급 페이지 캐시 시스템 (부드러운 네비게이션용 강화)
+이지 캐시 시스템 (부드러운 네비게이션용 강화)
 class AdvancedPageCache: ObservableObject {
     struct CachedPage {
         let snapshot: UIImage
@@ -259,27 +236,24 @@ struct CustomWebView: UIViewRepresentable {
 
     // MARK: - updateUIView
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 연결 상태 확인 및 재연결
-        if uiView.uiDelegate !== context.coordinator {
-            uiView.uiDelegate = context.coordinator
-        }
-        if context.coordinator.webView !== uiView {
-            context.coordinator.webView = uiView
-        }
-
-        // ✅ 하단 UI 겹치기를 위한 투명 설정 유지 (헬퍼 호출)
-        maintainTransparentWebView(uiView)
-        
-        // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용 (헬퍼 호출)
-        updateDesktopModeIfNeeded(webView: uiView, stateModel: stateModel, lastDesktopMode: &context.coordinator.lastDesktopMode)
-        
-        // 🐛 불일치 감지: 웹뷰 URL과 StateModel URL 비교
-        let webViewURL = uiView.url?.absoluteString ?? "nil"
-        let stateModelURL = stateModel.currentURL?.absoluteString ?? "nil"
-        if webViewURL != stateModelURL {
-            TabPersistenceManager.debugMessages.append("🐛 [불일치] updateUIView URL 불일치 - 웹뷰: \(webViewURL) | StateModel: \(stateModelURL)")
-        }
+    // 연결 상태 확인 및 재연결
+    if uiView.uiDelegate !== context.coordinator {
+        uiView.uiDelegate = context.coordinator
     }
+    if context.coordinator.webView !== uiView {
+        context.coordinator.webView = uiView
+    }
+    // ✅ navigationDelegate가 항상 dataModel로 연결되어 있어야 함
+    if uiView.navigationDelegate !== stateModel.dataModel {
+        uiView.navigationDelegate = stateModel.dataModel
+    }
+
+    // ✅ 하단 UI 겹치기를 위한 투명 설정 유지 (헬퍼 호출)
+    maintainTransparentWebView(uiView)
+    
+    // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용 (헬퍼 호출)
+    updateDesktopModeIfNeeded(webView: uiView, stateModel: stateModel, lastDesktopMode: &context.coordinator.lastDesktopMode)
+}
 
     // MARK: - teardown
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
@@ -407,40 +381,42 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: - 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템
         
-        func setupCachedPagePreview(for webView: WKWebView) {
-            // 캐시된 페이지 미리보기용 컨테이너 생성
-            let container = UIView()
-            container.backgroundColor = .systemBackground
-            container.isHidden = true
-            container.translatesAutoresizingMaskIntoConstraints = false
-            webView.addSubview(container)
-            
-            NSLayoutConstraint.activate([
-                container.topAnchor.constraint(equalTo: webView.topAnchor),
-                container.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
-                container.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
-                container.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
-            ])
-            
-            // 캐시된 이미지뷰
-            let imageView = UIImageView()
-            imageView.contentMode = .scaleAspectFill
-            imageView.clipsToBounds = true
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(imageView)
-            
-            NSLayoutConstraint.activate([
-                imageView.topAnchor.constraint(equalTo: container.topAnchor),
-                imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-            ])
-            
-            self.cachedPreviewContainer = container
-            self.cachedPreviewImageView = imageView
-            
-            print("📸 캐시된 페이지 미리보기 시스템 설정 완료")
-        }
+       func setupCachedPagePreview(for webView: WKWebView) {
+    // 캐시된 페이지 미리보기용 컨테이너 생성
+    let container = UIView()
+    container.backgroundColor = .systemBackground
+    container.isHidden = true
+    container.translatesAutoresizingMaskIntoConstraints = false
+    container.isUserInteractionEnabled = false // ✅ 미리보기가 터치를 가로채지 않도록 비활성화
+    webView.addSubview(container)
+    
+    NSLayoutConstraint.activate([
+        container.topAnchor.constraint(equalTo: webView.topAnchor),
+        container.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+        container.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+        container.bottomAnchor.constraint(equalTo: webView.bottomAnchor)
+    ])
+    
+    // 캐시된 이미지뷰
+    let imageView = UIImageView()
+    imageView.contentMode = .scaleAspectFill
+    imageView.clipsToBounds = true
+    imageView.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(imageView)
+    
+    NSLayoutConstraint.activate([
+        imageView.topAnchor.constraint(equalTo: container.topAnchor),
+        imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+    ])
+    
+    self.cachedPreviewContainer = container
+    self.cachedPreviewImageView = imageView
+    
+    print("📸 캐시된 페이지 미리보기 시스템 설정 완료")
+}
+
         
         func teardownCachedPagePreview() {
             // 🛡️ 타이머 정리
@@ -923,67 +899,71 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 📸 수정된 스와이프 완료 (커스텀 시스템과 웹뷰 완전 동기화)
-        private func completeSyncedSwipe(webView: WKWebView) {
-            guard let currentView = currentPageView,
-                  let nextView = nextPageView,
-                  let direction = swipeDirection else { return }
-            
-            UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
-                let screenWidth = UIScreen.main.bounds.width
-                
-                if direction == .back {
-                    currentView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
-                    nextView.transform = .identity
-                } else {
-                    currentView.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
-                    nextView.transform = .identity
-                }
-            } completion: { _ in
-                // 햅틱 피드백
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                
-                // 🐛 불일치 감지: 제스처 완료 전후 히스토리 상태 체크
-                let dataModel = self.parent.stateModel.dataModel
-                let beforeIndex = dataModel.currentPageIndex
-                let beforeCanBack = dataModel.canGoBack
-                let beforeCanForward = dataModel.canGoForward
-                
-                // 🎯 핵심 수정: 커스텀 시스템을 통한 정상적인 네비게이션
-                // 이렇게 하면 주소창 동기화, SPA 훅, 로그인 폼 모두 정상 작동
-                if direction == .back {
-                    self.parent.stateModel.goBack()
-                } else {
-                    self.parent.stateModel.goForward()
-                }
-                
-                // 🐛 불일치 감지: 제스처 완료 후 히스토리 상태 체크
-                let afterIndex = dataModel.currentPageIndex
-                let afterCanBack = dataModel.canGoBack
-                let afterCanForward = dataModel.canGoForward
-                
-                // 히스토리 상태가 예상대로 변경되지 않았으면 로그
-                let expectedIndexChange = direction == .back ? -1 : 1
-                let actualIndexChange = afterIndex - beforeIndex
-                if actualIndexChange != expectedIndexChange {
-                    TabPersistenceManager.debugMessages.append("🐛 [불일치] 제스처 완료 후 히스토리 인덱스 불일치 - 예상변화: \(expectedIndexChange) | 실제변화: \(actualIndexChange)")
-                }
-                
-                // canGoBack/Forward 상태 불일치 체크
-                if direction == .back {
-                    if beforeCanBack && !afterCanBack && afterIndex > 0 {
-                        TabPersistenceManager.debugMessages.append("🐛 [불일치] 뒤로가기 후 canGoBack 상태 불일치 - 인덱스: \(afterIndex) > 0 이지만 canGoBack: false")
-                    }
-                } else {
-                    if beforeCanForward && !afterCanForward && afterIndex < dataModel.pageHistory.count - 1 {
-                        TabPersistenceManager.debugMessages.append("🐛 [불일치] 앞으로가기 후 canGoForward 상태 불일치 - 인덱스: \(afterIndex) < \(dataModel.pageHistory.count - 1) 이지만 canGoForward: false")
-                    }
-                }
-                
-                self.cleanupSwipe()
-                print("📸 동기화 제스처 완료: \(direction == .back ? "뒤로" : "앞으로")")
+// MARK: - 📸 수정된 스와이프 완료 (WebKit 실제 이동 + 캐시 미리보기 선표출)
+private func completeSyncedSwipe(webView: WKWebView) {
+    guard let currentView = currentPageView,
+          let nextView = nextPageView,
+          let direction = swipeDirection else { return }
+    
+    UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut) {
+        let screenWidth = UIScreen.main.bounds.width
+        
+        if direction == .back {
+            currentView.transform = CGAffineTransform(translationX: screenWidth, y: 0)
+            nextView.transform = .identity
+        } else {
+            currentView.transform = CGAffineTransform(translationX: -screenWidth, y: 0)
+            nextView.transform = .identity
+        }
+    } completion: { _ in
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        // ✅ 이동 대상 URL로 캐시 미리보기 먼저 노출
+        if let record = self.targetPageRecord {
+            NotificationCenter.default.post(
+                name: .init("ShowCachedPageBeforeLoad"),
+                object: nil,
+                userInfo: [
+                    "url": record.url,
+                    "direction": (direction == .back ? "back" : "forward")
+                ]
+            )
+        }
+        
+        // ✅ 실제 WebKit 히스토리 이동을 수행 (주소만 바뀌고 화면이 안 바뀌던 문제의 근본 해결)
+        if direction == .back {
+            if webView.canGoBack {
+                webView.goBack()
+            } else if let r = self.targetPageRecord {
+                let req = URLRequest(
+                    url: r.url,
+                    cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+                    timeoutInterval: 10
+                )
+                webView.load(req) // 백스택이 비어 있으면 강제 로드
+            }
+        } else {
+            if webView.canGoForward {
+                webView.goForward()
+            } else if let r = self.targetPageRecord {
+                let req = URLRequest(
+                    url: r.url,
+                    cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+                    timeoutInterval: 10
+                )
+                webView.load(req) // 포워드스택이 비어 있으면 강제 로드
             }
         }
+        
+        // ❗ stateModel.goBack()/goForward()는 호출하지 않음.
+        //    WebKit이 실제 네비게이션을 수행하고,
+        //    KVO/url/title/navDelegate에서 상태가 동기화됨.
+        
+        self.cleanupSwipe()
+        print("📸 동기화 제스처 완료(실제 네비게이션 수행): \(direction == .back ? "뒤로" : "앞으로")")
+    }
+}
+
         
         // MARK: - 📸 수정된 스와이프 취소
         private func cancelSyncedSwipe(webView: WKWebView) {
@@ -1030,108 +1010,103 @@ struct CustomWebView: UIViewRepresentable {
             return true
         }
 
-        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정 (🐛 불일치 감지 로그 추가)
-        func setupLoadingObservers(for webView: WKWebView) {
-            loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let isLoading = change.newValue ?? false
+func setupLoadingObservers(for webView: WKWebView) {
+    loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
+        guard let self = self else { return }
+        let isLoading = change.newValue ?? false
 
-                DispatchQueue.main.async {
-                    // 🎯 조용한 새로고침 시에는 로딩 상태 변경하지 않음
-                    if !self.parent.stateModel.isSilentRefresh && self.parent.stateModel.isLoading != isLoading {
-                        self.parent.stateModel.isLoading = isLoading
-                    }
-                    
-                    // 🛡️ **핵심**: 로딩 완료 시 강화된 캐시 미리보기 처리
-                    if !isLoading && self.isShowingCachedPreview {
-                        // URL 매칭 확인
-                        if let expectedURL = self.expectedNavigationURL,
-                           let currentURL = webView.url {
-                            
-                            if currentURL.absoluteString == expectedURL.absoluteString {
-                                // URL이 일치하면 미리보기 숨김
-                                print("🛡️ URL 일치 확인, 캐시 미리보기 숨김: \(currentURL.absoluteString)")
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    self.hideCachedPreview()
-                                }
-                            } else {
-                                // 🐛 불일치 감지: 캐시 복구 시 URL 불일치
-                                TabPersistenceManager.debugMessages.append("🐛 [불일치] 캐시 미리보기 URL 불일치 - 예상: \(expectedURL.absoluteString) | 실제: \(currentURL.absoluteString)")
-                                print("🛡️ URL 불일치 감지, 복구 시도 - 예상: \(expectedURL.absoluteString), 실제: \(currentURL.absoluteString)")
-                                self.performCacheRecovery(expectedURL: expectedURL)
-                            }
-                        } else {
-                            // URL 정보가 없으면 일단 숨김
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                self.hideCachedPreview()
-                            }
+        DispatchQueue.main.async {
+            // ✅ [추가] 실제 로딩이 '시작'되면 캐시 미리보기를 즉시 내린다.
+            // - 이유: isLoading=true 신호가 들어왔다는 것은 WebKit이 실제 페인트/커밋을 진행한다는 뜻.
+            //         이 타이밍에 미리보기를 계속 띄워두면 복구 타이머와 경합하거나 화면을 가리는 착시가 발생한다.
+            if isLoading && self.isShowingCachedPreview {
+                self.hideCachedPreview(immediate: false)
+            }
+
+            // 🎯 조용한 새로고침 시에는 로딩 상태 변경하지 않음 (기존 보존)
+            if !self.parent.stateModel.isSilentRefresh && self.parent.stateModel.isLoading != isLoading {
+                self.parent.stateModel.isLoading = isLoading
+            }
+            
+            // 🛡️ 로딩 '완료' 시 캐시 미리보기 마무리 처리 (기존 보존)
+            if !isLoading && self.isShowingCachedPreview {
+                if let expectedURL = self.expectedNavigationURL,
+                   let currentURL = webView.url {
+                    if currentURL.absoluteString == expectedURL.absoluteString {
+                        // URL 일치 → 자연스러운 페이드아웃
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            self.hideCachedPreview()
                         }
+                    } else {
+                        // URL 불일치 → 복구 루트 (기존 보존)
+                        self.performCacheRecovery(expectedURL: expectedURL)
                     }
-                    
-                    // 로딩 완료 시 현재 페이지 스냅샷 저장
-                    if !isLoading && !self.isSwipeInProgress {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            self.saveCurrentPageToCache(webView: webView)
-                        }
+                } else {
+                    // URL 정보 없음 → 안전하게 숨김 (기존 보존)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.hideCachedPreview()
                     }
                 }
             }
-
-            progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let progress = change.newValue ?? 0.0
-
-                DispatchQueue.main.async {
-                    // 🎯 조용한 새로고침 시에는 진행률 업데이트하지 않음
-                    if !self.parent.stateModel.isSilentRefresh {
-                        let newProgress = max(0.0, min(1.0, progress))
-                        self.parent.stateModel.loadingProgress = newProgress
-                    }
-                }
-            }
-
-            urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
-                guard let self = self, let newURL = change.newValue, let url = newURL else { return }
-
-                DispatchQueue.main.async {
-                    let stateModelURL = self.parent.stateModel.currentURL
-                    let urlsMatch = url == stateModelURL
-                    
-                    if self.parent.stateModel.currentURL != url && !self.isSwipeInProgress {
-                        self.parent.stateModel.setNavigatingFromWebView(true)
-                        self.parent.stateModel.currentURL = url
-                        self.parent.stateModel.setNavigatingFromWebView(false)
-                        
-                        // 🛡️ URL 변경 시 캐시 미리보기 체크
-                        if self.isShowingCachedPreview {
-                            if let expectedURL = self.expectedNavigationURL,
-                               url.absoluteString == expectedURL.absoluteString {
-                                print("🛡️ URL 변경으로 캐시 미리보기 성공 확인: \(url.absoluteString)")
-                            }
-                        }
-                    }
-                    
-                    // 🐛 불일치 감지: 웹뷰 URL과 StateModel URL 불일치 (스와이프 중이 아닐 때만)
-                    if !self.isSwipeInProgress && !urlsMatch && stateModelURL != nil {
-                        TabPersistenceManager.debugMessages.append("🐛 [불일치] KVO urlObserver URL 불일치 - 웹뷰: \(url.absoluteString) | StateModel: \(stateModelURL?.absoluteString ?? "nil")")
-                    }
-                }
-            }
-
-            // 🔧 **제목 덮어쓰기 문제 해결**: titleObserver URL 검증 추가
-            titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
-                guard let self = self, 
-                      let title = change.newValue, 
-                      let title = title, 
-                      !title.isEmpty,
-                      let currentURL = webView.url else { return }
-
-                DispatchQueue.main.async {
-                    // 🔧 **핵심 수정**: URL 기반으로 제목 업데이트
-                    self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
+            
+            // 로딩 완료 후 현재 페이지 스냅샷 저장 (기존 보존)
+            if !isLoading && !self.isSwipeInProgress {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.saveCurrentPageToCache(webView: webView)
                 }
             }
         }
+    }
+
+    // 진행률 KVO (기존 보존)
+    progressObserver = webView.observe(\.estimatedProgress, options: [.new, .initial]) { [weak self] webView, change in
+        guard let self = self else { return }
+        let progress = change.newValue ?? 0.0
+
+        DispatchQueue.main.async {
+            // 🎯 조용한 새로고침 시에는 진행률 업데이트하지 않음
+            if !self.parent.stateModel.isSilentRefresh {
+                let newProgress = max(0.0, min(1.0, progress))
+                self.parent.stateModel.loadingProgress = newProgress
+            }
+        }
+    }
+
+    // URL KVO (기존 보존)
+    urlObserver = webView.observe(\.url, options: [.new]) { [weak self] webView, change in
+        guard let self = self, let newURL = change.newValue, let url = newURL else { return }
+
+        DispatchQueue.main.async {
+            if self.parent.stateModel.currentURL != url && !self.isSwipeInProgress {
+                self.parent.stateModel.setNavigatingFromWebView(true)
+                self.parent.stateModel.currentURL = url
+                self.parent.stateModel.setNavigatingFromWebView(false)
+                
+                // 미리보기 성공 확인 로그 등 (기존 보존)
+                if self.isShowingCachedPreview,
+                   let expectedURL = self.expectedNavigationURL,
+                   url.absoluteString == expectedURL.absoluteString {
+                    print("🛡️ URL 변경으로 캐시 미리보기 성공 확인: \(url.absoluteString)")
+                }
+            }
+        }
+    }
+
+    // Title KVO (기존 보존)
+    titleObserver = webView.observe(\.title, options: [.new]) { [weak self] webView, change in
+        guard let self = self,
+              let title = change.newValue,
+              let title = title,
+              !title.isEmpty,
+              let currentURL = webView.url else { return }
+
+        DispatchQueue.main.async {
+            // 🔧 URL 기반 제목 업데이트 (기존 보존)
+            self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
+        }
+    }
+}
+
 
         func removeLoadingObservers(for webView: WKWebView?) {
             loadingObserver?.invalidate()
@@ -1197,13 +1172,6 @@ struct CustomWebView: UIViewRepresentable {
                             return
                         }
                         
-                        // 🐛 불일치 감지: SPA 네비게이션 처리 전후 상태 체크
-                        let dataModel = self.parent.stateModel.dataModel
-                        let beforeIndex = dataModel.currentPageIndex
-                        let beforeCount = dataModel.pageHistory.count
-                        let beforeCanBack = dataModel.canGoBack
-                        let beforeCanForward = dataModel.canGoForward
-                        
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
                             url: url,
@@ -1211,29 +1179,6 @@ struct CustomWebView: UIViewRepresentable {
                             timestamp: timestamp,
                             siteType: siteType
                         )
-                        
-                        // 🐛 불일치 감지: SPA 네비게이션 처리 후 상태 체크
-                        let afterIndex = dataModel.currentPageIndex
-                        let afterCount = dataModel.pageHistory.count
-                        let afterCanBack = dataModel.canGoBack
-                        let afterCanForward = dataModel.canGoForward
-                        
-                        // SPA push/pop에 따른 예상 변화와 실제 변화 비교
-                        if type == "push" && afterCount <= beforeCount {
-                            TabPersistenceManager.debugMessages.append("🐛 [불일치] SPA push 처리 후 히스토리 증가하지 않음 - 이전: \(beforeCount) | 이후: \(afterCount)")
-                        }
-                        
-                        // 히스토리 인덱스와 상태의 일관성 체크
-                        let expectedCanBack = afterIndex > 0
-                        let expectedCanForward = afterIndex < afterCount - 1
-                        
-                        if afterCanBack != expectedCanBack {
-                            TabPersistenceManager.debugMessages.append("🐛 [불일치] SPA 처리 후 canGoBack 불일치 - 인덱스: \(afterIndex) | 예상: \(expectedCanBack) | 실제: \(afterCanBack)")
-                        }
-                        
-                        if afterCanForward != expectedCanForward {
-                            TabPersistenceManager.debugMessages.append("🐛 [불일치] SPA 처리 후 canGoForward 불일치 - 인덱스: \(afterIndex)/\(afterCount) | 예상: \(expectedCanForward) | 실제: \(afterCanForward)")
-                        }
                     }
                 }
             }
@@ -1490,7 +1435,7 @@ struct CustomWebView: UIViewRepresentable {
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(settingsURL)
                 }
-            })
+            }
             
             alert.addAction(UIAlertAction(title: "취소", style: .cancel))
             
