@@ -2514,7 +2514,10 @@ extension View {
                             SiteMenuSystem.UI.PopupBlockedAlert(
                                 domain: manager.popupAlertDomain,
                                 blockedCount: manager.popupAlertCount,
-                                isPresented: $manager.showPopupBlockedAlert
+                                isPresented: Binding(
+                                    get: { manager.showPopupBlockedAlert },
+                                    set: { manager.showPopupBlockedAlert = $0 }
+                                )
                             )
                         }
                         .transition(.opacity)
@@ -2572,19 +2575,4 @@ extension View {
                 }
             }
     }
-}
-
-// MARK: - 🔧 Helper Function for Top View Controller
-func getTopViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first else {
-        return nil
-    }
-    
-    var topController = window.rootViewController
-    while let presentedController = topController?.presentedViewController {
-        topController = presentedController
-    }
-    
-    return topController
 }
