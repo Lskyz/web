@@ -1462,7 +1462,7 @@ private func completeSyncedSwipe(webView: WKWebView) {
                 }
             }
             
-            alert.addAction(UIAlertAction(title: "취소", style: .cancel))
+            alert.addAction(UIAlertAction(title: "취소", style: .cancel, handler: nil))
             
             topVC.present(alert, animated: true)
         }
