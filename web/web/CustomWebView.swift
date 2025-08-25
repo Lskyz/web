@@ -1,4 +1,26 @@
-이지 캐시 시스템 (부드러운 네비게이션용 강화)
+//
+//  CustomWebView.swift
+//
+//  📸 캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침
+//  🎯 제스처 완료 시 커스텀 시스템과 웹뷰를 모두 정상 동기화
+//  🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 통합
+//  🔧 제목 덮어쓰기 문제 해결 - titleObserver URL 검증 추가
+//  📁 다운로드 기능 헬퍼 통합 완료 - 단방향 의존성 구현
+//  🏊‍♂️ 웹뷰 풀 실제 연동 완료 - 생성/등록/재사용/정리
+//  🚫 팝업 차단 시스템 완전 통합
+//  🛡️ 캐시 실패 복구 시스템 추가 - 미리보기 무한 표시 방지
+//
+
+import SwiftUI
+import WebKit
+import AVFoundation
+import UIKit
+import UniformTypeIdentifiers
+import Foundation
+import Security
+import Photos
+
+// MARK: - 고급 페이지 캐시 시스템 (부드러운 네비게이션용 강화)
 class AdvancedPageCache: ObservableObject {
     struct CachedPage {
         let snapshot: UIImage
@@ -235,7 +257,7 @@ struct CustomWebView: UIViewRepresentable {
     }
 
     // MARK: - updateUIView
-    func updateUIView(_ uiView: WKWebView, context: Context) {
+ func updateUIView(_ uiView: WKWebView, context: Context) {
     // 연결 상태 확인 및 재연결
     if uiView.uiDelegate !== context.coordinator {
         uiView.uiDelegate = context.coordinator
@@ -254,6 +276,7 @@ struct CustomWebView: UIViewRepresentable {
     // ✨ 데스크탑 모드 변경 시 페이지 새로고침으로 스크립트 적용 (헬퍼 호출)
     updateDesktopModeIfNeeded(webView: uiView, stateModel: stateModel, lastDesktopMode: &context.coordinator.lastDesktopMode)
 }
+
 
     // MARK: - teardown
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
@@ -381,7 +404,7 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: - 🎯 **새로 추가**: 캐시된 페이지 미리보기 시스템
         
-       func setupCachedPagePreview(for webView: WKWebView) {
+        func setupCachedPagePreview(for webView: WKWebView) {
     // 캐시된 페이지 미리보기용 컨테이너 생성
     let container = UIView()
     container.backgroundColor = .systemBackground
@@ -899,7 +922,8 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-// MARK: - 📸 수정된 스와이프 완료 (WebKit 실제 이동 + 캐시 미리보기 선표출)
+        
+        // MARK: - 📸 수정된 스와이프 완료 (WebKit 실제 이동 + 캐시 미리보기 선표출)
 private func completeSyncedSwipe(webView: WKWebView) {
     guard let currentView = currentPageView,
           let nextView = nextPageView,
@@ -1010,7 +1034,37 @@ private func completeSyncedSwipe(webView: WKWebView) {
             return true
         }
 
-func setupLoadingObservers(for webView: WKWebView) {
+        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정 (🛡️ 복구 시스템 추가)
+        func setupLoadingObservers(for webView: WKWebView) {
+            loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
+                guard let self = self else { return }
+                let isLoading = change.newValue ?? false
+
+                DispatchQueue.main.async {
+                    // 🎯 조용한 새로고침 시에는 로딩 상태 변경하지 않음
+                    if !self.parent.stateModel.isSilentRefresh && self.parent.stateModel.isLoading != isLoading {
+                        self.parent.stateModel.isLoading = isLoading
+                    }
+                    
+                    // 🛡️ **핵심**: 로딩 완료 시 강화된 캐시 미리보기 처리
+                    if !isLoading && self.isShowingCachedPreview {
+                        // URL 매칭 확인
+                        if let expectedURL = self.expectedNavigationURL,
+                           let currentURL = webView.url {
+                            
+                            if currentURL.absoluteString == expectedURL.absoluteString {
+                                // URL이 일치하면 미리보기 숨김
+                                print("🛡️ URL 일치 확인, 캐시 미리보기 숨김: \(currentURL.absoluteString)")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    self.hideCachedPreview()
+                                }
+                            } else {
+                                // URL이 다르면 복구 시도
+                                print("🛡️ URL 불일치 감지, 복구 시도 - 예상: \(expectedURL.absoluteString), 실제: \(currentURL.absoluteString)")
+                                self.performCacheRecovery(expectedURL: expectedURL)
+                            }
+                        } else {
+                            // URL 정func setupLoadingObservers(for webView: WKWebView) {
     loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
         guard let self = self else { return }
         let isLoading = change.newValue ?? false
