@@ -7,6 +7,7 @@
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
 //  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
 //  🔍 구글 검색 SPA 문제 완전 해결 - 검색 쿼리 변경 감지 + 강화된 정규화
+//  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
 //
 
 import Foundation
@@ -191,7 +192,25 @@ struct PageRecord: Codable, Identifiable, Hashable {
             }
         }
         
-        components?.fragment = nil
+        // 🆕 **Hash fragment도 정규화** (Google SPA 파라미터 제거)
+        if let fragment = components?.fragment {
+            // Hash 내의 파라미터들도 정규화
+            let hashIgnoredParams = Set(["sbfbu", "pi", "sei", "sca_esv", "ei"])
+            let hashComponents = fragment.components(separatedBy: "&")
+            let filteredHashComponents = hashComponents.filter { component in
+                let paramName = component.components(separatedBy: "=").first ?? ""
+                return !hashIgnoredParams.contains(paramName)
+            }
+            
+            if filteredHashComponents.isEmpty || filteredHashComponents.joined().isEmpty {
+                components?.fragment = nil
+            } else {
+                components?.fragment = filteredHashComponents.joined(separator: "&")
+            }
+        } else {
+            components?.fragment = nil
+        }
+        
         return components?.url?.absoluteString ?? url.absoluteString
     }
     
@@ -427,7 +446,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return nil
     }
     
-    // MARK: - 🌐 **SPA 네비게이션 처리** (강화된 검색 처리)
+    // MARK: - 🌐 **SPA 네비게이션 처리** (강화된 검색 처리 + Google 검색 플로우 개선)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
         dbg("🌐 SPA \(type): \(siteType) | \(url.absoluteString)")
@@ -465,7 +484,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
         case "pop":
-            // 🔍 **핵심 해결책 4: SPA pop에서 검색 쿼리 변경 감지**
+            // 🔍 **핵심 해결책 4: SPA pop에서 검색 쿼리 변경 감지 + Google 검색 플로우 개선**
             
             // [가드1] 검색 자기 자신 pop 무시
             if PageRecord.isSearchURL(url) {
@@ -486,6 +505,33 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     let popKey = PageRecord.normalizeURL(url)
                     if popKey == snap.fromNormalized || popKey == snap.toNormalized {
                         dbg("🔕 SPA pop 무시 - 검색 전/후 스냅샷 회귀(\(String(format: "%.3f", dt))s)")
+                        recentSearchTransition = nil
+                        return
+                    }
+                }
+            }
+
+            // 🆕 **[가드3] Google 검색 플로우 진행 중 pop 무시**
+            if siteType.contains("google.com") && siteType.contains("query_multi") {
+                // Google 메인페이지에서 검색 진행 중인 상황 감지
+                if let currentURL = currentPageRecord?.url,
+                   currentURL.host?.contains("google.com") == true {
+                    
+                    let currentPath = currentURL.path
+                    let popPath = url.path
+                    
+                    // 메인페이지(/) → 검색 관련 pop은 검색 진행으로 판단
+                    if (currentPath == "/" || currentPath.isEmpty) && 
+                       (popPath == "/" || popPath.isEmpty || popPath.contains("search")) {
+                        
+                        dbg("🔍 Google 검색 플로우 진행 중 - SPA pop 무시")
+                        dbg("   현재: \(currentURL.absoluteString)")
+                        dbg("   Pop: \(url.absoluteString)")
+                        
+                        // 검색 진행이므로 새 페이지로 처리하지 않고 현재 페이지 업데이트만
+                        if !isHistoryNavigationActive() {
+                            replaceCurrentPage(url: url, title: title, siteType: siteType)
+                        }
                         recentSearchTransition = nil
                         return
                     }
