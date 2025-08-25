@@ -375,6 +375,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (단순화)
     
 // 햅틱 피드백
+        func safariStyleGoBack(progress: Double = 1.0) {
+        guard canGoBack else { return }
+        
+        // 햅틱 피드백
         if progress >= 1.0 {
             let feedback = UIImpactFeedbackGenerator(style: .heavy)
             feedback.impactOccurred()
