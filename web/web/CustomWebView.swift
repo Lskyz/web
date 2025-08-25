@@ -95,7 +95,7 @@ struct CustomWebView: UIViewRepresentable {
         if webView == nil {
             // WKWebView 설정
             let config = WKWebViewConfiguration()
-            config.allowsInlineMediaPlaybook = true
+            config.allowsInlineMediaPlayback = true
             config.allowsPictureInPictureMediaPlayback = true
             config.mediaTypesRequiringUserActionForPlayback = []
             config.websiteDataStore = WKWebsiteDataStore.default()
@@ -1334,19 +1334,4 @@ struct CustomWebView: UIViewRepresentable {
             hideOverlay(overlayContainer: overlayContainer)
         }
     }
-}
-
-// MARK: - 🔧 Helper Function for Top View Controller
-func getTopViewController() -> UIViewController? {
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first else {
-        return nil
-    }
-    
-    var topController = window.rootViewController
-    while let presentedController = topController?.presentedViewController {
-        topController = presentedController
-    }
-    
-    return topController
 }
