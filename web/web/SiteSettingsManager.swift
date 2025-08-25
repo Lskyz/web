@@ -83,42 +83,106 @@ struct SitePermission: Identifiable, Codable {
     }
 }
 
-// MARK: - 🔒 PopupBlockManager Integration
+// MARK: - 🚫 Enhanced PopupBlockManager with Notification System
 class PopupBlockManager: ObservableObject {
     static let shared = PopupBlockManager()
     
     @Published var isPopupBlocked: Bool = true {
         didSet {
             UserDefaults.standard.set(isPopupBlocked, forKey: "popupBlocked")
+            NotificationCenter.default.post(name: .popupBlockStateChanged, object: nil)
         }
     }
     
-    @Published var blockedPopupCount: Int = 0
+    @Published var blockedPopupCount: Int = 0 {
+        didSet {
+            UserDefaults.standard.set(blockedPopupCount, forKey: "blockedPopupCount")
+        }
+    }
+    
+    @Published var lastBlockedDomain: String = ""
+    @Published var lastBlockedURL: String = ""
+    
     private var allowedDomains: Set<String> = []
+    private var blockedPopups: [BlockedPopup] = []
+    
+    struct BlockedPopup {
+        let domain: String
+        let url: String
+        let date: Date
+        let sourceURL: String
+    }
     
     private init() {
         self.isPopupBlocked = UserDefaults.standard.object(forKey: "popupBlocked") as? Bool ?? true
+        self.blockedPopupCount = UserDefaults.standard.object(forKey: "blockedPopupCount") as? Int ?? 0
         loadAllowedDomains()
+        loadBlockedPopups()
+    }
+    
+    // MARK: - 🚫 Core Blocking Logic
+    func shouldBlockPopup(from sourceURL: URL?, targetURL: URL?) -> Bool {
+        guard isPopupBlocked else { return false }
+        
+        // 소스 도메인이 허용 목록에 있으면 허용
+        if let sourceDomain = sourceURL?.host, allowedDomains.contains(sourceDomain) {
+            return false
+        }
+        
+        // 타겟 도메인이 허용 목록에 있으면 허용
+        if let targetDomain = targetURL?.host, allowedDomains.contains(targetDomain) {
+            return false
+        }
+        
+        return true
+    }
+    
+    func blockPopup(from sourceURL: URL?, targetURL: URL?) {
+        guard let sourceDomain = sourceURL?.host else { return }
+        
+        DispatchQueue.main.async {
+            self.blockedPopupCount += 1
+            self.lastBlockedDomain = sourceDomain
+            self.lastBlockedURL = targetURL?.absoluteString ?? ""
+            
+            let blockedPopup = BlockedPopup(
+                domain: sourceDomain,
+                url: targetURL?.absoluteString ?? "",
+                date: Date(),
+                sourceURL: sourceURL?.absoluteString ?? ""
+            )
+            self.blockedPopups.append(blockedPopup)
+            self.saveBlockedPopups()
+            
+            // 팝업 차단 알림 전송
+            NotificationCenter.default.post(
+                name: .popupBlocked,
+                object: nil,
+                userInfo: [
+                    "domain": sourceDomain,
+                    "url": targetURL?.absoluteString ?? "",
+                    "count": self.blockedPopupCount
+                ]
+            )
+        }
     }
     
     func resetBlockedCount() {
         blockedPopupCount = 0
-    }
-    
-    func blockPopup(from domain: String) {
-        if isPopupBlocked && !allowedDomains.contains(domain) {
-            blockedPopupCount += 1
-        }
+        blockedPopups.removeAll()
+        saveBlockedPopups()
     }
     
     func allowPopupsForDomain(_ domain: String) {
         allowedDomains.insert(domain)
         saveAllowedDomains()
+        NotificationCenter.default.post(name: .popupBlockStateChanged, object: nil)
     }
     
     func removeAllowedDomain(_ domain: String) {
         allowedDomains.remove(domain)
         saveAllowedDomains()
+        NotificationCenter.default.post(name: .popupBlockStateChanged, object: nil)
     }
     
     func isDomainAllowed(_ domain: String) -> Bool {
@@ -129,6 +193,11 @@ class PopupBlockManager: ObservableObject {
         return Array(allowedDomains).sorted()
     }
     
+    func getRecentBlockedPopups(limit: Int = 10) -> [BlockedPopup] {
+        return Array(blockedPopups.sorted { $0.date > $1.date }.prefix(limit))
+    }
+    
+    // MARK: - 💾 Persistence
     private func loadAllowedDomains() {
         if let domains = UserDefaults.standard.array(forKey: "allowedPopupDomains") as? [String] {
             allowedDomains = Set(domains)
@@ -138,6 +207,37 @@ class PopupBlockManager: ObservableObject {
     private func saveAllowedDomains() {
         UserDefaults.standard.set(Array(allowedDomains), forKey: "allowedPopupDomains")
     }
+    
+    private func loadBlockedPopups() {
+        if let data = UserDefaults.standard.data(forKey: "blockedPopups"),
+           let decoded = try? JSONDecoder().decode([BlockedPopupData].self, from: data) {
+            blockedPopups = decoded.map { data in
+                BlockedPopup(domain: data.domain, url: data.url, date: data.date, sourceURL: data.sourceURL)
+            }
+        }
+    }
+    
+    private func saveBlockedPopups() {
+        let data = blockedPopups.map { popup in
+            BlockedPopupData(domain: popup.domain, url: popup.url, date: popup.date, sourceURL: popup.sourceURL)
+        }
+        if let encoded = try? JSONEncoder().encode(data) {
+            UserDefaults.standard.set(encoded, forKey: "blockedPopups")
+        }
+    }
+    
+    private struct BlockedPopupData: Codable {
+        let domain: String
+        let url: String
+        let date: Date
+        let sourceURL: String
+    }
+}
+
+// MARK: - 📢 Notification Names
+extension Notification.Name {
+    static let popupBlocked = Notification.Name("PopupBlocked")
+    static let popupBlockStateChanged = Notification.Name("PopupBlockStateChanged")
 }
 
 // MARK: - 🎯 Main System (Complete modules)
@@ -182,11 +282,10 @@ enum SiteMenuSystem {
         }
     }
     
-    // MARK: - ⚙️ Settings Module (Enhanced)
+    // MARK: - ⚙️ Enhanced Settings Module
     enum Settings {
         static func togglePopupBlocking() -> Bool {
             PopupBlockManager.shared.isPopupBlocked.toggle()
-            NotificationCenter.default.post(name: NSNotification.Name("PopupBlockManagerStateChanged"), object: nil)
             return PopupBlockManager.shared.isPopupBlocked
         }
         
@@ -593,8 +692,72 @@ enum SiteMenuSystem {
         }
     }
     
-    // MARK: - 🎨 UI Components Module (Complete)
+    // MARK: - 🎨 UI Components Module (Complete with Enhanced Popup Blocking)
     enum UI {
+        
+        // MARK: - 🚫 Popup Block Alert View
+        struct PopupBlockedAlert: View {
+            let domain: String
+            let blockedCount: Int
+            @Binding var isPresented: Bool
+            
+            var body: some View {
+                VStack(spacing: 16) {
+                    // 아이콘
+                    Image(systemName: "shield.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(.red)
+                    
+                    // 제목
+                    Text("팝업 차단됨")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    
+                    // 메시지
+                    VStack(spacing: 8) {
+                        Text("\(domain)에서 팝업을 차단했습니다")
+                            .font(.body)
+                            .multilineTextAlignment(.center)
+                        
+                        if blockedCount > 1 {
+                            Text("총 \(blockedCount)개의 팝업이 차단되었습니다")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // 버튼들
+                    VStack(spacing: 8) {
+                        HStack(spacing: 12) {
+                            Button("이 사이트 허용") {
+                                PopupBlockManager.shared.allowPopupsForDomain(domain)
+                                isPresented = false
+                            }
+                            .foregroundColor(.blue)
+                            .frame(maxWidth: .infinity)
+                            
+                            Button("닫기") {
+                                isPresented = false
+                            }
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
+                        }
+                        
+                        Button("팝업 차단 끄기") {
+                            PopupBlockManager.shared.isPopupBlocked = false
+                            isPresented = false
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
+                }
+                .padding(24)
+                .background(Color(.systemBackground))
+                .cornerRadius(16)
+                .shadow(radius: 20)
+                .frame(maxWidth: 300)
+            }
+        }
         
         // MARK: - Main Site Menu Overlay
         struct SiteMenuOverlay: View {
@@ -2094,7 +2257,7 @@ enum SiteMenuSystem {
     }
 }
 
-// MARK: - 🎯 Unified Manager (Complete ObservableObject)
+// MARK: - 🎯 Enhanced Unified Manager with Popup Alert
 class SiteMenuManager: ObservableObject {
     // MARK: - UI State
     @Published var showSiteMenu: Bool = false
@@ -2103,6 +2266,11 @@ class SiteMenuManager: ObservableObject {
     @Published var showPrivacySettings: Bool = false
     @Published var showSitePermissions: Bool = false
     @Published var showPerformanceSettings: Bool = false
+    
+    // MARK: - 🚫 Popup Alert State
+    @Published var showPopupBlockedAlert: Bool = false
+    @Published var popupAlertDomain: String = ""
+    @Published var popupAlertCount: Int = 0
     
     // MARK: - Settings State
     @Published var popupBlocked: Bool = SiteMenuSystem.Settings.getPopupBlockedState()
@@ -2165,11 +2333,26 @@ class SiteMenuManager: ObservableObject {
         
         // PopupBlockManager 상태 변경 알림 구독
         NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("PopupBlockManagerStateChanged"),
+            forName: .popupBlockStateChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.popupBlocked = SiteMenuSystem.Settings.getPopupBlockedState()
+        }
+        
+        // 🚫 팝업 차단 알림 구독
+        NotificationCenter.default.addObserver(
+            forName: .popupBlocked,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let userInfo = notification.userInfo,
+                  let domain = userInfo["domain"] as? String,
+                  let count = userInfo["count"] as? Int else { return }
+            
+            self?.popupAlertDomain = domain
+            self?.popupAlertCount = count
+            self?.showPopupBlockedAlert = true
         }
     }
     
@@ -2225,10 +2408,10 @@ class SiteMenuManager: ObservableObject {
     
     // MARK: - Settings Actions
     func togglePopupBlocking() {
-    _ = SiteMenuSystem.Settings.togglePopupBlocking() // 스토어만 토글
-    popupBlocked = SiteMenuSystem.Settings.getPopupBlockedState() // 상태 싱크
-    if !popupBlocked { SiteMenuSystem.Settings.resetPopupBlockedCount() }
-}
+        _ = SiteMenuSystem.Settings.togglePopupBlocking() // 스토어만 토글
+        popupBlocked = SiteMenuSystem.Settings.getPopupBlockedState() // 상태 싱크
+        if !popupBlocked { SiteMenuSystem.Settings.resetPopupBlockedCount() }
+    }
     
     // MARK: - Downloads Actions
     func addDownload(filename: String, url: String, size: String = "알 수 없음", fileURL: URL? = nil) {
@@ -2295,7 +2478,7 @@ class SiteMenuManager: ObservableObject {
     }
 }
 
-// MARK: - 🔧 ContentView Extension (Complete Integration)
+// MARK: - 🔧 ContentView Extension (Complete Integration with Popup Alert)
 extension View {
     func siteMenuOverlay(
         manager: SiteMenuManager,
@@ -2320,6 +2503,22 @@ extension View {
                         tabs: tabs,
                         selectedTabIndex: selectedTabIndex
                     )
+                }
+            }
+            // 🚫 팝업 차단 알림 오버레이
+            .overlay {
+                if manager.showPopupBlockedAlert {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .overlay {
+                            SiteMenuSystem.UI.PopupBlockedAlert(
+                                domain: manager.popupAlertDomain,
+                                blockedCount: manager.popupAlertCount,
+                                isPresented: $manager.showPopupBlockedAlert
+                            )
+                        }
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: manager.showPopupBlockedAlert)
                 }
             }
             .sheet(
@@ -2373,4 +2572,19 @@ extension View {
                 }
             }
     }
+}
+
+// MARK: - 🔧 Helper Function for Top View Controller
+func getTopViewController() -> UIViewController? {
+    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+          let window = windowScene.windows.first else {
+        return nil
+    }
+    
+    var topController = window.rootViewController
+    while let presentedController = topController?.presentedViewController {
+        topController = presentedController
+    }
+    
+    return topController
 }
