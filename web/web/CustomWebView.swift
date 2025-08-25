@@ -1445,7 +1445,7 @@ private func completeSyncedSwipe(webView: WKWebView) {
             }.resume()
         }
 
-        MARK: - 알림 메시지들
+       // MARK: - 알림 메시지들
         
         private func showPermissionAlert() {
             guard let topVC = getTopViewController() else { return }
