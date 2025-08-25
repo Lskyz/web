@@ -3,7 +3,7 @@
 //  🎯 단순화된 정상 히스토리 시스템 + 직렬화 큐 복원 시스템
 //  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
-//  🔧 연타 레이스 방지 - 1-in-flight 직렬화 큐 시스템
+//  🔧 연타 레이스 방지 - enum 기반 직렬화 큐 시스템
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
 //  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
 //  🔍 구글 검색 SPA 문제 완전 해결 - 검색 쿼리 변경 감지 + 강화된 정규화
@@ -13,6 +13,34 @@ import Foundation
 import SwiftUI
 import WebKit
 
+// MARK: - 복원 상태 enum
+enum NavigationRestoreState {
+    case idle                    // 유휴 상태
+    case sessionRestoring       // 세션 복원 중
+    case queueRestoring(Int)    // 큐 복원 중 (목표 인덱스)
+    case preparing(Int)         // 복원 준비 중
+    case completed              // 복원 완료
+    case failed                 // 복원 실패
+    
+    var isActive: Bool {
+        switch self {
+        case .idle, .completed, .failed:
+            return false
+        default:
+            return true
+        }
+    }
+    
+    var targetIndex: Int? {
+        switch self {
+        case .queueRestoring(let index), .preparing(let index):
+            return index
+        default:
+            return nil
+        }
+    }
+}
+
 // MARK: - 네비게이션 타입 정의
 enum NavigationType: String, Codable, CaseIterable {
     case normal = "normal"
@@ -20,6 +48,13 @@ enum NavigationType: String, Codable, CaseIterable {
     case home = "home"
     case spaNavigation = "spa"
     case userClick = "userClick"
+}
+
+// MARK: - 복원 큐 아이템
+struct RestoreQueueItem {
+    let targetIndex: Int
+    let requestedAt: Date
+    let id: UUID = UUID()
 }
 
 // MARK: - 페이지 기록
@@ -202,7 +237,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 🎯 **WebViewDataModel - 직렬화 큐 복원 시스템**
+// MARK: - 🎯 **WebViewDataModel - enum 기반 단순화된 큐 복원 시스템**
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
@@ -214,13 +249,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     @Published private(set) var canGoBack: Bool = false
     @Published private(set) var canGoForward: Bool = false
     
-    // ✅ 복원 상태만 유지
-    private(set) var isRestoringSession: Bool = false
-    
-    // 🎯 **직렬화 큐 시스템**: 1-in-flight 복원으로 연타 레이스 방지
-    private(set) var isRestoring: Bool = false
-    private var restoreQueue: [Int] = [] // 목표 인덱스 큐
-    private(set) var expectedNormalizedURL: String? = nil
+    // 🎯 **핵심: enum 기반 복원 상태 관리**
+    @Published private(set) var restoreState: NavigationRestoreState = .idle
+    private var restoreQueue: [RestoreQueueItem] = []
+    private var expectedNormalizedURL: String? = nil
     
     // ✅ **검색 전환 스냅샷**: push 직후 검색 전/후로의 pop 1회 무시
     private var recentSearchTransition: (fromNormalized: String, toNormalized: String, at: Date)?
@@ -258,28 +290,41 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 🎯 **직렬화 큐 시스템 관리**
+    // MARK: - 🎯 **enum 기반 복원 시스템 관리 (모든 로직을 DataModel로 통합)**
     
-    func enqueueRestore(to targetIndex: Int) {
-        restoreQueue.append(targetIndex)
+    func enqueueRestore(to targetIndex: Int) -> PageRecord? {
+        guard targetIndex >= 0, targetIndex < pageHistory.count else {
+            dbg("❌ 잘못된 복원 인덱스: \(targetIndex)")
+            return nil
+        }
+        
+        let item = RestoreQueueItem(targetIndex: targetIndex)
+        restoreQueue.append(item)
         dbg("📥 복원 큐 추가: 인덱스 \(targetIndex) (큐 길이: \(restoreQueue.count))")
         
-        if !isRestoring {
-            startNextRestore()
+        // 미리 타겟 레코드 반환 (UI 즉시 업데이트용)
+        let targetRecord = pageHistory[targetIndex]
+        
+        if !restoreState.isActive {
+            processNextRestore()
         }
+        
+        return targetRecord
     }
     
-    private func startNextRestore() {
-        guard !restoreQueue.isEmpty, !isRestoring else { return }
+    private func processNextRestore() {
+        guard !restoreQueue.isEmpty, !restoreState.isActive else { return }
         
-        let targetIndex = restoreQueue.removeFirst()
+        let item = restoreQueue.removeFirst()
+        let targetIndex = item.targetIndex
+        
         guard targetIndex >= 0, targetIndex < pageHistory.count else {
             dbg("❌ 잘못된 복원 인덱스: \(targetIndex), 다음 큐 처리")
-            startNextRestore()
+            processNextRestore()
             return
         }
         
-        isRestoring = true
+        restoreState = .preparing(targetIndex)
         currentPageIndex = targetIndex
         updateNavigationState()
         
@@ -288,27 +333,74 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         dbg("🔄 복원 시작: 인덱스 \(targetIndex) → '\(targetRecord.title)' (큐 남은 건수: \(restoreQueue.count))")
         
-        // StateModel에 URL 동기화 및 부드러운 로딩 요청
+        // StateModel에 복원 요청
         stateModel?.performQueuedRestore(to: targetRecord.url)
+        
+        // 복원 중 상태로 전환
+        restoreState = .queueRestoring(targetIndex)
     }
     
     func finishCurrentRestore() {
-        guard isRestoring else { return }
+        guard restoreState.isActive else { return }
         
-        isRestoring = false
+        restoreState = .completed
         expectedNormalizedURL = nil
         dbg("✅ 복원 완료, 다음 큐 처리 시작")
         
-        // 큐에 대기 중인 다음 복원 처리
-        if !restoreQueue.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.startNextRestore()
-            }
+        // 상태 리셋 후 다음 큐 처리
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.restoreState = .idle
+            self.processNextRestore()
+        }
+    }
+    
+    func failCurrentRestore() {
+        guard restoreState.isActive else { return }
+        
+        restoreState = .failed
+        expectedNormalizedURL = nil
+        dbg("❌ 복원 실패, 다음 큐 처리")
+        
+        // 상태 리셋 후 다음 큐 처리
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.restoreState = .idle
+            self.processNextRestore()
         }
     }
     
     func isHistoryNavigationActive() -> Bool {
-        return isRestoring || !restoreQueue.isEmpty
+        return restoreState.isActive
+    }
+    
+    // MARK: - 🎯 **단순화된 네비게이션 메서드**
+    
+    func navigateBack() -> PageRecord? {
+        guard canGoBack, currentPageIndex > 0 else { 
+            dbg("❌ navigateBack 실패: canGoBack=\(canGoBack), currentIndex=\(currentPageIndex)")
+            return nil
+        }
+        
+        let targetIndex = currentPageIndex - 1
+        return enqueueRestore(to: targetIndex)
+    }
+    
+    func navigateForward() -> PageRecord? {
+        guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
+            dbg("❌ navigateForward 실패: canGoForward=\(canGoForward), currentIndex=\(currentPageIndex)")
+            return nil
+        }
+        
+        let targetIndex = currentPageIndex + 1
+        return enqueueRestore(to: targetIndex)
+    }
+    
+    func navigateToIndex(_ index: Int) -> PageRecord? {
+        guard index >= 0, index < pageHistory.count else { 
+            dbg("❌ navigateToIndex 실패: 잘못된 인덱스 \(index), 범위: 0..<\(pageHistory.count)")
+            return nil 
+        }
+        
+        return enqueueRestore(to: index)
     }
     
     // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기**
@@ -415,7 +507,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                         dbg("🔄 SPA pop - 동일한 검색 쿼리, 복원: \(existingIndex)")
                         dbg("   기존: \(existingSearchURL)")
                         dbg("   신규: \(newSearchURL)")
-                        enqueueRestore(to: existingIndex)
+                        _ = enqueueRestore(to: existingIndex)
                     } else {
                         // 검색 쿼리가 다르면 새 페이지 추가
                         dbg("🔍 SPA pop - 검색 쿼리 변경 감지, 새 페이지 추가")
@@ -440,7 +532,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 // **일반 URL의 경우 기존 로직**
                 if let existingIndex = findPageIndex(for: url) {
                     dbg("🔄 SPA pop - 기존 히스토리 항목, 큐 추가: \(existingIndex)")
-                    enqueueRestore(to: existingIndex)
+                    _ = enqueueRestore(to: existingIndex)
                 } else {
                     // 기존 항목이 없으면 새 페이지 추가 (복원 중이 아닐 때만)
                     if !isHistoryNavigationActive() {
@@ -475,18 +567,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if type != "title" && !isHistoryNavigationActive() && !Self.globalHistory.contains(where: { $0.url == url }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
-    }
-    
-    private func isHomepageURL(_ url: URL) -> Bool {
-        let path = url.path
-        let query = url.query
-        
-        // 쿼리 파라미터가 있으면 홈페이지가 아님
-        if let query = query, !query.isEmpty {
-            return false
-        }
-        
-        return path == "/" || path.isEmpty || path == "/main" || path == "/home"
     }
     
     // MARK: - 🌐 **SPA 훅 JavaScript 스크립트** (CustomWebView에서 사용)
@@ -669,6 +749,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
     
+    private func isHomepageURL(_ url: URL) -> Bool {
+        let path = url.path
+        let query = url.query
+        
+        // 쿼리 파라미터가 있으면 홈페이지가 아님
+        if let query = query, !query.isEmpty {
+            return false
+        }
+        
+        return path == "/" || path.isEmpty || path == "/main" || path == "/home"
+    }
+    
     private func replaceCurrentPage(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
             if !isHistoryNavigationActive() {
@@ -688,7 +780,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
     
-    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (큐 기반 복원 적용)**
+    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직**
     
     func addNewPage(url: URL, title: String = "") {
         if PageRecord.isLoginRelatedURL(url) {
@@ -696,9 +788,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // ✅ 큐 활성도 포함해서 차단
+        // ✅ 복원 중에는 차단
         if isHistoryNavigationActive() {
-            dbg("🤫 복원(활성) 중 새 페이지 추가 차단: \(url.absoluteString)")
+            dbg("🤫 복원 중 새 페이지 추가 차단: \(url.absoluteString)")
             return
         }
         
@@ -710,7 +802,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // ✅ **새 페이지 추가**: forward 스택 제거 후 추가 (복원 중에는 금지)
+        // ✅ **새 페이지 추가**: forward 스택 제거 후 추가
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
@@ -786,66 +878,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return pageHistory[currentPageIndex]
     }
     
-    // MARK: - 🎯 **큐 기반 네비게이션** (연타 레이스 방지)
-    
-    func navigateBack() -> PageRecord? {
-        guard canGoBack, currentPageIndex > 0 else { 
-            dbg("❌ navigateBack 실패: canGoBack=\(canGoBack), currentIndex=\(currentPageIndex)")
-            return nil
-        }
-        
-        let targetIndex = currentPageIndex - 1
-        
-        // 🎯 **큐 시스템에 추가**
-        enqueueRestore(to: targetIndex)
-        
-        // 미리 레코드 반환 (UI 즉시 업데이트용)
-        if let targetRecord = pageHistory[safe: targetIndex] {
-            dbg("⬅️ 뒤로가기 큐 추가: '\(targetRecord.title)' [목표 인덱스: \(targetIndex)/\(pageHistory.count)]")
-            return targetRecord
-        }
-        
-        return nil
-    }
-    
-    func navigateForward() -> PageRecord? {
-        guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
-            dbg("❌ navigateForward 실패: canGoForward=\(canGoForward), currentIndex=\(currentPageIndex)")
-            return nil
-        }
-        
-        let targetIndex = currentPageIndex + 1
-        
-        // 🎯 **큐 시스템에 추가**
-        enqueueRestore(to: targetIndex)
-        
-        // 미리 레코드 반환 (UI 즉시 업데이트용)
-        if let targetRecord = pageHistory[safe: targetIndex] {
-            dbg("➡️ 앞으로가기 큐 추가: '\(targetRecord.title)' [목표 인덱스: \(targetIndex)/\(pageHistory.count)]")
-            return targetRecord
-        }
-        
-        return nil
-    }
-    
-    func navigateToIndex(_ index: Int) -> PageRecord? {
-        guard index >= 0, index < pageHistory.count else { 
-            dbg("❌ navigateToIndex 실패: 잘못된 인덱스 \(index), 범위: 0..<\(pageHistory.count)")
-            return nil 
-        }
-        
-        // 🎯 **큐 시스템에 추가 (SPA pop 등에서 호출)**
-        enqueueRestore(to: index)
-        
-        // 미리 레코드 반환
-        if let targetRecord = pageHistory[safe: index] {
-            dbg("🎯 인덱스 네비게이션 큐 추가: '\(targetRecord.title)' [목표 인덱스: \(index)/\(pageHistory.count)]")
-            return targetRecord
-        }
-        
-        return nil
-    }
-    
     // MARK: - 🏄‍♂️ **스와이프 제스처 처리** (과거 점프 완전 방지)
     
     func handleSwipeGestureDetected(to url: URL) {
@@ -861,7 +893,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func findPageIndex(for url: URL) -> Int? {
-        // ⚠️ **주의**: 이 함수는 미리보기/캐시용만 사용
+        // ⚠️ **주의**: 이 함수는 미리보기용만 사용
         // 절대로 이 결과로 navigateToIndex 하지 말 것!
         let normalizedURL = PageRecord.normalizeURL(url)
         let matchingIndices = pageHistory.enumerated().compactMap { index, record in
@@ -885,7 +917,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
-        isRestoringSession = true
+        restoreState = .sessionRestoring
         
         pageHistory = session.pageRecords
         currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
@@ -895,7 +927,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func finishSessionRestore() {
-        isRestoringSession = false
+        restoreState = .idle
     }
     
     // MARK: - 유틸리티
@@ -910,7 +942,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     func resetNavigationFlags() {
-        isRestoring = false
+        restoreState = .idle
         expectedNormalizedURL = nil
         restoreQueue.removeAll()
         recentSearchTransition = nil
@@ -930,7 +962,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             if let url = navigationAction.request.url {
                 if let existingIndex = findPageIndex(for: url) {
                     dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                    enqueueRestore(to: existingIndex)
+                    _ = enqueueRestore(to: existingIndex)
                 } else {
                     dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
                 }
@@ -944,7 +976,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         decisionHandler(.allow)
     }
     
-    // MARK: - WKNavigationDelegate (큐 기반 복원 분기 적용)
+    // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용)
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         stateModel?.handleLoadingStart()
@@ -957,14 +989,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
         
         if let finalURL = webView.url {
-            // 🎯 **핵심: didFinish 3가지 분기 처리 (직렬화 큐 적용)**
-            if isRestoringSession {
+            // 🎯 **핵심: didFinish enum 기반 분기 처리**
+            switch restoreState {
+            case .sessionRestoring:
                 // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
                 updatePageTitle(for: finalURL, title: title)
                 finishSessionRestore()
-                dbg("🔄 복원 완료: '\(title)'")
+                dbg("🔄 세션 복원 완료: '\(title)'")
                 
-            } else if isRestoring {
+            case .queueRestoring(let targetIndex):
                 // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
                 
                 if let expectedNormalized = expectedNormalizedURL {
@@ -995,7 +1028,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 // 큐 기반 복원 완료
                 finishCurrentRestore()
                 
-            } else {
+            case .idle, .completed, .failed, .preparing:
                 // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
                 addNewPage(url: finalURL, title: title)
                 stateModel?.syncCurrentURL(finalURL)
@@ -1011,9 +1044,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
         
-        // 복원 중이면 해당 복원 완료 처리
-        if isRestoring {
-            finishCurrentRestore()
+        // 복원 중이면 해당 복원 실패 처리
+        if restoreState.isActive {
+            failCurrentRestore()
             dbg("🤫 복원 실패 - 다음 큐 처리")
         }
     }
@@ -1022,9 +1055,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
         
-        // 복원 중이면 해당 복원 완료 처리
-        if isRestoring {
-            finishCurrentRestore()
+        // 복원 중이면 해당 복원 실패 처리
+        if restoreState.isActive {
+            failCurrentRestore()
             dbg("🤫 복원 실패 - 다음 큐 처리")
         }
     }
@@ -1096,9 +1129,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let id = tabID?.uuidString.prefix(6) ?? "noTab"
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
         let historyCount = "[\(pageHistory.count)]"
-        let flagState = isRestoring ? "[🔄RESTORE]" : ""
+        let stateFlag = restoreState.isActive ? "[\(restoreState)]" : ""
         let queueState = restoreQueue.isEmpty ? "" : "[Q:\(restoreQueue.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(flagState)\(queueState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(stateFlag)\(queueState) \(msg)")
     }
 }
 
