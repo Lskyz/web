@@ -379,29 +379,8 @@ struct ContentView: View {
             }
         )
         .id(state.tabID)
-        // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지
+        // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지하되 좌우는 정상 적용
         .ignoresSafeArea(.container, edges: [.bottom])
-        // ✅ 웹뷰 스케일링 정상화
-        .onAppear {
-            // WKWebView의 pageZoom이나 magnification 설정을 정상화
-            if let webView = state.webView {
-                DispatchQueue.main.async {
-                    // iOS 14+ pageZoom 속성 확인 및 정상화
-                    if #available(iOS 14.0, *) {
-                        if webView.pageZoom != 1.0 {
-                            webView.pageZoom = 1.0
-                            TabPersistenceManager.debugMessages.append("🔧 WKWebView pageZoom 정상화: \(webView.pageZoom)")
-                        }
-                    }
-                    
-                    // magnification 정상화
-                    if webView.magnification != 1.0 {
-                        webView.setMagnification(1.0, centeredAt: CGPoint.zero)
-                        TabPersistenceManager.debugMessages.append("🔧 WKWebView magnification 정상화: \(webView.magnification)")
-                    }
-                }
-            }
-        }
     }
     
     private var dashboardView: some View {
