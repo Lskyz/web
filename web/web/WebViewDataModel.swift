@@ -298,7 +298,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return nil
         }
         
-        let item = RestoreQueueItem(targetIndex: targetIndex)
+        let item = RestoreQueueItem(targetIndex: targetIndex, requestedAt: Date())
         restoreQueue.append(item)
         dbg("📥 복원 큐 추가: 인덱스 \(targetIndex) (큐 길이: \(restoreQueue.count))")
         
@@ -997,7 +997,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 finishSessionRestore()
                 dbg("🔄 세션 복원 완료: '\(title)'")
                 
-            case .queueRestoring(let targetIndex):
+            case .queueRestoring(_):
                 // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
                 
                 if let expectedNormalized = expectedNormalizedURL {
