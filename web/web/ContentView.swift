@@ -426,7 +426,7 @@ struct ContentView: View {
         .background(whiteGlassBackground)
         .overlay(whiteGlassOverlay)
         .padding(.horizontal, outerHorizontalPadding)
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        .transition(.opacity)
     }
     
     private var addressBarMainContent: some View {
