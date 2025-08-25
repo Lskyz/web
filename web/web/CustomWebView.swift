@@ -1034,37 +1034,7 @@ private func completeSyncedSwipe(webView: WKWebView) {
             return true
         }
 
-        // MARK: - ✨ 로딩 상태 동기화를 위한 KVO 설정 (🛡️ 복구 시스템 추가)
-        func setupLoadingObservers(for webView: WKWebView) {
-            loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
-                guard let self = self else { return }
-                let isLoading = change.newValue ?? false
-
-                DispatchQueue.main.async {
-                    // 🎯 조용한 새로고침 시에는 로딩 상태 변경하지 않음
-                    if !self.parent.stateModel.isSilentRefresh && self.parent.stateModel.isLoading != isLoading {
-                        self.parent.stateModel.isLoading = isLoading
-                    }
-                    
-                    // 🛡️ **핵심**: 로딩 완료 시 강화된 캐시 미리보기 처리
-                    if !isLoading && self.isShowingCachedPreview {
-                        // URL 매칭 확인
-                        if let expectedURL = self.expectedNavigationURL,
-                           let currentURL = webView.url {
-                            
-                            if currentURL.absoluteString == expectedURL.absoluteString {
-                                // URL이 일치하면 미리보기 숨김
-                                print("🛡️ URL 일치 확인, 캐시 미리보기 숨김: \(currentURL.absoluteString)")
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    self.hideCachedPreview()
-                                }
-                            } else {
-                                // URL이 다르면 복구 시도
-                                print("🛡️ URL 불일치 감지, 복구 시도 - 예상: \(expectedURL.absoluteString), 실제: \(currentURL.absoluteString)")
-                                self.performCacheRecovery(expectedURL: expectedURL)
-                            }
-                        } else {
-                            // URL 정func setupLoadingObservers(for webView: WKWebView) {
+       func setupLoadingObservers(for webView: WKWebView) {
     loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
         guard let self = self else { return }
         let isLoading = change.newValue ?? false
@@ -1160,6 +1130,7 @@ private func completeSyncedSwipe(webView: WKWebView) {
         }
     }
 }
+
 
 
         func removeLoadingObservers(for webView: WKWebView?) {
