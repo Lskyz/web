@@ -1444,8 +1444,8 @@ private func completeSyncedSwipe(webView: WKWebView) {
                 }
             }.resume()
         }
-        
-        // MARK: - 알림 메시지들
+
+        MARK: - 알림 메시지들
         
         private func showPermissionAlert() {
             guard let topVC = getTopViewController() else { return }
@@ -1460,9 +1460,9 @@ private func completeSyncedSwipe(webView: WKWebView) {
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(settingsURL)
                 }
-            }
+            })
             
-            alert.addAction(UIAlertAction(title: "취소", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "취소", style: .cancel))
             
             topVC.present(alert, animated: true)
         }
