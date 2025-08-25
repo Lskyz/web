@@ -374,33 +374,74 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (단순화)
     
-    func safariStyleGoBack(progress: Double = 1.0) {
-        guard canGoBack else { return }
-        
-        // 햅틱 피드백
-        if progress >= 1.0 {
-            let feedback = UIImpactFeedbackGenerator(style: .medium)
-            feedback.impactOccurred()
-            
-            // 실제 뒤로가기 실행
-            goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
-        }
+    // 뒤로가기: 시작 + 완료 햅틱 분리
+func safariStyleGoBack(progress: Double = 1.0) {
+    guard canGoBack else { return }
+    
+    // 진행률 임계값(시작 감지용). 필요시 0.02~0.1 사이로 조절.
+    let startThreshold: Double = 0.04
+    
+    // 함수 로컬 정적 상태로 중복 트리거 방지
+    struct HState { static var startHapticFired = false }
+    
+    // --- 시작 햅틱 (임계 도달 시 1회) ---
+    if !HState.startHapticFired && progress >= startThreshold && progress < 1.0 {
+        let startFeedback = UIImpactFeedbackGenerator(style: .heavy)
+        startFeedback.prepare()
+        startFeedback.impactOccurred(intensity: 1.0) // 시작은 강하게
+        HState.startHapticFired = true
     }
     
-    func safariStyleGoForward(progress: Double = 1.0) {
-        guard canGoForward else { return }
+    // --- 완료 햅틱 + 실제 뒤로가기 ---
+    if progress >= 1.0 {
+        let endFeedback = UIImpactFeedbackGenerator(style: .rigid)
+        endFeedback.prepare()
+        endFeedback.impactOccurred() // 완료는 단단하게
         
-        // 햅틱 피드백
-        if progress >= 1.0 {
-            let feedback = UIImpactFeedbackGenerator(style: .heavy)
-            feedback.impactOccurred()
-            
-            // 실제 앞으로가기 실행
-            goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
-        }
+        goBack()
+        dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+        
+        // 다음 제스처 대비 리셋
+        HState.startHapticFired = false
+        return
     }
+    
+    // --- 취소/재시작 대비 리셋: 임계 미만으로 내려오면 다시 시작 가능 ---
+    if progress < startThreshold {
+        HState.startHapticFired = false
+    }
+}
+
+// 앞으로가기: 시작 + 완료 햅틱 분리
+func safariStyleGoForward(progress: Double = 1.0) {
+    guard canGoForward else { return }
+    
+    let startThreshold: Double = 0.04
+    struct HState { static var startHapticFired = false }
+    
+    if !HState.startHapticFired && progress >= startThreshold && progress < 1.0 {
+        let startFeedback = UIImpactFeedbackGenerator(style: .heavy)
+        startFeedback.prepare()
+        startFeedback.impactOccurred(intensity: 1.0)
+        HState.startHapticFired = true
+    }
+    
+    if progress >= 1.0 {
+        let endFeedback = UIImpactFeedbackGenerator(style: .rigid)
+        endFeedback.prepare()
+        endFeedback.impactOccurred()
+        
+        goForward()
+        dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+        
+        HState.startHapticFired = false
+        return
+    }
+    
+    if progress < startThreshold {
+        HState.startHapticFired = false
+    }
+}
     
     func reload() { 
         guard let webView = webView else { return }
