@@ -381,6 +381,27 @@ struct ContentView: View {
         .id(state.tabID)
         // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지
         .ignoresSafeArea(.container, edges: [.bottom])
+        // ✅ 웹뷰 스케일링 정상화
+        .onAppear {
+            // WKWebView의 pageZoom이나 magnification 설정을 정상화
+            if let webView = state.webView {
+                DispatchQueue.main.async {
+                    // iOS 14+ pageZoom 속성 확인 및 정상화
+                    if #available(iOS 14.0, *) {
+                        if webView.pageZoom != 1.0 {
+                            webView.pageZoom = 1.0
+                            TabPersistenceManager.debugMessages.append("🔧 WKWebView pageZoom 정상화: \(webView.pageZoom)")
+                        }
+                    }
+                    
+                    // magnification 정상화
+                    if webView.magnification != 1.0 {
+                        webView.setMagnification(1.0, centeredAt: CGPoint.zero)
+                        TabPersistenceManager.debugMessages.append("🔧 WKWebView magnification 정상화: \(webView.magnification)")
+                    }
+                }
+            }
+        }
     }
     
     private var dashboardView: some View {
@@ -460,7 +481,7 @@ struct ContentView: View {
             }
             .frame(width: 26, height: 20)
         }
-        .scaleEffect(siteMenuManager.getDesktopModeEnabled() ? 1.1 : 1.0)
+        // ✅ scaleEffect 제거 - 확대 문제 해결
         .animation(.easeInOut(duration: 0.2), value: siteMenuManager.getDesktopModeEnabled())
     }
     
@@ -542,15 +563,12 @@ struct ContentView: View {
                 toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
                 
-                // 🧩 **핵심 추가**: 퍼즐 버튼 (자물쇠 버튼 앞에 위치)
+                // 🧩 **핵심 추가**: 퍼즐 버튼
                 toolbarButton("puzzlepiece.extension", action: { 
                     siteMenuManager.setCurrentStateModel(currentState)
                     siteMenuManager.toggleSiteMenu()
                     TabPersistenceManager.debugMessages.append("🧩 사이트 메뉴 토글")
                 }, enabled: true, color: siteMenuManager.showSiteMenu ? .blue : .primary)
-                
-                // 🔒 **보안 정보 버튼** (기존 위치 유지, 정보 표시용)
-                securityInfoButton
                 
                 // 🎬 **PIP 버튼 추가 (조건부 표시)**
                 if pipManager.isPIPActive {
@@ -568,20 +586,6 @@ struct ContentView: View {
         .padding(.horizontal, outerHorizontalPadding)
         .contentShape(Rectangle())
         .onTapGesture(perform: onToolbarTap)
-    }
-    
-    // 🔒 **보안 정보 버튼**
-    @ViewBuilder
-    private var securityInfoButton: some View {
-        Button(action: {
-            // 보안 정보 표시 (추후 확장 가능)
-            TabPersistenceManager.debugMessages.append("🔒 보안 정보 표시")
-        }) {
-            let securityInfo = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
-            Image(systemName: securityInfo.icon)
-                .font(.system(size: iconSize))
-                .foregroundColor(securityInfo.color)
-        }
     }
     
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
