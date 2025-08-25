@@ -1,9 +1,10 @@
 //
 //  WebViewStateModel.swift
-//  🎯 **캐싱 기반 부드러운 히스토리 네비게이션 + 조용한 백그라운드 새로고침**
-//  ✅ 히스토리 네비게이션 중 새 페이지 추가 차단 강화
+//  🎯 **단순화된 상태 관리 모델**
+//  ✅ 복원 로직을 DataModel로 완전 이관
+//  🚫 캐시 시스템 및 조용한 새로고침 제거
+//  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
-//  🎯 히스토리 복원 플래그 DataModel 연동
 //
 
 import Foundation
@@ -18,7 +19,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - WebViewStateModel (캐싱 기반 부드러운 네비게이션)
+// MARK: - WebViewStateModel (단순화된 상태 관리)
 final class WebViewStateModel: NSObject, ObservableObject {
 
     var tabID: UUID?
@@ -38,12 +39,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
 
-            // ✅ 웹뷰 로드 조건 개선 - 즉석 네비게이션 시 로드하지 않음
+            // ✅ 웹뷰 로드 조건 단순화
             let shouldLoad = url != oldValue && 
-                           !dataModel.isRestoringSession &&
-                           !isNavigatingFromWebView &&
-                           !dataModel.isHistoryNavigationActive() &&
-                           !isInstantNavigation // 📸 즉석 네비게이션 시 로드 방지
+                           !dataModel.restoreState.isActive &&
+                           !isNavigatingFromWebView
             
             if shouldLoad {
                 if let webView = webView {
@@ -57,12 +56,6 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
-    
-    // 📸 즉석 네비게이션 플래그 (네트워크 재요청 방지)
-    internal var isInstantNavigation: Bool = false
-    
-    // 🎯 **새로 추가**: 조용한 새로고침 플래그 (로딩 인디케이터 숨김)
-    internal var isSilentRefresh: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -122,7 +115,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         setupDataModelObservation()
     }
     
-    // MARK: - 🎯 **핵심 추가**: 웹뷰 네이티브 네비게이션 완전 제어
+    // MARK: - 🎯 **핵심**: 웹뷰 네이티브 네비게이션 완전 제어
     
     private func setupWebViewNavigation(_ webView: WKWebView) {
         // 🚫 네이티브 제스처 비활성화 (이미 CustomWebView에서 설정됨)
@@ -155,23 +148,11 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // MARK: - DataModel과의 통신 메서드들
     
     func handleLoadingStart() {
-        // 🎯 조용한 새로고침 시에는 로딩 인디케이터 표시 안함
-        if !isInstantNavigation && !isSilentRefresh {
-            isLoading = true
-        }
+        isLoading = true
     }
     
     func handleLoadingFinish() {
-        // 🎯 조용한 새로고침 종료
-        if !isInstantNavigation && !isSilentRefresh {
-            isLoading = false
-        }
-        
-        // 조용한 새로고침 플래그 리셋
-        if isSilentRefresh {
-            isSilentRefresh = false
-            dbg("🤫 조용한 새로고침 완료")
-        }
+        isLoading = false
         
         // ✨ 데스크탑 모드일 때 줌 레벨 재적용
         if isDesktopMode {
@@ -182,14 +163,11 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func handleLoadingError() {
-        if !isInstantNavigation && !isSilentRefresh {
-            isLoading = false
-        }
-        isSilentRefresh = false
+        isLoading = false
     }
     
     func syncCurrentURL(_ url: URL) {
-        if !isNavigatingFromWebView && !isInstantNavigation {
+        if !isNavigatingFromWebView {
             isNavigatingFromWebView = true
             currentURL = url
             isNavigatingFromWebView = false
@@ -198,27 +176,6 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     func triggerNavigationFinished() {
         navigationDidFinish.send(())
-    }
-    
-    // MARK: - 📸 즉석 네비게이션 제어 메서드
-    
-    func setInstantNavigation(_ value: Bool) {
-        isInstantNavigation = value
-        if value {
-            dbg("📸 즉석 네비게이션 시작 - 네트워크 재요청 방지")
-        } else {
-            dbg("📸 즉석 네비게이션 종료")
-        }
-    }
-    
-    // 🎯 **새로 추가**: 조용한 새로고침 제어 메서드
-    func setSilentRefresh(_ value: Bool) {
-        isSilentRefresh = value
-        if value {
-            dbg("🤫 조용한 새로고침 시작 - 로딩 인디케이터 숨김")
-        } else {
-            dbg("🤫 조용한 새로고침 종료")
-        }
     }
     
     // MARK: - 순수 에러 알림 처리
@@ -287,7 +244,6 @@ final class WebViewStateModel: NSObject, ObservableObject {
     func stopLoading() {
         webView?.stopLoading()
         isLoading = false
-        isSilentRefresh = false
         dataModel.resetNavigationFlags()
     }
 
@@ -341,7 +297,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - 🎯 **큐 기반 부드러운 히스토리 네비게이션** (DataModel 연동)
+    // MARK: - 🎯 **단순화된 히스토리 네비게이션** (DataModel에 완전 위임)
     
     func goBack() {
         guard canGoBack else { 
@@ -349,7 +305,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 큐 기반 네비게이션
+        // 🎯 **핵심 수정**: DataModel 큐 시스템 사용
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateBack() {
@@ -366,8 +322,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("❌ 뒤로가기 실패: DataModel에서 nil 반환")
         }
         
-        // ✅ **수정**: 플래그 리셋 시간을 2초로 연장 (큐 처리 완료 대기)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // ✅ 플래그 리셋
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.isNavigatingFromWebView = false
             self.dbg("🔄 뒤로가기 플래그 리셋 완료")
         }
@@ -379,7 +335,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
             return 
         }
         
-        // 🎯 **핵심 수정**: 큐 기반 네비게이션
+        // 🎯 **핵심 수정**: DataModel 큐 시스템 사용
         isNavigatingFromWebView = true
         
         if let record = dataModel.navigateForward() {
@@ -396,51 +352,27 @@ final class WebViewStateModel: NSObject, ObservableObject {
             dbg("❌ 앞으로가기 실패: DataModel에서 nil 반환")
         }
         
-        // ✅ **수정**: 플래그 리셋 시간을 2초로 연장 (큐 처리 완료 대기)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // ✅ 플래그 리셋
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.isNavigatingFromWebView = false
             self.dbg("🔄 앞으로가기 플래그 리셋 완료")
         }
     }
     
-    // 🎯 **새로 추가**: 큐 기반 복원을 위한 메서드
+    // 🎯 **DataModel로 완전 이관**: 큐 기반 복원을 위한 메서드
     func performQueuedRestore(to url: URL) {
-        // 📸 **중요**: 캐시 활용 부드러운 로딩
-        performSmoothNavigation(to: url, webView: webView, direction: .back)
-    }
-    
-    // 🎯 **새로 추가**: 캐싱 기반 부드러운 네비게이션 구현
-    private enum NavigationDirection {
-        case back, forward
-    }
-    
-    private func performSmoothNavigation(to url: URL, webView: WKWebView?, direction: NavigationDirection) {
+        // DataModel이 이미 모든 복원 로직을 처리하므로 단순 로드만 수행
         guard let webView = webView else {
-            dbg("⚠️ 웹뷰 없음 - 부드러운 네비게이션 스킵")
+            dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
             return
         }
         
-        // 1️⃣ 조용한 새로고침 플래그 설정 (로딩 인디케이터 숨김)
-        setSilentRefresh(true)
-        
-        // 2️⃣ CustomWebView의 캐시에서 스냅샷 확인 및 즉시 표시 알림
-        NotificationCenter.default.post(
-            name: .init("ShowCachedPageBeforeLoad"),
-            object: nil,
-            userInfo: [
-                "url": url,
-                "direction": direction == .back ? "back" : "forward"
-            ]
-        )
-        
-        // 3️⃣ 백그라운드에서 조용히 실제 페이지 로드
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            webView.load(URLRequest(url: url))
-            self.dbg("🤫 백그라운드 조용한 로드 시작: \(url.absoluteString)")
-        }
+        // 단순 로드 (복잡한 캐시 로직 제거)
+        webView.load(URLRequest(url: url))
+        dbg("🔄 복원 로드: \(url.absoluteString)")
     }
     
-    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (캐싱 적용)
+    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (단순화)
     
     func safariStyleGoBack(progress: Double = 1.0) {
         guard canGoBack else { return }
@@ -450,9 +382,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
             
-            // 실제 뒤로가기 실행 (캐싱 적용)
+            // 실제 뒤로가기 실행
             goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료 (캐싱)")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         }
     }
     
@@ -464,9 +396,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
             let feedback = UIImpactFeedbackGenerator(style: .medium)
             feedback.impactOccurred()
             
-            // 실제 앞으로가기 실행 (캐싱 적용)
+            // 실제 앞으로가기 실행
             goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료 (캐싱)")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
     }
     
@@ -531,7 +463,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 🎯 강화된 디버그 메서드
+    // MARK: - 🎯 단순화된 디버그 메서드
     
     private func dbg(_ msg: String) {
         let id: String
@@ -544,11 +476,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
         // 🎯 네비게이션 상태도 함께 로깅
         let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
         let flagState = isNavigatingFromWebView ? "[🚩FLAG]" : ""
-        let instantState = isInstantNavigation ? "[📸INSTANT]" : ""
-        let silentState = isSilentRefresh ? "[🤫SILENT]" : ""
-        let restoreState = dataModel.isHistoryNavigationActive() ? "[🔄RESTORE]" : ""
+        let restoreState = dataModel.restoreState.isActive ? "[\(dataModel.restoreState)]" : ""
         let queueState = dataModel.queueCount > 0 ? "[Q:\(dataModel.queueCount)]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(instantState)\(silentState)\(restoreState)\(queueState) \(msg)")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(restoreState)\(queueState) \(msg)")
     }
     
     // MARK: - 메모리 정리
@@ -587,4 +517,3 @@ extension WebViewStateModel: WKHTTPCookieStoreObserver {
 
 // MARK: - 전역 쿠키 동기화 추적
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
-
