@@ -393,7 +393,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         
         // 햅틱 피드백
         if progress >= 1.0 {
-            let feedback = UIImpactFeedbackGenerator(style: .medium)
+            let feedback = UIImpactFeedbackGenerator(style: .heavy)
             feedback.impactOccurred()
             
             // 실제 앞으로가기 실행
