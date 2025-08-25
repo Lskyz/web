@@ -146,6 +146,10 @@ struct ContentView: View {
     
     @State private var keyboardHeight: CGFloat = 0
     
+    // 📋 **핵심 추가: 주소창 히스토리 표시 상태**
+    @State private var showAddressBarHistory = false
+    @State private var addressBarHistoryHeight: CGFloat = 0
+    
     var body: some View {
         mainContentView
             .onAppear(perform: onAppearHandler)
@@ -292,6 +296,13 @@ struct ContentView: View {
                 if pipManager.isPIPActive {
                     pipStatusOverlay
                 }
+                
+                // 📋 **핵심 추가: 주소창 히스토리 오버레이**
+                if showAddressBar && showAddressBarHistory {
+                    addressBarHistoryOverlay
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .animation(.easeInOut(duration: 0.25), value: showAddressBarHistory)
+                }
             }
         } else {
             dashboardView
@@ -321,6 +332,209 @@ struct ContentView: View {
             Spacer()
         }
         .allowsHitTesting(false) // 터치 이벤트 차단 방지
+    }
+    
+    // 📋 **핵심 추가: 주소창 히스토리 오버레이**
+    @ViewBuilder
+    private var addressBarHistoryOverlay: some View {
+        GeometryReader { geometry in
+            let safeAreaTop = geometry.safeAreaInsets.top
+            let availableHeight = geometry.size.height - safeAreaTop - 200 // 하단 UI 여백
+            
+            VStack(spacing: 0) {
+                // 상단 안전영역만큼 여백
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(height: safeAreaTop)
+                
+                // 히스토리 목록 컨테이너
+                VStack(spacing: 0) {
+                    // 📋 히스토리 목록 (스크롤 가능)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVStack(spacing: 0) {
+                            if isTextFieldFocused && !inputURL.isEmpty {
+                                // 🔍 자동완성 모드
+                                let autocompleteEntries = siteMenuManager.getAutocompleteEntries(for: inputURL)
+                                ForEach(autocompleteEntries) { entry in
+                                    addressBarHistoryRow(entry: entry, isAutocomplete: true)
+                                        .transition(.asymmetric(
+                                            insertion: .move(edge: .top).combined(with: .opacity),
+                                            removal: .opacity
+                                        ))
+                                }
+                            } else {
+                                // 🕒 최근방문 모드  
+                                ForEach(siteMenuManager.recentVisits) { entry in
+                                    addressBarHistoryRow(entry: entry, isAutocomplete: false)
+                                        .transition(.asymmetric(
+                                            insertion: .move(edge: .top).combined(with: .opacity),
+                                            removal: .opacity
+                                        ))
+                                }
+                            }
+                        }
+                        .animation(.easeInOut(duration: 0.3), value: inputURL)
+                        .animation(.easeInOut(duration: 0.3), value: isTextFieldFocused)
+                    }
+                    .frame(maxHeight: availableHeight - 60) // 하단 필터관리 버튼 공간 확보
+                    
+                    // 📋 방문필터관리 고정 버튼
+                    Button(action: {
+                        siteMenuManager.showHistoryFilterManager = true
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showAddressBarHistory = false
+                            isTextFieldFocused = false
+                        }
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .foregroundColor(.blue)
+                            
+                            Text("방문 기록 관리")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.blue)
+                            
+                            Spacer()
+                            
+                            if siteMenuManager.historyFilters.count > 0 {
+                                Text("\(siteMenuManager.historyFilters.filter { $0.isEnabled }.count)개 활성")
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.1))
+                                    .foregroundColor(.blue)
+                                    .cornerRadius(12)
+                            }
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+                    .background(Color(.systemBackground))
+                    .overlay(
+                        Rectangle()
+                            .fill(Color(.separator))
+                            .frame(height: 0.5),
+                        alignment: .top
+                    )
+                }
+                .background(whiteGlassBackground)
+                .overlay(whiteGlassOverlay)
+                .padding(.horizontal, outerHorizontalPadding)
+                
+                Spacer()
+            }
+        }
+        .background(Color.black.opacity(0.1))
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showAddressBarHistory = false
+                isTextFieldFocused = false
+            }
+        }
+    }
+    
+    // 📋 히스토리 행 뷰
+    @ViewBuilder
+    private func addressBarHistoryRow(entry: HistoryEntry, isAutocomplete: Bool) -> some View {
+        Button(action: {
+            handleAddressBarHistorySelection(entry.url)
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: isAutocomplete ? "magnifyingglass" : "clock")
+                    .foregroundColor(isAutocomplete ? .gray : .blue)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    if isAutocomplete {
+                        highlightedText(entry.title, searchText: inputURL)
+                            .font(.system(size: 16, weight: .medium))
+                            .lineLimit(1)
+                    } else {
+                        Text(entry.title)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                    }
+
+                    if isAutocomplete {
+                        highlightedText(entry.url.absoluteString, searchText: inputURL)
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(entry.url.absoluteString)
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if !isAutocomplete {
+                    Text(RelativeDateTimeFormatter().localizedString(for: entry.date, relativeTo: Date()))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Image(systemName: "arrow.up.left")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    
+    // 📋 하이라이트된 텍스트 뷰 (자동완성용)
+    @ViewBuilder
+    private func highlightedText(_ text: String, searchText: String) -> some View {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.isEmpty {
+            Text(text)
+                .foregroundColor(.primary)
+        } else {
+            let parts = text.components(separatedBy: trimmed)
+
+            if parts.count > 1 {
+                HStack(spacing: 0) {
+                    ForEach(0..<parts.count, id: \.self) { index in
+                        Text(parts[index])
+                            .foregroundColor(.primary)
+
+                        if index < parts.count - 1 {
+                            Text(trimmed)
+                                .foregroundColor(.blue)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+            } else {
+                Text(text)
+                    .foregroundColor(.primary)
+            }
+        }
+    }
+    
+    // 📋 주소창 히스토리 선택 처리
+    private func handleAddressBarHistorySelection(_ url: URL) {
+        currentState.currentURL = url
+        inputURL = url.absoluteString
+        
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showAddressBarHistory = false
+            isTextFieldFocused = false
+        }
+        
+        TabPersistenceManager.debugMessages.append("📋 주소창 히스토리 선택: \(url.absoluteString)")
     }
     
     @ViewBuilder
@@ -434,10 +648,38 @@ struct ContentView: View {
             desktopModeButton
             loadingOrSecurityIcon
             urlTextField
-            refreshButton
+            
+            // 🆕 **키보드 내리기 플로팅 버튼** (키보드 올라간 상태에서만 표시)
+            if keyboardHeight > 0 && isTextFieldFocused {
+                keyboardDismissButton
+                    .transition(.scale.combined(with: .opacity))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isTextFieldFocused)
+            } else {
+                refreshButton
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, barVPadding)
+    }
+    
+    // 🆕 **키보드 내리기 플로팅 버튼**
+    private var keyboardDismissButton: some View {
+        Button(action: {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isTextFieldFocused = false
+                showAddressBarHistory = false
+            }
+        }) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(.secondary)
+                .background(
+                    Circle()
+                        .fill(Color(.systemBackground))
+                        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                )
+        }
+        .frame(width: 30, height: 30)
     }
     
     private var desktopModeButton: some View {
@@ -488,6 +730,7 @@ struct ContentView: View {
             .focused($isTextFieldFocused)
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
+            .onChange(of: inputURL, perform: onInputURLChange)
             .onSubmit(onTextFieldSubmit)
             .overlay(textFieldClearButton)
     }
@@ -496,7 +739,7 @@ struct ContentView: View {
     private var textFieldClearButton: some View {
         HStack {
             Spacer()
-            if !inputURL.isEmpty && !currentState.isLoading {
+            if !inputURL.isEmpty && !currentState.isLoading && keyboardHeight == 0 {
                 Button(action: { inputURL = "" }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16))
@@ -800,6 +1043,7 @@ struct ContentView: View {
             if showAddressBar {
                 showAddressBar = false
                 isTextFieldFocused = false
+                showAddressBarHistory = false
             } else {
                 showAddressBar = true
             }
@@ -815,6 +1059,11 @@ struct ContentView: View {
         if !isTextFieldFocused {
             isTextFieldFocused = true
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+            
+            // 📋 **주소창 히스토리 표시**
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showAddressBarHistory = true
+            }
         }
         if !textFieldSelectedAll {
             DispatchQueue.main.async {
@@ -828,10 +1077,26 @@ struct ContentView: View {
     private func onTextFieldFocusChange(focused: Bool) {
         if focused {
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
+            
+            // 📋 **포커스 시 히스토리 표시**
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showAddressBarHistory = true
+            }
         } else {
             textFieldSelectedAll = false
             TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+            
+            // 📋 **포커스 해제 시 히스토리 숨김**
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showAddressBarHistory = false
+            }
         }
+    }
+    
+    // 📋 **핵심 추가: 입력 변경 시 히스토리 업데이트**
+    private func onInputURLChange(newValue: String) {
+        // 입력값이 변경되면 히스토리 목록도 다시 계산됨 (SwiftUI의 자동 업데이트)
+        // 애니메이션은 addressBarHistoryOverlay에서 처리
     }
     
     private func onTextFieldSubmit() {
@@ -840,6 +1105,11 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
         }
         isTextFieldFocused = false
+        
+        // 📋 **제출 시 히스토리 숨김**
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showAddressBarHistory = false
+        }
     }
     
     private func onToolbarTap() {
@@ -882,6 +1152,7 @@ struct ContentView: View {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
                 showAddressBar = false
                 isTextFieldFocused = false 
+                showAddressBarHistory = false
             }
         } else if delta < -12 && !showAddressBar {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { 
