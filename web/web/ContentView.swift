@@ -164,11 +164,6 @@ struct ContentView: View {
                         .offset(y: -keyboardHeight)
                         .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
                 }
-                
-                // 🎯 **사이트 메뉴를 별도 레이어로 배치** (주소창 위에 표시)
-                if siteMenuManager.showSiteMenu {
-                    siteMenuOverlayLayer
-                }
             }
         }
         .onAppear(perform: onAppearHandler)
@@ -244,6 +239,18 @@ struct ContentView: View {
                     .animation(.easeInOut(duration: 0.3), value: siteMenuManager.showPopupBlockedAlert)
             }
         }
+        
+        // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
+        .siteMenuOverlay(
+            manager: siteMenuManager,
+            currentState: currentState,
+            tabs: $tabs,
+            selectedTabIndex: $selectedTabIndex,
+            outerHorizontalPadding: outerHorizontalPadding,
+            showAddressBar: showAddressBar,
+            whiteGlassBackground: AnyView(whiteGlassBackground),
+            whiteGlassOverlay: AnyView(whiteGlassOverlay)
+        )
         .sheet(
             isPresented: Binding(
                 get: { siteMenuManager.showDownloadsList },
@@ -284,45 +291,6 @@ struct ContentView: View {
                 SiteMenuSystem.UI.PerformanceSettingsView(manager: siteMenuManager)
             }
         }
-    }
-    
-    // MARK: - 🎯 **사이트 메뉴 오버레이 레이어** (주소창 바로 위에 배치)
-    @ViewBuilder
-    private var siteMenuOverlayLayer: some View {
-        ZStack {
-            Color.black.opacity(0.1)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    siteMenuManager.showSiteMenu = false
-                }
-
-            VStack(spacing: 0) {
-                Spacer()
-                
-                // 🎯 **핵심: 사이트 메뉴를 주소창 바로 위에 배치**
-                VStack(spacing: 0) {
-                    SiteMenuSystem.UI.SiteMenuOverlay(
-                        manager: siteMenuManager,
-                        currentState: currentState,
-                        outerHorizontalPadding: outerHorizontalPadding,
-                        showAddressBar: showAddressBar,
-                        whiteGlassBackground: AnyView(whiteGlassBackground),
-                        whiteGlassOverlay: AnyView(whiteGlassOverlay),
-                        tabs: $tabs,
-                        selectedTabIndex: $selectedTabIndex
-                    )
-                }
-                .ignoresSafeArea(.keyboard, edges: .bottom) // 키보드 영향 제거
-                
-                // 하단 UI를 위한 공간 확보
-                Spacer()
-                    .frame(height: showAddressBar ? 
-                           (isTextFieldFocused ? 320 : 160) : // 주소창 표시 시: 키보드 + 방문기록 고려 or 기본 주소창 높이
-                           110 + keyboardHeight) // 툴바만 표시 시: 툴바 높이 + 키보드 높이
-            }
-        }
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: siteMenuManager.showSiteMenu)
     }
     
     // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
