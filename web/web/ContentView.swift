@@ -22,32 +22,56 @@ class KeyboardIndependentContainer: UIView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private func setupInvisibleTextField() {
-        // 보이지 않는 텍스트 필드 설정
-        invisibleTextField.isHidden = true
-        invisibleTextField.autocapitalizationType = .none
-        invisibleTextField.autocorrectionType = .no
-        invisibleTextField.keyboardType = .default
-        addSubview(invisibleTextField)
-        
-        // 항상 first responder 유지하되, 실제 텍스트 필드가 포커스되면 양보
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textFieldDidBeginEditing),
-            name: UITextField.textDidBeginEditingNotification,
-            object: nil
-        )
-    }
+   private func setupInvisibleTextField() {
+    // 숨기지 말고 '보이지 않게'만 처리(퍼스트 리스폰더가 가능해야 함)
+    invisibleTextField.isHidden = false
+    invisibleTextField.alpha = 0.01
+    invisibleTextField.tintColor = .clear
+    invisibleTextField.textColor = .clear
+    invisibleTextField.backgroundColor = .clear
+    invisibleTextField.autocapitalizationType = .none
+    invisibleTextField.autocorrectionType = .no
+    invisibleTextField.keyboardType = .default
+    invisibleTextField.returnKeyType = .default
+    invisibleTextField.enablesReturnKeyAutomatically = false
+    invisibleTextField.frame = CGRect(x: 0, y: 0, width: 1, height: 1) // 매우 작게
+    addSubview(invisibleTextField)
+    
+    NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(textFieldDidBeginEditing),
+        name: UITextField.textDidBeginEditingNotification,
+        object: nil
+    )
+}
+
     
     private func addToKeyWindow() {
+    DispatchQueue.main.async {
         guard let keyWindow = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .flatMap({ $0.windows })
             .first(where: { $0.isKeyWindow }) else { return }
         
-        keyWindow.addSubview(self)
-        isHidden = true // 기본적으로 숨김
+        if self.superview !== keyWindow { keyWindow.addSubview(self) }
+        
+        // 컨테이너 자체를 숨기지 말 것(숨기면 하위 텍스트필드도 hidden 취급되어 1st responder 실패)
+        self.isHidden = false
+        self.isUserInteractionEnabled = false
+        self.backgroundColor = .clear
+        
+        self.translatesAutoresizingMaskIntoConstraints = false
+        if self.constraints.isEmpty {
+            NSLayoutConstraint.activate([
+                self.leadingAnchor.constraint(equalTo: keyWindow.leadingAnchor),
+                self.topAnchor.constraint(equalTo: keyWindow.topAnchor),
+                self.widthAnchor.constraint(equalToConstant: 1),
+                self.heightAnchor.constraint(equalToConstant: 1)
+            ])
+        }
     }
+}
+
     
     @objc private func textFieldDidBeginEditing(_ notification: Notification) {
         // 다른 텍스트 필드가 포커스되면 잠시 first responder 양보
@@ -56,34 +80,32 @@ class KeyboardIndependentContainer: UIView {
         }
     }
     
-    // SwiftUI 뷰를 inputAccessoryView에 설정
-    func setAccessoryView<Content: View>(@ViewBuilder content: () -> Content) {
-        let swiftUIView = content()
-        let hostingController = UIHostingController(rootView: AnyView(swiftUIView))
-        
-        // 이전 호스팅 컨트롤러 정리
-        self.hostingController?.willMove(toParent: nil)
-        self.hostingController?.view.removeFromSuperview()
-        self.hostingController?.removeFromParent()
-        
-        // 새 호스팅 컨트롤러 설정
-        self.hostingController = hostingController
-        hostingController.view.backgroundColor = .clear
-        
-        // inputAccessoryView에 설정 (키보드와 동일한 레이어)
-        invisibleTextField.inputAccessoryView = hostingController.view
-        
-        // 크기 자동 조정
-        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-        
-        // first responder 활성화
-        DispatchQueue.main.async {
-            self.invisibleTextField.becomeFirstResponder()
-            hostingController.view.setNeedsLayout()
-            hostingController.view.layoutIfNeeded()
-        }
-    }
+   func setAccessoryView<Content: View>(@ViewBuilder content: () -> Content) {
+    let swiftUIView = content()
+    let hostingController = UIHostingController(rootView: AnyView(swiftUIView))
     
+    // 이전 호스팅 컨트롤러 정리
+    self.hostingController?.willMove(toParent: nil)
+    self.hostingController?.view.removeFromSuperview()
+    self.hostingController?.removeFromParent()
+    
+    // 새 호스팅 컨트롤러 설정
+    self.hostingController = hostingController
+    hostingController.view.backgroundColor = .clear
+    
+    // inputAccessoryView에 연결
+    invisibleTextField.inputAccessoryView = hostingController.view
+    hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+    
+    // 즉시 키보드/액세서리 세션을 안정적으로 올림
+    DispatchQueue.main.async {
+        _ = self.invisibleTextField.becomeFirstResponder()
+        self.invisibleTextField.reloadInputViews() // ✅ 핵심: 교체 직후 갱신
+        hostingController.view.setNeedsLayout()
+        hostingController.view.layoutIfNeeded()
+    }
+}
+
     // 액세서리 뷰 제거
     func removeAccessoryView() {
         invisibleTextField.inputAccessoryView = nil
@@ -97,17 +119,18 @@ class KeyboardIndependentContainer: UIView {
     
     // 키보드 독립 레이어 활성화
     func showKeyboardLayer() {
-        if !invisibleTextField.isFirstResponder {
-            invisibleTextField.becomeFirstResponder()
-        }
+    if !invisibleTextField.isFirstResponder {
+        _ = invisibleTextField.becomeFirstResponder()
+        invisibleTextField.reloadInputViews() // ✅ 세션 즉시 반영
     }
-    
-    // 키보드 독립 레이어 비활성화
-    func hideKeyboardLayer() {
-        if invisibleTextField.isFirstResponder {
-            invisibleTextField.resignFirstResponder()
-        }
+}
+
+func hideKeyboardLayer() {
+    if invisibleTextField.isFirstResponder {
+        invisibleTextField.resignFirstResponder()
     }
+}
+
 }
 
 // SwiftUI 뷰 확장
