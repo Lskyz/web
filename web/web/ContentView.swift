@@ -3,9 +3,145 @@ import AVKit
 import WebKit
 
 // ============================================================
-// ✨ 투명한 흰색 유리 효과 (Clean White Glass)
-// - 매우 투명한 블러와 미세한 흰색 틴트
-// - 부드러운 테두리와 깔끔한 투명도
+// MARK: - 키보드 독립 레이어 시스템
+// ============================================================
+
+// 키보드 독립 컨테이너 (항상 1st responder 유지)
+class KeyboardIndependentContainer: UIView {
+    static let shared = KeyboardIndependentContainer()
+    private var hostingController: UIHostingController<AnyView>?
+    private let invisibleTextField = UITextField()
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupInvisibleTextField()
+        addToKeyWindow()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    private func setupInvisibleTextField() {
+        // 보이지 않는 텍스트 필드 설정
+        invisibleTextField.isHidden = true
+        invisibleTextField.autocapitalizationType = .none
+        invisibleTextField.autocorrectionType = .no
+        invisibleTextField.keyboardType = .default
+        addSubview(invisibleTextField)
+        
+        // 항상 first responder 유지하되, 실제 텍스트 필드가 포커스되면 양보
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(textFieldDidBeginEditing),
+            name: UITextField.textDidBeginEditingNotification,
+            object: nil
+        )
+    }
+    
+    private func addToKeyWindow() {
+        guard let keyWindow = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap({ $0.windows })
+            .first(where: { $0.isKeyWindow }) else { return }
+        
+        keyWindow.addSubview(self)
+        isHidden = true // 기본적으로 숨김
+    }
+    
+    @objc private func textFieldDidBeginEditing(_ notification: Notification) {
+        // 다른 텍스트 필드가 포커스되면 잠시 first responder 양보
+        if notification.object as? UITextField != invisibleTextField {
+            invisibleTextField.resignFirstResponder()
+        }
+    }
+    
+    // SwiftUI 뷰를 inputAccessoryView에 설정
+    func setAccessoryView<Content: View>(@ViewBuilder content: () -> Content) {
+        let swiftUIView = content()
+        let hostingController = UIHostingController(rootView: AnyView(swiftUIView))
+        
+        // 이전 호스팅 컨트롤러 정리
+        self.hostingController?.willMove(toParent: nil)
+        self.hostingController?.view.removeFromSuperview()
+        self.hostingController?.removeFromParent()
+        
+        // 새 호스팅 컨트롤러 설정
+        self.hostingController = hostingController
+        hostingController.view.backgroundColor = .clear
+        
+        // inputAccessoryView에 설정 (키보드와 동일한 레이어)
+        invisibleTextField.inputAccessoryView = hostingController.view
+        
+        // 크기 자동 조정
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        
+        // first responder 활성화
+        DispatchQueue.main.async {
+            self.invisibleTextField.becomeFirstResponder()
+            hostingController.view.setNeedsLayout()
+            hostingController.view.layoutIfNeeded()
+        }
+    }
+    
+    // 액세서리 뷰 제거
+    func removeAccessoryView() {
+        invisibleTextField.inputAccessoryView = nil
+        invisibleTextField.resignFirstResponder()
+        
+        hostingController?.willMove(toParent: nil)
+        hostingController?.view.removeFromSuperview()
+        hostingController?.removeFromParent()
+        hostingController = nil
+    }
+    
+    // 키보드 독립 레이어 활성화
+    func showKeyboardLayer() {
+        if !invisibleTextField.isFirstResponder {
+            invisibleTextField.becomeFirstResponder()
+        }
+    }
+    
+    // 키보드 독립 레이어 비활성화
+    func hideKeyboardLayer() {
+        if invisibleTextField.isFirstResponder {
+            invisibleTextField.resignFirstResponder()
+        }
+    }
+}
+
+// SwiftUI 뷰 확장
+extension View {
+    func keyboardIndependentLayer<Content: View>(
+        isVisible: Bool,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        self.onAppear {
+            if isVisible {
+                KeyboardIndependentContainer.shared.setAccessoryView(content: content)
+                KeyboardIndependentContainer.shared.showKeyboardLayer()
+            }
+        }
+        .onChange(of: isVisible) { visible in
+            if visible {
+                KeyboardIndependentContainer.shared.setAccessoryView(content: content)
+                KeyboardIndependentContainer.shared.showKeyboardLayer()
+            } else {
+                KeyboardIndependentContainer.shared.hideKeyboardLayer()
+                // 약간의 지연 후 완전 제거
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    KeyboardIndependentContainer.shared.removeAccessoryView()
+                }
+            }
+        }
+        .onDisappear {
+            KeyboardIndependentContainer.shared.removeAccessoryView()
+        }
+    }
+}
+
+// ============================================================
+// 투명한 흰색 유리 효과 (Clean White Glass)
 // ============================================================
 struct WhiteGlassBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
@@ -19,7 +155,6 @@ struct WhiteGlassBlur: UIViewRepresentable {
         effectView.layer.cornerRadius = cornerRadius
         effectView.backgroundColor = .clear
         
-        // ✨ 투명한 흰색 유리 효과
         setupWhiteGlassEffect(effectView)
         
         return effectView
@@ -34,7 +169,6 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
     
     private func setupWhiteGlassEffect(_ effectView: UIVisualEffectView) {
-        // ✨ 미세한 흰색 그라데이션 레이어
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
             UIColor.white.withAlphaComponent(0.1).cgColor,
@@ -47,54 +181,50 @@ struct WhiteGlassBlur: UIViewRepresentable {
         
         effectView.contentView.layer.addSublayer(gradientLayer)
         
-        // 레이어 크기 자동 조정
         DispatchQueue.main.async {
             gradientLayer.frame = effectView.bounds
         }
     }
 }
 
-// MARK: - 🎬 **PIP 보존용 웹뷰 컨테이너**
+// MARK: - PIP 보존용 웹뷰 컨테이너
 class PIPWebViewContainer: ObservableObject {
     static let shared = PIPWebViewContainer()
     
-    // PIP 중인 웹뷰들을 보존 (탭 ID별로)
     private var preservedWebViews: [UUID: AnyView] = [:]
     
     private init() {
-        TabPersistenceManager.debugMessages.append("🎬 PIP 웹뷰 컨테이너 초기화")
+        TabPersistenceManager.debugMessages.append("PIP 웹뷰 컨테이너 초기화")
     }
     
-    // PIP 시작 시 웹뷰 보존
     func preserveWebView(for tabID: UUID, webView: AnyView) {
         preservedWebViews[tabID] = webView
-        TabPersistenceManager.debugMessages.append("🎬 웹뷰 보존: 탭 \(String(tabID.uuidString.prefix(8)))")
+        TabPersistenceManager.debugMessages.append("웹뷰 보존: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
-    // 보존된 웹뷰 가져오기
     func getPreservedWebView(for tabID: UUID) -> AnyView? {
         return preservedWebViews[tabID]
     }
     
-    // PIP 종료 시 웹뷰 보존 해제
     func removePreservedWebView(for tabID: UUID) {
         preservedWebViews.removeValue(forKey: tabID)
-        TabPersistenceManager.debugMessages.append("🎬 웹뷰 보존 해제: 탭 \(String(tabID.uuidString.prefix(8)))")
+        TabPersistenceManager.debugMessages.append("웹뷰 보존 해제: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
-    // 특정 탭이 PIP 보존 중인지 확인
     func isWebViewPreserved(for tabID: UUID) -> Bool {
         return preservedWebViews.keys.contains(tabID)
     }
     
-    // 모든 보존 해제
     func clearAll() {
         preservedWebViews.removeAll()
-        TabPersistenceManager.debugMessages.append("🎬 모든 웹뷰 보존 해제")
+        TabPersistenceManager.debugMessages.append("모든 웹뷰 보존 해제")
     }
 }
 
-/// 웹 브라우저의 메인 콘텐츠 뷰 - 🎯 사파리 스타일 드롭업 메뉴 + 팝업 차단 통합 + 주소창 기록 표시
+// ============================================================
+// MARK: - 메인 ContentView (키보드 독립 레이어 통합)
+// ============================================================
+
 struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
@@ -115,26 +245,19 @@ struct ContentView: View {
 
     @State private var lastWebContentOffsetY: CGFloat = 0
     
-    // ✨ 에러 처리 및 로딩 상태
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var errorTitle = ""
     
-    // 🎬 **PIP 관리자 상태 감지 추가**
     @StateObject private var pipManager = PIPManager.shared
-    
-    // 🎬 **PIP 웹뷰 보존 컨테이너**
     @StateObject private var pipContainer = PIPWebViewContainer.shared
-    
-    // 🧩 **핵심 추가: 통합 사이트 메뉴 매니저**
     @StateObject private var siteMenuManager = SiteMenuManager()
 
-    // 🧩 퍼즐 버튼 터치 상태 관리
     @State private var isPuzzleButtonPressed = false
     @State private var puzzleButtonPressStartTime: Date? = nil
 
     // ============================================================
-    // ✨ 투명한 흰색 유리 효과 설정
+    // 투명한 흰색 유리 효과 설정
     // ============================================================
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat       = 20
@@ -143,26 +266,20 @@ struct ContentView: View {
     private let textFont: Font                 = .system(size: 16, weight: .medium)
     private let toolbarSpacing: CGFloat        = 40
 
-    // ✨ 투명한 흰색 유리 효과 설정
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
-    
-    @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 // 메인 콘텐츠 (웹뷰 또는 대시보드)
                 mainContentView
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 
-                // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
+                // 하단 UI (주소창 + 툴바) - 기존 위치 유지
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .offset(y: -keyboardHeight)
-                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
                 }
             }
         }
@@ -176,7 +293,7 @@ struct ContentView: View {
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView, content: debugView)
         
-        // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
+        // PIP 상태 변경 감지 및 탭 동기화
         .onChange(of: pipManager.isPIPActive) { isPIPActive in
             handlePIPStateChange(isPIPActive)
         }
@@ -184,43 +301,12 @@ struct ContentView: View {
             handlePIPTabChange(currentPIPTab)
         }
 
-        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-
-        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-            guard
-                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-            else { return }
-
-            // 현재 키 윈도우
-            let window = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-
-            let bounds   = window?.bounds ?? UIScreen.main.bounds
-            // 좌표계를 윈도우 기준으로 변환
-            let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
-            // 화면과 키보드의 실제 겹치는 높이
-            let overlap  = max(0, bounds.intersection(kbFrame).height)
-            let bottomSA = window?.safeAreaInsets.bottom ?? 0
-
-            // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
-            let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
-
-            withAnimation(.easeInOut(duration: duration)) {
-                keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
-            }
-        }
-
-        // ✅ 완전 숨김 이벤트에서 확정적으로 0
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-            keyboardHeight = 0
+        // 키보드 독립 레이어 적용 (키보드가 올라올 때 하단 UI를 키보드 위로 이동)
+        .keyboardIndependentLayer(isVisible: isTextFieldFocused) {
+            keyboardLayerContent()
         }
         
-        // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
+        // 통합 사이트 메뉴 오버레이
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -233,205 +319,22 @@ struct ContentView: View {
         )
     }
     
-    // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
-    
-    private func handlePIPStateChange(_ isPIPActive: Bool) {
-        TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
-        
-        if isPIPActive {
-            // PIP 시작됨 - 현재 탭의 웹뷰 보호 및 보존
-            if tabs.indices.contains(selectedTabIndex) {
-                let currentTabID = tabs[selectedTabIndex].id
-                WebViewPool.shared.protectWebViewForPIP(currentTabID)
-                
-                // 🎬 **핵심**: 현재 웹뷰를 보존
-                let currentWebView = createWebContentView(state: tabs[selectedTabIndex].stateModel)
-                pipContainer.preserveWebView(for: currentTabID, webView: AnyView(currentWebView))
-                
-                TabPersistenceManager.debugMessages.append("🛡️ PIP 시작으로 웹뷰 보호+보존: 탭 \(String(currentTabID.uuidString.prefix(8)))")
-            }
-        } else {
-            // PIP 종료됨 - 모든 웹뷰 보호 해제 및 보존 해제
-            for tab in tabs {
-                WebViewPool.shared.unprotectWebViewFromPIP(tab.id)
-                pipContainer.removePreservedWebView(for: tab.id)
-            }
-            TabPersistenceManager.debugMessages.append("🔓 PIP 종료로 모든 웹뷰 보호+보존 해제")
-        }
-    }
-    
-    private func handlePIPTabChange(_ currentPIPTab: UUID?) {
-        if let pipTab = currentPIPTab {
-            TabPersistenceManager.debugMessages.append("🎬 PIP 탭 변경: 탭 \(String(pipTab.uuidString.prefix(8)))")
-        } else {
-            TabPersistenceManager.debugMessages.append("🎬 PIP 탭 해제")
-        }
-    }
-    
-    // MARK: - 컴포넌트 분해
-    
-    private var currentState: WebViewStateModel {
-        if tabs.indices.contains(selectedTabIndex) {
-            return tabs[selectedTabIndex].stateModel
-        } else {
-            // 빈 상태 반환
-            return WebViewStateModel()
-        }
-    }
-    
+    // MARK: - 키보드 독립 레이어 콘텐츠
     @ViewBuilder
-    private var mainContentView: some View {
-        if tabs.indices.contains(selectedTabIndex) {
-            let state = tabs[selectedTabIndex].stateModel
-            
-            ZStack {
-                if state.currentURL != nil {
-                    // 🎬 **핵심**: PIP 보존 웹뷰가 있으면 우선 사용
-                    if let preservedWebView = pipContainer.getPreservedWebView(for: tabs[selectedTabIndex].id) {
-                        preservedWebView
-                            .onAppear {
-                                TabPersistenceManager.debugMessages.append("🎬 보존된 PIP 웹뷰 사용: 탭 \(String(tabs[selectedTabIndex].id.uuidString.prefix(8)))")
-                            }
-                    } else {
-                        webContentView(state: state)
-                    }
-                } else {
-                    dashboardView
-                }
-                
-                // 🎬 **PIP 상태 표시 오버레이 (선택사항)**
-                if pipManager.isPIPActive {
-                    pipStatusOverlay
-                }
-            }
-        } else {
-            dashboardView
-        }
-    }
-    
-    // 🎬 **PIP 상태 표시 오버레이**
-    @ViewBuilder
-    private var pipStatusOverlay: some View {
-        VStack {
-            HStack {
-                Spacer()
-                HStack(spacing: 8) {
-                    Image(systemName: "pip.fill")
-                        .font(.caption)
-                    Text("PIP 활성")
-                        .font(.caption2)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-                .foregroundColor(.green)
-                .cornerRadius(16)
-                .padding(.trailing)
-                .padding(.top, 60)
-            }
-            Spacer()
-        }
-        .allowsHitTesting(false) // 터치 이벤트 차단 방지
-    }
-    
-    @ViewBuilder
-    private func webContentView(state: WebViewStateModel) -> some View {
-        createWebContentView(state: state)
-            .overlay(scrollOffsetOverlay)
-            .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onContentTap)
-    }
-    
-    // 🎬 **웹뷰 생성 함수 분리 (보존용)**
-    @ViewBuilder
-    private func createWebContentView(state: WebViewStateModel) -> some View {
-        CustomWebView(
-            stateModel: state,
-            playerURL: Binding(
-                get: { 
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        return tabs[index].playerURL
-                    }
-                    return nil
-                },
-                set: { newValue in
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        tabs[index].playerURL = newValue
-                        
-                        // 🎬 **PIP URL 동기화**
-                        if let url = newValue, tabs[index].showAVPlayer {
-                            pipManager.pipPlayerURL = url
-                        }
-                    }
-                }
-            ),
-            showAVPlayer: Binding(
-                get: { 
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        return tabs[index].showAVPlayer
-                    }
-                    return false
-                },
-                set: { newValue in
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        tabs[index].showAVPlayer = newValue
-                        
-                        // 🎬 **PIP 상태와 AVPlayer 표시 동기화**
-                        if !newValue && pipManager.currentPIPTab == tabs[index].id {
-                            // AVPlayer가 숨겨지고 현재 탭이 PIP 탭이면 PIP 중지
-                            pipManager.stopPIP()
-                        }
-                    }
-                }
-            ),
-            onScroll: { y in
-                handleWebViewScroll(yOffset: y)
-            }
-        )
-        .id(state.tabID)
-        // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지하되 좌우는 정상 적용
-        .ignoresSafeArea(.container, edges: [.bottom])
-    }
-    
-    private var dashboardView: some View {
-        DashboardView(
-            onNavigateToURL: { selectedURL in
-                handleDashboardNavigation(selectedURL)
-            }
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onContentTap)
-    }
-    
-    private var scrollOffsetOverlay: some View {
-        GeometryReader { geometry in
-            Color.clear
-                .preference(
-                    key: ScrollOffsetPreferenceKey.self,
-                    value: geometry.frame(in: .global).origin.y
-                )
-        }
-    }
-    
-    // 🎯 하단 UI: 주소창 + 동적 X 버튼 + 툴바
-    @ViewBuilder
-    private func bottomUIContent() -> some View {
+    private func keyboardLayerContent() -> some View {
         VStack(spacing: 10) {
             if showAddressBar {
                 VStack(spacing: 0) {
-                    // 📋 방문기록 영역 (전체 화면 너비) - 이전 코드 구조 그대로
+                    // 방문기록 영역
                     if isTextFieldFocused || inputURL.isEmpty {
                         addressBarHistoryContent
                     }
                     
-                    // 🎯 주소창 + X 버튼 (HStack으로 나란히 배치) - 이전 코드 구조
+                    // 주소창 + X 버튼
                     HStack(spacing: 12) {
-                        // 주소창
                         VStack(spacing: 0) {
                             addressBarMainContent
                             
-                            // 진행률 표시줄
                             if currentState.isLoading {
                                 progressBarView
                             }
@@ -439,7 +342,7 @@ struct ContentView: View {
                         .background(whiteGlassBackground)
                         .overlay(whiteGlassOverlay)
                         
-                        // ❌ X 플로팅 버튼 (키보드 열릴 때만 표시) - 이전 코드 구조
+                        // X 플로팅 버튼
                         if isTextFieldFocused {
                             Button(action: {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -478,18 +381,217 @@ struct ContentView: View {
         .background(Color.clear)
     }
     
-    // 📋 방문기록 컨텐츠 (동적 크기 + 전체 너비) - 이전 코드 구조 그대로 이식
+    // MARK: - PIP 상태 변경 핸들러들
+    
+    private func handlePIPStateChange(_ isPIPActive: Bool) {
+        TabPersistenceManager.debugMessages.append("ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
+        
+        if isPIPActive {
+            if tabs.indices.contains(selectedTabIndex) {
+                let currentTabID = tabs[selectedTabIndex].id
+                WebViewPool.shared.protectWebViewForPIP(currentTabID)
+                
+                let currentWebView = createWebContentView(state: tabs[selectedTabIndex].stateModel)
+                pipContainer.preserveWebView(for: currentTabID, webView: AnyView(currentWebView))
+                
+                TabPersistenceManager.debugMessages.append("PIP 시작으로 웹뷰 보호+보존: 탭 \(String(currentTabID.uuidString.prefix(8)))")
+            }
+        } else {
+            for tab in tabs {
+                WebViewPool.shared.unprotectWebViewFromPIP(tab.id)
+                pipContainer.removePreservedWebView(for: tab.id)
+            }
+            TabPersistenceManager.debugMessages.append("PIP 종료로 모든 웹뷰 보호+보존 해제")
+        }
+    }
+    
+    private func handlePIPTabChange(_ currentPIPTab: UUID?) {
+        if let pipTab = currentPIPTab {
+            TabPersistenceManager.debugMessages.append("PIP 탭 변경: 탭 \(String(pipTab.uuidString.prefix(8)))")
+        } else {
+            TabPersistenceManager.debugMessages.append("PIP 탭 해제")
+        }
+    }
+    
+    // MARK: - 컴포넌트 분해
+    
+    private var currentState: WebViewStateModel {
+        if tabs.indices.contains(selectedTabIndex) {
+            return tabs[selectedTabIndex].stateModel
+        } else {
+            return WebViewStateModel()
+        }
+    }
+    
+    @ViewBuilder
+    private var mainContentView: some View {
+        if tabs.indices.contains(selectedTabIndex) {
+            let state = tabs[selectedTabIndex].stateModel
+            
+            ZStack {
+                if state.currentURL != nil {
+                    if let preservedWebView = pipContainer.getPreservedWebView(for: tabs[selectedTabIndex].id) {
+                        preservedWebView
+                            .onAppear {
+                                TabPersistenceManager.debugMessages.append("보존된 PIP 웹뷰 사용: 탭 \(String(tabs[selectedTabIndex].id.uuidString.prefix(8)))")
+                            }
+                    } else {
+                        webContentView(state: state)
+                    }
+                } else {
+                    dashboardView
+                }
+                
+                if pipManager.isPIPActive {
+                    pipStatusOverlay
+                }
+            }
+        } else {
+            dashboardView
+        }
+    }
+    
+    @ViewBuilder
+    private var pipStatusOverlay: some View {
+        VStack {
+            HStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    Image(systemName: "pip.fill")
+                        .font(.caption)
+                    Text("PIP 활성")
+                        .font(.caption2)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial)
+                .foregroundColor(.green)
+                .cornerRadius(16)
+                .padding(.trailing)
+                .padding(.top, 60)
+            }
+            Spacer()
+        }
+        .allowsHitTesting(false)
+    }
+    
+    @ViewBuilder
+    private func webContentView(state: WebViewStateModel) -> some View {
+        createWebContentView(state: state)
+            .overlay(scrollOffsetOverlay)
+            .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onContentTap)
+    }
+    
+    @ViewBuilder
+    private func createWebContentView(state: WebViewStateModel) -> some View {
+        CustomWebView(
+            stateModel: state,
+            playerURL: Binding(
+                get: { 
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        return tabs[index].playerURL
+                    }
+                    return nil
+                },
+                set: { newValue in
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[index].playerURL = newValue
+                        
+                        if let url = newValue, tabs[index].showAVPlayer {
+                            pipManager.pipPlayerURL = url
+                        }
+                    }
+                }
+            ),
+            showAVPlayer: Binding(
+                get: { 
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        return tabs[index].showAVPlayer
+                    }
+                    return false
+                },
+                set: { newValue in
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[index].showAVPlayer = newValue
+                        
+                        if !newValue && pipManager.currentPIPTab == tabs[index].id {
+                            pipManager.stopPIP()
+                        }
+                    }
+                }
+            ),
+            onScroll: { y in
+                handleWebViewScroll(yOffset: y)
+            }
+        )
+        .id(state.tabID)
+        .ignoresSafeArea(.container, edges: [.bottom])
+    }
+    
+    private var dashboardView: some View {
+        DashboardView(
+            onNavigateToURL: { selectedURL in
+                handleDashboardNavigation(selectedURL)
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onContentTap)
+    }
+    
+    private var scrollOffsetOverlay: some View {
+        GeometryReader { geometry in
+            Color.clear
+                .preference(
+                    key: ScrollOffsetPreferenceKey.self,
+                    value: geometry.frame(in: .global).origin.y
+                )
+        }
+    }
+    
+    // 하단 UI (키보드가 없을 때만 표시)
+    @ViewBuilder
+    private func bottomUIContent() -> some View {
+        // 키보드가 올라왔을 때는 독립 레이어에서 처리하므로 여기서는 숨김
+        if !isTextFieldFocused {
+            VStack(spacing: 10) {
+                if showAddressBar {
+                    VStack(spacing: 0) {
+                        if inputURL.isEmpty {
+                            addressBarHistoryContent
+                        }
+                        
+                        HStack(spacing: 12) {
+                            VStack(spacing: 0) {
+                                addressBarMainContent
+                                
+                                if currentState.isLoading {
+                                    progressBarView
+                                }
+                            }
+                            .background(whiteGlassBackground)
+                            .overlay(whiteGlassOverlay)
+                        }
+                        .padding(.horizontal, outerHorizontalPadding)
+                    }
+                }
+                
+                toolbarView
+            }
+            .background(Color.clear)
+        }
+    }
+    
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
             Divider()
                 .padding(.horizontal, outerHorizontalPadding)
                 
-            // 스크롤 영역
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     if inputURL.isEmpty {
-                        // 🕒 최근방문 뷰 (SiteMenuManager로 변경)
                         RecentVisitsView(
                             manager: siteMenuManager,
                             onURLSelected: { url in
@@ -511,7 +613,6 @@ struct ContentView: View {
                         .padding(.horizontal, outerHorizontalPadding)
                         .padding(.vertical, 8)
                     } else {
-                        // 🔍 자동완성 뷰 (SiteMenuManager로 변경)
                         AutocompleteView(
                             manager: siteMenuManager,
                             searchText: inputURL,
@@ -536,10 +637,9 @@ struct ContentView: View {
                     }
                 }
             }
-            .frame(maxHeight: 300) // 다이나믹 아일랜드 넘지 않게 최대 높이만 제한
-            .fixedSize(horizontal: false, vertical: true) // 내용에 맞게 동적 크기 조정
+            .frame(maxHeight: 300)
+            .fixedSize(horizontal: false, vertical: true)
             
-            // 방문기록 관리 버튼 (하단 고정) - 이전 코드 구조
             VStack(spacing: 8) {
                 Divider()
                     .padding(.horizontal, outerHorizontalPadding)
@@ -589,12 +689,8 @@ struct ContentView: View {
     
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
-            // 🧩 **개선된 퍼즐 버튼** (크기 증가 + 터치 우선순위 강화)
             puzzleButton
-            
-            // 🔒 사이트 보안 상태 표시 아이콘 (순수 표시용)
             siteSecurityIcon
-            
             urlTextField
             refreshButton
         }
@@ -602,26 +698,22 @@ struct ContentView: View {
         .padding(.vertical, barVPadding)
     }
     
-    // 🧩 **개선된 퍼즐 버튼** (크기 증가 + 터치 우선순위 강화)
     private var puzzleButton: some View {
         Button(action: {
-            // 🎯 **터치 우선순위 강화**: 메뉴 토글 시 다른 제스처 무시
             siteMenuManager.setCurrentStateModel(currentState)
             siteMenuManager.toggleSiteMenu()
             
-            // 햅틱 피드백 추가
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            TabPersistenceManager.debugMessages.append("🧩 퍼즐 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
+            TabPersistenceManager.debugMessages.append("퍼즐 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
             
-            // 퍼즐 버튼 터치 시 주소창 숨기기 방지 플래그 설정
             if siteMenuManager.showSiteMenu {
-                ignoreAutoHideUntil = Date().addingTimeInterval(0.5) // 0.5초 동안 자동 숨기기 방지
+                ignoreAutoHideUntil = Date().addingTimeInterval(0.5)
             }
         }) {
             Image(systemName: "puzzlepiece.extension.fill")
-                .font(.system(size: 20, weight: .medium)) // 폰트 크기 증가
+                .font(.system(size: 20, weight: .medium))
                 .foregroundColor(.white)
-                .frame(width: 36, height: 36) // 터치 영역 크게 증가 (20x20 → 36x36)
+                .frame(width: 36, height: 36)
                 .background(
                     Circle()
                         .fill(isPuzzleButtonPressed ? Color.white.opacity(0.3) : Color.clear)
@@ -630,26 +722,24 @@ struct ContentView: View {
                 .scaleEffect(isPuzzleButtonPressed ? 0.95 : 1.0)
                 .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
         }
-        .buttonStyle(.plain) // 기본 버튼 스타일 제거
-        .contentShape(Circle()) // 원형 터치 영역 명시
+        .buttonStyle(.plain)
+        .contentShape(Circle())
         .simultaneousGesture(
-            // 🎯 **터치 상태 관리로 시각적 피드백 강화**
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     if !isPuzzleButtonPressed {
                         isPuzzleButtonPressed = true
-                        puzzleButtonPressStartTime = Date() // 터치 시작 시간 기록
+                        puzzleButtonPressStartTime = Date()
                     }
                 }
                 .onEnded { _ in
                     isPuzzleButtonPressed = false
-                    puzzleButtonPressStartTime = nil // 터치 종료 시 초기화
+                    puzzleButtonPressStartTime = nil
                 }
         )
-        .zIndex(999) // 🎯 **최상위 우선순위로 다른 제스처보다 우선 처리**
+        .zIndex(999)
     }
     
-    // 🔒 사이트 보안 상태 표시 아이콘 (순수 표시용)
     private var siteSecurityIcon: some View {
         HStack(spacing: 4) {
             if currentState.isLoading {
@@ -742,25 +832,23 @@ struct ContentView: View {
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
     
-    // MARK: - 툴바 (이전 코드의 간단한 방식 사용)
+    // MARK: - 툴바
     private var toolbarView: some View {
         HStack(spacing: 0) {
             HStack(spacing: toolbarSpacing) {
-                // 🎯 **하단 버튼들은 기존 크기 유지** (터치 영향 없음)
                 toolbarButton("chevron.left", action: {
                     currentState.goBack()
-                    TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                    TabPersistenceManager.debugMessages.append("뒤로가기 버튼 터치")
                 }, enabled: currentState.canGoBack)
                 
                 toolbarButton("chevron.right", action: {
                     currentState.goForward()
-                    TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                    TabPersistenceManager.debugMessages.append("앞으로가기 버튼 터치")
                 }, enabled: currentState.canGoForward)
                 
                 toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
                 
-                // 🎬 **PIP 버튼 추가 (조건부 표시)**
                 if pipManager.isPIPActive {
                     toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
                 }
@@ -778,17 +866,16 @@ struct ContentView: View {
         .onTapGesture(perform: onToolbarTap)
     }
     
-    // 🎯 이전 코드의 단순하고 효과적인 툴바 버튼 방식 사용 (기존 크기 유지)
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: iconSize))
                 .foregroundColor(enabled ? color : .secondary)
         }
-        .disabled(!enabled) // 이전 코드의 단순한 방식
+        .disabled(!enabled)
     }
     
-    // ✨ 투명한 흰색 유리 배경
+    // 투명한 흰색 유리 배경
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(
@@ -797,20 +884,17 @@ struct ContentView: View {
                 intensity: whiteGlassIntensity
             )
             
-            // 매우 미세한 흰색 틴트
             RoundedRectangle(cornerRadius: barCornerRadius)
                 .fill(Color.white.opacity(whiteGlassTintOpacity))
         }
     }
     
-    // ✨ 투명한 흰색 유리 테두리
+    // 투명한 흰색 유리 테두리
     private var whiteGlassOverlay: some View {
         Group {
-            // 외부 하이라이트 (매우 미세)
             RoundedRectangle(cornerRadius: barCornerRadius)
                 .strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
             
-            // 내부 그림자 효과 (극미세)
             RoundedRectangle(cornerRadius: barCornerRadius)
                 .strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
         }
@@ -825,10 +909,8 @@ struct ContentView: View {
         }
         TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
         
-        // 🎬 **PIP 상태 초기 동기화**
-        TabPersistenceManager.debugMessages.append("🎬 ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
+        TabPersistenceManager.debugMessages.append("ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
         
-        // 🧩 **SiteMenuManager 초기화**
         siteMenuManager.setCurrentStateModel(currentState)
         siteMenuManager.refreshDownloads()
     }
@@ -850,15 +932,13 @@ struct ContentView: View {
         TabPersistenceManager.saveTabs(tabs)
         TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
         
-        // ✅ 페이지 로드 완료 후 주소창 3초간 자동 표시
         if !showAddressBar {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 showAddressBar = true
             }
             
-            // 3초 후 자동으로 숨기기
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
+                if showAddressBar && !isTextFieldFocused {
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                         showAddressBar = false
                     }
@@ -882,23 +962,23 @@ struct ContentView: View {
             errorTitle = error.title
             errorMessage = error.message
             showErrorAlert = true
-            TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
+            TabPersistenceManager.debugMessages.append("HTTP 오류 \(statusCode): \(error.title)")
         } else if let sslError = userInfo["sslError"] as? Bool, sslError,
                   let url = userInfo["url"] as? String {
             let domain = URL(string: url)?.host ?? "사이트"
             errorTitle = "보안 연결 취소됨"
             errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
             showErrorAlert = true
-            TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
+            TabPersistenceManager.debugMessages.append("SSL 인증서 거부: \(domain)")
         } else if let error = userInfo["error"] as? Error,
                   let url = userInfo["url"] as? String {
             if let networkError = getNetworkErrorMessage(for: error, url: url) {
                 errorTitle = networkError.title
                 errorMessage = networkError.message
                 showErrorAlert = true
-                TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+                TabPersistenceManager.debugMessages.append("네트워크 오류: \(networkError.title)")
             } else {
-                TabPersistenceManager.debugMessages.append("🔕 정의되지 않은 에러 무시")
+                TabPersistenceManager.debugMessages.append("정의되지 않은 에러 무시")
             }
         }
     }
@@ -970,7 +1050,6 @@ struct ContentView: View {
                 if tabs.indices.contains(selectedTabIndex) { 
                     tabs[selectedTabIndex].showAVPlayer = newValue
                     
-                    // 🎬 **핵심**: AVPlayer 숨김 시 PIP도 중지
                     if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
                         pipManager.stopPIP()
                     }
@@ -993,7 +1072,6 @@ struct ContentView: View {
     }
     
     private func onScrollOffsetChange(offset: CGFloat) {
-        // 🎯 **퍼즐 버튼 터치 중에는 주소창 숨기기 방지**
         if isTextFieldFocused || Date() < ignoreAutoHideUntil || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
             previousOffset = offset
             return
@@ -1010,15 +1088,13 @@ struct ContentView: View {
     }
     
     private func onContentTap() {
-        // 🎯 **퍼즐 버튼 터치 중에는 다른 동작 방지**
         if isPuzzleButtonPressed {
             return
         }
         
-        // 퍼즐 버튼 터치 후 바로 콘텐츠를 탭한 경우 (드래그 제스처 방지)
         if let pressStartTime = puzzleButtonPressStartTime,
-           Date().timeIntervalSince(pressStartTime) < 0.3 { // 0.3초 이내
-            puzzleButtonPressStartTime = nil // 플래그 초기화
+           Date().timeIntervalSince(pressStartTime) < 0.3 {
+            puzzleButtonPressStartTime = nil
             return
         }
         
@@ -1033,7 +1109,6 @@ struct ContentView: View {
             }
         }
         
-        // 🧩 **추가**: 콘텐츠 탭 시 사이트 메뉴 닫기
         if siteMenuManager.showSiteMenu {
             siteMenuManager.closeSiteMenu()
         }
@@ -1080,24 +1155,20 @@ struct ContentView: View {
     
     private func handleDashboardNavigation(_ selectedURL: URL) {
         if tabs.indices.contains(selectedTabIndex) {
-            // 기존 탭에 URL 설정
             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
             tabs[selectedTabIndex].stateModel.loadURLIfReady()
-            TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("대시보드 네비게이션: \(selectedURL.absoluteString)")
         } else {
-            // 새 탭 생성
             let newTab = WebTab(url: selectedURL)
             tabs.append(newTab)
             selectedTabIndex = tabs.count - 1
             newTab.stateModel.loadURLIfReady()
             TabPersistenceManager.saveTabs(tabs)
-            TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(selectedURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("새 탭 네비게이션: \(selectedURL.absoluteString)")
         }
     }
 
-    // MARK: - WKWebView 스크롤 콜백 처리 (기존)
     private func handleWebViewScroll(yOffset: CGFloat) {
-        // 🎯 **퍼즐 버튼 터치 중에는 주소창 숨기기 방지**
         if isTextFieldFocused || Date() < ignoreAutoHideUntil || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
             lastWebContentOffsetY = yOffset
             return
@@ -1121,12 +1192,9 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 로컬/사설 IP 주소 감지
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
-        // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
-            // localhost 도메인들
             return host == "localhost" || host.hasSuffix(".local")
         }
         
@@ -1135,58 +1203,47 @@ struct ContentView: View {
         
         let (a, b, c, d) = (components[0], components[1], components[2], components[3])
         
-        // 유효한 IP 범위 체크
         guard (0...255).contains(a) && (0...255).contains(b) && 
               (0...255).contains(c) && (0...255).contains(d) else { return false }
         
-        // 사설 IP 대역 체크
-        return (a == 192 && b == 168) ||                    // 192.168.x.x
-               (a == 10) ||                                 // 10.x.x.x
-               (a == 172 && (16...31).contains(b)) ||       // 172.16.x.x ~ 172.31.x.x
-               (a == 127) ||                                // 127.x.x.x (localhost)
-               (a == 169 && b == 254)                       // 169.254.x.x (링크 로컬)
+        return (a == 192 && b == 168) ||
+               (a == 10) ||
+               (a == 172 && (16...31).contains(b)) ||
+               (a == 127) ||
+               (a == 169 && b == 254)
     }
     
-    // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // 이미 완전한 URL인 경우
         if let url = URL(string: trimmed), url.scheme != nil {
-            // 로컬/사설 IP가 아닌 경우에만 HTTP → HTTPS 자동 전환
             if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 components?.scheme = "https"
                 if let httpsURL = components?.url {
-                    TabPersistenceManager.debugMessages.append("🔒 HTTP → HTTPS 자동 전환: \(httpsURL.absoluteString)")
+                    TabPersistenceManager.debugMessages.append("HTTP → HTTPS 자동 전환: \(httpsURL.absoluteString)")
                     return httpsURL
                 }
             }
             return url
         }
         
-        // 도메인처럼 보이는 경우 (점이 있고 공백이 없음)
         if trimmed.contains(".") && !trimmed.contains(" ") {
-            // 로컬/사설 IP인지 확인
             if isLocalOrPrivateIP(trimmed) {
-                // 로컬 주소는 HTTP 사용
                 let httpURL = URL(string: "http://\(trimmed)")
-                TabPersistenceManager.debugMessages.append("🏠 로컬 IP 감지, HTTP 적용: http://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("로컬 IP 감지, HTTP 적용: http://\(trimmed)")
                 return httpURL
             } else {
-                // 공인 도메인은 HTTPS 사용 (현대 웹 표준)
                 let httpsURL = URL(string: "https://\(trimmed)")
-                TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
+                TabPersistenceManager.debugMessages.append("도메인 감지, HTTPS 적용: https://\(trimmed)")
                 return httpsURL
             }
         }
         
-        // 검색어로 처리
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
     
-    // MARK: - ✨ HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환 (간단하게)
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
         
@@ -1208,17 +1265,14 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - ✨ 네트워크 오류 메시지 처리 (default 케이스 제거)
     private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String)? {
         let domain = URL(string: url)?.host ?? "사이트"
         let nsError = error as NSError
         
-        // NSURLError가 아닌 경우 nil 반환 (알림 표시 안함)
         guard nsError.domain == NSURLErrorDomain else {
             return nil
         }
         
-        // ✅ 정의된 특정 에러만 처리, 나머지는 nil 반환
         switch nsError.code {
         case NSURLErrorCannotFindHost:
             return ("주소를 찾을 수 없음 (\(nsError.code))", "\(domain)을(를) 찾을 수 없습니다.")
@@ -1237,13 +1291,12 @@ struct ContentView: View {
         case NSURLErrorUnsupportedURL:
             return ("지원하지 않는 주소 (\(nsError.code))", "이 주소 형식은 지원하지 않습니다.")
         default:
-            // ✅ default 케이스에서 nil 반환 - 알림 표시 안함, 기록도 안함
             return nil
         }
     }
 }
 
-// MARK: - 📋 최근방문 뷰 컴포넌트 (SiteMenuManager 사용)
+// MARK: - 최근방문 뷰 컴포넌트
 struct RecentVisitsView: View {
     @ObservedObject var manager: SiteMenuManager
     let onURLSelected: (URL) -> Void
@@ -1324,7 +1377,7 @@ struct RecentVisitsView: View {
     }
 }
 
-// MARK: - 🔍 자동완성 뷰 컴포넌트 (SiteMenuManager 사용)
+// MARK: - 자동완성 뷰 컴포넌트
 struct AutocompleteView: View {
     @ObservedObject var manager: SiteMenuManager
     let searchText: String
@@ -1435,11 +1488,10 @@ struct AutocompleteView: View {
     }
 }
 
-// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey (기존)
+// MARK: - 스크롤 오프셋 추적을 위한 PreferenceKey
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
 
 // ✨ WebView 에러 처리를 위한 NotificationCenter 확장
 extension Notification.Name {
