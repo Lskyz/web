@@ -761,12 +761,12 @@ struct ContentView: View {
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
                 
                 // 🎬 **PIP 버튼 추가 (조건부 표시)**
-               // if pipManager.isPIPActive {
-                //    toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-                //}
+                if pipManager.isPIPActive {
+                    toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                }
                 
-               // toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-            //}
+                toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+            }
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(.horizontal, 16)
