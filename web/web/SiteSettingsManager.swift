@@ -738,8 +738,6 @@ enum SiteMenuSystem {
                 VStack(spacing: 0) {
                     siteInfoSection
                     Divider().padding(.vertical, 8)
-                    quickSettingsSection
-                    Divider().padding(.vertical, 8)
                     menuOptionsSection
                     Divider().padding(.vertical, 8)
                     downloadsSection
@@ -783,34 +781,8 @@ enum SiteMenuSystem {
             
             @ViewBuilder
             private var quickSettingsSection: some View {
-                VStack(spacing: 8) {
-                    HStack {
-                        quickSettingButton(
-                            icon: "shield.fill",
-                            title: "팝업 차단",
-                            isOn: manager.popupBlocked,
-                            color: manager.popupBlocked ? .blue : .gray
-                        ) {
-                            manager.togglePopupBlocking()
-                        }
-                        
-                        quickSettingButton(
-                            icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
-                            title: "데스크탑 모드",
-                            isOn: manager.getDesktopModeEnabled(),
-                            color: manager.getDesktopModeEnabled() ? .blue : .gray
-                        ) {
-                            manager.toggleDesktopMode()
-                        }
-                    }
-                    
-                    // 🎯 **데스크탑 모드가 활성화되었을 때만 줌 컨트롤 표시**
-                    if manager.getDesktopModeEnabled() {
-                        desktopZoomControls
-                            .transition(.opacity.combined(with: .slide))
-                            .animation(.easeInOut(duration: 0.3), value: manager.getDesktopModeEnabled())
-                    }
-                }
+                // 퀵 설정 섹션은 비어있음 (메뉴 옵션 섹션으로 모든 버튼 이동)
+                EmptyView()
             }
             
             @ViewBuilder
@@ -929,6 +901,7 @@ enum SiteMenuSystem {
             @ViewBuilder
             private var menuOptionsSection: some View {
                 VStack(spacing: 12) {
+                    // 첫 번째 줄: 방문기록 관리 + 개인정보 (2개)
                     HStack {
                         menuOptionRow(
                             icon: "line.3.horizontal.decrease.circle",
@@ -951,8 +924,26 @@ enum SiteMenuSystem {
                         }
                     }
                     
+                    // 두 번째 줄: 성능 + 빈 공간 (실질적으로 1개)
                     HStack {
-                        // 🎯 **데스크탑 모드를 성능과 위치 바꾸고 길게 만들기**
+                        menuOptionRow(
+                            icon: "speedometer",
+                            title: "성능",
+                            subtitle: "메모리 & 캐시",
+                            color: .red
+                        ) {
+                            manager.showPerformanceSettings = true
+                        }
+                        
+                        Spacer()
+                        
+                        // 빈 공간
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                    }
+                    
+                    // 세 번째 줄: 데스크탑 모드 (넓게 1개)
+                    VStack(spacing: 8) {
                         menuOptionRowWide(
                             icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
                             title: "데스크탑 모드",
@@ -962,15 +953,11 @@ enum SiteMenuSystem {
                             manager.toggleDesktopMode()
                         }
                         
-                        Spacer()
-                        
-                        menuOptionRow(
-                            icon: "speedometer",
-                            title: "성능",
-                            subtitle: "메모리 & 캐시",
-                            color: .red
-                        ) {
-                            manager.showPerformanceSettings = true
+                        // 🎯 **데스크탑 모드가 활성화되었을 때만 줌 컨트롤 표시**
+                        if manager.getDesktopModeEnabled() {
+                            desktopZoomControls
+                                .transition(.opacity.combined(with: .slide))
+                                .animation(.easeInOut(duration: 0.3), value: manager.getDesktopModeEnabled())
                         }
                     }
                 }
@@ -2283,19 +2270,22 @@ class SiteMenuManager: ObservableObject {
     
     func getZoomLevel() -> Double {
         guard let stateModel = currentStateModel else { return 1.0 }
-        return SiteMenuSystem.Desktop.getZoomLevel(for: stateModel)
+        return stateModel.currentZoomLevel
     }
     
     func setZoomLevel(_ level: Double) {
         guard let stateModel = currentStateModel else { return }
-        SiteMenuSystem.Desktop.setZoomLevel(level, for: stateModel)
+        let clampedLevel = max(0.3, min(3.0, level))
+        stateModel.setZoomLevel(clampedLevel)
         objectWillChange.send()
     }
     
     func adjustZoom(_ delta: Double) {
-        let currentLevel = getZoomLevel()
+        guard let stateModel = currentStateModel else { return }
+        let currentLevel = stateModel.currentZoomLevel
         let newLevel = max(0.3, min(3.0, currentLevel + delta))
-        setZoomLevel(newLevel)
+        stateModel.setZoomLevel(newLevel)
+        objectWillChange.send()
     }
     
     // MARK: - Settings Actions
