@@ -692,7 +692,7 @@ enum SiteMenuSystem {
             }
         }
         
-        // MARK: - Main Site Menu Overlay
+        // MARK: - Main Site Menu Overlay - 🎯 주소창 위로 위치 조정
         struct SiteMenuOverlay: View {
             @ObservedObject var manager: SiteMenuManager
             let currentState: WebViewStateModel
@@ -711,16 +711,27 @@ enum SiteMenuSystem {
                             manager.showSiteMenu = false
                         }
 
-                    VStack {
+                    // 🎯 주소창 바로 위로 위치 변경
+                    VStack(spacing: 0) {
                         Spacer()
-
+                        
+                        // 사이트 메뉴를 주소창 위에 표시
                         VStack(spacing: 0) {
                             siteMenuContent
                         }
                         .background(whiteGlassBackground)
                         .overlay(whiteGlassOverlay)
                         .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.bottom, showAddressBar ? 170 : 120)
+                        .padding(.bottom, 10) // 주소창과의 간격
+                        
+                        // 주소창 영역을 위한 공간 확보
+                        if showAddressBar {
+                            Spacer()
+                                .frame(height: 160) // 주소창 + 방문기록 영역
+                        } else {
+                            Spacer()
+                                .frame(height: 110) // 툴바 영역만
+                        }
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
