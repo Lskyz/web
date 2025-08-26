@@ -724,9 +724,14 @@ enum SiteMenuSystem {
                         .padding(.horizontal, outerHorizontalPadding)
                         .padding(.bottom, 10) // 주소창과의 간격
                         
-                        // 하단 UI를 위한 고정된 공간 확보 (키보드 높이 무시)
-                        Spacer()
-                            .frame(height: showAddressBar ? 160 : 110)
+                        // 주소창 영역을 위한 공간 확보
+                        if showAddressBar {
+                            Spacer()
+                                .frame(height: 160) // 주소창 + 방문기록 영역
+                        } else {
+                            Spacer()
+                                .frame(height: 110) // 툴바 영역만
+                        }
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -737,6 +742,8 @@ enum SiteMenuSystem {
             private var siteMenuContent: some View {
                 VStack(spacing: 0) {
                     siteInfoSection
+                    Divider().padding(.vertical, 8)
+                    quickSettingsSection
                     Divider().padding(.vertical, 8)
                     menuOptionsSection
                     Divider().padding(.vertical, 8)
@@ -781,8 +788,31 @@ enum SiteMenuSystem {
             
             @ViewBuilder
             private var quickSettingsSection: some View {
-                // 퀵 설정 섹션은 비어있음 (메뉴 옵션 섹션으로 모든 버튼 이동)
-                EmptyView()
+                VStack(spacing: 8) {
+                    HStack {
+                        quickSettingButton(
+                            icon: "shield.fill",
+                            title: "팝업 차단",
+                            isOn: manager.popupBlocked,
+                            color: manager.popupBlocked ? .blue : .gray
+                        ) {
+                            manager.togglePopupBlocking()
+                        }
+                        
+                        quickSettingButton(
+                            icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
+                            title: "데스크탑 모드",
+                            isOn: manager.getDesktopModeEnabled(),
+                            color: manager.getDesktopModeEnabled() ? .blue : .gray
+                        ) {
+                            manager.toggleDesktopMode()
+                        }
+                    }
+                    
+                    if manager.getDesktopModeEnabled() {
+                        desktopZoomControls
+                    }
+                }
             }
             
             @ViewBuilder
@@ -811,7 +841,7 @@ enum SiteMenuSystem {
             
             @ViewBuilder
             private var desktopZoomControls: some View {
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     HStack {
                         Text("페이지 줌")
                             .font(.caption)
@@ -819,89 +849,51 @@ enum SiteMenuSystem {
                         
                         Spacer()
                         
-                        Text("\(String(format: "%.0f", manager.getZoomLevel() * 100))%")
-                            .font(.headline)
-                            .fontWeight(.semibold)
+                        Text("\(String(format: "%.1f", manager.getZoomLevel()))x")
+                            .font(.caption)
+                            .fontWeight(.medium)
                             .foregroundColor(.blue)
                     }
                     
-                    // 🎯 **슬라이더 추가**
-                    VStack(spacing: 8) {
-                        Slider(
-                            value: Binding(
-                                get: { manager.getZoomLevel() },
-                                set: { newValue in
-                                    manager.setZoomLevel(newValue)
-                                }
-                            ),
-                            in: 0.3...3.0,
-                            step: 0.1
-                        ) {
-                            Text("줌 레벨")
-                        }
-                        .accentColor(.blue)
-                        
-                        // 슬라이더 하단 레이블
-                        HStack {
-                            Text("30%")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("300%")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    HStack(spacing: 8) {
+                    HStack {
                         Button("-") {
                             manager.adjustZoom(-0.1)
                         }
-                        .font(.title3)
-                        .fontWeight(.medium)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 28, height: 28)
                         .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
                         .cornerRadius(6)
                         
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 8) {
                                 ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
-                                    let isSelected = abs(manager.getZoomLevel() - preset) < 0.05
-                                    Button("\(String(format: "%.0f", preset * 100))%") {
+                                    Button("\(String(format: "%.1f", preset))x") {
                                         manager.setZoomLevel(preset)
                                     }
                                     .font(.caption)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(isSelected ? Color.blue : Color.gray.opacity(0.15))
-                                    .foregroundColor(isSelected ? .white : .primary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
+                                    .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
                                     .cornerRadius(6)
                                 }
                             }
-                            .padding(.horizontal, 2)
+                            .padding(.horizontal, 4)
                         }
-                        .frame(height: 32)
                         
                         Button("+") {
                             manager.adjustZoom(0.1)
                         }
-                        .font(.title3)
-                        .fontWeight(.medium)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 28, height: 28)
                         .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
                         .cornerRadius(6)
                     }
                 }
                 .padding(.top, 4)
-                .padding(.horizontal, 4)
             }
 
             @ViewBuilder
             private var menuOptionsSection: some View {
                 VStack(spacing: 12) {
-                    // 첫 번째 줄: 방문기록 관리 + 개인정보 (2개)
                     HStack {
                         menuOptionRow(
                             icon: "line.3.horizontal.decrease.circle",
@@ -924,7 +916,6 @@ enum SiteMenuSystem {
                         }
                     }
                     
-                    // 두 번째 줄: 성능 + 빈 공간 (실질적으로 1개)
                     HStack {
                         menuOptionRow(
                             icon: "speedometer",
@@ -937,28 +928,9 @@ enum SiteMenuSystem {
                         
                         Spacer()
                         
-                        // 빈 공간
+                        // 빈 공간을 위한 투명 버튼
                         Color.clear
                             .frame(maxWidth: .infinity)
-                    }
-                    
-                    // 세 번째 줄: 데스크탑 모드 (넓게 1개)
-                    VStack(spacing: 8) {
-                        menuOptionRowWide(
-                            icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
-                            title: "데스크탑 모드",
-                            subtitle: manager.getDesktopModeEnabled() ? "활성화됨" : "비활성화됨",
-                            color: manager.getDesktopModeEnabled() ? .blue : .gray
-                        ) {
-                            manager.toggleDesktopMode()
-                        }
-                        
-                        // 🎯 **데스크탑 모드가 활성화되었을 때만 줌 컨트롤 표시**
-                        if manager.getDesktopModeEnabled() {
-                            desktopZoomControls
-                                .transition(.opacity.combined(with: .slide))
-                                .animation(.easeInOut(duration: 0.3), value: manager.getDesktopModeEnabled())
-                        }
                     }
                 }
             }
@@ -984,41 +956,6 @@ enum SiteMenuSystem {
                     .padding(.vertical, 12)
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-            }
-            
-            // 🎯 **넓은 메뉴 옵션 행 (데스크탑 모드용)**
-            @ViewBuilder
-            private func menuOptionRowWide(icon: String, title: String, subtitle: String, color: Color, action: @escaping () -> Void) -> some View {
-                Button(action: action) {
-                    HStack(spacing: 8) {
-                        Image(systemName: icon)
-                            .font(.title2)
-                            .foregroundColor(color)
-                            .frame(width: 24)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(title)
-                                .font(.headline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                            
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-                    .background(manager.getDesktopModeEnabled() ? color.opacity(0.1) : Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(manager.getDesktopModeEnabled() ? color.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
             }
@@ -2270,22 +2207,19 @@ class SiteMenuManager: ObservableObject {
     
     func getZoomLevel() -> Double {
         guard let stateModel = currentStateModel else { return 1.0 }
-        return stateModel.currentZoomLevel
+        return SiteMenuSystem.Desktop.getZoomLevel(for: stateModel)
     }
     
     func setZoomLevel(_ level: Double) {
         guard let stateModel = currentStateModel else { return }
-        let clampedLevel = max(0.3, min(3.0, level))
-        stateModel.setZoomLevel(clampedLevel)
+        SiteMenuSystem.Desktop.setZoomLevel(level, for: stateModel)
         objectWillChange.send()
     }
     
     func adjustZoom(_ delta: Double) {
-        guard let stateModel = currentStateModel else { return }
-        let currentLevel = stateModel.currentZoomLevel
+        let currentLevel = getZoomLevel()
         let newLevel = max(0.3, min(3.0, currentLevel + delta))
-        stateModel.setZoomLevel(newLevel)
-        objectWillChange.send()
+        setZoomLevel(newLevel)
     }
     
     // MARK: - Settings Actions
@@ -2376,6 +2310,65 @@ extension View {
                         tabs: tabs,
                         selectedTabIndex: selectedTabIndex
                     )
+                }
+            }
+            // 🚫 팝업 차단 알림 오버레이
+            .overlay {
+                if manager.showPopupBlockedAlert {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .overlay {
+                            SiteMenuSystem.UI.PopupBlockedAlert(
+                                domain: manager.popupAlertDomain,
+                                blockedCount: manager.popupAlertCount,
+                                isPresented: Binding(
+                                    get: { manager.showPopupBlockedAlert },
+                                    set: { manager.showPopupBlockedAlert = $0 }
+                                )
+                            )
+                        }
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: manager.showPopupBlockedAlert)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showDownloadsList },
+                    set: { manager.showDownloadsList = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.DownloadsListView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showHistoryFilterManager },
+                    set: { manager.showHistoryFilterManager = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPrivacySettings },
+                    set: { manager.showPrivacySettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPerformanceSettings },
+                    set: { manager.showPerformanceSettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PerformanceSettingsView(manager: manager)
                 }
             }
     }
