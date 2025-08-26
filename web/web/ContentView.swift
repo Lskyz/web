@@ -1492,8 +1492,9 @@ struct AutocompleteView: View {
 private struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
 
-// ✨ WebView 에러 처리를 위한 NotificationCenter 확장
+// MARK: - WebView 에러 처리를 위한 NotificationCenter 확장
 extension Notification.Name {
     static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
 }
