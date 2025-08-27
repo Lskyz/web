@@ -132,7 +132,7 @@ struct ContentView: View {
         .sheet(isPresented: $showTabManager, content: tabManagerView)
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
-            debugView
+            debugView()
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
 
