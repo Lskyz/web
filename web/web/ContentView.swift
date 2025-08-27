@@ -36,7 +36,7 @@ struct WhiteGlassBlur: UIViewRepresentable {
         ]
         gradientLayer.locations = [0.0, 0.8, 1.0]
         gradientLayer.startPoint = CGPoint(x: 0, y: 0)
-        gradientLayer.endPoint = CGPoint(x: 1, y: 1)
+        gradientLayer.endPoint   = CGPoint(x: 1, y: 1)
         effectView.contentView.layer.addSublayer(gradientLayer)
         DispatchQueue.main.async { gradientLayer.frame = effectView.bounds }
     }
@@ -100,27 +100,29 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    // ✅ 키보드 높이 (교차 높이 기반, Safe Area 보정 없음)
+    // ✅ 키보드 높이 (루트 underlap 전제)
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
         GeometryReader { _ in
             ZStack {
-                // 메인 웹 콘텐츠
+                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
-                    .ignoresSafeArea(.keyboard, edges: .bottom) // underlap 고정
-                
-                // 하단 UI 고정
+
+                // 하단 UI 고정: 키보드만큼만 상승
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .ignoresSafeArea(.keyboard, edges: .bottom) // underlap 고정
-                        .padding(.bottom, keyboardHeight)            // 키보드만큼 끌어올림
+                        .padding(.bottom, keyboardHeight)
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
             }
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom) // 전역 underlap
+        // 🔽 루트에서 하단 안전영역 전부 무시 + 키보드 인셋 무시
+        .ignoresSafeArea(.container, edges: .bottom)
+        .ignoresSafeArea(.keyboard,  edges: .bottom)
+        // 🔼 이 두 줄로 전체 트리를 웹콘텐츠처럼 underlap 시킴
+
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
         .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
@@ -135,7 +137,7 @@ struct ContentView: View {
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // ✅ 키보드 관측 (Safe Area 보정 제거)
+        // ✅ 키보드 관측: 교차 높이만 계산(안전영역 차감 없음)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
             updateKeyboard(from: n, animated: true)
         }
@@ -146,7 +148,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 동일 정책
+        // 오버레이도 루트 underlap 규칙 공유
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -159,12 +161,11 @@ struct ContentView: View {
         )
     }
     
-    // MARK: - 키보드 교차 높이 계산 (Safe Area 차감 없음)
+    // MARK: - 키보드 교차 높이 계산
     private func updateKeyboard(from n: Notification, animated: Bool) {
         guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
-        // 화면 기준 교차 높이: 키보드가 차지하는 실제 픽셀 높이
-        let screen = UIScreen.main.bounds
-        let overlap = max(0, screen.maxY - endFrame.minY)
+        let screen  = UIScreen.main.bounds
+        let overlap = max(0, screen.maxY - endFrame.minY) // 실제 차지 높이
         if animated {
             let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.22
             withAnimation(.easeInOut(duration: duration)) { keyboardHeight = overlap }
@@ -260,7 +261,7 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        .ignoresSafeArea(.container, edges: [.bottom]) // 웹은 항상 underlap
+        // 웹은 루트 underlap을 그대로 상속받음
     }
     
     private var dashboardView: some View {
@@ -318,8 +319,6 @@ struct ContentView: View {
                     .padding(.horizontal, outerHorizontalPadding)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
-                .ignoresSafeArea(.keyboard, edges: .bottom) // 패널도 underlap
-                .padding(.bottom, keyboardHeight)           // 패널 함께 상승
             }
             toolbarView
         }
