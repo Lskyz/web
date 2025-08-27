@@ -749,7 +749,7 @@ struct ContentView: View {
     }
     @ViewBuilder private func debugView() -> some View { 
         DebugLogView()
-            .ignoresSafeArea(.keyboard, edges: .all)
+            .ignoresSafeArea(.keyboard, edges: .all) // 메인뷰 키보드 영향 차단
     }
     
     private func onScrollOffsetChange(offset: CGFloat) {
