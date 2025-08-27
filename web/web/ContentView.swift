@@ -109,10 +109,10 @@ struct ContentView: View {
                 // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
 
-                // 하단 UI 고정: 키보드만큼만 상승
+                // 하단 통합 UI 고정: 키보드만큼만 상승
                 VStack {
                     Spacer()
-                    bottomUIContent()
+                    bottomUnifiedUIContent()
                         .padding(.bottom, keyboardHeight)
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
@@ -283,24 +283,28 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 하단 UI
+    // MARK: - 🎯 통합된 하단 UI (주소창 + 툴바)
     @ViewBuilder
-    private func bottomUIContent() -> some View {
-        VStack(spacing: 10) {
-            if showAddressBar {
-                VStack(spacing: 0) {
-                    if isTextFieldFocused || inputURL.isEmpty { 
-                        addressBarHistoryContent
-                            // 히스토리 콘텐츠도 키보드 인셋 무시
-                            .ignoresSafeArea(.keyboard, edges: .all)
-                    }
+    private func bottomUnifiedUIContent() -> some View {
+        VStack(spacing: 0) {
+            // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
+            if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
+                addressBarHistoryContent
+                    .background(whiteGlassBackground)
+                    .overlay(whiteGlassOverlay)
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .ignoresSafeArea(.keyboard, edges: .all)
+            }
+            
+            // 2️⃣ 통합 툴바 (주소창 + 네비게이션 버튼들)
+            VStack(spacing: 0) {
+                if showAddressBar {
+                    // 주소창 영역
                     HStack(spacing: 12) {
                         VStack(spacing: 0) {
                             addressBarMainContent
                             if currentState.isLoading { progressBarView }
                         }
-                        .background(whiteGlassBackground)
-                        .overlay(whiteGlassOverlay)
                         
                         if isTextFieldFocused {
                             Button(action: {
@@ -327,22 +331,83 @@ struct ContentView: View {
                             ))
                         }
                     }
-                    .padding(.horizontal, outerHorizontalPadding)
+                    .padding(.horizontal, 14)
+                    .padding(.top, barVPadding)
+                    .padding(.bottom, showAddressBar ? 8 : 0)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
+                
+                // 네비게이션 툴바
+                HStack(spacing: 0) {
+                    HStack(spacing: toolbarSpacing) {
+                        toolbarButton("chevron.left", action: {
+                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                        }, enabled: currentState.canGoBack)
+                        toolbarButton("chevron.right", action: {
+                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                        }, enabled: currentState.canGoForward)
+                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                        if pipManager.isPIPActive {
+                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                        }
+                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, barVPadding)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onToolbarTap)
             }
-            toolbarView
+            // 🎯 전역 배경 적용 - 안전영역까지 확장
+            .background(
+                // 배경을 안전영역까지 확장
+                GeometryReader { geometry in
+                    whiteGlassBackground
+                        .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
+                        .offset(x: -geometry.frame(in: .global).minX, y: 0)
+                }
+            )
+            .overlay(
+                // 오버레이도 안전영역까지 확장
+                GeometryReader { geometry in
+                    whiteGlassOverlay
+                        .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
+                        .offset(x: -geometry.frame(in: .global).minX, y: 0)
+                }
+            )
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: barCornerRadius,
+                    topTrailingRadius: barCornerRadius,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0
+                )
+            )
+            .padding(.horizontal, outerHorizontalPadding)
+            
+            // 3️⃣ 하단 안전영역 유지 (배경 색상만)
+            Rectangle()
+                .fill(Color.white.opacity(whiteGlassTintOpacity))
+                .frame(height: 0)
+                .background(
+                    GeometryReader { geometry in
+                        whiteGlassBackground
+                            .frame(width: UIScreen.main.bounds.width, height: geometry.safeAreaInsets.bottom)
+                            .offset(x: -geometry.frame(in: .global).minX, y: 0)
+                    }
+                )
         }
         .background(Color.clear)
-        // 하단 UI 전체도 키보드 인셋 무시
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
-    // 방문기록/자동완성
+    // 방문기록/자동완성 (기존과 동일)
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
-            Divider().padding(.horizontal, outerHorizontalPadding)
+            Divider()
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     if inputURL.isEmpty {
@@ -358,7 +423,6 @@ struct ContentView: View {
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
-                        .padding(.horizontal, outerHorizontalPadding)
                         .padding(.vertical, 8)
                     } else {
                         AutocompleteView(
@@ -374,7 +438,6 @@ struct ContentView: View {
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
-                        .padding(.horizontal, outerHorizontalPadding)
                         .padding(.vertical, 8)
                     }
                 }
@@ -383,7 +446,7 @@ struct ContentView: View {
             .fixedSize(horizontal: false, vertical: true)
             
             VStack(spacing: 8) {
-                Divider().padding(.horizontal, outerHorizontalPadding)
+                Divider()
                 HStack {
                     Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
                         HStack(spacing: 4) { Image(systemName: "slider.horizontal.3"); Text("방문기록 관리") }
@@ -396,12 +459,9 @@ struct ContentView: View {
                     }
                     Spacer()
                 }
-                .padding(.horizontal, outerHorizontalPadding)
                 .padding(.bottom, 8)
             }
         }
-        .background(whiteGlassBackground)
-        .overlay(whiteGlassOverlay)
         .gesture(
             DragGesture().onEnded { value in
                 if value.translation.height > 50 && value.velocity.height > 300 {
@@ -535,33 +595,6 @@ struct ContentView: View {
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
     
-    // MARK: - 툴바
-    private var toolbarView: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: toolbarSpacing) {
-                toolbarButton("chevron.left", action: {
-                    currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-                }, enabled: currentState.canGoBack)
-                toolbarButton("chevron.right", action: {
-                    currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-                }, enabled: currentState.canGoForward)
-                toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
-                toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
-                if pipManager.isPIPActive {
-                    toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-                }
-                toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, barVPadding)
-        .background(whiteGlassBackground)
-        .overlay(whiteGlassOverlay)
-        .padding(.horizontal, outerHorizontalPadding)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onToolbarTap)
-    }
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
@@ -572,14 +605,14 @@ struct ContentView: View {
     }
     private var whiteGlassBackground: some View {
         ZStack {
-            WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: barCornerRadius, intensity: whiteGlassIntensity)
-            RoundedRectangle(cornerRadius: barCornerRadius).fill(Color.white.opacity(whiteGlassTintOpacity))
+            WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
+            Rectangle().fill(Color.white.opacity(whiteGlassTintOpacity))
         }
     }
     private var whiteGlassOverlay: some View {
         Group {
-            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
-            RoundedRectangle(cornerRadius: barCornerRadius).strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
+            Rectangle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
+            Rectangle().strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
         }
     }
     
