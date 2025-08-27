@@ -104,22 +104,23 @@ struct ContentView: View {
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
-        GeometryReader { geometry in
+        GeometryReader { _ in
             ZStack {
-                // 메인 웹 콘텐츠 (툴바와 겹침 허용)
+                // 메인 웹 콘텐츠: 하단 툴바와 "겹치도록" 아래 안전영역 무시
                 mainContentView
+                    .ignoresSafeArea(.container, edges: .bottom)
 
-                // 하단 UI 고정: 키보드만큼만 상승, 추가 여백 없이 콘텐츠와 겹침
+                // 하단 UI 고정: 키보드만큼만 상승, 추가 여백 없음
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .padding(.bottom, keyboardHeight) // ← 겹치기 유지: 키보드만 반영
+                        .padding(.bottom, keyboardHeight)
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
             }
         }
-        // 상단 다이내믹 아일랜드 보호: 상단 안전영역 무시하지 않음
-        // 키보드 인셋만 전역 무시하여 입력 UX 유지
+        // 상단 다이내믹 아일랜드 보호(상단 안전영역은 무시하지 않음)
+        // 키보드 인셋만 전역 무시
         .ignoresSafeArea(.keyboard, edges: .all)
 
         .onAppear(perform: onAppearHandler)
@@ -139,7 +140,7 @@ struct ContentView: View {
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // ✅ 키보드 관측: 교차 높이만 계산(안전영역 차감 없음)
+        // ✅ 키보드 관측
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
             updateKeyboard(from: n, animated: true)
         }
@@ -150,7 +151,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 루트 underlap 규칙 공유 + 키보드 인셋 무시
+        // 오버레이도 키보드 인셋 무시
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -234,6 +235,8 @@ struct ContentView: View {
             .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
+            // 하단 겹침 유지 위해 아래 안전영역 무시
+            .ignoresSafeArea(.container, edges: .bottom)
     }
     
     @ViewBuilder
@@ -264,7 +267,7 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        // 웹뷰도 키보드 인셋 무시 상속
+        // 키보드 인셋만 무시(상단 안전영역 보호)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -272,7 +275,8 @@ struct ContentView: View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
-            // 대시보드도 키보드 인셋 무시 상속
+            // 하단 겹침 유지 위해 아래 안전영역 무시
+            .ignoresSafeArea(.container, edges: .bottom)
             .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -290,7 +294,6 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     if isTextFieldFocused || inputURL.isEmpty {
                         addressBarHistoryContent
-                            // 히스토리 콘텐츠도 키보드 인셋 무시
                             .ignoresSafeArea(.keyboard, edges: .all)
                     }
                     HStack(spacing: 12) {
@@ -333,7 +336,6 @@ struct ContentView: View {
             toolbarView
         }
         .background(Color.clear)
-        // 하단 UI 전체도 키보드 인셋 무시
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -775,7 +777,7 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 🎬 PIP 상태 변경 핸들러 (ContentView 내부 메서드)
+    // MARK: - 🎬 PIP 상태 변경 핸들러
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
         if isPIPActive {
