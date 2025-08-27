@@ -155,7 +155,7 @@ struct ContentView: View {
             ZStack {
                 // 메인 콘텐츠 (웹뷰 또는 대시보드)
                 mainContentView
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                   // .ignoresSafeArea(.keyboard, edges: .bottom)
                 
                 // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
                 VStack {
