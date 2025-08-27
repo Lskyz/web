@@ -1147,7 +1147,7 @@ struct ContentView: View {
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
-        guard host.range(of: ipPattern, options: .regular_expression) != nil else {
+        guard host.range(of: ipPattern, options: .regularExpression) != nil else {
             // localhost 도메인들
             return host == "localhost" || host.hasSuffix(".local")
         }
