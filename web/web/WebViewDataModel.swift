@@ -497,10 +497,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             replaceCurrentPage(url: url, title: title, siteType: siteType)
         }
 
-    default:
-        break
-    }
-}
             
         case "pop":
             // 🔍 **핵심 해결책 4: SPA pop에서 검색 쿼리 변경 감지 + Google 검색 플로우 개선**
