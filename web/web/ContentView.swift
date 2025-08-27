@@ -338,32 +338,38 @@ struct ContentView: View {
                 .onTapGesture(perform: onToolbarTap)
             }
             .padding(.vertical, barVPadding)
-            // 🎯 전역 배경 적용 - 안전영역까지 확장 (사파리 스타일)
-            .background(
-                GeometryReader { geometry in
-                    whiteGlassBackground
-                        .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
-                        .offset(x: -geometry.frame(in: .global).minX, y: 0)
-                }
-            )
-            .overlay(
-                GeometryReader { geometry in
-                    whiteGlassOverlay
-                        .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
-                        .offset(x: -geometry.frame(in: .global).minX, y: 0)
-                }
-            )
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: barCornerRadius,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: barCornerRadius
-                )
-            )
             
-            // 3️⃣ 하단 안전영역은 자동으로 시스템이 처리
+            // 🎯 하단 안전영역 배경 연장 (키보드 상태 무관하게 일관성 유지)
+            Spacer(minLength: 0)
+                .frame(maxHeight: .infinity)
+                .background(whiteGlassBackground)
+                .overlay(whiteGlassOverlay)
         }
+        // 전체를 하나의 배경으로 통합
+        .background(
+            GeometryReader { geometry in
+                whiteGlassBackground
+                    .frame(width: UIScreen.main.bounds.width)
+                    .offset(x: -geometry.frame(in: .global).minX, y: 0)
+                    .ignoresSafeArea(.all, edges: .bottom) // 하단까지 완전히 확장
+            }
+        )
+        .overlay(
+            GeometryReader { geometry in
+                whiteGlassOverlay
+                    .frame(width: UIScreen.main.bounds.width)
+                    .offset(x: -geometry.frame(in: .global).minX, y: 0)
+                    .ignoresSafeArea(.all, edges: .bottom) // 하단까지 완전히 확장
+            }
+        )
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: barCornerRadius,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: barCornerRadius
+            )
+        )
         .background(Color.clear)
         // 하단 UI도 기본 키보드 인셋 처리 사용
     }
