@@ -482,9 +482,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         case "replace":
         // ✅ Root Replace 분기 처리
         if url.path == "/" || url.path.isEmpty {
-            if let current = currentRecord, current.url.path == "/" {
-                // 이미 루트인데 또 루트 replace → 무시
-                dbg("⚠️ Root Replace 중복 무시")
+            if let current = currentPageRecord, current.url.path == "/" {
+             dbg("⚠️ Root Replace 중복 무시")
                 return
             } else {
                 // 현재는 루트가 아닌데 루트 replace → 홈으로 간주, 새 페이지 추가
