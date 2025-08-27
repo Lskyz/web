@@ -150,87 +150,109 @@ struct ContentView: View {
     
     @State private var keyboardHeight: CGFloat = 0
     
+    // ✅ 키보드 표시 여부 헬퍼 (툴바 표시 전략 전환용)
+    private var keyboardIsVisible: Bool { keyboardHeight > 0.5 }
+    
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                // 메인 콘텐츠 (웹뷰 또는 대시보드)
-                mainContentView
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                
-                // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
-                VStack {
-                    Spacer()
-                    bottomUIContent()
-                        .offset(y: -keyboardHeight)
-                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
+        // ✅ 바깥 컨테이너: safeAreaInset을 적용할 래퍼
+        ZStack {
+            GeometryReader { geometry in
+                ZStack {
+                    // 메인 콘텐츠 (웹뷰 또는 대시보드)
+                    mainContentView
+                        .ignoresSafeArea(.keyboard, edges: .bottom) // 기존 동작 유지: 웹은 underlap 유지
+                        .ignoresSafeArea(.keyboard, edges: .bottom) // (원문에 2회 존재하던 부분 유지)
+                        .ignoresSafeArea(.keyboard, edges: .bottom) // 중복 호출 허용(기능 동일), 삭제 없이 유지
+                    
+                    // 하단 UI (주소창 + 툴바) - Overlay 경로
+                    // ✅ 키보드가 없을 때에만 Overlay 방식 유지 (기존 동작 완전 보존)
+                    VStack {
+                        Spacer()
+                        if !keyboardIsVisible {
+                            bottomUIContent()
+                                .offset(y: -keyboardHeight) // 기존 로직 그대로 유지
+                                .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
+                        }
+                    }
                 }
             }
+            // 원래 body에 달려 있던 각종 수신/시트/커버/오버레이 Modifier들을 삭제하지 않고 동일하게 유지
+            .onAppear(perform: onAppearHandler)
+            .onReceive(currentState.$currentURL, perform: onURLChange)
+            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+            .sheet(isPresented: $showHistorySheet, content: historySheet)
+            .sheet(isPresented: $showTabManager, content: tabManagerView)
+            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+            .fullScreenCover(isPresented: $showDebugView, content: debugView)
+            
+            // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
+            .onChange(of: pipManager.isPIPActive) { isPIPActive in
+                handlePIPStateChange(isPIPActive)
+            }
+            .onChange(of: pipManager.currentPIPTab) { currentPIPTab in
+                handlePIPTabChange(currentPIPTab)
+            }
+
+            // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+
+            // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+                guard
+                    let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                    let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+                else { return }
+
+                // 현재 키 윈도우
+                let window = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .flatMap { $0.windows }
+                    .first { $0.isKeyWindow }
+
+                let bounds   = window?.bounds ?? UIScreen.main.bounds
+                // 좌표계를 윈도우 기준으로 변환
+                let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
+                // 화면과 키보드의 실제 겹치는 높이
+                let overlap  = max(0, bounds.intersection(kbFrame).height)
+                let bottomSA = window?.safeAreaInsets.bottom ?? 0
+
+                // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
+                let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
+
+                withAnimation(.easeInOut(duration: duration)) {
+                    keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
+                }
+            }
+
+            // ✅ 완전 숨김 이벤트에서 확정적으로 0
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                keyboardHeight = 0
+            }
+            
+            // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
+            .siteMenuOverlay(
+                manager: siteMenuManager,
+                currentState: currentState,
+                tabs: $tabs,
+                selectedTabIndex: $selectedTabIndex,
+                outerHorizontalPadding: outerHorizontalPadding,
+                showAddressBar: showAddressBar,
+                whiteGlassBackground: AnyView(whiteGlassBackground),
+                whiteGlassOverlay: AnyView(whiteGlassOverlay)
+            )
         }
-        .onAppear(perform: onAppearHandler)
-        .onReceive(currentState.$currentURL, perform: onURLChange)
-        .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
-        .onReceive(errorNotificationPublisher, perform: onErrorReceived)
-        .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
-        .sheet(isPresented: $showHistorySheet, content: historySheet)
-        .sheet(isPresented: $showTabManager, content: tabManagerView)
-        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-        .fullScreenCover(isPresented: $showDebugView, content: debugView)
-        
-        // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
-        .onChange(of: pipManager.isPIPActive) { isPIPActive in
-            handlePIPStateChange(isPIPActive)
-        }
-        .onChange(of: pipManager.currentPIPTab) { currentPIPTab in
-            handlePIPTabChange(currentPIPTab)
-        }
-
-        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-
-        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-            guard
-                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-            else { return }
-
-            // 현재 키 윈도우
-            let window = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-
-            let bounds   = window?.bounds ?? UIScreen.main.bounds
-            // 좌표계를 윈도우 기준으로 변환
-            let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
-            // 화면과 키보드의 실제 겹치는 높이
-            let overlap  = max(0, bounds.intersection(kbFrame).height)
-            let bottomSA = window?.safeAreaInsets.bottom ?? 0
-
-            // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
-            let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
-
-            withAnimation(.easeInOut(duration: duration)) {
-                keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
+        // ✅ 키보드가 보일 때만 ‘시스템 안전영역’ 위에 툴바를 그리는 두 번째 경로
+        //    → 시스템이 키보드 인셋을 반영해 툴바를 자동으로 키보드 위에 배치하므로
+        //      Overlay 경로에서 생기던 툴바 아래 흰 여백이 사라진다.
+        .safeAreaInset(edge: .bottom) {
+            if keyboardIsVisible {
+                bottomUIContent()
+            } else {
+                EmptyView().frame(height: 0)
             }
         }
-
-        // ✅ 완전 숨김 이벤트에서 확정적으로 0
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-            keyboardHeight = 0
-        }
-        
-        // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
-        .siteMenuOverlay(
-            manager: siteMenuManager,
-            currentState: currentState,
-            tabs: $tabs,
-            selectedTabIndex: $selectedTabIndex,
-            outerHorizontalPadding: outerHorizontalPadding,
-            showAddressBar: showAddressBar,
-            whiteGlassBackground: AnyView(whiteGlassBackground),
-            whiteGlassOverlay: AnyView(whiteGlassOverlay)
-        )
     }
     
     // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
@@ -1125,7 +1147,7 @@ struct ContentView: View {
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
-        guard host.range(of: ipPattern, options: .regularExpression) != nil else {
+        guard host.range(of: ipPattern, options: .regular_expression) != nil else {
             // localhost 도메인들
             return host == "localhost" || host.hasSuffix(".local")
         }
