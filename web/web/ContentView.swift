@@ -391,7 +391,7 @@ struct ContentView: View {
         )
         .id(state.tabID)
         // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지하되 좌우는 정상 적용
-        .ignoresSafeArea(.container, edges: [.bottom])
+        //.ignoresSafeArea(.container, edges: [.bottom])
     }
     
     private var dashboardView: some View {
