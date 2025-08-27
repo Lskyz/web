@@ -104,28 +104,23 @@ struct ContentView: View {
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
-        GeometryReader { geometry in
-            // ✅ 하단 안전영역 값
-            let bottomInset = geometry.safeAreaInsets.bottom
-            
+        GeometryReader { _ in
             ZStack {
-                // 메인 웹 콘텐츠: 툴바와 겹치기 위해 바닥 안전영역 무시
+                // 메인 웹 콘텐츠: 하단 툴바와 "겹치도록" 아래 안전영역 무시
                 mainContentView
                     .ignoresSafeArea(.container, edges: .bottom)
 
-                // 하단 UI 고정: 키보드만큼만 상승(안전영역 중복 제거)
+                // 하단 UI 고정: 키보드만큼만 상승, 추가 여백 없음
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        // 키보드가 차지하는 높이에서 하단 안전영역을 차감하여 흰여백 제거
-                        .padding(.bottom, max(0, keyboardHeight - bottomInset))
+                        .padding(.bottom, keyboardHeight)
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
-                // 툴바 컨테이너가 홈 인디케이터 아래까지 덮도록 설정
-                .ignoresSafeArea(.container, edges: .bottom)
             }
         }
-        // 상단 다이내믹 아일랜드 보호(상단은 무시하지 않음) + 키보드 인셋만 전역 무시
+        // 상단 다이내믹 아일랜드 보호(상단 안전영역은 무시하지 않음)
+        // 키보드 인셋만 전역 무시
         .ignoresSafeArea(.keyboard, edges: .all)
 
         .onAppear(perform: onAppearHandler)
@@ -156,7 +151,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 바닥 안전영역 무시(툴바 밑 흰여백 방지) + 키보드 인셋 무시
+        // 오버레이도 키보드 인셋 무시
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -167,7 +162,6 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
-        .ignoresSafeArea(.container, edges: .bottom)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -813,7 +807,7 @@ struct ContentView: View {
     // MARK: - 로컬/사설 IP 판별
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
-      guard host.range(of: ipPattern, options: .regularExpression) != nil else {
+        guard host.range(of: ipPattern, options: .regularExpression) != nil else {
             return host == "localhost" || host.hasSuffix(".local")
         }
         let comps = host.split(separator: ".").compactMap { Int($0) }
