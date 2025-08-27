@@ -106,22 +106,21 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠 (전체 underlap)
+                // 메인 웹 콘텐츠 (툴바와 겹침 허용)
                 mainContentView
 
-                // 하단 UI 고정: 키보드만큼만 상승
+                // 하단 UI 고정: 키보드만큼만 상승, 추가 여백 없이 콘텐츠와 겹침
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .padding(.bottom, keyboardHeight)
+                        .padding(.bottom, keyboardHeight) // ← 겹치기 유지: 키보드만 반영
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
             }
         }
-        // 🔽 루트에서 모든 안전영역 전부 무시 + 키보드 인셋 전역 무시
-        .ignoresSafeArea(.all, edges: .all)
+        // 상단 다이내믹 아일랜드 보호: 상단 안전영역 무시하지 않음
+        // 키보드 인셋만 전역 무시하여 입력 UX 유지
         .ignoresSafeArea(.keyboard, edges: .all)
-        // 🔼 전체 트리가 웹콘텐츠처럼 underlap되고 키보드 인셋도 전역 무시
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
@@ -289,7 +288,7 @@ struct ContentView: View {
         VStack(spacing: 10) {
             if showAddressBar {
                 VStack(spacing: 0) {
-                    if isTextFieldFocused || inputURL.isEmpty { 
+                    if isTextFieldFocused || inputURL.isEmpty {
                         addressBarHistoryContent
                             // 히스토리 콘텐츠도 키보드 인셋 무시
                             .ignoresSafeArea(.keyboard, edges: .all)
@@ -689,12 +688,12 @@ struct ContentView: View {
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
             AVPlayerView(url: url)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
-    @ViewBuilder private func debugView() -> some View { 
+    @ViewBuilder private func debugView() -> some View {
         DebugLogView()
             .ignoresSafeArea(.keyboard, edges: .all)
     }
