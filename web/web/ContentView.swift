@@ -100,24 +100,27 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    // ✅ 자동 키보드 인셋 처리로 단순화 (keyboardHeight 제거)
+    // ✅ 키보드 높이 추가 (수동 처리 필요)
+    @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠 (상단/좌우만 underlap)
+                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
 
-                // 하단 통합 UI 고정: 자동으로 키보드 위로 올라감
+                // 하단 통합 UI 고정: 키보드만큼 상승
                 VStack {
                     Spacer()
                     bottomUnifiedUIContent()
+                        .padding(.bottom, keyboardHeight)
+                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
                 }
             }
         }
-        // 🔽 상단/좌우만 안전영역 무시, 하단은 유지로 키보드 인셋 자동 처리
-        .ignoresSafeArea(.all, edges: [.top, .leading, .trailing])
-        // 🔼 키보드 인셋은 자동으로 처리됨
+        // 🔽 상단은 안전영역 유지 (다이나믹 아일랜드/노치), 하단만 무시
+        .ignoresSafeArea(.all, edges: [.leading, .trailing, .bottom])
+        .ignoresSafeArea(.keyboard, edges: .all)
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
@@ -136,7 +139,18 @@ struct ContentView: View {
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // 오버레이는 기본 키보드 인셋 처리 사용
+        // ✅ 키보드 높이 수동 계산 (안전영역 무시하면서도 정확한 처리)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
+            updateKeyboard(from: n, animated: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+            updateKeyboard(from: n, animated: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) { keyboardHeight = 0 }
+        }
+
+        // 오버레이도 동일한 처리
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -147,8 +161,31 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
+    // MARK: - 키보드 높이 수동 계산 (안전영역 포함)
+    private func updateKeyboard(from n: Notification, animated: Bool) {
+        guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
+        let screen = UIScreen.main.bounds
+        let safeBottom = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets.bottom ?? 0
+        
+        // 키보드 높이에서 안전영역 제외 (중복 제거)
+        let keyboardHeight = max(0, screen.maxY - endFrame.minY)
+        let adjustedHeight = max(0, keyboardHeight - safeBottom)
+        
+        if animated {
+            let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeInOut(duration: duration)) { 
+                self.keyboardHeight = adjustedHeight 
+            }
+        } else {
+            self.keyboardHeight = adjustedHeight
+        }
+    }
+
     // MARK: - 현재 탭 상태
     private var currentState: WebViewStateModel {
         if tabs.indices.contains(selectedTabIndex) { return tabs[selectedTabIndex].stateModel }
@@ -236,14 +273,14 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        // 웹뷰는 기본 키보드 인셋 처리 사용
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     private var dashboardView: some View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
-            // 대시보드도 기본 키보드 인셋 처리 사용
+            .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     private var scrollOffsetOverlay: some View {
@@ -260,7 +297,7 @@ struct ContentView: View {
             if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
                 addressBarHistoryContent
                     .padding(.horizontal, outerHorizontalPadding)
-                    // 히스토리 콘텐츠도 기본 키보드 인셋 처리
+                    .ignoresSafeArea(.keyboard, edges: .all)
             }
             
             // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
@@ -338,28 +375,27 @@ struct ContentView: View {
                 .onTapGesture(perform: onToolbarTap)
             }
             .padding(.vertical, barVPadding)
-            
-            // 🎯 하단 안전영역 배경 연장 (키보드 상태 무관하게 일관성 유지)
-            Spacer(minLength: 0)
-                .frame(maxHeight: .infinity)
-                .background(whiteGlassBackground)
-                .overlay(whiteGlassOverlay)
+            .padding(.bottom, max(20, UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.windows.first?.safeAreaInsets.bottom ?? 0))
         }
-        // 전체를 하나의 배경으로 통합
+        // 🎯 완전한 전체 화면 글래스 배경 (상단 안전영역 제외, 하단 포함)
         .background(
             GeometryReader { geometry in
                 whiteGlassBackground
-                    .frame(width: UIScreen.main.bounds.width)
-                    .offset(x: -geometry.frame(in: .global).minX, y: 0)
-                    .ignoresSafeArea(.all, edges: .bottom) // 하단까지 완전히 확장
+                    .frame(width: UIScreen.main.bounds.width, 
+                           height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
+                    .offset(x: -geometry.frame(in: .global).minX, 
+                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
         .overlay(
             GeometryReader { geometry in
                 whiteGlassOverlay
-                    .frame(width: UIScreen.main.bounds.width)
-                    .offset(x: -geometry.frame(in: .global).minX, y: 0)
-                    .ignoresSafeArea(.all, edges: .bottom) // 하단까지 완전히 확장
+                    .frame(width: UIScreen.main.bounds.width, 
+                           height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
+                    .offset(x: -geometry.frame(in: .global).minX, 
+                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
         .clipShape(
@@ -371,7 +407,7 @@ struct ContentView: View {
             )
         )
         .background(Color.clear)
-        // 하단 UI도 기본 키보드 인셋 처리 사용
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
@@ -708,6 +744,7 @@ struct ContentView: View {
     @ViewBuilder private func avPlayerView() -> some View {
         if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
             AVPlayerView(url: url)
+                .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
     @ViewBuilder private func debugView() -> some View { 
