@@ -62,6 +62,38 @@ class PIPWebViewContainer: ObservableObject {
         TabPersistenceManager.debugMessages.append("🎬 모든 웹뷰 보존 해제")
     }
 }
+// MARK: - 🎬 PIP 상태 변경 핸들러 (누락 보충)
+private func handlePIPStateChange(_ isPIPActive: Bool) {
+    TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
+    
+    if isPIPActive {
+        // PIP 시작: 현재 탭 보호 + 현재 웹뷰 보존
+        if tabs.indices.contains(selectedTabIndex) {
+            let currentTabID = tabs[selectedTabIndex].id
+            WebViewPool.shared.protectWebViewForPIP(currentTabID)
+            
+            let currentWebView = createWebContentView(state: tabs[selectedTabIndex].stateModel)
+            pipContainer.preserveWebView(for: currentTabID, webView: AnyView(currentWebView))
+            
+            TabPersistenceManager.debugMessages.append("🛡️ PIP 시작으로 웹뷰 보호+보존: 탭 \(String(currentTabID.uuidString.prefix(8)))")
+        }
+    } else {
+        // PIP 종료: 모든 탭 보호 해제 + 보존 해제
+        for tab in tabs {
+            WebViewPool.shared.unprotectWebViewFromPIP(tab.id)
+            pipContainer.removePreservedWebView(for: tab.id)
+        }
+        TabPersistenceManager.debugMessages.append("🔓 PIP 종료로 모든 웹뷰 보호+보존 해제")
+    }
+}
+
+private func handlePIPTabChange(_ currentPIPTab: UUID?) {
+    if let pipTab = currentPIPTab {
+        TabPersistenceManager.debugMessages.append("🎬 PIP 탭 변경: 탭 \(String(pipTab.uuidString.prefix(8)))")
+    } else {
+        TabPersistenceManager.debugMessages.append("🎬 PIP 탭 해제")
+    }
+}
 
 // MARK: - 메인 뷰
 struct ContentView: View {
