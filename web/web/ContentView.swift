@@ -104,24 +104,24 @@ struct ContentView: View {
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠: 하단 툴바와 "겹치도록" 아래 안전영역 무시
+                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
-                    .ignoresSafeArea(.container, edges: .bottom)
 
-                // 하단 UI 고정: 키보드만큼만 상승, 추가 여백 없음
+                // 하단 UI 고정: 키보드만큼만 상승
                 VStack {
                     Spacer()
-                    unifiedBottomChrome // 주소창 + 툴바를 하나의 배경으로 묶음
+                    bottomUIContent()
                         .padding(.bottom, keyboardHeight)
                         .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
             }
         }
-        // 상단 다이내믹 아일랜드 보호(상단 안전영역은 무시하지 않음)
-        // 키보드 인셋만 전역 무시
+        // 🔽 루트에서 모든 안전영역 전부 무시 + 키보드 인셋 전역 무시
+        .ignoresSafeArea(.all, edges: .all)
         .ignoresSafeArea(.keyboard, edges: .all)
+        // 🔼 전체 트리가 웹콘텐츠처럼 underlap되고 키보드 인셋도 전역 무시
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
@@ -140,7 +140,7 @@ struct ContentView: View {
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // ✅ 키보드 관측
+        // ✅ 키보드 관측: 교차 높이만 계산(안전영역 차감 없음)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
             updateKeyboard(from: n, animated: true)
         }
@@ -151,7 +151,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 키보드 인셋 무시
+        // 오버레이도 루트 underlap 규칙 공유 + 키보드 인셋 무시
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -162,71 +162,6 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
-        .ignoresSafeArea(.keyboard, edges: .all)
-    }
-
-    // MARK: - 아래 크롬(주소창+툴바) 통합
-    private var unifiedBottomChrome: some View {
-        VStack(spacing: 0) {
-            if showAddressBar {
-                // 방문기록/자동완성 패널
-                if isTextFieldFocused || inputURL.isEmpty {
-                    addressBarHistoryContent
-                        .padding(.top, 10)
-                        .ignoresSafeArea(.keyboard, edges: .all)
-                }
-                // 주소 입력 줄
-                HStack(spacing: 12) {
-                    VStack(spacing: 0) {
-                        addressBarMainContent
-                        if currentState.isLoading { progressBarView }
-                    }
-                    if isTextFieldFocused {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                isTextFieldFocused = false
-                                siteMenuManager.closeSiteMenu()
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                            }
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.primary)
-                                .frame(width: 44, height: 44)
-                                .background(
-                                    Circle().fill(Color.white.opacity(0.0001)) // 시각적 변형 없이 터치영역만 유지
-                                )
-                        }
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .trailing).combined(with: .opacity)
-                        ))
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 6)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
-            }
-            // 툴바 줄
-            toolbarRow
-                .padding(.horizontal, 16)
-                .padding(.vertical, barVPadding)
-        }
-        .padding(.horizontal, outerHorizontalPadding)
-        // 🔑 배경을 하나로 묶고, 배경만 하단 Safe Area 무시
-        .background(
-            ZStack {
-                whiteGlassBackground
-                    .ignoresSafeArea(edges: .bottom)
-                whiteGlassOverlay
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: barCornerRadius, style: .continuous))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onToolbarTap)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -300,8 +235,6 @@ struct ContentView: View {
             .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
-            // 하단 겹침 유지 위해 아래 안전영역 무시
-            .ignoresSafeArea(.container, edges: .bottom)
     }
     
     @ViewBuilder
@@ -332,7 +265,7 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        // 키보드 인셋만 무시(상단 안전영역 보호)
+        // 웹뷰도 키보드 인셋 무시 상속
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -340,8 +273,7 @@ struct ContentView: View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
-            // 하단 겹침 유지 위해 아래 안전영역 무시
-            .ignoresSafeArea(.container, edges: .bottom)
+            // 대시보드도 키보드 인셋 무시 상속
             .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -350,9 +282,261 @@ struct ContentView: View {
             Color.clear.preference(key: ScrollOffsetPreferenceKey.self, value: g.frame(in: .global).origin.y)
         }
     }
-
-    // MARK: - 툴바(내용만, 배경은 unifiedBottomChrome가 담당)
-    private var toolbarRow: some View {
+    
+    // MARK: - 하단 UI
+    @ViewBuilder
+    private func bottomUIContent() -> some View {
+        VStack(spacing: 10) {
+            if showAddressBar {
+                VStack(spacing: 0) {
+                    if isTextFieldFocused || inputURL.isEmpty { 
+                        addressBarHistoryContent
+                            // 히스토리 콘텐츠도 키보드 인셋 무시
+                            .ignoresSafeArea(.keyboard, edges: .all)
+                    }
+                    HStack(spacing: 12) {
+                        VStack(spacing: 0) {
+                            addressBarMainContent
+                            if currentState.isLoading { progressBarView }
+                        }
+                        .background(whiteGlassBackground)
+                        .overlay(whiteGlassOverlay)
+                        
+                        if isTextFieldFocused {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    isTextFieldFocused = false
+                                    siteMenuManager.closeSiteMenu()
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(whiteGlassBackground)
+                                    .overlay(whiteGlassOverlay)
+                                    .clipShape(Circle())
+                            }
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
+                        }
+                    }
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
+                }
+            }
+            toolbarView
+        }
+        .background(Color.clear)
+        // 하단 UI 전체도 키보드 인셋 무시
+        .ignoresSafeArea(.keyboard, edges: .all)
+    }
+    
+    // 방문기록/자동완성
+    @ViewBuilder
+    private var addressBarHistoryContent: some View {
+        VStack(spacing: 0) {
+            Divider().padding(.horizontal, outerHorizontalPadding)
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    if inputURL.isEmpty {
+                        RecentVisitsView(
+                            manager: siteMenuManager,
+                            onURLSelected: { url in
+                                inputURL = url.absoluteString
+                                currentState.currentURL = url
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
+                            },
+                            onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
+                        )
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .padding(.vertical, 8)
+                    } else {
+                        AutocompleteView(
+                            manager: siteMenuManager,
+                            searchText: inputURL,
+                            onURLSelected: { url in
+                                inputURL = url.absoluteString
+                                currentState.currentURL = url
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
+                            },
+                            onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
+                        )
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+            .fixedSize(horizontal: false, vertical: true)
+            
+            VStack(spacing: 8) {
+                Divider().padding(.horizontal, outerHorizontalPadding)
+                HStack {
+                    Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
+                        HStack(spacing: 4) { Image(systemName: "slider.horizontal.3"); Text("방문기록 관리") }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, outerHorizontalPadding)
+                .padding(.bottom, 8)
+            }
+        }
+        .background(whiteGlassBackground)
+        .overlay(whiteGlassOverlay)
+        .gesture(
+            DragGesture().onEnded { value in
+                if value.translation.height > 50 && value.velocity.height > 300 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isTextFieldFocused = false
+                        siteMenuManager.closeSiteMenu()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+        )
+    }
+    
+    private var addressBarMainContent: some View {
+        HStack(spacing: 8) {
+            puzzleButton
+            siteSecurityIcon
+            urlTextField
+            refreshButton
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, barVPadding)
+    }
+    
+    private var puzzleButton: some View {
+        Button(action: {
+            siteMenuManager.setCurrentStateModel(currentState)
+            siteMenuManager.toggleSiteMenu()
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            TabPersistenceManager.debugMessages.append("🧩 퍼즐 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
+        }) {
+            Image(systemName: "puzzlepiece.extension.fill")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundColor(.white)
+                .frame(width: 36, height: 36)
+                .background(
+                    Circle()
+                        .fill(isPuzzleButtonPressed ? Color.white.opacity(0.3) : Color.clear)
+                        .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
+                )
+                .scaleEffect(isPuzzleButtonPressed ? 0.95 : 1.0)
+                .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !isPuzzleButtonPressed { isPuzzleButtonPressed = true; puzzleButtonPressStartTime = Date() }
+                }
+                .onEnded { _ in
+                    isPuzzleButtonPressed = false
+                    puzzleButtonPressStartTime = nil
+                }
+        )
+        .zIndex(999)
+    }
+    
+    private var siteSecurityIcon: some View {
+        HStack(spacing: 4) {
+            if currentState.isLoading {
+                ProgressView().scaleEffect(0.6).frame(width: 20, height: 20)
+            } else {
+                Image(systemName: getSiteIcon())
+                    .font(.system(size: 16))
+                    .foregroundColor(getSiteIconColor())
+                    .frame(width: 20, height: 20)
+            }
+        }
+    }
+    private func getSiteIcon() -> String {
+        guard let url = currentState.currentURL else { return "globe" }
+        if url.scheme == "https" { return "lock.fill" }
+        if url.scheme == "http" { return "exclamationmark.triangle.fill" }
+        return "globe"
+    }
+    private func getSiteIconColor() -> Color {
+        guard let url = currentState.currentURL else { return .secondary }
+        if url.scheme == "https" { return .green }
+        if url.scheme == "http" { return .orange }
+        return .secondary
+    }
+    
+    private var urlTextField: some View {
+        TextField("URL 또는 검색어", text: $inputURL)
+            .textFieldStyle(.plain)
+            .font(textFont)
+            .autocapitalization(.none)
+            .disableAutocorrection(true)
+            .keyboardType(.URL)
+            .focused($isTextFieldFocused)
+            .onTapGesture(perform: onTextFieldTap)
+            .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
+            .onSubmit(onTextFieldSubmit)
+            .overlay(textFieldClearButton)
+    }
+    @ViewBuilder
+    private var textFieldClearButton: some View {
+        HStack {
+            Spacer()
+            if !inputURL.isEmpty && !currentState.isLoading {
+                Button(action: { inputURL = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.trailing, 8)
+            }
+        }
+    }
+    private var refreshButton: some View {
+        Button(action: {
+            if currentState.isLoading { currentState.stopLoading(); TabPersistenceManager.debugMessages.append("로딩 중지") }
+            else { currentState.reload(); TabPersistenceManager.debugMessages.append("페이지 새로고침") }
+        }) {
+            Image(systemName: currentState.isLoading ? "xmark" : "arrow.clockwise")
+                .font(.system(size: 16))
+                .foregroundColor(.primary)
+        }
+        .frame(width: 24, height: 24)
+    }
+    private var progressBarView: some View {
+        ProgressView(value: max(0.0, min(1.0, currentState.loadingProgress)))
+            .progressViewStyle(LinearProgressViewStyle(tint: currentState.currentURL?.scheme == "https" ? .green : .secondary))
+            .frame(height: 2)
+            .padding(.horizontal, 14)
+            .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
+            .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+    }
+    
+    // MARK: - 툴바
+    private var toolbarView: some View {
         HStack(spacing: 0) {
             HStack(spacing: toolbarSpacing) {
                 toolbarButton("chevron.left", action: {
@@ -370,6 +554,11 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, barVPadding)
+        .background(whiteGlassBackground)
+        .overlay(whiteGlassOverlay)
+        .padding(.horizontal, outerHorizontalPadding)
         .contentShape(Rectangle())
         .onTapGesture(perform: onToolbarTap)
     }
@@ -381,8 +570,6 @@ struct ContentView: View {
         }
         .disabled(!enabled)
     }
-    
-    // MARK: - 툴바/주소창 공용 배경(통합 컨테이너에서 사용)
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: barCornerRadius, intensity: whiteGlassIntensity)
@@ -502,12 +689,12 @@ struct ContentView: View {
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
             AVPlayerView(url: url)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
-    @ViewBuilder private func debugView() -> some View {
+    @ViewBuilder private func debugView() -> some View { 
         DebugLogView()
             .ignoresSafeArea(.keyboard, edges: .all)
     }
@@ -589,7 +776,7 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 🎬 PIP 상태 변경 핸들러
+    // MARK: - 🎬 PIP 상태 변경 핸들러 (ContentView 내부 메서드)
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
         if isPIPActive {
