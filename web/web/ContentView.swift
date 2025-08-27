@@ -2,7 +2,7 @@ import SwiftUI
 import AVKit
 import WebKit
 
-// MARK: - 🎯 키보드 독립 레이어 시스템 (수정됨)
+// MARK: - 🎯 키보드 독립 레이어 시스템 (완전 독립형)
 class KeyboardLayerManager: ObservableObject {
     static let shared = KeyboardLayerManager()
     
@@ -49,14 +49,14 @@ class KeyboardLayerManager: ObservableObject {
         isKeyboardVisible = false
     }
     
-    // 키보드 독립 레이어 설정
+    // 키보드 독립 레이어 설정 - 완전히 분리된 윈도우 레벨
     func setupKeyboardLayer<Content: View>(content: @escaping () -> Content) {
         DispatchQueue.main.async { [weak self] in
             self?.createHiddenTextField(content: content)
         }
     }
     
-    // 보이지 않는 텍스트필드 생성 (수정됨)
+    // 보이지 않는 텍스트필드 생성 - 완전 독립형
     private func createHiddenTextField<Content: View>(content: @escaping () -> Content) {
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }) else { 
@@ -70,48 +70,49 @@ class KeyboardLayerManager: ObservableObject {
         // 기존 숨겨진 텍스트필드가 있으면 제거
         cleanup()
         
-        // 새로운 숨겨진 텍스트필드 생성
+        // 새로운 숨겨진 텍스트필드 생성 - 완전히 숨김
         let textField = UITextField()
-        textField.frame = CGRect(x: -1000, y: -1000, width: 1, height: 1) // 화면 밖에 배치
-        textField.alpha = 0.001 // 거의 투명하게 (완전 투명하면 터치 이벤트가 안 됨)
+        textField.frame = CGRect(x: -10000, y: -10000, width: 1, height: 1) // 화면 완전히 밖에 배치
+        textField.alpha = 0.001 // 거의 투명
         textField.isHidden = false
         textField.autocorrectionType = .no
         textField.autocapitalizationType = .none
         textField.keyboardType = .default
         
-        // inputAccessoryView에 SwiftUI 콘텐츠 호스팅
+        // 🎯 핵심: inputAccessoryView만 사용 - 메인 UI와 완전 분리
         let hostingController = UIHostingController(rootView: AnyView(content()))
         hostingController.view.backgroundColor = .clear
         hostingController.view.translatesAutoresizingMaskIntoConstraints = false
         
-        // 키보드 위 콘텐츠 크기 설정 (동적)
+        // 키보드 위에만 나타나는 독립 콘텐츠 뷰
         let accessoryView = UIView()
         accessoryView.backgroundColor = .clear
         accessoryView.addSubview(hostingController.view)
         
+        // 🎯 높이를 고정하여 메인 UI와 충돌 방지
         NSLayoutConstraint.activate([
             hostingController.view.topAnchor.constraint(equalTo: accessoryView.topAnchor),
             hostingController.view.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
             hostingController.view.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
             hostingController.view.bottomAnchor.constraint(equalTo: accessoryView.bottomAnchor),
-            accessoryView.heightAnchor.constraint(equalToConstant: 250) // 고정 높이
+            accessoryView.heightAnchor.constraint(equalToConstant: 220) // 고정 높이로 제한
         ])
         
         textField.inputAccessoryView = accessoryView
         
-        // 윈도우에 추가
+        // 🎯 중요: 윈도우에 추가하되 완전히 숨김 처리
         keyWindow.addSubview(textField)
+        textField.isUserInteractionEnabled = true // first responder만 가능하게
         
         self.hiddenTextField = textField
         self.accessoryHostingController = hostingController
     }
     
-    // 키보드 표시 (수정됨)
+    // 키보드 표시
     func showKeyboard() {
         DispatchQueue.main.async { [weak self] in
             guard let textField = self?.hiddenTextField else { return }
             
-            // 이미 first responder인지 확인
             if !textField.isFirstResponder {
                 _ = textField.becomeFirstResponder()
             }
@@ -304,18 +305,16 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 콘텐츠 (웹뷰 또는 대시보드)
+                // 메인 콘텐츠 (웹뷰 또는 대시보드) - 키보드와 완전 분리
                 mainContentView
                     .ignoresSafeArea(.keyboard, edges: .all)
                 
-                // 하단 UI (주소창 + 툴바) - 키보드 높이만큼 올리기
+                // 하단 UI (주소창 + 툴바) - 키보드 독립 레이어로 완전 분리
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .offset(y: -keyboardLayerManager.keyboardHeight * 0.3) // 키보드 높이의 30%만큼 올리기
-                        .animation(.easeInOut(duration: 0.25), value: keyboardLayerManager.keyboardHeight)
                 }
-                .zIndex(100) // UI가 키보드 콘텐츠보다 위에 오도록
+                // 🎯 키보드 독립 레이어 사용으로 offset 완전 제거 - 메인 UI는 키보드에 영향받지 않음
             }
         }
         .onAppear(perform: onAppearHandler)
@@ -386,11 +385,11 @@ struct ContentView: View {
         }
     }
     
-    // 🎯 키보드 독립 레이어에 표시될 콘텐츠 (수정됨)
+    // 🎯 키보드 독립 레이어에 표시될 콘텐츠 - 완전 독립형
     @ViewBuilder
     private func keyboardLayerContent() -> some View {
         VStack(spacing: 0) {
-            // 📋 방문기록 영역 (키보드 위 독립 공간)
+            // 📋 방문기록 영역 (키보드 위 독립 공간만 사용)
             if inputURL.isEmpty {
                 // 🕒 최근방문 뷰
                 RecentVisitsView(
@@ -404,7 +403,7 @@ struct ContentView: View {
                         siteMenuManager.showHistoryFilterManager = true
                     }
                 )
-                .frame(maxHeight: 160) // 키보드 위 공간에 맞게 제한
+                .frame(maxHeight: 140) // 키보드 위 공간에만 맞게 제한
             } else {
                 // 🔍 자동완성 뷰
                 AutocompleteView(
@@ -419,13 +418,17 @@ struct ContentView: View {
                         siteMenuManager.showHistoryFilterManager = true
                     }
                 )
-                .frame(maxHeight: 160) // 키보드 위 공간에 맞게 제한
+                .frame(maxHeight: 140) // 키보드 위 공간에만 맞게 제한
             }
             
-            // 방문기록 관리 버튼
+            // 방문기록 관리 버튼 - 키보드 위에서만 작동
             HStack {
                 Button(action: {
-                    siteMenuManager.showHistoryFilterManager = true
+                    // 🎯 키보드를 먼저 닫고 메뉴 열기
+                    isTextFieldFocused = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        siteMenuManager.showHistoryFilterManager = true
+                    }
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "slider.horizontal.3")
@@ -442,11 +445,12 @@ struct ContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            
+            Spacer(minLength: 20) // 키보드와의 간격 확보
         }
-        .background(.regularMaterial) // 키보드 위 콘텐츠 배경
-        .cornerRadius(12)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .background(.regularMaterial) // 키보드 위 독립 콘텐츠 배경
+        .cornerRadius(12, corners: [.topLeft, .topRight]) // 상단만 둥글게
+        .clipped()
     }
     
     // 키보드와 주소창 숨기기 헬퍼 (수정됨)
@@ -1569,4 +1573,25 @@ private struct ScrollOffsetPreferenceKey: PreferenceKey {
 // ✨ WebView 에러 처리를 위한 NotificationCenter 확장
 extension Notification.Name {
     static let webViewDidFailLoad = Notification.Name("webViewDidFailLoad")
+}
+
+// MARK: - 코너 반경 헬퍼 확장
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
+    }
 }
