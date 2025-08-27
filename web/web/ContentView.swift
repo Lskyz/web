@@ -813,7 +813,7 @@ struct ContentView: View {
     // MARK: - 로컬/사설 IP 판별
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
-        guard host.range(of: ipPattern, options: .regular_expression) != nil else {
+        guard host.range(of: ipPattern, options: .regularexpression) != nil else {
             return host == "localhost" || host.hasSuffix(".local")
         }
         let comps = host.split(separator: ".").compactMap { Int($0) }
