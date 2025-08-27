@@ -2,6 +2,90 @@ import SwiftUI
 import AVKit
 import WebKit
 
+// MARK: - 🎯 키보드 독립 레이어 시스템
+class KeyboardLayerManager: ObservableObject {
+    static let shared = KeyboardLayerManager()
+    
+    @Published var isKeyboardVisible = false
+    @Published var keyboardHeight: CGFloat = 0
+    
+    private var hiddenTextField: UITextField?
+    private var accessoryHostingController: UIHostingController<AnyView>?
+    
+    private init() {}
+    
+    // 키보드 독립 레이어 설정
+    func setupKeyboardLayer<Content: View>(content: @escaping () -> Content) {
+        DispatchQueue.main.async { [weak self] in
+            self?.createHiddenTextField(content: content)
+        }
+    }
+    
+    // 보이지 않는 텍스트필드 생성 (항상 1st responder 유지)
+    private func createHiddenTextField<Content: View>(content: @escaping () -> Content) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }) else { return }
+        
+        // 기존 숨겨진 텍스트필드가 있으면 제거
+        hiddenTextField?.removeFromSuperview()
+        
+        // 새로운 숨겨진 텍스트필드 생성
+        let textField = UITextField()
+        textField.frame = CGRect(x: -1000, y: -1000, width: 1, height: 1) // 화면 밖에 배치
+        textField.alpha = 0.01 // 거의 투명하게 (완전 투명하면 터치 이벤트가 안 됨)
+        textField.isHidden = false
+        
+        // inputAccessoryView에 SwiftUI 콘텐츠 호스팅
+        let hostingController = UIHostingController(rootView: AnyView(content()))
+        hostingController.view.backgroundColor = .clear
+        
+        // 키보드 높이에 맞춰 동적 크기 조정
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        textField.inputAccessoryView = hostingController.view
+        
+        // 윈도우에 추가
+        keyWindow.addSubview(textField)
+        
+        self.hiddenTextField = textField
+        self.accessoryHostingController = hostingController
+    }
+    
+    // 키보드 표시 (독립 레이어 활성화)
+    func showKeyboard() {
+        DispatchQueue.main.async {
+            self.hiddenTextField?.becomeFirstResponder()
+            self.isKeyboardVisible = true
+        }
+    }
+    
+    // 키보드 숨기기 (독립 레이어 비활성화)
+    func hideKeyboard() {
+        DispatchQueue.main.async {
+            self.hiddenTextField?.resignFirstResponder()
+            self.isKeyboardVisible = false
+        }
+    }
+    
+    // 키보드 레이어 업데이트
+    func updateKeyboardLayer<Content: View>(content: @escaping () -> Content) {
+        guard let hostingController = accessoryHostingController else { return }
+        
+        DispatchQueue.main.async {
+            hostingController.rootView = AnyView(content())
+        }
+    }
+    
+    // 정리
+    func cleanup() {
+        DispatchQueue.main.async {
+            self.hiddenTextField?.removeFromSuperview()
+            self.hiddenTextField = nil
+            self.accessoryHostingController = nil
+            self.isKeyboardVisible = false
+        }
+    }
+}
+
 // ============================================================
 // ✨ 투명한 흰색 유리 효과 (Clean White Glass)
 // - 매우 투명한 블러와 미세한 흰색 틴트
@@ -94,7 +178,7 @@ class PIPWebViewContainer: ObservableObject {
     }
 }
 
-/// 웹 브라우저의 메인 콘텐츠 뷰 - 🎯 사파리 스타일 드롭업 메뉴 + 팝업 차단 통합 + 주소창 기록 표시
+/// 웹 브라우저의 메인 콘텐츠 뷰 - 🎯 사파리 스타일 드롭업 메뉴 + 팝업 차단 통합 + 주소창 기록 표시 + 키보드 독립 레이어
 struct ContentView: View {
     // MARK: - 속성 정의
     @Binding var tabs: [WebTab]
@@ -132,6 +216,9 @@ struct ContentView: View {
     // 🧩 퍼즐 버튼 터치 상태 관리
     @State private var isPuzzleButtonPressed = false
     @State private var puzzleButtonPressStartTime: Date? = nil
+    
+    // 🎯 **키보드 독립 레이어 매니저**
+    @StateObject private var keyboardLayerManager = KeyboardLayerManager.shared
 
     // ============================================================
     // ✨ 투명한 흰색 유리 효과 설정
@@ -148,21 +235,20 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    @State private var keyboardHeight: CGFloat = 0
-    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 // 메인 콘텐츠 (웹뷰 또는 대시보드)
                 mainContentView
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                    // 🎯 **키보드 독립 레이어로 완전 분리**
+                    .ignoresSafeArea(.keyboard, edges: .all)
                 
                 // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
                 VStack {
                     Spacer()
                     bottomUIContent()
-                        .offset(y: -keyboardHeight)
-                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
+                        // 🎯 **키보드 독립 레이어 사용으로 offset 제거**
+                        .animation(.easeInOut(duration: 0.25), value: keyboardLayerManager.isKeyboardVisible)
                 }
             }
         }
@@ -184,40 +270,15 @@ struct ContentView: View {
             handlePIPTabChange(currentPIPTab)
         }
 
-        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-
-        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-            guard
-                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-            else { return }
-
-            // 현재 키 윈도우
-            let window = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-
-            let bounds   = window?.bounds ?? UIScreen.main.bounds
-            // 좌표계를 윈도우 기준으로 변환
-            let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
-            // 화면과 키보드의 실제 겹치는 높이
-            let overlap  = max(0, bounds.intersection(kbFrame).height)
-            let bottomSA = window?.safeAreaInsets.bottom ?? 0
-
-            // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
-            let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
-
-            withAnimation(.easeInOut(duration: duration)) {
-                keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
-            }
+        // 🎯 **키보드 독립 레이어로 모든 키보드 인셋 무시**
+        .ignoresSafeArea(.keyboard, edges: .all)
+        
+        // 🎯 **키보드 독립 레이어 설정**
+        .onAppear {
+            setupKeyboardLayer()
         }
-
-        // ✅ 완전 숨김 이벤트에서 확정적으로 0
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-            keyboardHeight = 0
+        .onDisappear {
+            keyboardLayerManager.cleanup()
         }
         
         // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
@@ -231,6 +292,96 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
+    }
+    
+    // MARK: - 🎯 키보드 독립 레이어 설정
+    private func setupKeyboardLayer() {
+        keyboardLayerManager.setupKeyboardLayer {
+            keyboardLayerContent()
+        }
+    }
+    
+    // 🎯 키보드 독립 레이어에 표시될 콘텐츠
+    @ViewBuilder
+    private func keyboardLayerContent() -> some View {
+        if isTextFieldFocused {
+            VStack(spacing: 0) {
+                // 📋 방문기록 영역 (키보드 위 독립 공간)
+                if inputURL.isEmpty {
+                    // 🕒 최근방문 뷰
+                    RecentVisitsView(
+                        manager: siteMenuManager,
+                        onURLSelected: { url in
+                            inputURL = url.absoluteString
+                            currentState.currentURL = url
+                            hideKeyboardAndAddressBar()
+                        },
+                        onManageHistory: {
+                            siteMenuManager.showHistoryFilterManager = true
+                        }
+                    )
+                    .frame(maxHeight: 200) // 키보드 위 공간에 맞게 제한
+                    .background(whiteGlassBackground)
+                    .overlay(whiteGlassOverlay)
+                    .padding(.horizontal, outerHorizontalPadding)
+                } else {
+                    // 🔍 자동완성 뷰
+                    AutocompleteView(
+                        manager: siteMenuManager,
+                        searchText: inputURL,
+                        onURLSelected: { url in
+                            inputURL = url.absoluteString
+                            currentState.currentURL = url
+                            hideKeyboardAndAddressBar()
+                        },
+                        onManageHistory: {
+                            siteMenuManager.showHistoryFilterManager = true
+                        }
+                    )
+                    .frame(maxHeight: 200) // 키보드 위 공간에 맞게 제한
+                    .background(whiteGlassBackground)
+                    .overlay(whiteGlassOverlay)
+                    .padding(.horizontal, outerHorizontalPadding)
+                }
+                
+                // 방문기록 관리 버튼
+                HStack {
+                    Button(action: {
+                        siteMenuManager.showHistoryFilterManager = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "slider.horizontal.3")
+                            Text("방문기록 관리")
+                        }
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, outerHorizontalPadding)
+                .padding(.vertical, 8)
+                .background(whiteGlassBackground)
+                .overlay(whiteGlassOverlay)
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+    
+    // 키보드와 주소창 숨기기 헬퍼
+    private func hideKeyboardAndAddressBar() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            isTextFieldFocused = false
+            keyboardLayerManager.hideKeyboard()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                showAddressBar = false
+            }
+        }
     }
     
     // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
@@ -414,177 +565,62 @@ struct ContentView: View {
         }
     }
     
-    // 🎯 하단 UI: 주소창 + 동적 X 버튼 + 툴바
+    // 🎯 하단 UI: 주소창 + 동적 X 버튼 + 툴바 (키보드 독립 레이어 적용)
     @ViewBuilder
     private func bottomUIContent() -> some View {
         VStack(spacing: 10) {
             if showAddressBar {
-                VStack(spacing: 0) {
-                    // 📋 방문기록 영역 (전체 화면 너비) - 이전 코드 구조 그대로
-                    if isTextFieldFocused || inputURL.isEmpty {
-                        addressBarHistoryContent
-                    }
-                    
-                    // 🎯 주소창 + X 버튼 (HStack으로 나란히 배치) - 이전 코드 구조
-                    HStack(spacing: 12) {
-                        // 주소창
-                        VStack(spacing: 0) {
-                            addressBarMainContent
-                            
-                            // 진행률 표시줄
-                            if currentState.isLoading {
-                                progressBarView
-                            }
-                        }
-                        .background(whiteGlassBackground)
-                        .overlay(whiteGlassOverlay)
+                // 🎯 주소창 + X 버튼 (키보드 독립 레이어 사용으로 간소화)
+                HStack(spacing: 12) {
+                    // 주소창
+                    VStack(spacing: 0) {
+                        addressBarMainContent
                         
-                        // ❌ X 플로팅 버튼 (키보드 열릴 때만 표시) - 이전 코드 구조
-                        if isTextFieldFocused {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isTextFieldFocused = false
-                                    siteMenuManager.closeSiteMenu()
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                        showAddressBar = false
-                                    }
-                                }
-                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                                impactFeedback.impactOccurred()
-                            }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 44, height: 44)
-                                    .background(whiteGlassBackground)
-                                    .overlay(whiteGlassOverlay)
-                                    .clipShape(Circle())
-                            }
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
+                        // 진행률 표시줄
+                        if currentState.isLoading {
+                            progressBarView
                         }
                     }
-                    .padding(.horizontal, outerHorizontalPadding)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
+                    .background(whiteGlassBackground)
+                    .overlay(whiteGlassOverlay)
+                    
+                    // ❌ X 플로팅 버튼 (키보드 열릴 때만 표시)
+                    if isTextFieldFocused {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                isTextFieldFocused = false
+                                keyboardLayerManager.hideKeyboard()
+                                siteMenuManager.closeSiteMenu()
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                                    showAddressBar = false
+                                }
+                            }
+                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                            impactFeedback.impactOccurred()
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: 44, height: 44)
+                                .background(whiteGlassBackground)
+                                .overlay(whiteGlassOverlay)
+                                .clipShape(Circle())
+                        }
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        ))
+                    }
                 }
+                .padding(.horizontal, outerHorizontalPadding)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
             }
             
             toolbarView
         }
         .background(Color.clear)
-    }
-    
-    // 📋 방문기록 컨텐츠 (동적 크기 + 전체 너비) - 이전 코드 구조 그대로 이식
-    @ViewBuilder
-    private var addressBarHistoryContent: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .padding(.horizontal, outerHorizontalPadding)
-                
-            // 스크롤 영역
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
-                    if inputURL.isEmpty {
-                        // 🕒 최근방문 뷰 (SiteMenuManager로 변경)
-                        RecentVisitsView(
-                            manager: siteMenuManager,
-                            onURLSelected: { url in
-                                inputURL = url.absoluteString
-                                currentState.currentURL = url
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isTextFieldFocused = false
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                        showAddressBar = false
-                                    }
-                                }
-                            },
-                            onManageHistory: {
-                                siteMenuManager.showHistoryFilterManager = true
-                            }
-                        )
-                        .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.vertical, 8)
-                    } else {
-                        // 🔍 자동완성 뷰 (SiteMenuManager로 변경)
-                        AutocompleteView(
-                            manager: siteMenuManager,
-                            searchText: inputURL,
-                            onURLSelected: { url in
-                                inputURL = url.absoluteString
-                                currentState.currentURL = url
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isTextFieldFocused = false
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                        showAddressBar = false
-                                    }
-                                }
-                            },
-                            onManageHistory: {
-                                siteMenuManager.showHistoryFilterManager = true
-                            }
-                        )
-                        .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.vertical, 8)
-                    }
-                }
-            }
-            .frame(maxHeight: 300) // 다이나믹 아일랜드 넘지 않게 최대 높이만 제한
-            .fixedSize(horizontal: false, vertical: true) // 내용에 맞게 동적 크기 조정
-            
-            // 방문기록 관리 버튼 (하단 고정) - 이전 코드 구조
-            VStack(spacing: 8) {
-                Divider()
-                    .padding(.horizontal, outerHorizontalPadding)
-                    
-                HStack {
-                    Button(action: {
-                        siteMenuManager.showHistoryFilterManager = true
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "slider.horizontal.3")
-                            Text("방문기록 관리")
-                        }
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
-                    }
-                    Spacer()
-                }
-                .padding(.horizontal, outerHorizontalPadding)
-                .padding(.bottom, 8)
-            }
-        }
-        .background(whiteGlassBackground)
-        .overlay(whiteGlassOverlay)
-        .gesture(
-            DragGesture()
-                .onEnded { value in
-                    if value.translation.height > 50 && value.velocity.height > 300 {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            isTextFieldFocused = false
-                            siteMenuManager.closeSiteMenu()
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                showAddressBar = false
-                            }
-                        }
-                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                        impactFeedback.impactOccurred()
-                    }
-                }
-        )
     }
     
     private var addressBarMainContent: some View {
@@ -831,6 +867,9 @@ struct ContentView: View {
         // 🧩 **SiteMenuManager 초기화**
         siteMenuManager.setCurrentStateModel(currentState)
         siteMenuManager.refreshDownloads()
+        
+        // 🎯 **키보드 독립 레이어 초기화**
+        setupKeyboardLayer()
     }
     
     private func onURLChange(url: URL?) {
@@ -1003,6 +1042,7 @@ struct ContentView: View {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 showAddressBar = false
                 isTextFieldFocused = false
+                keyboardLayerManager.hideKeyboard()
                 siteMenuManager.closeSiteMenu()
             }
         }
@@ -1028,6 +1068,7 @@ struct ContentView: View {
             } else if showAddressBar {
                 showAddressBar = false
                 isTextFieldFocused = false
+                keyboardLayerManager.hideKeyboard()
             } else {
                 showAddressBar = true
             }
@@ -1042,6 +1083,7 @@ struct ContentView: View {
     private func onTextFieldTap() {
         if !isTextFieldFocused {
             isTextFieldFocused = true
+            keyboardLayerManager.showKeyboard() // 🎯 키보드 독립 레이어 활성화
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
         }
         if !textFieldSelectedAll {
@@ -1055,8 +1097,10 @@ struct ContentView: View {
     
     private func onTextFieldFocusChange(focused: Bool) {
         if focused {
+            keyboardLayerManager.showKeyboard() // 🎯 키보드 독립 레이어 활성화
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
         } else {
+            keyboardLayerManager.hideKeyboard() // 🎯 키보드 독립 레이어 비활성화
             textFieldSelectedAll = false
             TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
         }
@@ -1068,6 +1112,7 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
         }
         isTextFieldFocused = false
+        keyboardLayerManager.hideKeyboard() // 🎯 키보드 독립 레이어 비활성화
     }
     
     private func onToolbarTap() {
@@ -1110,6 +1155,7 @@ struct ContentView: View {
         if delta > 4 && (showAddressBar || siteMenuManager.showSiteMenu) {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
                 showAddressBar = false
+                keyboardLayerManager.hideKeyboard()
                 siteMenuManager.closeSiteMenu()
                 isTextFieldFocused = false 
             }
