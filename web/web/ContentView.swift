@@ -150,112 +150,92 @@ struct ContentView: View {
     
     @State private var keyboardHeight: CGFloat = 0
     
-    // ✅ 키보드 표시 여부 헬퍼 (툴바 표시 전략 전환용)
-    private var keyboardIsVisible: Bool { keyboardHeight > 0.5 }
-    
     var body: some View {
-        // ✅ 바깥 컨테이너: safeAreaInset을 적용할 래퍼
-        ZStack {
-            GeometryReader { geometry in
-                ZStack {
-                    // 메인 콘텐츠 (웹뷰 또는 대시보드)
-                    mainContentView
-                        .ignoresSafeArea(.keyboard, edges: .bottom) // 기존 동작 유지: 웹은 underlap 유지
-                        .ignoresSafeArea(.keyboard, edges: .bottom) // (원문에 2회 존재하던 부분 유지)
-                        .ignoresSafeArea(.keyboard, edges: .bottom) // 중복 호출 허용(기능 동일), 삭제 없이 유지
-                    
-                    // 하단 UI (주소창 + 툴바) - Overlay 경로
-                    // ✅ 키보드가 없을 때에만 Overlay 방식 유지 (기존 동작 완전 보존)
-                    VStack {
-                        Spacer()
-                        if !keyboardIsVisible {
-                            bottomUIContent()
-                                .offset(y: -keyboardHeight) // 기존 로직 그대로 유지
-                                .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
-                        }
-                    }
+        GeometryReader { _ in
+            ZStack {
+                // 메인 콘텐츠 (웹뷰 또는 대시보드)
+                mainContentView
+                    .ignoresSafeArea(.keyboard, edges: .bottom) // ✅ 웹은 underlap 유지
+                
+                // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
+                VStack {
+                    Spacer()
+                    bottomUIContent()
+                        .ignoresSafeArea(.keyboard, edges: .bottom) // ✅ 하단 UI도 underlap
+                        .padding(.bottom, keyboardHeight)            // ✅ offset 대신 padding
+                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
                 }
             }
-            // 원래 body에 달려 있던 각종 수신/시트/커버/오버레이 Modifier들을 삭제하지 않고 동일하게 유지
-            .onAppear(perform: onAppearHandler)
-            .onReceive(currentState.$currentURL, perform: onURLChange)
-            .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
-            .onReceive(errorNotificationPublisher, perform: onErrorReceived)
-            .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
-            .sheet(isPresented: $showHistorySheet, content: historySheet)
-            .sheet(isPresented: $showTabManager, content: tabManagerView)
-            .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-            .fullScreenCover(isPresented: $showDebugView, content: debugView)
-            
-            // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
-            .onChange(of: pipManager.isPIPActive) { isPIPActive in
-                handlePIPStateChange(isPIPActive)
-            }
-            .onChange(of: pipManager.currentPIPTab) { currentPIPTab in
-                handlePIPTabChange(currentPIPTab)
-            }
-
-            // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-
-            // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-                guard
-                    let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-                    let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
-                else { return }
-
-                // 현재 키 윈도우
-                let window = UIApplication.shared.connectedScenes
-                    .compactMap { $0 as? UIWindowScene }
-                    .flatMap { $0.windows }
-                    .first { $0.isKeyWindow }
-
-                let bounds   = window?.bounds ?? UIScreen.main.bounds
-                // 좌표계를 윈도우 기준으로 변환
-                let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
-                // 화면과 키보드의 실제 겹치는 높이
-                let overlap  = max(0, bounds.intersection(kbFrame).height)
-                let bottomSA = window?.safeAreaInsets.bottom ?? 0
-
-                // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
-                let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
-
-                withAnimation(.easeInOut(duration: duration)) {
-                    keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
-                }
-            }
-
-            // ✅ 완전 숨김 이벤트에서 확정적으로 0
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-                keyboardHeight = 0
-            }
-            
-            // 🧩 **핵심 추가: 통합 사이트 메뉴 오버레이**
-            .siteMenuOverlay(
-                manager: siteMenuManager,
-                currentState: currentState,
-                tabs: $tabs,
-                selectedTabIndex: $selectedTabIndex,
-                outerHorizontalPadding: outerHorizontalPadding,
-                showAddressBar: showAddressBar,
-                whiteGlassBackground: AnyView(whiteGlassBackground),
-                whiteGlassOverlay: AnyView(whiteGlassOverlay)
-            )
         }
-        // ✅ 키보드가 보일 때만 ‘시스템 안전영역’ 위에 툴바를 그리는 두 번째 경로
-        //    → 시스템이 키보드 인셋을 반영해 툴바를 자동으로 키보드 위에 배치하므로
-        //      Overlay 경로에서 생기던 툴바 아래 흰 여백이 사라진다.
-        .safeAreaInset(edge: .bottom) {
-            if keyboardIsVisible {
-                bottomUIContent()
-            } else {
-                EmptyView().frame(height: 0)
+        .ignoresSafeArea(.keyboard, edges: .bottom) // ✅ 최상위에서도 키보드 인셋 무시
+        .onAppear(perform: onAppearHandler)
+        .onReceive(currentState.$currentURL, perform: onURLChange)
+        .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
+        .onReceive(errorNotificationPublisher, perform: onErrorReceived)
+        .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
+        .sheet(isPresented: $showHistorySheet, content: historySheet)
+        .sheet(isPresented: $showTabManager, content: tabManagerView)
+        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
+        .fullScreenCover(isPresented: $showDebugView, content: debugView)
+        
+        // 🎬 **PIP 상태 변경 감지 및 탭 동기화**
+        .onChange(of: pipManager.isPIPActive) { isPIPActive in
+            handlePIPStateChange(isPIPActive)
+        }
+        .onChange(of: pipManager.currentPIPTab) { currentPIPTab in
+            handlePIPTabChange(currentPIPTab)
+        }
+
+        // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+
+        // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+            guard
+                let endFrame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                let duration = n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double
+            else { return }
+
+            // 현재 키 윈도우
+            let window = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first { $0.isKeyWindow }
+
+            let bounds   = window?.bounds ?? UIScreen.main.bounds
+            // 좌표계를 윈도우 기준으로 변환
+            let kbFrame  = window?.convert(endFrame, from: nil) ?? endFrame
+            // 화면과 키보드의 실제 겹치는 높이
+            let overlap  = max(0, bounds.intersection(kbFrame).height)
+            let bottomSA = window?.safeAreaInsets.bottom ?? 0
+
+            // 키보드가 사실상 내려간 상태인지 보정(부동소수 및 오차 보정)
+            let hidden = overlap <= bottomSA + 0.5 || kbFrame.minY >= bounds.maxY - 0.5
+
+            withAnimation(.easeInOut(duration: duration)) {
+                keyboardHeight = hidden ? 0 : max(0, overlap - bottomSA)
             }
         }
+
+        // ✅ 완전 숨김 이벤트에서 확정적으로 0
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+            keyboardHeight = 0
+        }
+        
+        // 🧩 **통합 사이트 메뉴 오버레이**도 동일 정책
+        .siteMenuOverlay(
+            manager: siteMenuManager,
+            currentState: currentState,
+            tabs: $tabs,
+            selectedTabIndex: $selectedTabIndex,
+            outerHorizontalPadding: outerHorizontalPadding,
+            showAddressBar: showAddressBar,
+            whiteGlassBackground: AnyView(whiteGlassBackground),
+            whiteGlassOverlay: AnyView(whiteGlassOverlay)
+        )
     }
     
-    // MARK: - 🎬 **PIP 상태 변경 핸들러들 수정**
+    // MARK: - 🎬 **PIP 상태 변경 핸들러들**
     
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
@@ -371,7 +351,7 @@ struct ContentView: View {
         CustomWebView(
             stateModel: state,
             playerURL: Binding(
-                get: { 
+                get: {
                     if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
                         return tabs[index].playerURL
                     }
@@ -389,7 +369,7 @@ struct ContentView: View {
                 }
             ),
             showAVPlayer: Binding(
-                get: { 
+                get: {
                     if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
                         return tabs[index].showAVPlayer
                     }
@@ -442,12 +422,12 @@ struct ContentView: View {
         VStack(spacing: 10) {
             if showAddressBar {
                 VStack(spacing: 0) {
-                    // 📋 방문기록 영역 (전체 화면 너비) - 이전 코드 구조 그대로
+                    // 📋 방문기록 영역 (전체 화면 너비)
                     if isTextFieldFocused || inputURL.isEmpty {
                         addressBarHistoryContent
                     }
                     
-                    // 🎯 주소창 + X 버튼 (HStack으로 나란히 배치) - 이전 코드 구조
+                    // 🎯 주소창 + X 버튼 (HStack으로 나란히 배치)
                     HStack(spacing: 12) {
                         // 주소창
                         VStack(spacing: 0) {
@@ -461,7 +441,7 @@ struct ContentView: View {
                         .background(whiteGlassBackground)
                         .overlay(whiteGlassOverlay)
                         
-                        // ❌ X 플로팅 버튼 (키보드 열릴 때만 표시) - 이전 코드 구조
+                        // ❌ X 플로팅 버튼 (키보드 열릴 때만 표시)
                         if isTextFieldFocused {
                             Button(action: {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -493,6 +473,9 @@ struct ContentView: View {
                     .padding(.horizontal, outerHorizontalPadding)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
+                // ✅ 주소창 패널(히스토리/자동완성 포함)도 같은 컨테이너에서 끌어올림
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .padding(.bottom, keyboardHeight)
             }
             
             toolbarView
@@ -500,7 +483,7 @@ struct ContentView: View {
         .background(Color.clear)
     }
     
-    // 📋 방문기록 컨텐츠 (동적 크기 + 전체 너비) - 이전 코드 구조 그대로 이식
+    // 📋 방문기록 컨텐츠 (동적 크기 + 전체 너비)
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
@@ -511,7 +494,7 @@ struct ContentView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     if inputURL.isEmpty {
-                        // 🕒 최근방문 뷰 (SiteMenuManager로 변경)
+                        // 🕒 최근방문 뷰
                         RecentVisitsView(
                             manager: siteMenuManager,
                             onURLSelected: { url in
@@ -533,7 +516,7 @@ struct ContentView: View {
                         .padding(.horizontal, outerHorizontalPadding)
                         .padding(.vertical, 8)
                     } else {
-                        // 🔍 자동완성 뷰 (SiteMenuManager로 변경)
+                        // 🔍 자동완성 뷰
                         AutocompleteView(
                             manager: siteMenuManager,
                             searchText: inputURL,
@@ -561,7 +544,7 @@ struct ContentView: View {
             .frame(maxHeight: 300) // 다이나믹 아일랜드 넘지 않게 최대 높이만 제한
             .fixedSize(horizontal: false, vertical: true) // 내용에 맞게 동적 크기 조정
             
-            // 방문기록 관리 버튼 (하단 고정) - 이전 코드 구조
+            // 방문기록 관리 버튼 (하단 고정)
             VStack(spacing: 8) {
                 Divider()
                     .padding(.horizontal, outerHorizontalPadding)
@@ -611,7 +594,7 @@ struct ContentView: View {
     
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
-            // 🧩 **개선된 퍼즐 버튼** (크기 증가 + 터치 우선순위 강화)
+            // 🧩 개선된 퍼즐 버튼
             puzzleButton
             
             // 🔒 사이트 보안 상태 표시 아이콘 (순수 표시용)
@@ -624,26 +607,23 @@ struct ContentView: View {
         .padding(.vertical, barVPadding)
     }
     
-    // 🧩 **개선된 퍼즐 버튼** (크기 증가 + 터치 우선순위 강화)
+    // 🧩 개선된 퍼즐 버튼
     private var puzzleButton: some View {
         Button(action: {
-            // 🎯 **터치 우선순위 강화**: 메뉴 토글 시 다른 제스처 무시
             siteMenuManager.setCurrentStateModel(currentState)
             siteMenuManager.toggleSiteMenu()
             
-            // 햅틱 피드백 추가
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             TabPersistenceManager.debugMessages.append("🧩 퍼즐 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
             
-            // 퍼즐 버튼 터치 시 주소창 숨기기 방지 플래그 설정
             if siteMenuManager.showSiteMenu {
-                ignoreAutoHideUntil = Date().addingTimeInterval(0.5) // 0.5초 동안 자동 숨기기 방지
+                ignoreAutoHideUntil = Date().addingTimeInterval(0.5)
             }
         }) {
             Image(systemName: "puzzlepiece.extension.fill")
-                .font(.system(size: 20, weight: .medium)) // 폰트 크기 증가
+                .font(.system(size: 20, weight: .medium))
                 .foregroundColor(.white)
-                .frame(width: 36, height: 36) // 터치 영역 크게 증가 (20x20 → 36x36)
+                .frame(width: 36, height: 36)
                 .background(
                     Circle()
                         .fill(isPuzzleButtonPressed ? Color.white.opacity(0.3) : Color.clear)
@@ -652,23 +632,22 @@ struct ContentView: View {
                 .scaleEffect(isPuzzleButtonPressed ? 0.95 : 1.0)
                 .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
         }
-        .buttonStyle(.plain) // 기본 버튼 스타일 제거
-        .contentShape(Circle()) // 원형 터치 영역 명시
+        .buttonStyle(.plain)
+        .contentShape(Circle())
         .simultaneousGesture(
-            // 🎯 **터치 상태 관리로 시각적 피드백 강화**
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     if !isPuzzleButtonPressed {
                         isPuzzleButtonPressed = true
-                        puzzleButtonPressStartTime = Date() // 터치 시작 시간 기록
+                        puzzleButtonPressStartTime = Date()
                     }
                 }
                 .onEnded { _ in
                     isPuzzleButtonPressed = false
-                    puzzleButtonPressStartTime = nil // 터치 종료 시 초기화
+                    puzzleButtonPressStartTime = nil
                 }
         )
-        .zIndex(999) // 🎯 **최상위 우선순위로 다른 제스처보다 우선 처리**
+        .zIndex(999)
     }
     
     // 🔒 사이트 보안 상태 표시 아이콘 (순수 표시용)
@@ -768,7 +747,7 @@ struct ContentView: View {
     private var toolbarView: some View {
         HStack(spacing: 0) {
             HStack(spacing: toolbarSpacing) {
-                // 🎯 **하단 버튼들은 기존 크기 유지** (터치 영향 없음)
+                // 🎯 하단 버튼 기본 크기 유지
                 toolbarButton("chevron.left", action: {
                     currentState.goBack()
                     TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
@@ -782,7 +761,7 @@ struct ContentView: View {
                 toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
                 toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
                 
-                // 🎬 **PIP 버튼 추가 (조건부 표시)**
+                // 🎬 PIP 버튼 (조건부)
                 if pipManager.isPIPActive {
                     toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
                 }
@@ -800,14 +779,14 @@ struct ContentView: View {
         .onTapGesture(perform: onToolbarTap)
     }
     
-    // 🎯 이전 코드의 단순하고 효과적인 툴바 버튼 방식 사용 (기존 크기 유지)
+    // 🎯 단순하고 효과적인 툴바 버튼
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: iconSize))
                 .foregroundColor(enabled ? color : .secondary)
         }
-        .disabled(!enabled) // 이전 코드의 단순한 방식
+        .disabled(!enabled)
     }
     
     // ✨ 투명한 흰색 유리 배경
@@ -847,10 +826,10 @@ struct ContentView: View {
         }
         TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
         
-        // 🎬 **PIP 상태 초기 동기화**
+        // 🎬 PIP 상태 초기 동기화
         TabPersistenceManager.debugMessages.append("🎬 ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
         
-        // 🧩 **SiteMenuManager 초기화**
+        // 🧩 SiteMenuManager 초기화
         siteMenuManager.setCurrentStateModel(currentState)
         siteMenuManager.refreshDownloads()
     }
@@ -941,7 +920,7 @@ struct ContentView: View {
     
     @ViewBuilder
     private func historySheet() -> some View {
-        NavigationView { 
+        NavigationView {
             WebViewDataModel.HistoryPage(
                 dataModel: currentState.dataModel,
                 onNavigateToPage: { record in
@@ -985,14 +964,14 @@ struct ContentView: View {
     
     private var avPlayerBinding: Binding<Bool> {
         Binding(
-            get: { 
-                tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false 
+            get: {
+                tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false
             },
             set: { newValue in
-                if tabs.indices.contains(selectedTabIndex) { 
+                if tabs.indices.contains(selectedTabIndex) {
                     tabs[selectedTabIndex].showAVPlayer = newValue
                     
-                    // 🎬 **핵심**: AVPlayer 숨김 시 PIP도 중지
+                    // 🎬 AVPlayer 숨김 시 PIP도 중지
                     if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
                         pipManager.stopPIP()
                     }
@@ -1015,7 +994,7 @@ struct ContentView: View {
     }
     
     private func onScrollOffsetChange(offset: CGFloat) {
-        // 🎯 **퍼즐 버튼 터치 중에는 주소창 숨기기 방지**
+        // 🎯 퍼즐 버튼 터치 중에는 주소창 숨기기 방지
         if isTextFieldFocused || Date() < ignoreAutoHideUntil || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
             previousOffset = offset
             return
@@ -1032,15 +1011,15 @@ struct ContentView: View {
     }
     
     private func onContentTap() {
-        // 🎯 **퍼즐 버튼 터치 중에는 다른 동작 방지**
+        // 🎯 퍼즐 버튼 터치 중에는 다른 동작 방지
         if isPuzzleButtonPressed {
             return
         }
         
-        // 퍼즐 버튼 터치 후 바로 콘텐츠를 탭한 경우 (드래그 제스처 방지)
+        // 퍼즐 버튼 터치 후 바로 콘텐츠 탭(드래그 잔상 방지)
         if let pressStartTime = puzzleButtonPressStartTime,
-           Date().timeIntervalSince(pressStartTime) < 0.3 { // 0.3초 이내
-            puzzleButtonPressStartTime = nil // 플래그 초기화
+           Date().timeIntervalSince(pressStartTime) < 0.3 {
+            puzzleButtonPressStartTime = nil
             return
         }
         
@@ -1055,7 +1034,6 @@ struct ContentView: View {
             }
         }
         
-        // 🧩 **추가**: 콘텐츠 탭 시 사이트 메뉴 닫기
         if siteMenuManager.showSiteMenu {
             siteMenuManager.closeSiteMenu()
         }
@@ -1119,7 +1097,7 @@ struct ContentView: View {
 
     // MARK: - WKWebView 스크롤 콜백 처리 (기존)
     private func handleWebViewScroll(yOffset: CGFloat) {
-        // 🎯 **퍼즐 버튼 터치 중에는 주소창 숨기기 방지**
+        // 🎯 퍼즐 버튼 터치 중에는 주소창 숨기기 방지
         if isTextFieldFocused || Date() < ignoreAutoHideUntil || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
             lastWebContentOffsetY = yOffset
             return
@@ -1130,14 +1108,14 @@ struct ContentView: View {
             return
         }
         if delta > 4 && (showAddressBar || siteMenuManager.showSiteMenu) {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 showAddressBar = false
                 siteMenuManager.closeSiteMenu()
-                isTextFieldFocused = false 
+                isTextFieldFocused = false
             }
         } else if delta < -12 && !showAddressBar {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { 
-                showAddressBar = true 
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showAddressBar = true
             }
         }
         lastWebContentOffsetY = yOffset
@@ -1147,6 +1125,7 @@ struct ContentView: View {
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
+        // ✅ Swift 표준 옵션명 사용
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
             // localhost 도메인들
             return host == "localhost" || host.hasSuffix(".local")
@@ -1158,7 +1137,7 @@ struct ContentView: View {
         let (a, b, c, d) = (components[0], components[1], components[2], components[3])
         
         // 유효한 IP 범위 체크
-        guard (0...255).contains(a) && (0...255).contains(b) && 
+        guard (0...255).contains(a) && (0...255).contains(b) &&
               (0...255).contains(c) && (0...255).contains(d) else { return false }
         
         // 사설 IP 대역 체크
@@ -1259,7 +1238,6 @@ struct ContentView: View {
         case NSURLErrorUnsupportedURL:
             return ("지원하지 않는 주소 (\(nsError.code))", "이 주소 형식은 지원하지 않습니다.")
         default:
-            // ✅ default 케이스에서 nil 반환 - 알림 표시 안함, 기록도 안함
             return nil
         }
     }
