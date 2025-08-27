@@ -1280,7 +1280,7 @@ struct DebugLogView: View {
     }
     
     var body: some View {
-        // 🛡️ 완전 격리: GeometryReader + ignoresSafeArea로 부모 여백 차단
+        // 🛡️ 완전 격리: GeometryReader + 키보드 인셋 전역 무시로 부모 여백 완전 차단
         GeometryReader { geometry in
             NavigationView {
                 debugContent
@@ -1294,13 +1294,14 @@ struct DebugLogView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .ignoresSafeArea(.all)
+        .ignoresSafeArea(.all, edges: .all)
+        .ignoresSafeArea(.keyboard, edges: .all)
         .onAppear { 
             debugMessages = TabPersistenceManager.debugMessages
             
             // 🛡️ 키보드 강제 숨김
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋")
+            TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋 + 안전영역 전체 무시")
         }
         .alert("복사 완료", isPresented: $showCopyAlert) {
             Button("확인", role: .cancel) { }
