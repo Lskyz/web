@@ -796,16 +796,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
     
     private func isHomepageURL(_ url: URL) -> Bool {
-        let path = url.path
-        let query = url.query
-        
-        // 쿼리 파라미터가 있으면 홈페이지가 아님
-        if let query = query, !query.isEmpty {
-            return false
-        }
-        
-        return path == "/" || path.isEmpty || path == "/main" || path == "/home"
-    }
+    return false
+}
     
     private func replaceCurrentPage(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
