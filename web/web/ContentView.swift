@@ -104,7 +104,7 @@ struct ContentView: View {
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geometry in
             ZStack {
                 // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
@@ -118,10 +118,10 @@ struct ContentView: View {
                 }
             }
         }
-        // 🔽 루트에서 하단 안전영역 전부 무시 + 키보드 인셋 무시
-        .ignoresSafeArea(.container, edges: .bottom)
-        .ignoresSafeArea(.keyboard,  edges: .bottom)
-        // 🔼 이 두 줄로 전체 트리를 웹콘텐츠처럼 underlap 시킴
+        // 🔽 루트에서 모든 안전영역 전부 무시 + 키보드 인셋 전역 무시
+        .ignoresSafeArea(.all, edges: .all)
+        .ignoresSafeArea(.keyboard, edges: .all)
+        // 🔼 전체 트리가 웹콘텐츠처럼 underlap되고 키보드 인셋도 전역 무시
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
@@ -131,7 +131,10 @@ struct ContentView: View {
         .sheet(isPresented: $showHistorySheet, content: historySheet)
         .sheet(isPresented: $showTabManager, content: tabManagerView)
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
-        .fullScreenCover(isPresented: $showDebugView, content: debugView)
+        .fullScreenCover(isPresented: $showDebugView) {
+            debugView
+                .ignoresSafeArea(.keyboard, edges: .all)
+        }
 
         // 🎬 PIP 상태 동기화
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
@@ -148,7 +151,7 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 루트 underlap 규칙 공유
+        // 오버레이도 루트 underlap 규칙 공유 + 키보드 인셋 무시
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -159,6 +162,7 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     // MARK: - 키보드 교차 높이 계산
@@ -261,13 +265,16 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        // 웹은 루트 underlap을 그대로 상속받음
+        // 웹뷰도 키보드 인셋 무시 상속
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     private var dashboardView: some View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
+            // 대시보드도 키보드 인셋 무시 상속
+            .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     private var scrollOffsetOverlay: some View {
@@ -282,7 +289,11 @@ struct ContentView: View {
         VStack(spacing: 10) {
             if showAddressBar {
                 VStack(spacing: 0) {
-                    if isTextFieldFocused || inputURL.isEmpty { addressBarHistoryContent }
+                    if isTextFieldFocused || inputURL.isEmpty { 
+                        addressBarHistoryContent
+                            // 히스토리 콘텐츠도 키보드 인셋 무시
+                            .ignoresSafeArea(.keyboard, edges: .all)
+                    }
                     HStack(spacing: 12) {
                         VStack(spacing: 0) {
                             addressBarMainContent
@@ -323,6 +334,8 @@ struct ContentView: View {
             toolbarView
         }
         .background(Color.clear)
+        // 하단 UI 전체도 키보드 인셋 무시
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     // 방문기록/자동완성
@@ -642,6 +655,7 @@ struct ContentView: View {
                 onNavigateToURL: { url in currentState.currentURL = url }
             )
         }
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     @ViewBuilder private func tabManagerView() -> some View {
         NavigationView {
@@ -661,6 +675,7 @@ struct ContentView: View {
                 }
             )
         }
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     private var avPlayerBinding: Binding<Bool> {
         Binding(
@@ -674,9 +689,15 @@ struct ContentView: View {
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { AVPlayerView(url: url) }
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
+            AVPlayerView(url: url)
+                .ignoresSafeArea(.keyboard, edges: .all)
+        }
     }
-    @ViewBuilder private func debugView() -> some View { DebugLogView() }
+    @ViewBuilder private func debugView() -> some View { 
+        DebugLogView()
+            .ignoresSafeArea(.keyboard, edges: .all)
+    }
     
     private func onScrollOffsetChange(offset: CGFloat) {
         if isTextFieldFocused || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
