@@ -132,6 +132,8 @@ struct ContentView: View {
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
             debugView()
+                // 🔽 탭매니저처럼 완전 격리 - 키보드 전파 차단
+                .ignoresSafeArea(.all, edges: .all)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
 
@@ -748,8 +750,18 @@ struct ContentView: View {
         }
     }
     @ViewBuilder private func debugView() -> some View { 
-        DebugLogView()
-            .ignoresSafeArea(.keyboard, edges: .all) // 메인뷰 키보드 영향 차단
+        // 🛡️ 탭매니저와 동일한 완전 격리 패턴
+        GeometryReader { geometry in
+            DebugLogView()
+                .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .ignoresSafeArea(.all, edges: .all)
+        .ignoresSafeArea(.keyboard, edges: .all)
+        .onAppear { 
+            // 🛡️ 핵심: 키보드 강제 숨김 (TabManager와 동일)
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋")
+        }
     }
     
     private func onScrollOffsetChange(offset: CGFloat) {
