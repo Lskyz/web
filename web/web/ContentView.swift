@@ -2,19 +2,43 @@ import SwiftUI
 import AVKit
 import WebKit
 
-// MARK: - 🎯 키보드 독립 레이어 시스템 (완전 독립형)
-class KeyboardLayerManager: ObservableObject {
-    static let shared = KeyboardLayerManager()
-    
-    @Published var isKeyboardVisible = false
+import SwiftUI
+import AVKit
+import WebKit
+
+// MARK: - 🎯 간단한 키보드 높이 감지만 (복잡한 독립 레이어 제거)
+class KeyboardHeightObserver: ObservableObject {
     @Published var keyboardHeight: CGFloat = 0
     
-    private var hiddenTextField: UITextField?
-    private var accessoryHostingController: UIHostingController<AnyView>?
-    private var keyboardObservers: [NSObjectProtocol] = []
+    init() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillShow),
+            name: UIResponder.keyboardWillShowNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(keyboardWillHide),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+    }
     
-    private init() {
-        setupKeyboardObservers()
+    @objc private func keyboardWillShow(_ notification: Notification) {
+        if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            keyboardHeight = keyboardFrame.cgRectValue.height
+        }
+    }
+    
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardHeight = 0
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+}setupKeyboardObservers()
     }
     
     deinit {
@@ -284,7 +308,7 @@ struct ContentView: View {
     @State private var isPuzzleButtonPressed = false
     @State private var puzzleButtonPressStartTime: Date? = nil
     
-    // 🎯 **키보드 독립 레이어 매니저**
+    // 🎯 **키보드 독립 레이어 매니저 (키보드 위 콘텐츠만)**
     @StateObject private var keyboardLayerManager = KeyboardLayerManager.shared
 
     // ============================================================
@@ -305,16 +329,17 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 콘텐츠 (웹뷰 또는 대시보드) - 키보드와 완전 분리
+                // 메인 콘텐츠 (웹뷰 또는 대시보드) - 키보드 인셋 차단
                 mainContentView
                     .ignoresSafeArea(.keyboard, edges: .all)
                 
-                // 하단 UI (주소창 + 툴바) - 키보드 독립 레이어로 완전 분리
+                // 하단 UI (주소창 + 툴바) - 키보드와 함께 올라옴
                 VStack {
                     Spacer()
                     bottomUIContent()
+                        .offset(y: -keyboardLayerManager.keyboardHeight) // 🎯 키보드 높이만큼 올리기
+                        .animation(.easeInOut(duration: 0.25), value: keyboardLayerManager.keyboardHeight)
                 }
-                // 🎯 키보드 독립 레이어 사용으로 offset 완전 제거 - 메인 UI는 키보드에 영향받지 않음
             }
         }
         .onAppear(perform: onAppearHandler)
@@ -335,8 +360,7 @@ struct ContentView: View {
             handlePIPTabChange(currentPIPTab)
         }
 
-        // 🎯 **키보드 독립 레이어로 모든 키보드 인셋 무시**
-        .ignoresSafeArea(.keyboard, edges: .all)
+        .ignoresSafeArea(.keyboard, edges: .all) // 🎯 메인 UI는 키보드 자동 인셋 차단, 수동으로 제어
         
         // 🎯 **키보드 독립 레이어 설정 및 포커스 동기화**
         .onAppear {
