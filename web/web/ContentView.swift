@@ -155,7 +155,7 @@ struct ContentView: View {
             ZStack {
                 // 메인 콘텐츠 (웹뷰 또는 대시보드)
                 mainContentView
-                   // .ignoresSafeArea(.keyboard, edges: .bottom)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 
                 // 하단 UI (주소창 + 툴바) - VStack으로 하단에 고정
                 VStack {
@@ -185,7 +185,7 @@ struct ContentView: View {
         }
 
         // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-       // .ignoresSafeArea(.keyboard, edges: .all)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
 
         // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
@@ -391,7 +391,7 @@ struct ContentView: View {
         )
         .id(state.tabID)
         // 🛡️ 다이나믹 아일랜드 안전영역 보호: 상단 안전영역은 항상 유지하되 좌우는 정상 적용
-        //.ignoresSafeArea(.container, edges: [.bottom])
+        .ignoresSafeArea(.container, edges: [.bottom])
     }
     
     private var dashboardView: some View {
@@ -855,9 +855,10 @@ struct ContentView: View {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                 showAddressBar = true
             }
+            
             // 3초 후 자동으로 숨기기
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                if showAddressBar && !isTextFieldFocused { // 사용자가 사용 중이 아닐 때만
+                if showAddressBar && !isTextFieldFocused {  // 사용자가 사용 중이 아닐 때만
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                         showAddressBar = false
                     }
@@ -871,25 +872,34 @@ struct ContentView: View {
     }
     
     private func onErrorReceived(notification: Notification) {
-        guard let userInfo = notification.userInfo, let tabIDString = userInfo["tabID"] as? String, tabIDString == currentState.tabID?.uuidString else { return }
+        guard let userInfo = notification.userInfo,
+              let tabIDString = userInfo["tabID"] as? String,
+              tabIDString == currentState.tabID?.uuidString else { return }
         
-        if let statusCode = userInfo["statusCode"] as? Int, let url = userInfo["url"] as? String {
+        if let statusCode = userInfo["statusCode"] as? Int,
+           let url = userInfo["url"] as? String {
             let error = getErrorMessage(for: statusCode, url: url)
             errorTitle = error.title
             errorMessage = error.message
             showErrorAlert = true
             TabPersistenceManager.debugMessages.append("❌ HTTP 오류 \(statusCode): \(error.title)")
-        } else if let sslError = userInfo["sslError"] as? Bool, sslError, let url = userInfo["url"] as? String {
+        } else if let sslError = userInfo["sslError"] as? Bool, sslError,
+                  let url = userInfo["url"] as? String {
             let domain = URL(string: url)?.host ?? "사이트"
             errorTitle = "보안 연결 취소됨"
             errorMessage = "\(domain)의 보안 인증서를 신뢰할 수 없어 연결이 취소되었습니다.\n\n다른 안전한 사이트를 이용하시거나, 해당 사이트가 신뢰할 수 있는 사이트라면 다시 방문을 시도해보세요."
             showErrorAlert = true
-            TabPersistenceManager.debugMessages.append("❌ SSL/TLS 오류")
-        } else if let nsError = userInfo["nsError"] as? NSError, let error = getErrorMessage(from: nsError) {
-            errorTitle = error.title
-            errorMessage = error.message
-            showErrorAlert = true
-            TabPersistenceManager.debugMessages.append("❌ NS 에러 \(nsError.code): \(error.title)")
+            TabPersistenceManager.debugMessages.append("🔒 SSL 인증서 거부: \(domain)")
+        } else if let error = userInfo["error"] as? Error,
+                  let url = userInfo["url"] as? String {
+            if let networkError = getNetworkErrorMessage(for: error, url: url) {
+                errorTitle = networkError.title
+                errorMessage = networkError.message
+                showErrorAlert = true
+                TabPersistenceManager.debugMessages.append("❌ 네트워크 오류: \(networkError.title)")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔕 정의되지 않은 에러 무시")
+            }
         }
     }
     
@@ -909,7 +919,7 @@ struct ContentView: View {
     
     @ViewBuilder
     private func historySheet() -> some View {
-        NavigationView {
+        NavigationView { 
             WebViewDataModel.HistoryPage(
                 dataModel: currentState.dataModel,
                 onNavigateToPage: { record in
@@ -953,10 +963,13 @@ struct ContentView: View {
     
     private var avPlayerBinding: Binding<Bool> {
         Binding(
-            get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
+            get: { 
+                tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false 
+            },
             set: { newValue in
-                if tabs.indices.contains(selectedTabIndex) {
+                if tabs.indices.contains(selectedTabIndex) { 
                     tabs[selectedTabIndex].showAVPlayer = newValue
+                    
                     // 🎬 **핵심**: AVPlayer 숨김 시 PIP도 중지
                     if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id {
                         pipManager.stopPIP()
@@ -968,7 +981,8 @@ struct ContentView: View {
     
     @ViewBuilder
     private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
+        if tabs.indices.contains(selectedTabIndex),
+           let url = tabs[selectedTabIndex].playerURL {
             AVPlayerView(url: url)
         }
     }
@@ -984,9 +998,7 @@ struct ContentView: View {
             previousOffset = offset
             return
         }
-        
         let delta = offset - previousOffset
-        
         if delta < -30 && showAddressBar {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 showAddressBar = false
@@ -994,27 +1006,31 @@ struct ContentView: View {
                 siteMenuManager.closeSiteMenu()
             }
         }
-        
         previousOffset = offset
     }
     
     private func onContentTap() {
         // 🎯 **퍼즐 버튼 터치 중에는 다른 동작 방지**
-        if isPuzzleButtonPressed { return }
-        
-        // 퍼즐 버튼 터치 후 바로 콘텐츠를 탭한 경우 (드래그 제스처 방지)
-        if let pressStartTime = puzzleButtonPressStartTime, Date().timeIntervalSince(pressStartTime) < 0.2 {
+        if isPuzzleButtonPressed {
             return
         }
         
-        if showAddressBar {
-            // 주소창이 열려있으면 닫기
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+        // 퍼즐 버튼 터치 후 바로 콘텐츠를 탭한 경우 (드래그 제스처 방지)
+        if let pressStartTime = puzzleButtonPressStartTime,
+           Date().timeIntervalSince(pressStartTime) < 0.3 { // 0.3초 이내
+            puzzleButtonPressStartTime = nil // 플래그 초기화
+            return
+        }
+        
+        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+            if siteMenuManager.showSiteMenu {
+                siteMenuManager.closeSiteMenu()
+            } else if showAddressBar {
                 showAddressBar = false
                 isTextFieldFocused = false
+            } else {
+                showAddressBar = true
             }
-        } else {
-            showAddressBar = true
         }
         
         // 🧩 **추가**: 콘텐츠 탭 시 사이트 메뉴 닫기
@@ -1028,7 +1044,6 @@ struct ContentView: View {
             isTextFieldFocused = true
             ignoreAutoHideUntil = Date().addingTimeInterval(focusDebounceSeconds)
         }
-        
         if !textFieldSelectedAll {
             DispatchQueue.main.async {
                 UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
@@ -1079,7 +1094,7 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(selectedURL.absoluteString)")
         }
     }
-    
+
     // MARK: - WKWebView 스크롤 콜백 처리 (기존)
     private func handleWebViewScroll(yOffset: CGFloat) {
         // 🎯 **퍼즐 버튼 터치 중에는 주소창 숨기기 방지**
@@ -1087,48 +1102,49 @@ struct ContentView: View {
             lastWebContentOffsetY = yOffset
             return
         }
-        
         let delta = yOffset - lastWebContentOffsetY
-        
         if abs(delta) < 2 {
             lastWebContentOffsetY = yOffset
             return
         }
-        
         if delta > 4 && (showAddressBar || siteMenuManager.showSiteMenu) {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
                 showAddressBar = false
                 siteMenuManager.closeSiteMenu()
-                isTextFieldFocused = false
+                isTextFieldFocused = false 
             }
         } else if delta < -12 && !showAddressBar {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                showAddressBar = true
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { 
+                showAddressBar = true 
             }
         }
         lastWebContentOffsetY = yOffset
     }
-    
+
     // MARK: - 로컬/사설 IP 주소 감지
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         // IPv4 패턴 체크
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
-            return false
+            // localhost 도메인들
+            return host == "localhost" || host.hasSuffix(".local")
         }
         
         let components = host.split(separator: ".").compactMap { Int($0) }
         guard components.count == 4 else { return false }
         
-        let a = components[0]
-        let b = components[1]
+        let (a, b, c, d) = (components[0], components[1], components[2], components[3])
+        
+        // 유효한 IP 범위 체크
+        guard (0...255).contains(a) && (0...255).contains(b) && 
+              (0...255).contains(c) && (0...255).contains(d) else { return false }
         
         // 사설 IP 대역 체크
-        return (a == 192 && b == 168) || // 192.168.x.x
-               (a == 10) || // 10.x.x.x
-               (a == 172 && (16...31).contains(b)) || // 172.16.x.x ~ 172.31.x.x
-               (a == 127) || // 127.x.x.x (localhost)
-               (a == 169 && b == 254) // 169.254.x.x (링크 로컬)
+        return (a == 192 && b == 168) ||                    // 192.168.x.x
+               (a == 10) ||                                 // 10.x.x.x
+               (a == 172 && (16...31).contains(b)) ||       // 172.16.x.x ~ 172.31.x.x
+               (a == 127) ||                                // 127.x.x.x (localhost)
+               (a == 169 && b == 254)                       // 169.254.x.x (링크 로컬)
     }
     
     // MARK: - 입력 문자열을 URL로 정규화 + 스마트 HTTP/HTTPS 처리
@@ -1173,6 +1189,7 @@ struct ContentView: View {
     // MARK: - ✨ HTTP 에러 코드를 사용자 친화적인 한글 메시지로 변환 (간단하게)
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
+        
         switch statusCode {
         case 403:
             return ("\(statusCode)에러", "\(domain)에 접근할 권한이 없습니다.")
@@ -1185,30 +1202,36 @@ struct ContentView: View {
         case 503:
             return ("\(statusCode)에러", "\(domain)이 점검 중이거나 과부하 상태입니다.")
         case 504:
-            return ("\(statusCode)에러", "서버 응답 시간 초과. 잠시 후 다시 시도해주세요.")
+            return ("\(statusCode)에러", "\(domain) 서버 응답이 늦습니다.")
         default:
-            return ("\(statusCode) 에러", "페이지를 불러오는 중 알 수 없는 오류가 발생했습니다.")
+            return ("\(statusCode)에러", "페이지 오류가 발생했습니다.")
         }
     }
     
-    // MARK: - NSError를 사용자 친화적인 한글 메시지로 변환
-    private func getErrorMessage(from nsError: NSError) -> (title: String, message: String)? {
-        guard nsError.domain == NSURLErrorDomain else { return nil }
+    // MARK: - ✨ 네트워크 오류 메시지 처리 (default 케이스 제거)
+    private func getNetworkErrorMessage(for error: Error, url: String) -> (title: String, message: String)? {
+        let domain = URL(string: url)?.host ?? "사이트"
+        let nsError = error as NSError
+        
+        // NSURLError가 아닌 경우 nil 반환 (알림 표시 안함)
+        guard nsError.domain == NSURLErrorDomain else {
+            return nil
+        }
         
         // ✅ 정의된 특정 에러만 처리, 나머지는 nil 반환
         switch nsError.code {
         case NSURLErrorCannotFindHost:
-            return ("주소를 찾을 수 없음 (\(nsError.code))", "\(nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String ?? "주소")을(를) 찾을 수 없습니다.")
+            return ("주소를 찾을 수 없음 (\(nsError.code))", "\(domain)을(를) 찾을 수 없습니다.")
         case NSURLErrorTimedOut:
-            return ("연결 시간 초과 (\(nsError.code))", "서버 응답이 늦습니다.")
+            return ("연결 시간 초과 (\(nsError.code))", "\(domain) 서버 응답이 늦습니다.")
         case NSURLErrorNotConnectedToInternet:
             return ("인터넷 연결 없음 (\(nsError.code))", "인터넷에 연결되어 있지 않습니다.")
         case NSURLErrorCannotConnectToHost:
-            return ("서버 연결 실패 (\(nsError.code))", "서버에 연결할 수 없습니다.")
+            return ("서버 연결 실패 (\(nsError.code))", "\(domain) 서버에 연결할 수 없습니다.")
         case NSURLErrorNetworkConnectionLost:
             return ("네트워크 연결 끊김 (\(nsError.code))", "네트워크 연결이 끊어졌습니다.")
         case NSURLErrorDNSLookupFailed:
-            return ("DNS 조회 실패 (\(nsError.code))", "DNS 조회에 실패했습니다. 올바른 주소인지 확인해주세요.")
+            return ("DNS 조회 실패 (\(nsError.code))", "\(domain)의 DNS 조회에 실패했습니다.")
         case NSURLErrorBadURL:
             return ("잘못된 주소 (\(nsError.code))", "입력한 주소 형식이 올바르지 않습니다.")
         case NSURLErrorUnsupportedURL:
@@ -1225,7 +1248,7 @@ struct RecentVisitsView: View {
     @ObservedObject var manager: SiteMenuManager
     let onURLSelected: (URL) -> Void
     let onManageHistory: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 0) {
             if manager.recentVisits.isEmpty {
@@ -1235,13 +1258,14 @@ struct RecentVisitsView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private var emptyStateView: some View {
         VStack(spacing: 12) {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.title2)
                 .foregroundColor(.secondary)
+
             Text("최근 방문한 사이트가 없습니다")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
@@ -1249,12 +1273,13 @@ struct RecentVisitsView: View {
         }
         .padding(.vertical, 20)
     }
-    
+
     @ViewBuilder
     private var historyListView: some View {
         VStack(spacing: 0) {
             ForEach(manager.recentVisits) { entry in
                 historyRow(entry)
+
                 if entry.id != manager.recentVisits.last?.id {
                     Divider()
                         .padding(.horizontal, 14)
@@ -1262,31 +1287,38 @@ struct RecentVisitsView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private func historyRow(_ entry: HistoryEntry) -> some View {
         Button(action: {
             onURLSelected(entry.url)
         }) {
             HStack(spacing: 12) {
-                Image(systemName: "globe")
-                    .foregroundColor(.gray)
+                Image(systemName: "clock")
+                    .foregroundColor(.blue)
                     .frame(width: 20)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.title)
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.primary)
                         .lineLimit(1)
+
                     Text(entry.url.absoluteString)
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
-                
+
                 Spacer()
+
+                Text(RelativeDateTimeFormatter().localizedString(for: entry.date, relativeTo: Date()))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1298,7 +1330,7 @@ struct AutocompleteView: View {
     let searchText: String
     let onURLSelected: (URL) -> Void
     let onManageHistory: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 0) {
             if manager.getAutocompleteEntries(for: searchText).isEmpty {
@@ -1308,26 +1340,28 @@ struct AutocompleteView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private var emptyStateView: some View {
         VStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.title2)
                 .foregroundColor(.secondary)
-            Text("검색 기록이 없습니다")
+
+            Text("'\(searchText)'에 대한 방문 기록이 없습니다")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
         .padding(.vertical, 20)
     }
-    
+
     @ViewBuilder
     private var autocompleteListView: some View {
         VStack(spacing: 0) {
             ForEach(manager.getAutocompleteEntries(for: searchText)) { entry in
                 autocompleteRow(entry)
+
                 if entry.id != manager.getAutocompleteEntries(for: searchText).last?.id {
                     Divider()
                         .padding(.horizontal, 14)
@@ -1335,7 +1369,7 @@ struct AutocompleteView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private func autocompleteRow(_ entry: HistoryEntry) -> some View {
         Button(action: {
@@ -1345,21 +1379,27 @@ struct AutocompleteView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.gray)
                     .frame(width: 20)
-                
+
                 VStack(alignment: .leading, spacing: 2) {
                     highlightedText(entry.title, searchText: searchText)
                         .font(.system(size: 16, weight: .medium))
                         .lineLimit(1)
+
                     highlightedText(entry.url.absoluteString, searchText: searchText)
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
-                
+
                 Spacer()
+
+                Image(systemName: "arrow.up.left")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
