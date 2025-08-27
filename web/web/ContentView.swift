@@ -185,7 +185,7 @@ struct ContentView: View {
         }
 
         // ✅ SwiftUI의 키보드 자동 인셋 무시(웹뷰에 빈공간 방지)
-        .ignoresSafeArea(.keyboard, edges: .all)
+       // .ignoresSafeArea(.keyboard, edges: .all)
 
         // ✅ 키보드 프레임 변경에 맞춰 실제 겹침 높이(Intersection)로 계산
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
