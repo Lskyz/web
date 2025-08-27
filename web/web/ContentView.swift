@@ -100,28 +100,24 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    // ✅ 키보드 높이 (루트 underlap 전제)
-    @State private var keyboardHeight: CGFloat = 0
+    // ✅ 자동 키보드 인셋 처리로 단순화 (keyboardHeight 제거)
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠 (전체 underlap)
+                // 메인 웹 콘텐츠 (상단/좌우만 underlap)
                 mainContentView
 
-                // 하단 통합 UI 고정: 키보드만큼만 상승
+                // 하단 통합 UI 고정: 자동으로 키보드 위로 올라감
                 VStack {
                     Spacer()
                     bottomUnifiedUIContent()
-                        .padding(.bottom, keyboardHeight)
-                        .animation(.easeInOut(duration: 0.22), value: keyboardHeight)
                 }
             }
         }
-        // 🔽 루트에서 모든 안전영역 전부 무시 + 키보드 인셋 전역 무시
-        .ignoresSafeArea(.all, edges: .all)
-        .ignoresSafeArea(.keyboard, edges: .all)
-        // 🔼 전체 트리가 웹콘텐츠처럼 underlap되고 키보드 인셋도 전역 무시
+        // 🔽 상단/좌우만 안전영역 무시, 하단은 유지로 키보드 인셋 자동 처리
+        .ignoresSafeArea(.all, edges: [.top, .leading, .trailing])
+        // 🔼 키보드 인셋은 자동으로 처리됨
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
@@ -140,18 +136,7 @@ struct ContentView: View {
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // ✅ 키보드 관측: 교차 높이만 계산(안전영역 차감 없음)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
-            updateKeyboard(from: n, animated: true)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
-            updateKeyboard(from: n, animated: true)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            withAnimation(.easeInOut(duration: 0.22)) { keyboardHeight = 0 }
-        }
-
-        // 오버레이도 루트 underlap 규칙 공유 + 키보드 인셋 무시
+        // 오버레이는 기본 키보드 인셋 처리 사용
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -162,22 +147,8 @@ struct ContentView: View {
             whiteGlassBackground: AnyView(whiteGlassBackground),
             whiteGlassOverlay: AnyView(whiteGlassOverlay)
         )
-        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
-    // MARK: - 키보드 교차 높이 계산
-    private func updateKeyboard(from n: Notification, animated: Bool) {
-        guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
-        let screen  = UIScreen.main.bounds
-        let overlap = max(0, screen.maxY - endFrame.minY) // 실제 차지 높이
-        if animated {
-            let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.22
-            withAnimation(.easeInOut(duration: duration)) { keyboardHeight = overlap }
-        } else {
-            keyboardHeight = overlap
-        }
-    }
-
     // MARK: - 현재 탭 상태
     private var currentState: WebViewStateModel {
         if tabs.indices.contains(selectedTabIndex) { return tabs[selectedTabIndex].stateModel }
@@ -265,16 +236,14 @@ struct ContentView: View {
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
         .id(state.tabID)
-        // 웹뷰도 키보드 인셋 무시 상속
-        .ignoresSafeArea(.keyboard, edges: .all)
+        // 웹뷰는 기본 키보드 인셋 처리 사용
     }
     
     private var dashboardView: some View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
-            // 대시보드도 키보드 인셋 무시 상속
-            .ignoresSafeArea(.keyboard, edges: .all)
+            // 대시보드도 기본 키보드 인셋 처리 사용
     }
     
     private var scrollOffsetOverlay: some View {
@@ -283,28 +252,34 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 🎯 통합된 하단 UI (주소창 + 툴바)
+    // MARK: - 🎯 통합된 하단 UI (사파리 스타일 - 배경 통합, 주소창만 테두리 구분)
     @ViewBuilder
     private func bottomUnifiedUIContent() -> some View {
         VStack(spacing: 0) {
             // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
             if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
                 addressBarHistoryContent
-                    .background(whiteGlassBackground)
-                    .overlay(whiteGlassOverlay)
                     .padding(.horizontal, outerHorizontalPadding)
-                    .ignoresSafeArea(.keyboard, edges: .all)
+                    // 히스토리 콘텐츠도 기본 키보드 인셋 처리
             }
             
-            // 2️⃣ 통합 툴바 (주소창 + 네비게이션 버튼들)
-            VStack(spacing: 0) {
+            // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
+            VStack(spacing: 12) {
                 if showAddressBar {
-                    // 주소창 영역
+                    // 주소창 영역 - 별도 테두리로 구분
                     HStack(spacing: 12) {
                         VStack(spacing: 0) {
                             addressBarMainContent
                             if currentState.isLoading { progressBarView }
                         }
+                        .background(
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color(UIColor.systemBackground))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                        )
                         
                         if isTextFieldFocused {
                             Button(action: {
@@ -321,9 +296,14 @@ struct ContentView: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(width: 44, height: 44)
-                                    .background(whiteGlassBackground)
-                                    .overlay(whiteGlassOverlay)
-                                    .clipShape(Circle())
+                                    .background(
+                                        Circle()
+                                            .fill(Color(UIColor.systemBackground))
+                                    )
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                                    )
                             }
                             .transition(.asymmetric(
                                 insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -331,13 +311,11 @@ struct ContentView: View {
                             ))
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.top, barVPadding)
-                    .padding(.bottom, showAddressBar ? 8 : 0)
+                    .padding(.horizontal, outerHorizontalPadding)
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
                 
-                // 네비게이션 툴바
+                // 네비게이션 툴바 - 배경에 자연스럽게 통합
                 HStack(spacing: 0) {
                     HStack(spacing: toolbarSpacing) {
                         toolbarButton("chevron.left", action: {
@@ -356,13 +334,12 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, barVPadding)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onToolbarTap)
             }
-            // 🎯 전역 배경 적용 - 안전영역까지 확장
+            .padding(.vertical, barVPadding)
+            // 🎯 전역 배경 적용 - 안전영역까지 확장 (사파리 스타일)
             .background(
-                // 배경을 안전영역까지 확장
                 GeometryReader { geometry in
                     whiteGlassBackground
                         .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
@@ -370,7 +347,6 @@ struct ContentView: View {
                 }
             )
             .overlay(
-                // 오버레이도 안전영역까지 확장
                 GeometryReader { geometry in
                     whiteGlassOverlay
                         .frame(width: UIScreen.main.bounds.width, height: geometry.size.height + geometry.safeAreaInsets.bottom)
@@ -385,29 +361,20 @@ struct ContentView: View {
                     topTrailingRadius: barCornerRadius
                 )
             )
-            .padding(.horizontal, outerHorizontalPadding)
             
-            // 3️⃣ 하단 안전영역 유지 (배경 색상만)
-            Rectangle()
-                .fill(Color.white.opacity(whiteGlassTintOpacity))
-                .frame(height: 0)
-                .background(
-                    GeometryReader { geometry in
-                        whiteGlassBackground
-                            .frame(width: UIScreen.main.bounds.width, height: geometry.safeAreaInsets.bottom)
-                            .offset(x: -geometry.frame(in: .global).minX, y: 0)
-                    }
-                )
+            // 3️⃣ 하단 안전영역은 자동으로 시스템이 처리
         }
         .background(Color.clear)
-        .ignoresSafeArea(.keyboard, edges: .all)
+        // 하단 UI도 기본 키보드 인셋 처리 사용
     }
     
-    // 방문기록/자동완성 (기존과 동일)
+    // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
             Divider()
+                .background(Color(UIColor.separator).opacity(0.3))
+            
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     if inputURL.isEmpty {
@@ -447,21 +414,32 @@ struct ContentView: View {
             
             VStack(spacing: 8) {
                 Divider()
+                    .background(Color(UIColor.separator).opacity(0.3))
+                
                 HStack {
                     Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
-                        HStack(spacing: 4) { Image(systemName: "slider.horizontal.3"); Text("방문기록 관리") }
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(8)
+                        HStack(spacing: 4) { 
+                            Image(systemName: "slider.horizontal.3")
+                            Text("방문기록 관리") 
+                        }
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
                     }
                     Spacer()
                 }
                 .padding(.bottom, 8)
             }
         }
+        .background(Color(UIColor.systemBackground).opacity(0.95))
+        .cornerRadius(barCornerRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: barCornerRadius)
+                .strokeBorder(Color(UIColor.separator).opacity(0.2), lineWidth: 0.5)
+        )
         .gesture(
             DragGesture().onEnded { value in
                 if value.translation.height > 50 && value.velocity.height > 300 {
@@ -724,7 +702,6 @@ struct ContentView: View {
     @ViewBuilder private func avPlayerView() -> some View {
         if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
             AVPlayerView(url: url)
-                .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
     @ViewBuilder private func debugView() -> some View { 
