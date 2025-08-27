@@ -800,58 +800,17 @@ enum SiteMenuSystem {
                         }
                         
                         quickSettingButton(
-                            icon: "speedometer",
-                            title: "성능",
-                            isOn: false,
-                            color: .red
+                            icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
+                            title: "데스크탑 모드",
+                            isOn: manager.getDesktopModeEnabled(),
+                            color: manager.getDesktopModeEnabled() ? .blue : .gray
                         ) {
-                            manager.showPerformanceSettings = true
+                            manager.toggleDesktopMode()
                         }
                     }
                     
-                    // 🎯 데스크탑 모드 - 2개 너비로 확장
-                    VStack(spacing: 8) {
-                        Button(action: {
-                            manager.toggleDesktopMode()
-                        }) {
-                            VStack(spacing: 4) {
-                                HStack {
-                                    Image(systemName: manager.getDesktopModeEnabled() ? "display" : "iphone")
-                                        .font(.title2)
-                                        .foregroundColor(manager.getDesktopModeEnabled() ? .blue : .gray)
-                                    
-                                    Text("데스크탑 모드")
-                                        .font(.headline)
-                                        .foregroundColor(manager.getDesktopModeEnabled() ? .primary : .secondary)
-                                    
-                                    Spacer()
-                                    
-                                    Text(manager.getDesktopModeEnabled() ? "켜짐" : "꺼짐")
-                                        .font(.caption)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(manager.getDesktopModeEnabled() ? .blue : .gray)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .padding(.horizontal, 16)
-                                .background(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.1) : Color.clear)
-                                .cornerRadius(12)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
-                                )
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        
-                        // 🎯 데스크탑 모드일 때만 줌 슬라이더 표시
-                        if manager.getDesktopModeEnabled() {
-                            desktopZoomSlider
-                        }
+                    if manager.getDesktopModeEnabled() {
+                        desktopZoomControls
                     }
                 }
             }
@@ -878,70 +837,6 @@ enum SiteMenuSystem {
                     )
                 }
                 .buttonStyle(.plain)
-            }
-            
-            @ViewBuilder
-            private var desktopZoomSlider: some View {
-                VStack(spacing: 8) {
-                    HStack {
-                        Text("페이지 줌")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Text("\(String(format: "%.1f", manager.getZoomLevel()))x")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    // 🎯 슬라이더 추가
-                    HStack(spacing: 12) {
-                        Button("-") {
-                            manager.adjustZoom(-0.1)
-                        }
-                        .frame(width: 28, height: 28)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(6)
-                        
-                        Slider(value: Binding(
-                            get: { manager.getZoomLevel() },
-                            set: { manager.setZoomLevel($0) }
-                        ), in: 0.3...3.0, step: 0.1)
-                        .accentColor(.blue)
-                        
-                        Button("+") {
-                            manager.adjustZoom(0.1)
-                        }
-                        .frame(width: 28, height: 28)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                    
-                    // 프리셋 버튼들
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
-                                Button("\(String(format: "%.1f", preset))x") {
-                                    manager.setZoomLevel(preset)
-                                }
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
-                                .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
-                                .cornerRadius(6)
-                            }
-                        }
-                        .padding(.horizontal, 4)
-                    }
-                }
-                .padding(.top, 4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(8)
             }
             
             @ViewBuilder
@@ -1019,6 +914,23 @@ enum SiteMenuSystem {
                         ) {
                             manager.showPrivacySettings = true
                         }
+                    }
+                    
+                    HStack {
+                        menuOptionRow(
+                            icon: "speedometer",
+                            title: "성능",
+                            subtitle: "메모리 & 캐시",
+                            color: .red
+                        ) {
+                            manager.showPerformanceSettings = true
+                        }
+                        
+                        Spacer()
+                        
+                        // 빈 공간을 위한 투명 버튼
+                        Color.clear
+                            .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -2415,4 +2327,49 @@ extension View {
                                 )
                             )
                         }
-                        .
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: manager.showPopupBlockedAlert)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showDownloadsList },
+                    set: { manager.showDownloadsList = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.DownloadsListView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showHistoryFilterManager },
+                    set: { manager.showHistoryFilterManager = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPrivacySettings },
+                    set: { manager.showPrivacySettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
+                }
+            }
+            .sheet(
+                isPresented: Binding(
+                    get: { manager.showPerformanceSettings },
+                    set: { manager.showPerformanceSettings = $0 }
+                )
+            ) {
+                NavigationView {
+                    SiteMenuSystem.UI.PerformanceSettingsView(manager: manager)
+                }
+            }
+    }
+}
