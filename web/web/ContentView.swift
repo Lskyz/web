@@ -380,9 +380,9 @@ struct ContentView: View {
             .clipShape(
                 UnevenRoundedRectangle(
                     topLeadingRadius: barCornerRadius,
-                    topTrailingRadius: barCornerRadius,
                     bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: barCornerRadius
                 )
             )
             .padding(.horizontal, outerHorizontalPadding)
