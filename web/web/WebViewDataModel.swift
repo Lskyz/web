@@ -274,11 +274,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var restoreQueue: [RestoreQueueItem] = []
     private var expectedNormalizedURL: String? = nil
     
-    // ✅ **검색 전환 스냅샷**: push 직후 검색 전/후로의 pop 1회 무시
-    private var recentSearchTransition: (fromNormalized: String, toNormalized: String, at: Date)?
-    
-    // ✅ pop 무시 윈도우
-    private static let searchPopIgnoreWindow: TimeInterval = 1.0
+    // 🎯 **범용 전이 pop 필터용**: 모든 네비게이션 타임스탬프
+    private var lastNavigationAt: Date = .distantPast
+    private static let transientPopIgnoreWindow: TimeInterval = 0.35 // 350ms: 전이성 pop 무시 창
     
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
@@ -467,18 +465,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             
             addNewPage(url: url, title: title)
             
-            // 🔍 검색 push이면 전환 스냅샷 저장
-            if PageRecord.isSearchURL(url) {
-                let toNorm = PageRecord.normalizeSearchURL(url)
-                let fromNorm: String = {
-                    if let cur = currentPageRecord {
-                        return PageRecord.normalizeURL(cur.url)
-                    }
-                    return ""
-                }()
-                recentSearchTransition = (fromNormalized: fromNorm, toNormalized: toNorm, at: Date())
-                dbg("📸 검색 전환 스냅샷 저장: '\(fromNorm)' → '\(toNorm)'")
-            }
+            // 🎯 **모든 네비게이션 타임스탬프 갱신**
+            lastNavigationAt = Date()
             
         case "replace":
             // 🏠 **핵심 개선: 루트 Replace 오염 방지**
@@ -504,62 +492,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // 루트가 아닌 정상 replace는 그대로 교체
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
-        case "pop":
-            // 🔍 **핵심 해결책 4: SPA pop에서 검색 쿼리 변경 감지 + Google 검색 플로우 개선**
+            // 🎯 **모든 네비게이션 타임스탬프 갱신**
+            lastNavigationAt = Date()
             
-            // [가드1] 검색 자기 자신 pop 무시
-            if PageRecord.isSearchURL(url) {
-                let newNorm = PageRecord.normalizeSearchURL(url)
-                if let cur = currentPageRecord,
-                   PageRecord.isSearchURL(cur.url),
-                   PageRecord.normalizeSearchURL(cur.url) == newNorm {
-                    dbg("🔕 SPA pop 무시 - 현재 검색과 동일")
-                    recentSearchTransition = nil
-                    return
-                }
+        case "pop":
+            // 🎯 **범용 전이 pop 필터** (루트든 아니든 모든 전이성 pop 차단)
+            let dt = Date().timeIntervalSince(lastNavigationAt)
+            if dt <= Self.transientPopIgnoreWindow {
+                dbg("🔕 pop 무시 - 전이성 pop (\(String(format: "%.3f", dt))s): \(url.absoluteString)")
+                return
             }
 
-            // [가드2] 검색 push 직후 검색 전/후 스냅샷으로의 회귀 pop 1회 무시
-            if let snap = recentSearchTransition {
-                let dt = Date().timeIntervalSince(snap.at)
-                if dt <= Self.searchPopIgnoreWindow {
-                    let popKey = PageRecord.normalizeURL(url)
-                    if popKey == snap.fromNormalized || popKey == snap.toNormalized {
-                        dbg("🔕 SPA pop 무시 - 검색 전/후 스냅샷 회귀(\(String(format: "%.3f", dt))s)")
-                        recentSearchTransition = nil
-                        return
-                    }
-                }
-            }
-
-            // 🆕 **[가드3] Google 검색 플로우 진행 중 pop 무시**
-            if siteType.contains("google.com") && siteType.contains("query_multi") {
-                // Google 메인페이지에서 검색 진행 중인 상황 감지
-                if let currentURL = currentPageRecord?.url,
-                   currentURL.host?.contains("google.com") == true {
-                    
-                    let currentPath = currentURL.path
-                    let popPath = url.path
-                    
-                    // 메인페이지(/) → 검색 관련 pop은 검색 진행으로 판단
-                    if (currentPath == "/" || currentPath.isEmpty) && 
-                       (popPath == "/" || popPath.isEmpty || popPath.contains("search")) {
-                        
-                        dbg("🔍 Google 검색 플로우 진행 중 - SPA pop 무시")
-                        dbg("   현재: \(currentURL.absoluteString)")
-                        dbg("   Pop: \(url.absoluteString)")
-                        
-                        // 검색 진행이므로 새 페이지로 처리하지 않고 현재 페이지 업데이트만
-                        if !isHistoryNavigationActive() {
-                            replaceCurrentPage(url: url, title: title, siteType: siteType)
-                        }
-                        recentSearchTransition = nil
-                        return
-                    }
-                }
-            }
-
-            // 🔍 **검색 URL의 경우 특별 처리**
+            // 🔍 **검색 URL 특수 처리** (구글 검색어 복귀 방지만 담당)
             if PageRecord.isSearchURL(url) {
                 dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
                 
@@ -596,30 +540,33 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                 }
             } else {
-                // **일반 URL의 경우 기존 로직**
+                // **일반 URL의 경우**
                 if let existingIndex = findPageIndex(for: url) {
-                    dbg("🔄 SPA pop - 기존 히스토리 항목, 큐 추가: \(existingIndex)")
+                    dbg("🔄 SPA pop - 기존 히스토리 항목 복원: \(existingIndex)")
                     _ = enqueueRestore(to: existingIndex)
                 } else {
                     // 기존 항목이 없으면 새 페이지 추가 (복원 중이 아닐 때만)
                     if !isHistoryNavigationActive() {
                         addNewPage(url: url, title: title)
-                        dbg("🔄 SPA pop - 새 페이지 추가")
+                        dbg("🆕 SPA pop - 새 페이지 추가")
                     } else {
                         dbg("🤫 복원 중 SPA pop 무시: \(url.absoluteString)")
                     }
                 }
             }
-
-            // [마무리] 스냅샷 소멸
-            recentSearchTransition = nil
             
         case "hash", "dom":
             // 홈페이지면 새 페이지, 아니면 현재 페이지 교체
             if isHomepageURL(url) && !isHistoryNavigationActive() {
                 addNewPage(url: url, title: title)
+                
+                // 🎯 **모든 네비게이션 타임스탬프 갱신**
+                lastNavigationAt = Date()
             } else {
                 replaceCurrentPage(url: url, title: title, siteType: siteType)
+                
+                // 🎯 **모든 네비게이션 타임스탬프 갱신**
+                lastNavigationAt = Date()
             }
             
         case "title":
@@ -1079,7 +1026,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         restoreState = .idle
         expectedNormalizedURL = nil
         restoreQueue.removeAll()
-        recentSearchTransition = nil
+        lastNavigationAt = .distantPast
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
     
