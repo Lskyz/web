@@ -399,16 +399,7 @@ extension SiteMenuSystem {
                         }
                     }
                     
-                    // 빈 공간으로 균형 맞춤
-                    HStack {
-                        Color.clear
-                            .frame(maxWidth: .infinity)
-                        
-                        Spacer()
-                        
-                        Color.clear
-                            .frame(maxWidth: .infinity)
-                    }
+                    
                 }
             }
             
