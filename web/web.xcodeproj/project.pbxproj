@@ -16,9 +16,10 @@
 		336424232E3B6D5700A5963D /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 336424222E3B6D5700A5963D /* Preview Assets.xcassets */; };
 		336424462E3B6EAC00A5963D /* CustomWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336424452E3B6EAC00A5963D /* CustomWebView.swift */; };
 		336424482E3B6EB700A5963D /* MyBrowserAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336424472E3B6EB700A5963D /* MyBrowserAppApp.swift */; };
+		33BF79EA2E5FC9D3007250B7 /* Site Menu Data.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79E92E5FC9D3007250B7 /* Site Menu Data.swift */; };
+		33BF79EC2E5FC9EB007250B7 /* Site Menu UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79EB2E5FC9EB007250B7 /* Site Menu UI.swift */; };
 		33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C8EF7A2E3EFBC100A48206 /* tabview.swift */; };
 		33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */; };
-		33D47D402E56EEED005DFD69 /* SiteSettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D47D3F2E56EEED005DFD69 /* SiteSettingsManager.swift */; };
 		33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */; };
 /* End PBXBuildFile section */
 
@@ -53,9 +54,10 @@
 		336424322E3B6D5800A5963D /* webUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = webUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		336424452E3B6EAC00A5963D /* CustomWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomWebView.swift; sourceTree = "<group>"; };
 		336424472E3B6EB700A5963D /* MyBrowserAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyBrowserAppApp.swift; sourceTree = "<group>"; };
+		33BF79E92E5FC9D3007250B7 /* Site Menu Data.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Site Menu Data.swift"; sourceTree = "<group>"; };
+		33BF79EB2E5FC9EB007250B7 /* Site Menu UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Site Menu UI.swift"; sourceTree = "<group>"; };
 		33C8EF7A2E3EFBC100A48206 /* tabview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tabview.swift; sourceTree = "<group>"; };
 		33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHelper.swift; sourceTree = "<group>"; };
-		33D47D3F2E56EEED005DFD69 /* SiteSettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteSettingsManager.swift; sourceTree = "<group>"; };
 		33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewDataModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -109,11 +111,12 @@
 				3364241D2E3B6D5500A5963D /* ContentView.swift */,
 				336424452E3B6EAC00A5963D /* CustomWebView.swift */,
 				3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */,
+				33BF79E92E5FC9D3007250B7 /* Site Menu Data.swift */,
+				33BF79EB2E5FC9EB007250B7 /* Site Menu UI.swift */,
 				3322308A2E3B717B00EB7526 /* Info.plist */,
 				3322308F2E3D85B600EB7526 /* web.mp3 */,
 				332230912E3D88F700EB7526 /* avp.swift */,
 				33C8EF7A2E3EFBC100A48206 /* tabview.swift */,
-				33D47D3F2E56EEED005DFD69 /* SiteSettingsManager.swift */,
 				33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */,
 				33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */,
 				3322308C2E3B71DB00EB7526 /* exportOptions.plist */,
@@ -266,9 +269,10 @@
 				33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */,
 				332230922E3D88F700EB7526 /* avp.swift in Sources */,
 				33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */,
-				33D47D402E56EEED005DFD69 /* SiteSettingsManager.swift in Sources */,
+				33BF79EC2E5FC9EB007250B7 /* Site Menu UI.swift in Sources */,
 				336424482E3B6EB700A5963D /* MyBrowserAppApp.swift in Sources */,
 				3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */,
+				33BF79EA2E5FC9D3007250B7 /* Site Menu Data.swift in Sources */,
 				336424462E3B6EAC00A5963D /* CustomWebView.swift in Sources */,
 				3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */,
 				33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */,
