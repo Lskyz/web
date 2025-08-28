@@ -134,7 +134,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
     }
     
     // 🔧 쿼리 차이 로깅 (디버깅용)
-    private static func logDiffIfSamePathButDifferentQuery(prev: URL, curr: URL) {
+    static func logDiffIfSamePathButDifferentQuery(prev: URL, curr: URL) {
         guard let a = normalizedComponents(for: prev), let b = normalizedComponents(for: curr) else { return }
         let pa = a.path, pb = b.path
         if pa == pb {
