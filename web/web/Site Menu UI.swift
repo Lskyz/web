@@ -1330,6 +1330,7 @@ extension SiteMenuSystem {
             @State private var showClearCookiesAlert = false
             @State private var showClearCacheAlert = false
             @State private var showClearAllDataAlert = false
+            @State private var showPopupDomainManager = false
             
             var body: some View {
                 List {
@@ -1404,14 +1405,24 @@ extension SiteMenuSystem {
                         }
                         
                         HStack {
-                            Text("허용된 사이트")
-                                .font(.headline)
+                            VStack(alignment: .leading) {
+                                Text("도메인별 설정 관리")
+                                    .font(.headline)
+                                Text("사이트별 팝업 차단/허용 설정")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             
                             Spacer()
                             
                             let allowedCount = PopupBlockManager.shared.getAllowedDomains().count
-                            Text("\(allowedCount)개")
+                            Text("\(allowedCount)개 허용")
                                 .foregroundColor(.secondary)
+                            
+                            Button("관리") {
+                                showPopupDomainManager = true
+                            }
+                            .foregroundColor(.blue)
                         }
                     }
                 }
@@ -1422,6 +1433,11 @@ extension SiteMenuSystem {
                         Button("닫기") {
                             dismiss()
                         }
+                    }
+                }
+                .sheet(isPresented: $showPopupDomainManager) {
+                    NavigationView {
+                        PopupDomainManagerView()
                     }
                 }
                 .alert("쿠키 삭제", isPresented: $showClearCookiesAlert) {
@@ -1448,6 +1464,230 @@ extension SiteMenuSystem {
                 } message: {
                     Text("쿠키, 캐시, 로컬 저장소 등 모든 웹사이트 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")
                 }
+            }
+        }
+        
+        // MARK: - 🚫 새로운 팝업 도메인 관리 뷰
+        struct PopupDomainManagerView: View {
+            @Environment(\.dismiss) private var dismiss
+            @State private var allowedDomains: [String] = []
+            @State private var recentBlockedPopups: [PopupBlockManager.BlockedPopup] = []
+            @State private var showAddDomainAlert = false
+            @State private var newDomainText = ""
+            @State private var showClearAllAllowedAlert = false
+            
+            var body: some View {
+                List {
+                    // 허용된 도메인 섹션
+                    Section {
+                        if allowedDomains.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "shield.checkered")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("허용된 사이트가 없습니다")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'이 사이트 허용' 버튼을 누르세요")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        } else {
+                            ForEach(allowedDomains, id: \.self) { domain in
+                                HStack {
+                                    Image(systemName: "checkmark.shield.fill")
+                                        .foregroundColor(.green)
+                                        .frame(width: 24)
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(domain)
+                                            .font(.headline)
+                                        
+                                        Text("팝업 허용됨")
+                                            .font(.caption)
+                                            .foregroundColor(.green)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Button("차단") {
+                                        PopupBlockManager.shared.removeAllowedDomain(domain)
+                                        refreshData()
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.red.opacity(0.1))
+                                    .cornerRadius(8)
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("팝업 허용 사이트 (\(allowedDomains.count)개)")
+                            
+                            Spacer()
+                            
+                            if !allowedDomains.isEmpty {
+                                Button("수동 추가") {
+                                    showAddDomainAlert = true
+                                }
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    
+                    // 최근 차단된 팝업 섹션
+                    Section {
+                        if recentBlockedPopups.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "shield.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                                
+                                Text("차단된 팝업이 없습니다")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        } else {
+                            ForEach(recentBlockedPopups.indices, id: \.self) { index in
+                                let popup = recentBlockedPopups[index]
+                                
+                                HStack {
+                                    Image(systemName: "shield.slash.fill")
+                                        .foregroundColor(.red)
+                                        .frame(width: 24)
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(popup.domain)
+                                            .font(.headline)
+                                        
+                                        if !popup.url.isEmpty {
+                                            Text(popup.url)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        
+                                        Text(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Button("허용") {
+                                        PopupBlockManager.shared.allowPopupsForDomain(popup.domain)
+                                        refreshData()
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.1))
+                                    .cornerRadius(8)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("최근 차단된 팝업 (\(recentBlockedPopups.count)개)")
+                    } footer: {
+                        if !recentBlockedPopups.isEmpty {
+                            Text("차단된 팝업의 사이트를 허용 목록에 추가할 수 있습니다")
+                        }
+                    }
+                }
+                .navigationTitle("팝업 차단 관리")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("닫기") {
+                            dismiss()
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Menu {
+                            Button {
+                                showAddDomainAlert = true
+                            } label: {
+                                Label("도메인 수동 추가", systemImage: "plus")
+                            }
+                            
+                            if !allowedDomains.isEmpty {
+                                Divider()
+                                
+                                Button(role: .destructive) {
+                                    showClearAllAllowedAlert = true
+                                } label: {
+                                    Label("모든 허용 사이트 제거", systemImage: "trash")
+                                }
+                            }
+                            
+                            Button {
+                                SiteMenuSystem.Settings.resetPopupBlockedCount()
+                                refreshData()
+                            } label: {
+                                Label("차단 기록 초기화", systemImage: "arrow.counterclockwise")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+                .onAppear {
+                    refreshData()
+                }
+                .alert("도메인 추가", isPresented: $showAddDomainAlert) {
+                    TextField("도메인명 (예: example.com)", text: $newDomainText)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                    
+                    Button("취소", role: .cancel) {
+                        newDomainText = ""
+                    }
+                    
+                    Button("추가") {
+                        let trimmedDomain = newDomainText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmedDomain.isEmpty {
+                            PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain)
+                            refreshData()
+                        }
+                        newDomainText = ""
+                    }
+                    .disabled(newDomainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } message: {
+                    Text("팝업을 허용할 도메인을 입력하세요")
+                }
+                .alert("모든 허용 사이트 제거", isPresented: $showClearAllAllowedAlert) {
+                    Button("취소", role: .cancel) { }
+                    Button("제거", role: .destructive) {
+                        for domain in allowedDomains {
+                            PopupBlockManager.shared.removeAllowedDomain(domain)
+                        }
+                        refreshData()
+                    }
+                } message: {
+                    Text("모든 허용 사이트를 제거하시겠습니까?")
+                }
+            }
+            
+            private func refreshData() {
+                allowedDomains = PopupBlockManager.shared.getAllowedDomains()
+                recentBlockedPopups = PopupBlockManager.shared.getRecentBlockedPopups(limit: 20)
             }
         }
         
