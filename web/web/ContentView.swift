@@ -86,8 +86,8 @@ struct ContentView: View {
     @StateObject private var pipContainer = PIPWebViewContainer.shared
     @StateObject private var siteMenuManager = SiteMenuManager()
 
-    @State private var isPuzzleButtonPressed = false
-    @State private var puzzleButtonPressStartTime: Date? = nil
+    @State private var isMenuButtonPressed = false
+    @State private var menuButtonPressStartTime: Date? = nil
 
     // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
@@ -502,7 +502,7 @@ struct ContentView: View {
     
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
-            puzzleButton
+            menuButton
             siteSecurityIcon
             urlTextField
             refreshButton
@@ -511,35 +511,36 @@ struct ContentView: View {
         .padding(.vertical, barVPadding)
     }
     
-    private var puzzleButton: some View {
+    // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경
+    private var menuButton: some View {
         Button(action: {
             siteMenuManager.setCurrentStateModel(currentState)
             siteMenuManager.toggleSiteMenu()
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            TabPersistenceManager.debugMessages.append("🧩 퍼즐 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
+            TabPersistenceManager.debugMessages.append("🍔 메뉴 버튼으로 사이트 메뉴 토글: \(siteMenuManager.showSiteMenu)")
         }) {
-            Image(systemName: "puzzlepiece.extension.fill")
+            Image(systemName: "line.3.horizontal")
                 .font(.system(size: 20, weight: .medium))
                 .foregroundColor(.white)
                 .frame(width: 36, height: 36)
                 .background(
                     Circle()
-                        .fill(isPuzzleButtonPressed ? Color.white.opacity(0.3) : Color.clear)
-                        .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
+                        .fill(isMenuButtonPressed ? Color.white.opacity(0.3) : Color.clear)
+                        .animation(.easeInOut(duration: 0.1), value: isMenuButtonPressed)
                 )
-                .scaleEffect(isPuzzleButtonPressed ? 0.95 : 1.0)
-                .animation(.easeInOut(duration: 0.1), value: isPuzzleButtonPressed)
+                .scaleEffect(isMenuButtonPressed ? 0.95 : 1.0)
+                .animation(.easeInOut(duration: 0.1), value: isMenuButtonPressed)
         }
         .buttonStyle(.plain)
         .contentShape(Circle())
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !isPuzzleButtonPressed { isPuzzleButtonPressed = true; puzzleButtonPressStartTime = Date() }
+                    if !isMenuButtonPressed { isMenuButtonPressed = true; menuButtonPressStartTime = Date() }
                 }
                 .onEnded { _ in
-                    isPuzzleButtonPressed = false
-                    puzzleButtonPressStartTime = nil
+                    isMenuButtonPressed = false
+                    menuButtonPressStartTime = nil
                 }
         )
         .zIndex(999)
@@ -765,7 +766,7 @@ struct ContentView: View {
     }
     
     private func onScrollOffsetChange(offset: CGFloat) {
-        if isTextFieldFocused || isPuzzleButtonPressed || siteMenuManager.showSiteMenu {
+        if isTextFieldFocused || isMenuButtonPressed || siteMenuManager.showSiteMenu {
             previousOffset = offset; return
         }
         let delta = offset - previousOffset
@@ -779,8 +780,8 @@ struct ContentView: View {
         previousOffset = offset
     }
     private func onContentTap() {
-        if isPuzzleButtonPressed { return }
-        if let t = puzzleButtonPressStartTime, Date().timeIntervalSince(t) < 0.3 { puzzleButtonPressStartTime = nil; return }
+        if isMenuButtonPressed { return }
+        if let t = menuButtonPressStartTime, Date().timeIntervalSince(t) < 0.3 { menuButtonPressStartTime = nil; return }
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             if siteMenuManager.showSiteMenu { siteMenuManager.closeSiteMenu() }
             else if showAddressBar { showAddressBar = false; isTextFieldFocused = false }
@@ -826,7 +827,7 @@ struct ContentView: View {
         }
     }
     private func handleWebViewScroll(yOffset: CGFloat) {
-        if isTextFieldFocused || isPuzzleButtonPressed || siteMenuManager.showSiteMenu { lastWebContentOffsetY = yOffset; return }
+        if isTextFieldFocused || isMenuButtonPressed || siteMenuManager.showSiteMenu { lastWebContentOffsetY = yOffset; return }
         let delta = yOffset - lastWebContentOffsetY
         if abs(delta) < 2 { lastWebContentOffsetY = yOffset; return }
         if delta > 4 && (showAddressBar || siteMenuManager.showSiteMenu) {
