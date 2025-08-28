@@ -511,7 +511,7 @@ struct ContentView: View {
         .padding(.vertical, barVPadding)
     }
     
-    // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경
+    // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경 (검은색)
     private var menuButton: some View {
         Button(action: {
             siteMenuManager.setCurrentStateModel(currentState)
@@ -521,11 +521,11 @@ struct ContentView: View {
         }) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 20, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.black)
                 .frame(width: 36, height: 36)
                 .background(
                     Circle()
-                        .fill(isMenuButtonPressed ? Color.white.opacity(0.3) : Color.clear)
+                        .fill(isMenuButtonPressed ? Color.black.opacity(0.1) : Color.clear)
                         .animation(.easeInOut(duration: 0.1), value: isMenuButtonPressed)
                 )
                 .scaleEffect(isMenuButtonPressed ? 0.95 : 1.0)
