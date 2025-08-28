@@ -180,154 +180,53 @@ func makeDesktopModeScript() -> WKUserScript {
 }
 
 // MARK: - 이미지 저장 스크립트 구현체 (안전한 JavaScript 방식)
+// MARK: - 이미지 저장 스크립트 구현체 (롱프레스 전용, 안전모드)
 func makeImageSaveScript() -> WKUserScript {
-    let scriptSource = """
-    (function() {
-        'use strict';
-        
-        console.log('📷 이미지 저장 스크립트 초기화');
-        
-        // 이미지 저장 함수
-        function saveImageToPhotos(imageUrl, imageSrc) {
-            if (window.webkit?.messageHandlers?.saveImage) {
-                window.webkit.messageHandlers.saveImage.postMessage({
-                    action: 'save',
-                    url: imageUrl || imageSrc,
-                    type: 'photo'
-                });
-                console.log('📷 이미지 저장 요청: ' + (imageUrl || imageSrc));
-            }
-        }
-        
-        // 이미지 복사 함수  
-        function copyImageToClipboard(imageUrl, imageSrc) {
-            if (window.webkit?.messageHandlers?.saveImage) {
-                window.webkit.messageHandlers.saveImage.postMessage({
-                    action: 'copy',
-                    url: imageUrl || imageSrc,
-                    type: 'clipboard'
-                });
-                console.log('📷 이미지 복사 요청: ' + (imageUrl || imageSrc));
-            }
-        }
-        
-        // 이미지 공유 함수
-        function shareImage(imageUrl, imageSrc) {
-            if (window.webkit?.messageHandlers?.saveImage) {
-                window.webkit.messageHandlers.saveImage.postMessage({
-                    action: 'share',
-                    url: imageUrl || imageSrc,
-                    type: 'share'
-                });
-                console.log('📷 이미지 공유 요청: ' + (imageUrl || imageSrc));
-            }
-        }
-        
-        // 이미지에 길게 누르기 제스처 추가
-        function setupImageGestures() {
-            const images = document.querySelectorAll('img');
-            
-            images.forEach(function(img) {
-                if (img.hasAttribute('data-gesture-added')) return;
-                img.setAttribute('data-gesture-added', 'true');
-                
-                let pressTimer;
-                let startX, startY;
-                
-                // 터치 시작
-                img.addEventListener('touchstart', function(e) {
-                    startX = e.touches[0].clientX;
-                    startY = e.touches[0].clientY;
-                    
-                    pressTimer = setTimeout(function() {
-                        showImageActionSheet(img);
-                    }, 500); // 0.5초 길게 누르기
-                }, { passive: true });
-                
-                // 터치 이동 (길게 누르기 취소)
-                img.addEventListener('touchmove', function(e) {
-                    const deltaX = Math.abs(e.touches[0].clientX - startX);
-                    const deltaY = Math.abs(e.touches[0].clientY - startY);
-                    
-                    if (deltaX > 10 || deltaY > 10) {
-                        clearTimeout(pressTimer);
-                    }
-                }, { passive: true });
-                
-                // 터치 종료
-                img.addEventListener('touchend', function(e) {
-                    clearTimeout(pressTimer);
-                }, { passive: true });
-                
-                // 마우스 이벤트 (데스크탑 지원)
-                img.addEventListener('contextmenu', function(e) {
-                    e.preventDefault();
-                    showImageActionSheet(img);
-                });
-            });
-        }
-        
-        // 이미지 액션 시트 표시
-        function showImageActionSheet(img) {
-            const imageUrl = img.src || img.getAttribute('data-src') || img.getAttribute('data-original');
-            
-            if (!imageUrl) {
-                console.log('📷 이미지 URL을 찾을 수 없음');
-                return;
-            }
-            
-            // 햅틱 피드백 트리거 (iOS)
-            if (window.webkit?.messageHandlers?.saveImage) {
-                window.webkit.messageHandlers.saveImage.postMessage({
-                    action: 'haptic',
-                    type: 'impact'
-                });
-            }
-            
-            // 네이티브 액션 시트 표시
-            if (window.webkit?.messageHandlers?.saveImage) {
-                window.webkit.messageHandlers.saveImage.postMessage({
-                    action: 'showActionSheet',
-                    url: imageUrl,
-                    title: img.alt || '이미지',
-                    type: 'actionSheet'
-                });
-            }
-        }
-        
-        // 페이지 로드 시 이미지 제스처 설정
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupImageGestures);
-        } else {
-            setupImageGestures();
-        }
-        
-        // 동적으로 추가되는 이미지 감지
-        const observer = new MutationObserver(function(mutations) {
-            let shouldSetup = false;
-            mutations.forEach(function(mutation) {
-                mutation.addedNodes.forEach(function(node) {
-                    if (node.nodeType === 1) { // Element 노드
-                        if (node.tagName === 'IMG' || node.querySelector('img')) {
-                            shouldSetup = true;
-                        }
-                    }
-                });
-            });
-            
-            if (shouldSetup) {
-                setTimeout(setupImageGestures, 100);
-            }
-        });
-        
-        observer.observe(document.body, { 
-            childList: true, 
-            subtree: true 
-        });
-        
-        console.log('✅ 이미지 저장 스크립트 설정 완료');
+    let scriptSource = #"""
+    (function(){
+      if (window.__IMAGE_SAVE_HOOK_INSTALLED__) return;
+      window.__IMAGE_SAVE_HOOK_INSTALLED__ = true;
+
+      function isProbablyImage(url) {
+        if (!url) return false;
+        if (url.startsWith('data:image/')) return true;
+        try {
+          const u = new URL(url, window.location.href);
+          const ext = (u.pathname.split('.').pop() || "").toLowerCase();
+          if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return true;
+        } catch(e) {}
+        return false;
+      }
+
+      // 📌 오직 contextmenu(롱프레스)에서만 동작
+      document.addEventListener('contextmenu', function(e){
+        try {
+          let node = e.target, img = null;
+          while (node && node !== document) {
+            if (node.tagName === 'IMG') { img = node; break; }
+            node = node.parentNode;
+          }
+          if (!img) return;
+
+          // 📌 링크(<a>) 안에 포함된 IMG면 제외 → 카드뷰 썸네일 탭은 네비게이션 유지
+          let p = img.parentElement;
+          while (p && p !== document) {
+            if (p.tagName === 'A') return;
+            p = p.parentElement;
+          }
+
+          const src = img.currentSrc || img.src;
+          if (!isProbablyImage(src)) return;
+
+          if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.saveImage) {
+            window.webkit.messageHandlers.saveImage.postMessage({ url: src, gesture: 'contextmenu' });
+          }
+        } catch(_) {}
+      }, { passive: true });
+
+      // ❌ touchstart / touchend / click 은 절대 훅킹하지 않음
     })();
-    """
+    """#
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
 }
 
