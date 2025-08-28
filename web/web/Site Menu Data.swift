@@ -2,6 +2,7 @@
 //  Site Menu Data.swift
 //  🧩 사이트 메뉴 시스템 - 데이터 로직 및 관리자
 //  📋 데스크탑 모드, 팝업 차단, 다운로드, 히스토리, 개인정보, 성능 등 모든 기능 통합
+//  🖥️ 데스크탑 모드 델리게이트 연결 강화
 //
 
 import SwiftUI
@@ -222,7 +223,7 @@ extension Notification.Name {
 // MARK: - 🎯 Main System (Complete modules)
 enum SiteMenuSystem {
     
-    // MARK: - 🖥️ Desktop Module  
+    // MARK: - 🖥️ Enhanced Desktop Module with Delegate Connection
     enum Desktop {
         private static let desktopModeKey = "isDesktopModeEnabled"
         private static let zoomLevelKey = "currentZoomLevel"
@@ -234,11 +235,16 @@ enum SiteMenuSystem {
         static func setDesktopModeEnabled(_ enabled: Bool, for stateModel: WebViewStateModel) {
             stateModel.isDesktopMode = enabled
             UserDefaults.standard.set(enabled, forKey: desktopModeKey)
+            
+            // 🖥️ 델리게이트 연결: 웹뷰에 직접 설정 적용
+            if let webView = stateModel.webView {
+                applyDesktopModeToWebView(webView, enabled: enabled)
+            }
         }
         
         static func toggleDesktopMode(for stateModel: WebViewStateModel) {
-            stateModel.toggleDesktopMode()
-            UserDefaults.standard.set(stateModel.isDesktopMode, forKey: desktopModeKey)
+            let newMode = !stateModel.isDesktopMode
+            setDesktopModeEnabled(newMode, for: stateModel)
         }
         
         static func getZoomLevel(for stateModel: WebViewStateModel) -> Double {
@@ -249,6 +255,11 @@ enum SiteMenuSystem {
             let clampedLevel = max(0.3, min(3.0, level))
             stateModel.setZoomLevel(clampedLevel)
             UserDefaults.standard.set(clampedLevel, forKey: zoomLevelKey)
+            
+            // 🖥️ 델리게이트 연결: 웹뷰에 직접 줌 적용
+            if let webView = stateModel.webView, stateModel.isDesktopMode {
+                applyZoomToWebView(webView, level: clampedLevel)
+            }
         }
         
         static func getZoomPresets() -> [Double] {
@@ -258,6 +269,65 @@ enum SiteMenuSystem {
         static func resetToDefault(for stateModel: WebViewStateModel) {
             setDesktopModeEnabled(false, for: stateModel)
             setZoomLevel(1.0, for: stateModel)
+        }
+        
+        // 🖥️ 핵심 델리게이트 메서드들: 웹뷰와 직접 연결
+        private static func applyDesktopModeToWebView(_ webView: WKWebView, enabled: Bool) {
+            // 사용자 에이전트 설정
+            if enabled {
+                let desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                webView.customUserAgent = desktopUA
+            } else {
+                webView.customUserAgent = nil
+            }
+            
+            // JavaScript 환경 설정
+            let script = """
+            if (window.toggleDesktopMode) { 
+                window.toggleDesktopMode(\(enabled)); 
+            }
+            """
+            
+            webView.evaluateJavaScript(script) { result, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드 적용 실패: \(error.localizedDescription)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드 적용 완료: \(enabled)")
+                }
+            }
+        }
+        
+        private static func applyZoomToWebView(_ webView: WKWebView, level: Double) {
+            let script = """
+            if (window.setPageZoom) {
+                window.setPageZoom(\(level));
+            }
+            """
+            
+            webView.evaluateJavaScript(script) { result, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🔍 줌 적용 실패: \(error.localizedDescription)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔍 줌 레벨 적용: \(String(format: "%.1f", level))x")
+                }
+            }
+        }
+        
+        // 🖥️ 웹뷰 연결 시 상태 동기화 (CustomWebView에서 호출)
+        static func syncWebViewState(for stateModel: WebViewStateModel) {
+            guard let webView = stateModel.webView else { return }
+            
+            // 현재 데스크탑 모드 상태 적용
+            applyDesktopModeToWebView(webView, enabled: stateModel.isDesktopMode)
+            
+            // 데스크탑 모드가 켜져있고 줌 레벨이 기본값이 아니면 적용
+            if stateModel.isDesktopMode && stateModel.currentZoomLevel != 1.0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    applyZoomToWebView(webView, level: stateModel.currentZoomLevel)
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🖥️ 웹뷰 상태 동기화 완료")
         }
     }
     
@@ -626,7 +696,7 @@ enum SiteMenuSystem {
     }
 }
 
-// MARK: - 🎯 Enhanced Unified Manager with Popup Alert
+// MARK: - 🎯 Enhanced Unified Manager with Desktop Mode Delegate Connection
 class SiteMenuManager: ObservableObject {
     // MARK: - UI State
     @Published var showSiteMenu: Bool = false
@@ -643,11 +713,20 @@ class SiteMenuManager: ObservableObject {
     // MARK: - Settings State
     @Published var popupBlocked: Bool = SiteMenuSystem.Settings.getPopupBlockedState()
     
-    // MARK: - Desktop Mode State
-    private weak var currentStateModel: WebViewStateModel?
+    // MARK: - 🖥️ Desktop Mode State with Strong Connection
+    private weak var currentStateModel: WebViewStateModel? {
+        didSet {
+            // 🖥️ 상태 모델 변경 시 데스크탑 상태 동기화
+            if let stateModel = currentStateModel {
+                SiteMenuSystem.Desktop.syncWebViewState(for: stateModel)
+            }
+        }
+    }
     
     func setCurrentStateModel(_ stateModel: WebViewStateModel) {
         self.currentStateModel = stateModel
+        // 🖥️ 즉시 웹뷰 상태 동기화
+        SiteMenuSystem.Desktop.syncWebViewState(for: stateModel)
     }
     
     // MARK: - Downloads State
@@ -741,7 +820,7 @@ class SiteMenuManager: ObservableObject {
         showHistoryFilterManager = true
     }
     
-    // MARK: - Desktop Mode Actions
+    // MARK: - 🖥️ Enhanced Desktop Mode Actions with Strong Delegate Connection
     func getDesktopModeEnabled() -> Bool {
         guard let stateModel = currentStateModel else { return false }
         return SiteMenuSystem.Desktop.getDesktopModeEnabled(for: stateModel)
@@ -751,6 +830,7 @@ class SiteMenuManager: ObservableObject {
         guard let stateModel = currentStateModel else { return }
         SiteMenuSystem.Desktop.toggleDesktopMode(for: stateModel)
         objectWillChange.send()
+        TabPersistenceManager.debugMessages.append("🖥️ 데스크탑 모드 토글: \(getDesktopModeEnabled())")
     }
     
     func getZoomLevel() -> Double {
@@ -762,6 +842,7 @@ class SiteMenuManager: ObservableObject {
         guard let stateModel = currentStateModel else { return }
         SiteMenuSystem.Desktop.setZoomLevel(level, for: stateModel)
         objectWillChange.send()
+        TabPersistenceManager.debugMessages.append("🔍 줌 레벨 설정: \(String(format: "%.1f", level))x")
     }
     
     func adjustZoom(_ delta: Double) {
