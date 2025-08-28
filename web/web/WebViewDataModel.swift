@@ -9,6 +9,7 @@
 //  🔍 구글 검색 SPA 문제 완전 해결 - 검색 쿼리 변경 감지 + 강화된 정규화
 //  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
+//  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //
 
 import Foundation
@@ -90,37 +91,95 @@ struct PageRecord: Codable, Identifiable, Hashable {
         lastAccessed = Date()
     }
     
-    // 🎯 **핵심 해결책 1: 수정된 URL 정규화** - 검색 엔진은 검색 정규화 사용
+    // 🔧 트래킹/광고 파라미터(무시 대상) — 필요시 여기에만 추가
+    private static let ignoredTrackingKeys: Set<String> = [
+        "utm_source","utm_medium","utm_campaign","utm_term","utm_content","utm_id",
+        "gclid","fbclid","igshid","msclkid","yclid","ref","ref_src","ref_url",
+        "ved","ei","sclient","source","sourceid","gbv","lr","hl","biw","bih","dpr"
+    ]
+    
+    // 값 부재(nil)와 빈값("")을 **구분 보존**하여 미세 차이도 잡는다.
+    private static func normalizedQueryMapPreservingEmpty(_ comps: URLComponents?) -> [String: [String?]] {
+        let items = comps?.queryItems ?? []
+        var dict: [String: [String?]] = [:]
+        for it in items {
+            let name = it.name.lowercased()
+            if ignoredTrackingKeys.contains(name) { continue }
+            dict[name, default: []].append(it.value) // String? 그대로 보존(nil vs "")
+        }
+        // 정렬로 안정화(값 순서 변화에 영향받지 않도록)
+        for (k, arr) in dict {
+            dict[k] = arr.sorted { (a, b) in
+                switch (a, b) {
+                case let (la?, lb?): return la < lb
+                case (nil, _?):      return true
+                case (_?, nil):      return false
+                default:             return false
+                }
+            }
+        }
+        return dict
+    }
+    
+    // 경로 정규화: 중복/트레일링 슬래시 정리, http→https 승격
+    private static func normalizedComponents(for url: URL) -> URLComponents? {
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        if comps?.scheme == "http" { comps?.scheme = "https" }
+        if var path = comps?.path {
+            while path.contains("//") { path = path.replacingOccurrences(of: "//", with: "/") }
+            if path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+            comps?.path = path
+        }
+        return comps
+    }
+    
+    // 🔧 쿼리 차이 로깅 (디버깅용)
+    private static func logDiffIfSamePathButDifferentQuery(prev: URL, curr: URL) {
+        guard let a = normalizedComponents(for: prev), let b = normalizedComponents(for: curr) else { return }
+        let pa = a.path, pb = b.path
+        if pa == pb {
+            let qa = normalizedQueryMapPreservingEmpty(a)
+            let qb = normalizedQueryMapPreservingEmpty(b)
+            if qa != qb {
+                let removed = Set(qa.keys).subtracting(qb.keys).sorted()
+                let added   = Set(qb.keys).subtracting(qa.keys).sorted()
+                let common  = Set(qa.keys).intersection(qb.keys).sorted()
+                TabPersistenceManager.debugMessages.append("✏️ 쿼리 차이: -\(removed) +\(added)")
+                for k in common where qa[k]! != qb[k]! {
+                    TabPersistenceManager.debugMessages.append("✏️ 값 변경 [\(k)]: \(String(describing: qa[k]!)) -> \(String(describing: qb[k]!))")
+                }
+            }
+        }
+    }
+    
+    // ✅ 범용 정규화: **트래킹만 제거**, 그 외 파라미터는 전부 보존
     static func normalizeURL(_ url: URL) -> String {
-        // 🔍 **검색 URL인 경우 검색 정규화 사용**
+        // 검색엔진은 기존 특화 정규화 유지
         if isSearchURL(url) {
             return normalizeSearchURL(url)
         }
         
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        guard var comps = normalizedComponents(for: url) else { return url.absoluteString }
         
-        if components?.scheme == "http" {
-            components?.scheme = "https"
-        }
-        
-        if let path = components?.path, path.hasSuffix("/") && path.count > 1 {
-            components?.path = String(path.dropLast())
-        }
-        
-        // 핵심 파라미터만 유지
-        if let queryItems = components?.queryItems {
-            let importantParams = ["document_srl", "wr_id", "no", "id", "mid", "page"]
-            let filteredItems = queryItems.filter { importantParams.contains($0.name) }
-            
-            if !filteredItems.isEmpty {
-                components?.queryItems = filteredItems.sorted { $0.name < $1.name }
-            } else {
-                components?.query = nil
+        // 쿼리: 트래킹 키 제외하고 **모든 키/값 보존**
+        let kept = normalizedQueryMapPreservingEmpty(comps)
+        if kept.isEmpty {
+            comps.queryItems = nil
+        } else {
+            // String? 배열을 queryItems로 재구성
+            var items: [URLQueryItem] = []
+            for (k, arr) in kept.sorted(by: { $0.key < $1.key }) {
+                for v in arr {
+                    items.append(URLQueryItem(name: k, value: v)) // nil과 "" 구분 유지
+                }
             }
+            comps.queryItems = items
         }
         
-        components?.fragment = nil
-        return components?.url?.absoluteString ?? url.absoluteString
+        // 프래그먼트: 기본적으로 제거(필요 시 정책적으로 남길 수 있음)
+        comps.fragment = nil
+        
+        return comps.url?.absoluteString ?? url.absoluteString
     }
     
     func normalizedURL() -> String {
@@ -870,7 +929,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
     
-    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직**
+    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용)**
     
     func addNewPage(url: URL, title: String = "") {
         if PageRecord.isLoginRelatedURL(url) {
@@ -884,12 +943,23 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // ✅ **핵심 로직**: 현재 페이지와 같으면 제목만 업데이트
-        if let currentRecord = currentPageRecord,
-           currentRecord.normalizedURL() == PageRecord.normalizeURL(url) {
-            updatePageTitle(for: url, title: title)
-            dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
-            return
+        // ✅ **핵심 로직 (범용 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
+        if let currentRecord = currentPageRecord {
+            let currentNormalized = currentRecord.normalizedURL()
+            let newNormalized = PageRecord.normalizeURL(url)
+            
+            // 🔧 쿼리 차이 로깅 (디버깅용)
+            PageRecord.logDiffIfSamePathButDifferentQuery(prev: currentRecord.url, curr: url)
+            
+            if currentNormalized == newNormalized {
+                updatePageTitle(for: url, title: title)
+                dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
+                return
+            } else {
+                dbg("🆕 URL 차이 감지 - 새 페이지 추가")
+                dbg("   현재: \(currentNormalized)")
+                dbg("   신규: \(newNormalized)")
+            }
         }
         
         // ✅ **새 페이지 추가**: forward 스택 제거 후 추가
