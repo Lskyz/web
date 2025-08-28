@@ -1,7 +1,7 @@
 //
 //  Site Menu UI.swift
 //  🧩 사이트 메뉴 시스템 - UI 컴포넌트 모음
-//  📋 모든 설정 화면 및 오버레이 UI 컴포넌트
+//  📋 모든 설정 화면 및 오버레이 UI 컴포넌트 - 데스크탑 모드 확장
 //
 
 import SwiftUI
@@ -9,7 +9,7 @@ import Foundation
 import WebKit
 import AVFoundation
 
-// MARK: - 🎨 UI Components Module (Complete with Enhanced Popup Blocking)
+// MARK: - 🎨 UI Components Module (Complete with Enhanced Popup Blocking and Extended Desktop Mode)
 extension SiteMenuSystem {
     enum UI {
         
@@ -77,7 +77,7 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - Main Site Menu Overlay - 🎯 주소창 위로 위치 조정
+        // MARK: - Main Site Menu Overlay - 🎯 주소창 위로 위치 조정 + 데스크탑 모드 확장
         struct SiteMenuOverlay: View {
             @ObservedObject var manager: SiteMenuManager
             let currentState: WebViewStateModel
@@ -171,9 +171,11 @@ extension SiteMenuSystem {
                 }
             }
             
+            // ⚙️ 퀵 설정 섹션 - 데스크탑 모드 확장 (2배 너비) 및 위치 변경
             @ViewBuilder
             private var quickSettingsSection: some View {
                 VStack(spacing: 8) {
+                    // 첫 번째 줄: 팝업 차단 + 성능 (위치 바뀜)
                     HStack {
                         quickSettingButton(
                             icon: "shield.fill",
@@ -185,17 +187,56 @@ extension SiteMenuSystem {
                         }
                         
                         quickSettingButton(
-                            icon: manager.getDesktopModeEnabled() ? "display" : "iphone",
-                            title: "데스크탑 모드",
-                            isOn: manager.getDesktopModeEnabled(),
-                            color: manager.getDesktopModeEnabled() ? .blue : .gray
+                            icon: "speedometer",
+                            title: "성능",
+                            isOn: false,
+                            color: .red
                         ) {
-                            manager.toggleDesktopMode()
+                            manager.showPerformanceSettings = true
                         }
                     }
                     
-                    if manager.getDesktopModeEnabled() {
-                        desktopZoomControls
+                    // 두 번째 줄: 데스크탑 모드 (2배 너비로 확장)
+                    VStack(spacing: 8) {
+                        // 데스크탑 모드 토글 버튼 (전체 너비)
+                        Button(action: {
+                            manager.toggleDesktopMode()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: manager.getDesktopModeEnabled() ? "display" : "iphone")
+                                    .font(.title2)
+                                    .foregroundColor(manager.getDesktopModeEnabled() ? .blue : .gray)
+                                
+                                Text("데스크탑 모드")
+                                    .font(.headline)
+                                    .foregroundColor(manager.getDesktopModeEnabled() ? .primary : .secondary)
+                                
+                                Spacer()
+                                
+                                Text(manager.getDesktopModeEnabled() ? "ON" : "OFF")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(manager.getDesktopModeEnabled() ? Color.blue : Color.gray)
+                                    .foregroundColor(.white)
+                                    .cornerRadius(12)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        
+                        // 데스크탑 모드가 켜져있을 때만 슬라이더와 배율 컨트롤 표시
+                        if manager.getDesktopModeEnabled() {
+                            desktopZoomControls
+                        }
                     }
                 }
             }
@@ -224,56 +265,113 @@ extension SiteMenuSystem {
                 .buttonStyle(.plain)
             }
             
+            // 🖥️ 확장된 데스크탑 줌 컨트롤 (슬라이더 + 배율 프리셋)
             @ViewBuilder
             private var desktopZoomControls: some View {
-                VStack(spacing: 8) {
+                VStack(spacing: 12) {
+                    // 현재 줌 레벨 표시
                     HStack {
-                        Text("페이지 줌")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("페이지 배율")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
                         
                         Spacer()
                         
-                        Text("\(String(format: "%.1f", manager.getZoomLevel()))x")
-                            .font(.caption)
-                            .fontWeight(.medium)
+                        Text("\(String(format: "%.0f", manager.getZoomLevel() * 100))%")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
                             .foregroundColor(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
                     }
                     
-                    HStack {
-                        Button("-") {
-                            manager.adjustZoom(-0.1)
-                        }
-                        .frame(width: 28, height: 28)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(6)
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
-                                    Button("\(String(format: "%.1f", preset))x") {
-                                        manager.setZoomLevel(preset)
-                                    }
-                                    .font(.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
-                                    .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
-                                    .cornerRadius(6)
+                    // 슬라이더 컨트롤
+                    VStack(spacing: 8) {
+                        HStack(spacing: 12) {
+                            Text("30%")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            
+                            Slider(value: Binding(
+                                get: { manager.getZoomLevel() },
+                                set: { newValue in
+                                    manager.setZoomLevel(newValue)
                                 }
-                            }
-                            .padding(.horizontal, 4)
+                            ), in: 0.3...3.0, step: 0.1)
+                            .accentColor(.blue)
+                            
+                            Text("300%")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
                         
-                        Button("+") {
-                            manager.adjustZoom(0.1)
+                        // 빠른 배율 조정 버튼들
+                        HStack(spacing: 8) {
+                            Button("-") {
+                                manager.adjustZoom(-0.1)
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            .frame(width: 32, height: 32)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(8)
+                            
+                            Spacer()
+                            
+                            Button("리셋") {
+                                manager.setZoomLevel(1.0)
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.gray.opacity(0.1))
+                            .foregroundColor(.primary)
+                            .cornerRadius(8)
+                            
+                            Spacer()
+                            
+                            Button("+") {
+                                manager.adjustZoom(0.1)
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
+                            .frame(width: 32, height: 32)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(8)
                         }
-                        .frame(width: 28, height: 28)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(6)
+                    }
+                    
+                    // 배율 프리셋 버튼들
+                    VStack(spacing: 8) {
+                        Text("빠른 배율 선택")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
+                            ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
+                                Button("\(String(format: "%.0f", preset * 100))%") {
+                                    manager.setZoomLevel(preset)
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                }
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
+                                .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
+                                .cornerRadius(8)
+                            }
+                        }
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, 8)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
+                .background(Color.blue.opacity(0.05))
+                .cornerRadius(12)
             }
 
             @ViewBuilder
@@ -301,19 +399,13 @@ extension SiteMenuSystem {
                         }
                     }
                     
+                    // 빈 공간으로 균형 맞춤
                     HStack {
-                        menuOptionRow(
-                            icon: "speedometer",
-                            title: "성능",
-                            subtitle: "메모리 & 캐시",
-                            color: .red
-                        ) {
-                            manager.showPerformanceSettings = true
-                        }
+                        Color.clear
+                            .frame(maxWidth: .infinity)
                         
                         Spacer()
                         
-                        // 빈 공간을 위한 투명 버튼
                         Color.clear
                             .frame(maxWidth: .infinity)
                     }
