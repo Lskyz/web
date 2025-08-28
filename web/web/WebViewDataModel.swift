@@ -8,6 +8,7 @@
 //  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
 //  🔍 구글 검색 SPA 문제 완전 해결 - 검색 쿼리 변경 감지 + 강화된 정규화
 //  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
+//  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //
 
 import Foundation
@@ -446,7 +447,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return nil
     }
     
-    // MARK: - 🌐 **SPA 네비게이션 처리** (강화된 검색 처리 + Google 검색 플로우 개선)
+    // MARK: - 🌐 **SPA 네비게이션 처리** (🏠 루트 Replace 오염 방지 적용)
     
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
         dbg("🌐 SPA \(type): \(siteType) | \(url.absoluteString)")
@@ -480,7 +481,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
             
         case "replace":
-            // replace는 현재 페이지 교체 (복원 중이어도 허용)
+            // 🏠 **핵심 개선: 루트 Replace 오염 방지**
+            let isRoot = (url.path == "/" || url.path.isEmpty)
+            let isHomeClick = siteType.lowercased().contains("homeclick")
+
+            if isRoot {
+                if isHomeClick {
+                    // 진짜 홈 이동(로고 클릭 등) → 새 페이지로 기록
+                    if !isHistoryNavigationActive() {
+                        dbg("🏠 홈 클릭 기반 root replace → 새 페이지 추가")
+                        addNewPage(url: url, title: title)
+                    } else {
+                        dbg("🤫 복원 중 홈 클릭 root replace 무시")
+                    }
+                } else {
+                    // 일시적/전이성 root replace → 전면 무시 (히스토리 오염 방지)
+                    dbg("⚠️ 일시적 root replace 무시: \(url.absoluteString)")
+                }
+                return
+            }
+
+            // 루트가 아닌 정상 replace는 그대로 교체
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
         case "pop":
@@ -615,11 +636,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
     
-    // MARK: - 🌐 **SPA 훅 JavaScript 스크립트** (CustomWebView에서 사용)
+    // MARK: - 🌐 **SPA 훅 JavaScript 스크립트** (🏠 루트 Replace 디바운싱 적용)
     
     static func makeSPANavigationScript() -> WKUserScript {
         let scriptSource = """
-        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅
+        // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 + 🏠 루트 Replace 디바운싱
         (function() {
             'use strict';
 
@@ -627,6 +648,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
+
+            // 🏠 **루트 Replace 디바운싱 설정**
+            const SPA_BOOT_SUPPRESS_MS = 500;  // 초기 부트 중 루트 replace 무시
+            const ROOT_REPLACE_DELAY_MS = 250; // 루트 replace 지연 후 전송
+            const bootAt = Date.now();
+
+            let rootReplaceTimer = null;
+            let pendingRootPayload = null;
+            let lastNonRootNavAt = 0;
+            let lastHomeClickAt = 0;
 
             let currentSPAState = {
                 url: window.location.href,
@@ -645,6 +676,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             function shouldExcludeFromHistory(url) {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
+
+            // 🏠 **홈(로고) 클릭 식별 리스너**
+            document.addEventListener('click', (e) => {
+                const a = e.target.closest && e.target.closest('a[href="/"], a[data-home], a[role="home"]');
+                if (a) {
+                    lastHomeClickAt = Date.now();
+                    console.log('🏠 홈 클릭 감지:', a);
+                }
+            }, true);
 
             // ===== 범용 커뮤니티 패턴 매칭 =====
             function detectSiteType(url) {
@@ -720,30 +760,78 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return `${host}_${pattern}`;
             }
 
+            // 🏠 **개선된 네비게이션 전송 함수** (루트 replace 디바운싱)
+            function postSPANav(message) {
+                if (window.webkit?.messageHandlers?.spaNavigation) {
+                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
+                    console.log(`🌐 SPA ${message.type}: ${message.siteType} | ${message.url}`);
+                }
+            }
+
+            function sendOrDelay(type, url, title, state) {
+                const now = Date.now();
+                const u = new URL(url, window.location.origin);
+                let siteType = detectSiteType(u.href);
+
+                const isRoot = (u.pathname === '/' || u.pathname === '');
+
+                // 🏠 홈 클릭 힌트 부여
+                const recentlyHomeClicked = (now - lastHomeClickAt) <= 600;
+                if (recentlyHomeClicked) {
+                    siteType = `${siteType}_homeclick`;
+                }
+
+                // 🏠 **부트 중 루트 replace 무시**
+                if (type === 'replace' && isRoot && (now - bootAt) < SPA_BOOT_SUPPRESS_MS) {
+                    console.log('⚠️ suppress root replace during boot:', u.href);
+                    return;
+                }
+
+                // 비루트 네비 시간 갱신
+                if (!isRoot) {
+                    lastNonRootNavAt = now;
+                }
+
+                // 🏠 **루트 replace는 지연 전송(디바운스)**
+                if (type === 'replace' && isRoot && !recentlyHomeClicked) {
+                    // 이전 대기 취소
+                    if (rootReplaceTimer) {
+                        clearTimeout(rootReplaceTimer);
+                        rootReplaceTimer = null;
+                        pendingRootPayload = null;
+                    }
+                    // 지연 예약
+                    pendingRootPayload = {
+                        type, url: u.href, title: title || document.title, state, siteType
+                    };
+                    rootReplaceTimer = setTimeout(() => {
+                        // 지연 중에 비루트 네비가 발생했다면 폐기
+                        const dt = Date.now() - lastNonRootNavAt;
+                        if (dt < ROOT_REPLACE_DELAY_MS) {
+                            console.log('⚠️ drop transient root replace:', u.href);
+                        } else {
+                            postSPANav(pendingRootPayload);
+                        }
+                        rootReplaceTimer = null;
+                        pendingRootPayload = null;
+                    }, ROOT_REPLACE_DELAY_MS);
+                    return;
+                }
+
+                // 그 외는 즉시 전송
+                postSPANav({
+                    type, url: u.href, title: title || document.title, state, siteType
+                });
+            }
+
             function notifyNavigation(type, url, title, state) {
                 if (shouldExcludeFromHistory(url)) {
                     console.log(`🔒 히스토리 제외: ${url} (${type})`);
                     return;
                 }
 
-                const siteType = detectSiteType(url);
-
-                const message = {
-                    type: type,
-                    url: url,
-                    title: title || document.title,
-                    state: state,
-                    timestamp: Date.now(),
-                    userAgent: navigator.userAgent,
-                    referrer: document.referrer,
-                    siteType: siteType,
-                    shouldExclude: false
-                };
-
-                if (window.webkit?.messageHandlers?.spaNavigation) {
-                    window.webkit.messageHandlers.spaNavigation.postMessage(message);
-                    console.log(`🌐 SPA ${type}: ${siteType} | ${url}`);
-                }
+                // 🏠 **기존 notifyNavigation 대신 sendOrDelay 사용**
+                sendOrDelay(type, url, title, state);
             }
 
             // ===== History API 후킹 =====
@@ -789,7 +877,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             observer.observe(document.body, { childList: true, subtree: true });
 
-            console.log('✅ SPA 네비게이션 훅 설정 완료');
+            console.log('✅ SPA 네비게이션 훅 설정 완료 (루트 Replace 디바운싱 적용)');
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -898,10 +986,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         dbg("📝 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
     }
     
-    // 🔧 **새로 추가**: URL 기반 제목 업데이트 메서드
+    // 🔧 **개선된 제목 업데이트**: 공백 제목 보정 추가
     func updatePageTitle(for url: URL, title: String) {
-        guard !title.isEmpty else { return }
-        
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeTitle = trimmed.isEmpty ? (url.host ?? "제목 없음") : trimmed
         let normalizedURL = PageRecord.normalizeURL(url)
         
         // 해당 URL을 가진 가장 최근 레코드 찾기
@@ -909,9 +997,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let record = pageHistory[i]
             if record.normalizedURL() == normalizedURL {
                 var updatedRecord = record
-                updatedRecord.updateTitle(title)
+                updatedRecord.updateTitle(safeTitle)
                 pageHistory[i] = updatedRecord
-                dbg("📝 URL 기반 제목 업데이트: '\(title)' [인덱스: \(i)] URL: \(url.absoluteString)")
+                dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString)")
                 return
             }
         }
