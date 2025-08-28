@@ -274,9 +274,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var restoreQueue: [RestoreQueueItem] = []
     private var expectedNormalizedURL: String? = nil
     
-    // 🎯 **범용 전이 pop 필터용**: 모든 네비게이션 타임스탬프
-    private var lastNavigationAt: Date = .distantPast
-    private static let transientPopIgnoreWindow: TimeInterval = 0.35 // 350ms: 전이성 pop 무시 창
+    // 🎯 **비루트 네비 직후 루트 pop 무시용**: provisional 네비게이션 추적
+    private var lastProvisionalNavAt: Date?
+    private var lastProvisionalURL: URL?
+    private static let rootPopNavWindow: TimeInterval = 0.6 // 600ms
     
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
@@ -465,45 +466,59 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             
             addNewPage(url: url, title: title)
             
-            // 🎯 **모든 네비게이션 타임스탬프 갱신**
-            lastNavigationAt = Date()
-            
         case "replace":
-            // 🏠 **핵심 개선: 루트 Replace 오염 방지**
             let isRoot = (url.path == "/" || url.path.isEmpty)
-            let isHomeClick = siteType.lowercased().contains("homeclick")
+
+            // 🎯 **비루트 네비 직후(600ms) 들어온 루트 replace는 전이성으로 보고 무시**
+            if isRoot, let t = lastProvisionalNavAt,
+               Date().timeIntervalSince(t) < Self.rootPopNavWindow {
+                dbg("🔕 replace 무시 - 비루트 네비 직후 전이성 루트 replace")
+                return
+            }
 
             if isRoot {
-                if isHomeClick {
-                    // 진짜 홈 이동(로고 클릭 등) → 새 페이지로 기록
+                // 진짜 홈 이동만 새 페이지로 반영하고, 그 외 루트 replace는 히스토리 오염 방지 목적 무시
+                if let cur = currentPageRecord, !(cur.url.path == "/" || cur.url.path.isEmpty) {
+                    dbg("🏠 홈 이동으로 판단 → 새 페이지 추가")
                     if !isHistoryNavigationActive() {
-                        dbg("🏠 홈 클릭 기반 root replace → 새 페이지 추가")
                         addNewPage(url: url, title: title)
                     } else {
-                        dbg("🤫 복원 중 홈 클릭 root replace 무시")
+                        dbg("🤫 복원 중 홈 이동 무시")
                     }
                 } else {
-                    // 일시적/전이성 root replace → 전면 무시 (히스토리 오염 방지)
-                    dbg("⚠️ 일시적 root replace 무시: \(url.absoluteString)")
+                    dbg("🔕 루트 replace 무시(중복/전이성)")
                 }
                 return
             }
 
-            // 루트가 아닌 정상 replace는 그대로 교체
+            // 정상 replace
             replaceCurrentPage(url: url, title: title, siteType: siteType)
             
-            // 🎯 **모든 네비게이션 타임스탬프 갱신**
-            lastNavigationAt = Date()
-            
         case "pop":
-            // 🎯 **범용 전이 pop 필터** (루트든 아니든 모든 전이성 pop 차단)
-            let dt = Date().timeIntervalSince(lastNavigationAt)
-            if dt <= Self.transientPopIgnoreWindow {
-                dbg("🔕 pop 무시 - 전이성 pop (\(String(format: "%.3f", dt))s): \(url.absoluteString)")
+            let isRoot = (url.path == "/" || url.path.isEmpty)
+
+            // 🎯 **핵심 가드: 비루트 네비 직후 루트 pop 무시**
+            if isRoot, let t = lastProvisionalNavAt,
+               Date().timeIntervalSince(t) < Self.rootPopNavWindow,
+               let u = lastProvisionalURL, !(u.path == "/" || u.path.isEmpty) {
+                // 검색/상세로 가는 비루트 네비를 막 시작했는데, 중간에 튄 루트 pop은 잡음으로 간주
+                dbg("🔕 pop 무시 - 비루트 네비 직후의 전이성 루트 pop (\(String(format: "%.3f", Date().timeIntervalSince(t)))s) from \(u.absoluteString)")
                 return
             }
 
-            // 🔍 **검색 URL 특수 처리** (구글 검색어 복귀 방지만 담당)
+            // 🎯 **루트 pop의 실제 복원**: 과거에 루트가 있을 때만
+            if isRoot {
+                if currentPageIndex > 0,
+                   let idx = pageHistory[0..<currentPageIndex].lastIndex(where: { $0.url.path == "/" || $0.url.path.isEmpty }) {
+                    dbg("🔄 pop - 과거 루트 기록 복원: index \(idx)")
+                    _ = enqueueRestore(to: idx)
+                } else {
+                    dbg("🔕 pop 무시 - 과거 루트 기록 없음(노이즈 루트 pop)")
+                }
+                return
+            }
+
+            // 🔍 **검색 URL 특수 처리** (구글 검색어 복귀 방지)
             if PageRecord.isSearchURL(url) {
                 dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
                 
@@ -559,14 +574,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // 홈페이지면 새 페이지, 아니면 현재 페이지 교체
             if isHomepageURL(url) && !isHistoryNavigationActive() {
                 addNewPage(url: url, title: title)
-                
-                // 🎯 **모든 네비게이션 타임스탬프 갱신**
-                lastNavigationAt = Date()
             } else {
                 replaceCurrentPage(url: url, title: title, siteType: siteType)
-                
-                // 🎯 **모든 네비게이션 타임스탬프 갱신**
-                lastNavigationAt = Date()
             }
             
         case "title":
@@ -1026,7 +1035,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         restoreState = .idle
         expectedNormalizedURL = nil
         restoreQueue.removeAll()
-        lastNavigationAt = .distantPast
+        lastProvisionalNavAt = nil
+        lastProvisionalURL = nil
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
     
@@ -1063,6 +1073,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleLoadingStart()
         
         dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
+        
+        // 🎯 **비루트 네비 감지용 스탬프**
+        if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
+            lastProvisionalNavAt = Date()
+            lastProvisionalURL = u
+        }
     }
     
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
