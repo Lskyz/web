@@ -46,9 +46,9 @@ struct CustomWebView: UIViewRepresentable {
         if webView == nil {
             // WKWebView 설정
             let config = WKWebViewConfiguration()
-            config.allowsInlineMediaPlaybook = true
-            config.allowsPictureInPictureMediaPlaybook = true
-            config.mediaTypesRequiringUserActionForPlaybook = []
+            config.allowsInlineMediaPlayback = true
+            config.allowsPictureInPictureMediaPlayback = true
+            config.mediaTypesRequiringUserActionForPlayback = []
             config.websiteDataStore = WKWebsiteDataStore.default()
             config.processPool = WKProcessPool()
 
@@ -57,7 +57,7 @@ struct CustomWebView: UIViewRepresentable {
                 config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
                 // ✅ 다운로드 허용 설정 추가
                 config.preferences.javaScriptCanOpenWindowsAutomatically = true
-                config.allowsInlineMediaPlaybook = true
+                config.allowsInlineMediaPlayback = true
             }
 
             // 사용자 스크립트/메시지 핸들러 (헬퍼 호출)
