@@ -179,8 +179,7 @@ func makeDesktopModeScript() -> WKUserScript {
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
 }
 
-// MARK: - 이미지 저장 스크립트 구현체 (안전한 JavaScript 방식)
-// MARK: - 이미지 저장 스크립트 구현체 (롱프레스 전용, 안전모드)
+// MARK: - 🔧 수정된 이미지 저장 스크립트 (롱프레스 전용, 썸네일 클릭 문제 해결)
 func makeImageSaveScript() -> WKUserScript {
     let scriptSource = #"""
     (function(){
@@ -198,33 +197,50 @@ func makeImageSaveScript() -> WKUserScript {
         return false;
       }
 
-      // 📌 오직 contextmenu(롱프레스)에서만 동작
+      // 📌 오직 contextmenu(롱프레스)에서만 동작 - 터치 이벤트 완전 제거
       document.addEventListener('contextmenu', function(e){
         try {
           let node = e.target, img = null;
+          
+          // IMG 태그 찾기
           while (node && node !== document) {
-            if (node.tagName === 'IMG') { img = node; break; }
+            if (node.tagName === 'IMG') { 
+              img = node; 
+              break; 
+            }
             node = node.parentNode;
           }
+          
           if (!img) return;
 
-          // 📌 링크(<a>) 안에 포함된 IMG면 제외 → 카드뷰 썸네일 탭은 네비게이션 유지
-          let p = img.parentElement;
-          while (p && p !== document) {
-            if (p.tagName === 'A') return;
-            p = p.parentElement;
+          // 🔧 핵심 수정: 링크(<a>) 안에 포함된 IMG면 제외 → 카드뷰 썸네일 탭은 네비게이션 유지
+          let parent = img.parentElement;
+          while (parent && parent !== document) {
+            if (parent.tagName === 'A') {
+              // 링크 안의 이미지는 이미지 저장 기능 비활성화
+              console.log('🔗 링크 안의 이미지 감지 - 이미지 저장 기능 비활성화');
+              return;
+            }
+            parent = parent.parentElement;
           }
 
           const src = img.currentSrc || img.src;
           if (!isProbablyImage(src)) return;
 
+          // 롱프레스만 처리
           if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.saveImage) {
-            window.webkit.messageHandlers.saveImage.postMessage({ url: src, gesture: 'contextmenu' });
+            window.webkit.messageHandlers.saveImage.postMessage({ 
+              url: src, 
+              gesture: 'contextmenu' 
+            });
+            console.log('📷 이미지 저장 요청:', src);
           }
-        } catch(_) {}
+        } catch(err) {
+          console.log('이미지 저장 처리 오류:', err);
+        }
       }, { passive: true });
 
-      // ❌ touchstart / touchend / click 은 절대 훅킹하지 않음
+      console.log('✅ 이미지 저장 훅 초기화 완료 (롱프레스 전용)');
     })();
     """#
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -1060,8 +1076,7 @@ func handleDownloadDecision(_ navigationResponse: WKNavigationResponse, decision
             }
         }
         
-        // 🎯 **기본값: 웹페이지로 처리** (PHP, HTML, 동영상 등 모든 일반 콘텐츠)
-        TabPersistenceManager.debugMessages.append("📁 웹페이지로 처리: \(navigationResponse.response.mimeType ?? "unknown")")
+       
     }
     
     decisionHandler(.allow)
