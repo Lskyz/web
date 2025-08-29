@@ -355,38 +355,37 @@ struct CustomWebView: UIViewRepresentable {
             
             switch gesture.state {
             case .began:
-                // 전환 시작 - 오버레이 뷰 생성
+                // 전환 시작 - 웹뷰 실제 이동 준비
                 if isLeftEdge && parent.stateModel.canGoBack {
-                    createSlideTransitionOverlay(for: webView, direction: .back)
+                    prepareSlideTransition(for: webView, direction: .back)
                 } else if !isLeftEdge && parent.stateModel.canGoForward {
-                    createSlideTransitionOverlay(for: webView, direction: .forward)
+                    prepareSlideTransition(for: webView, direction: .forward)
                 }
                 
             case .changed:
-                // 제스처 진행 중 - 전환 효과 업데이트
-                updateSlideTransitionProgress(progress: progress, translation: translation.x, isLeftEdge: isLeftEdge)
+                // 제스처 진행 중 - 웹뷰를 실제로 밀어내기
+                updateWebViewSlidePosition(webView: webView, translation: translation.x, isLeftEdge: isLeftEdge)
                 
             case .ended, .cancelled:
                 let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
                 
                 if shouldComplete {
-                    // 전환 완료 애니메이션
-                    completeSlideTransition(isLeftEdge: isLeftEdge, completion: { [weak self] in
+                    // 전환 완료 - 웹뷰를 완전히 밀어내고 새 페이지 로드
+                    completeWebViewSlideTransition(webView: webView, isLeftEdge: isLeftEdge) { [weak self] in
                         // 실제 네비게이션 실행
                         if isLeftEdge && self?.parent.stateModel.canGoBack == true {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             self?.parent.stateModel.goBack()
-                            print("🎭 슬라이드 뒤로가기 완료")
+                            print("🎭 실제 페이지 슬라이드 뒤로가기 완료")
                         } else if !isLeftEdge && self?.parent.stateModel.canGoForward == true {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             self?.parent.stateModel.goForward()
-                            print("🎭 슬라이드 앞으로가기 완료")
+                            print("🎭 실제 페이지 슬라이드 앞으로가기 완료")
                         }
-                        self?.removeSlideTransitionOverlay()
-                    })
+                    }
                 } else {
-                    // 전환 취소 애니메이션
-                    cancelSlideTransition()
+                    // 전환 취소 - 웹뷰를 원래 위치로 되돌리기
+                    cancelWebViewSlideTransition(webView: webView)
                 }
                 
             default:
