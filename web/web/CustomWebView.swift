@@ -9,6 +9,7 @@
 //  🏊‍♂️ 웹뷰 풀 실제 연동 완료 - 생성/등록/재사용/정리
 //  🚫 팝업 차단 시스템 완전 통합
 //  🚫 복잡한 캐시 및 미리보기 시스템 제거
+//  🎭 앞뒤 스와이프 제스처 슬라이드 전환 효과 적용
 //
 
 import SwiftUI
@@ -45,9 +46,9 @@ struct CustomWebView: UIViewRepresentable {
         if webView == nil {
             // WKWebView 설정
             let config = WKWebViewConfiguration()
-            config.allowsInlineMediaPlayback = true
-            config.allowsPictureInPictureMediaPlayback = true
-            config.mediaTypesRequiringUserActionForPlayback = []
+            config.allowsInlineMediaPlaybook = true
+            config.allowsPictureInPictureMediaPlaybook = true
+            config.mediaTypesRequiringUserActionForPlaybook = []
             config.websiteDataStore = WKWebsiteDataStore.default()
             config.processPool = WKProcessPool()
 
@@ -56,7 +57,7 @@ struct CustomWebView: UIViewRepresentable {
                 config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
                 // ✅ 다운로드 허용 설정 추가
                 config.preferences.javaScriptCanOpenWindowsAutomatically = true
-                config.allowsInlineMediaPlayback = true
+                config.allowsInlineMediaPlaybook = true
             }
 
             // 사용자 스크립트/메시지 핸들러 (헬퍼 호출)
@@ -113,8 +114,8 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 초기 사용자 에이전트 설정 (헬퍼 호출)
         updateUserAgentIfNeeded(webView: finalWebView, stateModel: stateModel)
 
-        // 📸 단순화된 제스처 설정 (캐시 제거)
-        context.coordinator.setupSimpleSwipeGesture(for: finalWebView)
+        // 🎭 슬라이드 전환 효과가 적용된 제스처 설정
+        context.coordinator.setupSlideTransitionGesture(for: finalWebView)
 
         // Pull to Refresh (헬퍼 호출)
         setupPullToRefresh(for: finalWebView, target: context.coordinator, action: #selector(Coordinator.handleRefresh(_:)))
@@ -233,8 +234,8 @@ struct CustomWebView: UIViewRepresentable {
         uiView.navigationDelegate = nil // 📁 네비게이션 델리게이트도 해제
         coordinator.webView = nil
 
-        // 📸 제스처 제거
-        coordinator.removeSimpleSwipeGesture(from: uiView)
+        // 🎭 제스처 제거
+        coordinator.removeSlideTransitionGesture(from: uiView)
 
         // 오디오 세션 비활성화 (헬퍼 호출)
         deactivateAudioSession()
@@ -258,9 +259,14 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 데스크탑 모드 변경 감지용 플래그
         var lastDesktopMode: Bool = false
 
-        // 📸 단순화된 제스처 관리
+        // 🎭 슬라이드 전환 효과가 적용된 제스처 관리
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
+        
+        // 🎭 전환 효과 상태 관리
+        @State private var isShowingBackTransition = false
+        @State private var isShowingForwardTransition = false
+        private var transitionOverlayView: UIView?
         
         // 📁 **다운로드 진행률 UI 구성 요소들 (헬퍼가 관리)**
         var overlayContainer: UIVisualEffectView?
@@ -306,26 +312,26 @@ struct CustomWebView: UIViewRepresentable {
             TabPersistenceManager.debugMessages.append("🎬 PIP 종료 요청 수신: 탭 \(String(tabID.uuidString.prefix(8)))")
         }
 
-        // MARK: - 📸 단순화된 제스처 설정 (복잡한 캐시 로직 제거)
-        func setupSimpleSwipeGesture(for webView: WKWebView) {
-            // 왼쪽 에지 제스처 (뒤로가기)
-            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSimpleEdgeGesture(_:)))
+        // MARK: - 🎭 슬라이드 전환 효과가 적용된 제스처 설정
+        func setupSlideTransitionGesture(for webView: WKWebView) {
+            // 왼쪽 에지 제스처 (뒤로가기 - 오른쪽에서 슬라이드)
+            let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSlideTransitionGesture(_:)))
             leftEdge.edges = .left
             leftEdge.delegate = self
             webView.addGestureRecognizer(leftEdge)
             self.leftEdgeGesture = leftEdge
             
-            // 오른쪽 에지 제스처 (앞으로가기)
-            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSimpleEdgeGesture(_:)))
+            // 오른쪽 에지 제스처 (앞으로가기 - 왼쪽에서 슬라이드)
+            let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSlideTransitionGesture(_:)))
             rightEdge.edges = .right
             rightEdge.delegate = self
             webView.addGestureRecognizer(rightEdge)
             self.rightEdgeGesture = rightEdge
             
-            print("📸 단순화된 제스처 설정 완료")
+            print("🎭 슬라이드 전환 효과 제스처 설정 완료")
         }
         
-        func removeSimpleSwipeGesture(from webView: WKWebView) {
+        func removeSlideTransitionGesture(from webView: WKWebView) {
             if let gesture = leftEdgeGesture {
                 webView.removeGestureRecognizer(gesture)
                 self.leftEdgeGesture = nil
@@ -334,35 +340,179 @@ struct CustomWebView: UIViewRepresentable {
                 webView.removeGestureRecognizer(gesture)
                 self.rightEdgeGesture = nil
             }
+            
+            // 전환 오버레이 제거
+            transitionOverlayView?.removeFromSuperview()
+            transitionOverlayView = nil
         }
         
-        // MARK: - 📸 단순화된 에지 제스처 핸들러 (캐시 미리보기 제거)
-        @objc private func handleSimpleEdgeGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        // MARK: - 🎭 SlideFromRightIOS 스타일 전환 효과 핸들러
+        @objc private func handleSlideTransitionGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+            guard let webView = webView else { return }
+            
             let translation = gesture.translation(in: gesture.view)
             let velocity = gesture.velocity(in: gesture.view)
             let isLeftEdge = (gesture.edges == .left)
+            let progress = abs(translation.x) / (gesture.view?.bounds.width ?? 1)
             
             switch gesture.state {
-            case .ended:
-                let progress = abs(translation.x) / (gesture.view?.bounds.width ?? 1)
+            case .began:
+                // 전환 시작 - 오버레이 뷰 생성
+                if isLeftEdge && parent.stateModel.canGoBack {
+                    createSlideTransitionOverlay(for: webView, direction: .back)
+                } else if !isLeftEdge && parent.stateModel.canGoForward {
+                    createSlideTransitionOverlay(for: webView, direction: .forward)
+                }
+                
+            case .changed:
+                // 제스처 진행 중 - 전환 효과 업데이트
+                updateSlideTransitionProgress(progress: progress, translation: translation.x, isLeftEdge: isLeftEdge)
+                
+            case .ended, .cancelled:
                 let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
                 
                 if shouldComplete {
-                    // 직접 네비게이션 실행 (단순화)
-                    if isLeftEdge && parent.stateModel.canGoBack {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        parent.stateModel.goBack()
-                        print("📸 단순 뒤로가기 완료")
-                    } else if !isLeftEdge && parent.stateModel.canGoForward {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        parent.stateModel.goForward()
-                        print("📸 단순 앞으로가기 완료")
-                    }
+                    // 전환 완료 애니메이션
+                    completeSlideTransition(isLeftEdge: isLeftEdge, completion: { [weak self] in
+                        // 실제 네비게이션 실행
+                        if isLeftEdge && self?.parent.stateModel.canGoBack == true {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            self?.parent.stateModel.goBack()
+                            print("🎭 슬라이드 뒤로가기 완료")
+                        } else if !isLeftEdge && self?.parent.stateModel.canGoForward == true {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            self?.parent.stateModel.goForward()
+                            print("🎭 슬라이드 앞으로가기 완료")
+                        }
+                        self?.removeSlideTransitionOverlay()
+                    })
+                } else {
+                    // 전환 취소 애니메이션
+                    cancelSlideTransition()
                 }
                 
             default:
                 break
             }
+        }
+        
+        // MARK: - 🎭 슬라이드 전환 오버레이 관리
+        
+        private enum SlideDirection {
+            case back, forward
+        }
+        
+        private func createSlideTransitionOverlay(for webView: WKWebView, direction: SlideDirection) {
+            guard transitionOverlayView == nil else { return }
+            
+            // 현재 웹뷰의 스크린샷 생성
+            let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+            let screenshot = renderer.image { context in
+                webView.layer.render(in: context.cgContext)
+            }
+            
+            // 오버레이 뷰 생성
+            let overlayView = UIView(frame: webView.bounds)
+            overlayView.backgroundColor = .systemBackground
+            
+            // 스크린샷 이미지 뷰
+            let imageView = UIImageView(image: screenshot)
+            imageView.frame = webView.bounds
+            imageView.contentMode = .scaleAspectFill
+            overlayView.addSubview(imageView)
+            
+            // 그림자 효과
+            let shadowView = UIView()
+            shadowView.backgroundColor = .black
+            shadowView.alpha = 0.2
+            shadowView.frame = CGRect(
+                x: direction == .back ? -10 : webView.bounds.width + 10,
+                y: 0,
+                width: 10,
+                height: webView.bounds.height
+            )
+            overlayView.addSubview(shadowView)
+            
+            // 웹뷰에 추가
+            webView.addSubview(overlayView)
+            transitionOverlayView = overlayView
+            
+            // 초기 위치 설정
+            let initialX: CGFloat = direction == .back ? -webView.bounds.width : webView.bounds.width
+            overlayView.transform = CGAffineTransform(translationX: initialX, y: 0)
+        }
+        
+        private func updateSlideTransitionProgress(progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
+            guard let overlayView = transitionOverlayView,
+                  let webView = webView else { return }
+            
+            let screenWidth = webView.bounds.width
+            
+            if isLeftEdge {
+                // 왼쪽에서 시작하는 뒤로가기 (오른쪽으로 슬라이드)
+                let translateX = max(-screenWidth, -screenWidth + translation)
+                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+            } else {
+                // 오른쪽에서 시작하는 앞으로가기 (왼쪽으로 슬라이드)
+                let translateX = min(screenWidth, screenWidth + translation)
+                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+            }
+            
+            // 투명도 조절
+            overlayView.alpha = 0.3 + (progress * 0.7)
+        }
+        
+        private func completeSlideTransition(isLeftEdge: Bool, completion: @escaping () -> Void) {
+            guard let overlayView = transitionOverlayView else {
+                completion()
+                return
+            }
+            
+            // 완료 애니메이션 - 슬라이드 인
+            UIView.animate(
+                withDuration: 0.3,
+                delay: 0,
+                usingSpringWithDamping: 0.8,
+                initialSpringVelocity: 0.5,
+                options: [.curveEaseOut],
+                animations: {
+                    overlayView.transform = .identity
+                    overlayView.alpha = 1.0
+                },
+                completion: { _ in
+                    // 잠시 대기 후 네비게이션 실행
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        completion()
+                    }
+                }
+            )
+        }
+        
+        private func cancelSlideTransition() {
+            guard let overlayView = transitionOverlayView,
+                  let webView = webView else { return }
+            
+            let screenWidth = webView.bounds.width
+            let cancelX: CGFloat = overlayView.transform.tx > 0 ? screenWidth : -screenWidth
+            
+            // 취소 애니메이션 - 슬라이드 아웃
+            UIView.animate(
+                withDuration: 0.25,
+                delay: 0,
+                options: [.curveEaseInOut],
+                animations: {
+                    overlayView.transform = CGAffineTransform(translationX: cancelX, y: 0)
+                    overlayView.alpha = 0.0
+                },
+                completion: { [weak self] _ in
+                    self?.removeSlideTransitionOverlay()
+                }
+            )
+        }
+        
+        private func removeSlideTransitionOverlay() {
+            transitionOverlayView?.removeFromSuperview()
+            transitionOverlayView = nil
         }
         
         // MARK: - UIGestureRecognizerDelegate
