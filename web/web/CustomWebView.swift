@@ -263,9 +263,6 @@ struct CustomWebView: UIViewRepresentable {
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
-        // 🎭 전환 효과 상태 관리
-        private var transitionInProgress = false
-        
         // 📁 **다운로드 진행률 UI 구성 요소들 (헬퍼가 관리)**
         var overlayContainer: UIVisualEffectView?
         var overlayTitleLabel: UILabel?
@@ -340,7 +337,7 @@ struct CustomWebView: UIViewRepresentable {
             }
             
             // 웹뷰 변환 초기화
-            webView.transform = .identity
+            webView.transform = CGAffineTransform.identity
             webView.layer.shadowOpacity = 0.0
         }
         
@@ -393,123 +390,99 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // MARK: - 🎭 슬라이드 전환 오버레이 관리
+        // MARK: - 🎭 실제 웹뷰 슬라이드 전환 구현
         
         private enum SlideDirection {
             case back, forward
         }
         
-        private func createSlideTransitionOverlay(for webView: WKWebView, direction: SlideDirection) {
-            guard transitionOverlayView == nil else { return }
+        private func prepareSlideTransition(for webView: WKWebView, direction: SlideDirection) {
+            // 그림자 효과 추가
+            webView.layer.shadowColor = UIColor.black.cgColor
+            webView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
+            webView.layer.shadowRadius = 10
+            webView.layer.shadowOpacity = 0.3
             
-            // 현재 웹뷰의 스크린샷 생성
-            let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
-            let screenshot = renderer.image { context in
-                webView.layer.render(in: context.cgContext)
-            }
-            
-            // 오버레이 뷰 생성
-            let overlayView = UIView(frame: webView.bounds)
-            overlayView.backgroundColor = .systemBackground
-            
-            // 스크린샷 이미지 뷰
-            let imageView = UIImageView(image: screenshot)
-            imageView.frame = webView.bounds
-            imageView.contentMode = .scaleAspectFill
-            overlayView.addSubview(imageView)
-            
-            // 그림자 효과
-            let shadowView = UIView()
-            shadowView.backgroundColor = .black
-            shadowView.alpha = 0.2
-            shadowView.frame = CGRect(
-                x: direction == .back ? -10 : webView.bounds.width + 10,
-                y: 0,
-                width: 10,
-                height: webView.bounds.height
-            )
-            overlayView.addSubview(shadowView)
-            
-            // 웹뷰에 추가
-            webView.addSubview(overlayView)
-            transitionOverlayView = overlayView
-            
-            // 초기 위치 설정
-            let initialX: CGFloat = direction == .back ? -webView.bounds.width : webView.bounds.width
-            overlayView.transform = CGAffineTransform(translationX: initialX, y: 0)
+            print("🎭 웹뷰 슬라이드 전환 준비: \(direction)")
         }
         
-        private func updateSlideTransitionProgress(progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
-            guard let overlayView = transitionOverlayView,
-                  let webView = webView else { return }
-            
+        private func updateWebViewSlidePosition(webView: WKWebView, translation: CGFloat, isLeftEdge: Bool) {
             let screenWidth = webView.bounds.width
+            let maxTranslation = screenWidth * 0.8 // 최대 80%까지만 슬라이드
+            
+            var translateX: CGFloat
             
             if isLeftEdge {
-                // 왼쪽에서 시작하는 뒤로가기 (오른쪽으로 슬라이드)
-                let translateX = max(-screenWidth, -screenWidth + translation)
-                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+                // 왼쪽에서 시작하는 뒤로가기 (오른쪽으로 밀어내기)
+                translateX = max(0, min(maxTranslation, translation))
             } else {
-                // 오른쪽에서 시작하는 앞으로가기 (왼쪽으로 슬라이드)
-                let translateX = min(screenWidth, screenWidth + translation)
-                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+                // 오른쪽에서 시작하는 앞으로가기 (왼쪽으로 밀어내기)
+                translateX = min(0, max(-maxTranslation, translation))
             }
             
-            // 투명도 조절
-            overlayView.alpha = 0.3 + (progress * 0.7)
+            // 웹뷰 실제 이동
+            webView.transform = CGAffineTransform(translationX: translateX, y: 0)
+            
+            // 진행률에 따른 그림자 강도 조절
+            let progress = abs(translateX) / maxTranslation
+            webView.layer.shadowOpacity = Float(0.1 + (progress * 0.2))
         }
         
-        private func completeSlideTransition(isLeftEdge: Bool, completion: @escaping () -> Void) {
-            guard let overlayView = transitionOverlayView else {
-                completion()
-                return
-            }
+        private func completeWebViewSlideTransition(webView: WKWebView, isLeftEdge: Bool, completion: @escaping () -> Void) {
+            let screenWidth = webView.bounds.width
+            let finalX: CGFloat = isLeftEdge ? screenWidth : -screenWidth
             
-            // 완료 애니메이션 - 슬라이드 인
+            // 웹뷰를 화면 밖으로 완전히 밀어내기
             UIView.animate(
-                withDuration: 0.3,
+                withDuration: 0.25,
                 delay: 0,
                 usingSpringWithDamping: 0.8,
                 initialSpringVelocity: 0.5,
                 options: [.curveEaseOut],
                 animations: {
-                    overlayView.transform = .identity
-                    overlayView.alpha = 1.0
+                    webView.transform = CGAffineTransform(translationX: finalX, y: 0)
+                    webView.alpha = 0.0
                 },
                 completion: { _ in
-                    // 잠시 대기 후 네비게이션 실행
+                    // 네비게이션 실행
+                    completion()
+                    
+                    // 새 페이지 로드 후 웹뷰를 반대편에서 슬라이드 인
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        completion()
+                        // 반대편에서 시작
+                        webView.transform = CGAffineTransform(translationX: -finalX, y: 0)
+                        webView.alpha = 1.0
+                        
+                        // 중앙으로 슬라이드 인
+                        UIView.animate(
+                            withDuration: 0.3,
+                            delay: 0,
+                            usingSpringWithDamping: 0.9,
+                            initialSpringVelocity: 0.3,
+                            options: [.curveEaseInOut],
+                            animations: {
+                                webView.transform = CGAffineTransform.identity
+                                webView.layer.shadowOpacity = 0.0
+                            }
+                        )
                     }
                 }
             )
         }
         
-        private func cancelSlideTransition() {
-            guard let overlayView = transitionOverlayView,
-                  let webView = webView else { return }
-            
-            let screenWidth = webView.bounds.width
-            let cancelX: CGFloat = overlayView.transform.tx > 0 ? screenWidth : -screenWidth
-            
-            // 취소 애니메이션 - 슬라이드 아웃
+        private func cancelWebViewSlideTransition(webView: WKWebView) {
+            // 원래 위치로 되돌리기
             UIView.animate(
                 withDuration: 0.25,
                 delay: 0,
+                usingSpringWithDamping: 0.8,
+                initialSpringVelocity: 0.3,
                 options: [.curveEaseInOut],
                 animations: {
-                    overlayView.transform = CGAffineTransform(translationX: cancelX, y: 0)
-                    overlayView.alpha = 0.0
-                },
-                completion: { [weak self] _ in
-                    self?.removeSlideTransitionOverlay()
+                    webView.transform = CGAffineTransform.identity
+                    webView.layer.shadowOpacity = 0.0
                 }
             )
-        }
-        
-        private func removeSlideTransitionOverlay() {
-            transitionOverlayView?.removeFromSuperview()
-            transitionOverlayView = nil
         }
         
         // MARK: - UIGestureRecognizerDelegate
