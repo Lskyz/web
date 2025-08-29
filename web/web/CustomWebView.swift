@@ -264,9 +264,7 @@ struct CustomWebView: UIViewRepresentable {
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
         // 🎭 전환 효과 상태 관리
-        @State private var isShowingBackTransition = false
-        @State private var isShowingForwardTransition = false
-        private var transitionOverlayView: UIView?
+        private var transitionInProgress = false
         
         // 📁 **다운로드 진행률 UI 구성 요소들 (헬퍼가 관리)**
         var overlayContainer: UIVisualEffectView?
@@ -341,9 +339,9 @@ struct CustomWebView: UIViewRepresentable {
                 self.rightEdgeGesture = nil
             }
             
-            // 전환 오버레이 제거
-            transitionOverlayView?.removeFromSuperview()
-            transitionOverlayView = nil
+            // 웹뷰 변환 초기화
+            webView.transform = .identity
+            webView.layer.shadowOpacity = 0.0
         }
         
         // MARK: - 🎭 SlideFromRightIOS 스타일 전환 효과 핸들러
