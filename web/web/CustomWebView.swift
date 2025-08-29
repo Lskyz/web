@@ -263,6 +263,11 @@ struct CustomWebView: UIViewRepresentable {
         private var leftEdgeGesture: UIScreenEdgePanGestureRecognizer?
         private var rightEdgeGesture: UIScreenEdgePanGestureRecognizer?
         
+        // 🎭 전환 효과 상태 관리
+        @State private var isShowingBackTransition = false
+        @State private var isShowingForwardTransition = false
+        private var transitionOverlayView: UIView?
+        
         // 📁 **다운로드 진행률 UI 구성 요소들 (헬퍼가 관리)**
         var overlayContainer: UIVisualEffectView?
         var overlayTitleLabel: UILabel?
@@ -274,18 +279,6 @@ struct CustomWebView: UIViewRepresentable {
         private var urlObserver: NSKeyValueObservation?
         private var titleObserver: NSKeyValueObservation?
         private var progressObserver: NSKeyValueObservation?
-
-        // ------------------------------------------------------------
-        // [ADD] 🔽 인터랙티브 슬라이드 전환 상태/뷰
-        // ------------------------------------------------------------
-        private var isInteractive: Bool = false
-        private var interactiveDirection: SlideDirection?
-        private weak var superContainer: UIView?
-        private var currentSnapshotView: UIImageView?
-        private var targetSnapshotView: UIImageView? // 스냅샷 프리뷰(폴백)
-        private var previewWebView: WKWebView?       // [ADD] 라이브 프리뷰용 실 웹뷰
-        private var previewTargetURL: URL?           // [ADD] 프리뷰 로드 대상 URL
-        // ------------------------------------------------------------
 
         init(_ parent: CustomWebView) {
             self.parent = parent
@@ -305,24 +298,30 @@ struct CustomWebView: UIViewRepresentable {
                   let tabID = userInfo["tabID"] as? UUID,
                   let url = userInfo["url"] as? URL,
                   tabID == parent.stateModel.tabID else { return }
+            
+            // PIP 시작 - PIPManager에 알림
             PIPManager.shared.startPIP(for: tabID, with: url)
             TabPersistenceManager.debugMessages.append("🎬 PIP 시작 요청 수신: 탭 \(String(tabID.uuidString.prefix(8)))")
         }
         
         @objc func handlePIPStop(_ notification: Notification) {
-            guard let _ = parent.stateModel.tabID else { return }
+            guard let tabID = parent.stateModel.tabID else { return }
+            
+            // PIP 종료 - PIPManager에 알림
             PIPManager.shared.stopPIP()
-            TabPersistenceManager.debugMessages.append("🎬 PIP 종료 요청 수신")
+            TabPersistenceManager.debugMessages.append("🎬 PIP 종료 요청 수신: 탭 \(String(tabID.uuidString.prefix(8)))")
         }
 
         // MARK: - 🎭 슬라이드 전환 효과가 적용된 제스처 설정
         func setupSlideTransitionGesture(for webView: WKWebView) {
+            // 왼쪽 에지 제스처 (뒤로가기 - 오른쪽에서 슬라이드)
             let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSlideTransitionGesture(_:)))
             leftEdge.edges = .left
             leftEdge.delegate = self
             webView.addGestureRecognizer(leftEdge)
             self.leftEdgeGesture = leftEdge
             
+            // 오른쪽 에지 제스처 (앞으로가기 - 왼쪽에서 슬라이드)
             let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleSlideTransitionGesture(_:)))
             rightEdge.edges = .right
             rightEdge.delegate = self
@@ -341,337 +340,181 @@ struct CustomWebView: UIViewRepresentable {
                 webView.removeGestureRecognizer(gesture)
                 self.rightEdgeGesture = nil
             }
-            webView.transform = .identity
-            webView.layer.shadowOpacity = 0.0
-        }
-
-        // [ADD] 수평 우선 시작 필터
-        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if let pan = gestureRecognizer as? UIScreenEdgePanGestureRecognizer,
-               let v = pan.view {
-                let vel = pan.velocity(in: v)
-                return abs(vel.x) > abs(vel.y)
-            }
-            return true
+            
+            // 전환 오버레이 제거
+            transitionOverlayView?.removeFromSuperview()
+            transitionOverlayView = nil
         }
         
         // MARK: - 🎭 SlideFromRightIOS 스타일 전환 효과 핸들러
         @objc private func handleSlideTransitionGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
             guard let webView = webView else { return }
             
-            let view = gesture.view ?? webView
-            let translation = gesture.translation(in: view)
-            let velocity = gesture.velocity(in: view)
+            let translation = gesture.translation(in: gesture.view)
+            let velocity = gesture.velocity(in: gesture.view)
             let isLeftEdge = (gesture.edges == .left)
-            let progress = abs(translation.x) / max(1, view.bounds.width)
-
+            let progress = abs(translation.x) / (gesture.view?.bounds.width ?? 1)
+            
             switch gesture.state {
             case .began:
+                // 전환 시작 - 오버레이 뷰 생성
                 if isLeftEdge && parent.stateModel.canGoBack {
-                    prepareInteractiveTransition(webView: webView, direction: .back) // [ADD]
+                    createSlideTransitionOverlay(for: webView, direction: .back)
                 } else if !isLeftEdge && parent.stateModel.canGoForward {
-                    prepareInteractiveTransition(webView: webView, direction: .forward) // [ADD]
-                } else {
-                    // 폴백
-                    if isLeftEdge && parent.stateModel.canGoBack {
-                        prepareSlideTransition(for: webView, direction: .back)
-                    } else if !isLeftEdge && parent.stateModel.canGoForward {
-                        prepareSlideTransition(for: webView, direction: .forward)
-                    }
+                    createSlideTransitionOverlay(for: webView, direction: .forward)
                 }
                 
             case .changed:
-                if isInteractive {
-                    updateInteractiveTransition(progress: progress) // [ADD]
-                } else {
-                    updateWebViewSlidePosition(webView: webView, translation: translation.x, isLeftEdge: isLeftEdge)
-                }
+                // 제스처 진행 중 - 전환 효과 업데이트
+                updateSlideTransitionProgress(progress: progress, translation: translation.x, isLeftEdge: isLeftEdge)
                 
             case .ended, .cancelled:
-                let shouldComplete = isInteractive
-                    ? (progress > 0.35 || abs(velocity.x) > 900)
-                    : (progress > 0.3 || abs(velocity.x) > 800)
+                let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
                 
                 if shouldComplete {
-                    if isInteractive {
-                        finishInteractiveTransition(webView: webView) { [weak self] in // [ADD]
-                            guard let self else { return }
-                            if isLeftEdge && self.parent.stateModel.canGoBack {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                self.parent.stateModel.goBack()
-                            } else if !isLeftEdge && self.parent.stateModel.canGoForward {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                self.parent.stateModel.goForward()
-                            }
+                    // 전환 완료 애니메이션
+                    completeSlideTransition(isLeftEdge: isLeftEdge, completion: { [weak self] in
+                        // 실제 네비게이션 실행
+                        if isLeftEdge && self?.parent.stateModel.canGoBack == true {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            self?.parent.stateModel.goBack()
+                            print("🎭 슬라이드 뒤로가기 완료")
+                        } else if !isLeftEdge && self?.parent.stateModel.canGoForward == true {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            self?.parent.stateModel.goForward()
+                            print("🎭 슬라이드 앞으로가기 완료")
                         }
-                    } else {
-                        completeWebViewSlideTransition(webView: webView, isLeftEdge: isLeftEdge) { [weak self] in
-                            if isLeftEdge && self?.parent.stateModel.canGoBack == true {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                self?.parent.stateModel.goBack()
-                                print("🎭 실제 페이지 슬라이드 뒤로가기 완료")
-                            } else if !isLeftEdge && self?.parent.stateModel.canGoForward == true {
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                self?.parent.stateModel.goForward()
-                                print("🎭 실제 페이지 슬라이드 앞으로가기 완료")
-                            }
-                        }
-                    }
+                        self?.removeSlideTransitionOverlay()
+                    })
                 } else {
-                    if isInteractive {
-                        cancelInteractiveTransition(webView: webView) // [ADD]
-                    } else {
-                        cancelWebViewSlideTransition(webView: webView)
-                    }
+                    // 전환 취소 애니메이션
+                    cancelSlideTransition()
                 }
+                
             default:
                 break
             }
         }
         
-        // MARK: - 🎭 실제 웹뷰 슬라이드 전환 구현 (기존 폴백)
-        private enum SlideDirection { case back, forward }
+        // MARK: - 🎭 슬라이드 전환 오버레이 관리
         
-        private func prepareSlideTransition(for webView: WKWebView, direction: SlideDirection) {
-            webView.layer.shadowColor = UIColor.black.cgColor
-            webView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
-            webView.layer.shadowRadius = 10
-            webView.layer.shadowOpacity = 0.3
-            print("🎭 웹뷰 슬라이드 전환 준비: \(direction)")
+        private enum SlideDirection {
+            case back, forward
         }
         
-        private func updateWebViewSlidePosition(webView: WKWebView, translation: CGFloat, isLeftEdge: Bool) {
+        private func createSlideTransitionOverlay(for webView: WKWebView, direction: SlideDirection) {
+            guard transitionOverlayView == nil else { return }
+            
+            // 현재 웹뷰의 스크린샷 생성
+            let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+            let screenshot = renderer.image { context in
+                webView.layer.render(in: context.cgContext)
+            }
+            
+            // 오버레이 뷰 생성
+            let overlayView = UIView(frame: webView.bounds)
+            overlayView.backgroundColor = .systemBackground
+            
+            // 스크린샷 이미지 뷰
+            let imageView = UIImageView(image: screenshot)
+            imageView.frame = webView.bounds
+            imageView.contentMode = .scaleAspectFill
+            overlayView.addSubview(imageView)
+            
+            // 그림자 효과
+            let shadowView = UIView()
+            shadowView.backgroundColor = .black
+            shadowView.alpha = 0.2
+            shadowView.frame = CGRect(
+                x: direction == .back ? -10 : webView.bounds.width + 10,
+                y: 0,
+                width: 10,
+                height: webView.bounds.height
+            )
+            overlayView.addSubview(shadowView)
+            
+            // 웹뷰에 추가
+            webView.addSubview(overlayView)
+            transitionOverlayView = overlayView
+            
+            // 초기 위치 설정
+            let initialX: CGFloat = direction == .back ? -webView.bounds.width : webView.bounds.width
+            overlayView.transform = CGAffineTransform(translationX: initialX, y: 0)
+        }
+        
+        private func updateSlideTransitionProgress(progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
+            guard let overlayView = transitionOverlayView,
+                  let webView = webView else { return }
+            
             let screenWidth = webView.bounds.width
-            let maxTranslation = screenWidth * 0.8
-            var translateX: CGFloat
+            
             if isLeftEdge {
-                translateX = max(0, min(maxTranslation, translation))
+                // 왼쪽에서 시작하는 뒤로가기 (오른쪽으로 슬라이드)
+                let translateX = max(-screenWidth, -screenWidth + translation)
+                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
             } else {
-                translateX = min(0, max(-maxTranslation, translation))
+                // 오른쪽에서 시작하는 앞으로가기 (왼쪽으로 슬라이드)
+                let translateX = min(screenWidth, screenWidth + translation)
+                overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
             }
-            webView.transform = CGAffineTransform(translationX: translateX, y: 0)
-            let progress = abs(translateX) / maxTranslation
-            webView.layer.shadowOpacity = Float(0.1 + (progress * 0.2))
+            
+            // 투명도 조절
+            overlayView.alpha = 0.3 + (progress * 0.7)
         }
         
-        private func completeWebViewSlideTransition(webView: WKWebView, isLeftEdge: Bool, completion: @escaping () -> Void) {
+        private func completeSlideTransition(isLeftEdge: Bool, completion: @escaping () -> Void) {
+            guard let overlayView = transitionOverlayView else {
+                completion()
+                return
+            }
+            
+            // 완료 애니메이션 - 슬라이드 인
+            UIView.animate(
+                withDuration: 0.3,
+                delay: 0,
+                usingSpringWithDamping: 0.8,
+                initialSpringVelocity: 0.5,
+                options: [.curveEaseOut],
+                animations: {
+                    overlayView.transform = .identity
+                    overlayView.alpha = 1.0
+                },
+                completion: { _ in
+                    // 잠시 대기 후 네비게이션 실행
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        completion()
+                    }
+                }
+            )
+        }
+        
+        private func cancelSlideTransition() {
+            guard let overlayView = transitionOverlayView,
+                  let webView = webView else { return }
+            
             let screenWidth = webView.bounds.width
-            let finalX: CGFloat = isLeftEdge ? screenWidth : -screenWidth
-            UIView.animate(withDuration: 0.25,
-                           delay: 0,
-                           usingSpringWithDamping: 0.8,
-                           initialSpringVelocity: 0.5,
-                           options: [.curveEaseOut],
-                           animations: {
-                webView.transform = CGAffineTransform(translationX: finalX, y: 0)
-                webView.alpha = 0.0
-            }, completion: { _ in
-                completion()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    webView.transform = CGAffineTransform(translationX: -finalX, y: 0)
-                    webView.alpha = 1.0
-                    UIView.animate(withDuration: 0.3,
-                                   delay: 0,
-                                   usingSpringWithDamping: 0.9,
-                                   initialSpringVelocity: 0.3,
-                                   options: [.curveEaseInOut],
-                                   animations: {
-                        webView.transform = .identity
-                        webView.layer.shadowOpacity = 0.0
-                    })
+            let cancelX: CGFloat = overlayView.transform.tx > 0 ? screenWidth : -screenWidth
+            
+            // 취소 애니메이션 - 슬라이드 아웃
+            UIView.animate(
+                withDuration: 0.25,
+                delay: 0,
+                options: [.curveEaseInOut],
+                animations: {
+                    overlayView.transform = CGAffineTransform(translationX: cancelX, y: 0)
+                    overlayView.alpha = 0.0
+                },
+                completion: { [weak self] _ in
+                    self?.removeSlideTransitionOverlay()
                 }
-            })
+            )
         }
         
-        private func cancelWebViewSlideTransition(webView: WKWebView) {
-            UIView.animate(withDuration: 0.25,
-                           delay: 0,
-                           usingSpringWithDamping: 0.8,
-                           initialSpringVelocity: 0.3,
-                           options: [.curveEaseInOut],
-                           animations: {
-                webView.transform = .identity
-                webView.layer.shadowOpacity = 0.0
-            })
+        private func removeSlideTransitionOverlay() {
+            transitionOverlayView?.removeFromSuperview()
+            transitionOverlayView = nil
         }
-
-        // ============================================================
-        // [ADD] 🔽 인터랙티브 전환: "라이브 프리뷰" + 스냅샷 혼합
-        // ============================================================
-
-        /// 현재 WebView 스냅샷
-        private func takeSnapshot(of webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
-            if #available(iOS 14.0, *) {
-                let conf = WKSnapshotConfiguration()
-                conf.rect = webView.bounds
-                webView.takeSnapshot(with: conf) { image, _ in completion(image) }
-            } else {
-                UIGraphicsBeginImageContextWithOptions(webView.bounds.size, false, 0)
-                defer { UIGraphicsEndImageContext() }
-                webView.drawHierarchy(in: webView.bounds, afterScreenUpdates: true)
-                completion(UIGraphicsGetImageFromCurrentImageContext())
-            }
-        }
-
-        /// [ADD] 프리뷰용 WKWebView 구성 (동일 세션 공유)
-        private func buildPreviewWebView(basedOn webView: WKWebView, url: URL) -> WKWebView {
-            let cfg = WKWebViewConfiguration()
-            cfg.processPool = webView.configuration.processPool
-            cfg.websiteDataStore = webView.configuration.websiteDataStore
-            cfg.allowsInlineMediaPlayback = webView.configuration.allowsInlineMediaPlayback
-            cfg.allowsPictureInPictureMediaPlayback = webView.configuration.allowsPictureInPictureMediaPlayback
-            let pv = WKWebView(frame: webView.frame, configuration: cfg)
-            pv.isOpaque = webView.isOpaque
-            pv.backgroundColor = .clear
-            pv.scrollView.contentInsetAdjustmentBehavior = .never
-            pv.scrollView.isScrollEnabled = false
-            pv.alpha = 1.0
-            pv.load(URLRequest(url: url))
-            return pv
-        }
-
-        /// [ADD] 백/포워드 대상 URL 산출
-        private func targetURL(for direction: SlideDirection, in webView: WKWebView) -> URL? {
-            let list = webView.backForwardList
-            switch direction {
-            case .back:    return list.backItem?.url
-            case .forward: return list.forwardItem?.url
-            }
-        }
-
-        /// 인터랙티브 준비: 스냅샷 위에 "라이브 프리뷰"를 아래로 배치
-        private func prepareInteractiveTransition(webView: WKWebView, direction: SlideDirection) {
-            guard !isInteractive else { return }
-            isInteractive = true
-            interactiveDirection = direction
-
-            guard let container = webView.superview else { return }
-            superContainer = container
-
-            // 1) 현재 화면 스냅샷 (손가락과 함께 움직일 상단 레이어)
-            takeSnapshot(of: webView) { [weak self] currentImg in
-                guard let self = self else { return }
-                let current = UIImageView(image: currentImg)
-                current.frame = container.convert(webView.frame, from: webView)
-                current.layer.shadowColor = UIColor.black.cgColor
-                current.layer.shadowOpacity = 0.1
-                current.layer.shadowRadius = 10
-                current.layer.shadowOffset = .zero
-                self.currentSnapshotView = current
-
-                // 2) 아래 레이어: 우선 라이브 프리뷰(WebView) 시도
-                if let url = self.targetURL(for: direction, in: webView) {
-                    self.previewTargetURL = url
-                    let pv = self.buildPreviewWebView(basedOn: webView, url: url)
-                    pv.frame = current.frame
-                    self.previewWebView = pv
-                    container.insertSubview(pv, belowSubview: webView)
-                } else {
-                    // 2-폴백: 대상 스냅샷(임시 썸네일)
-                    let target = UIImageView(image: currentImg)
-                    target.frame = current.frame
-                    target.transform = CGAffineTransform(scaleX: 0.98, y: 0.98)
-                        .translatedBy(x: (direction == .back ? -30 : 30), y: 0)
-                    target.alpha = 0.9
-                    self.targetSnapshotView = target
-                    container.insertSubview(target, belowSubview: webView)
-                }
-
-                // 3) 실제 webView는 투명화 (스냅샷/프리뷰만 보이게)
-                webView.alpha = 0.0
-
-                // 4) 최상단에 현재 스냅샷 올림
-                container.addSubview(current)
-            }
-        }
-
-        /// 진행 중: 상단 스냅샷은 손가락 비율대로, 하단 프리뷰는 패럴랙스
-        private func updateInteractiveTransition(progress: CGFloat) {
-            guard let current = currentSnapshotView,
-                  let direction = interactiveDirection else { return }
-
-            let p = max(0, min(1, progress))
-            let width = current.bounds.width
-            let tx = (direction == .back) ? (p * width) : (-p * width)
-            current.transform = CGAffineTransform(translationX: tx, y: 0)
-
-            // 하단 레이어(라이브 프리뷰 또는 폴백 스냅샷)
-            if let pv = previewWebView {
-                let parallax: CGFloat = (direction == .back) ? 60 : -60
-                pv.transform = CGAffineTransform(translationX: tx * 0.2 + parallax * (1 - p), y: 0)
-                pv.alpha = 0.9 + 0.1 * p
-            } else if let target = targetSnapshotView {
-                let parallax: CGFloat = (direction == .back) ? 60 : -60
-                target.transform = CGAffineTransform(translationX: tx * 0.2 + parallax * (1 - p), y: 0)
-                target.alpha = 0.9 + 0.1 * p
-            }
-        }
-
-        /// 완료: 상단 스냅샷을 밀어내고 하단 프리뷰를 그대로 남긴 채 실제 네비게이션 트리거
-        private func finishInteractiveTransition(webView: WKWebView, completion: @escaping () -> Void) {
-            guard let current = currentSnapshotView,
-                  let direction = interactiveDirection else { return }
-
-            let width = current.bounds.width
-            let finalX: CGFloat = (direction == .back) ? width : -width
-
-            UIView.animate(withDuration: 0.22,
-                           delay: 0,
-                           options: [.curveEaseOut],
-                           animations: {
-                current.transform = CGAffineTransform(translationX: finalX, y: 0)
-                if let pv = self.previewWebView {
-                    pv.transform = .identity
-                    pv.alpha = 1.0
-                } else if let target = self.targetSnapshotView {
-                    target.transform = .identity
-                    target.alpha = 1.0
-                }
-            }, completion: { [weak self] _ in
-                // 실제 goBack/goForward 실행
-                completion()
-
-                // 약간의 지연 후 정리 (로드 개시 시간을 고려)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                    self?.cleanupInteractiveTransition(webView: webView)
-                }
-            })
-        }
-
-        /// 취소: 원위치
-        private func cancelInteractiveTransition(webView: WKWebView) {
-            UIView.animate(withDuration: 0.22,
-                           delay: 0,
-                           options: [.curveEaseInOut],
-                           animations: {
-                self.currentSnapshotView?.transform = .identity
-                if let pv = self.previewWebView {
-                    pv.transform = CGAffineTransform(scaleX: 0.98, y: 0.98)
-                    pv.alpha = 0.9
-                } else if let target = self.targetSnapshotView {
-                    target.transform = CGAffineTransform(scaleX: 0.98, y: 0.98)
-                    target.alpha = 0.9
-                }
-            }, completion: { [weak self] _ in
-                self?.cleanupInteractiveTransition(webView: webView)
-            })
-        }
-
-        /// 정리: 스냅샷/프리뷰 제거, 본 웹뷰 복원
-        private func cleanupInteractiveTransition(webView: WKWebView) {
-            currentSnapshotView?.removeFromSuperview()
-            targetSnapshotView?.removeFromSuperview()
-            previewWebView?.removeFromSuperview()
-            currentSnapshotView = nil
-            targetSnapshotView = nil
-            previewWebView = nil
-            previewTargetURL = nil
-            webView.alpha = 1.0
-            isInteractive = false
-            interactiveDirection = nil
-        }
-        // ============================================================
-
+        
         // MARK: - UIGestureRecognizerDelegate
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
             // 에지 제스처는 스크롤과 충돌하지 않음
@@ -724,6 +567,7 @@ struct CustomWebView: UIViewRepresentable {
                       let currentURL = webView.url else { return }
 
                 DispatchQueue.main.async {
+                    // 🔧 URL 기반 제목 업데이트
                     self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
                 }
             }
@@ -747,6 +591,8 @@ struct CustomWebView: UIViewRepresentable {
                     DispatchQueue.main.async {
                         self.parent.playerURL = url
                         self.parent.showAVPlayer = true
+                        
+                        // 🎬 **PIP 시작 알림 추가**
                         if let tabID = self.parent.stateModel.tabID {
                             PIPManager.shared.startPIP(for: tabID, with: url)
                             TabPersistenceManager.debugMessages.append("🎬 비디오 재생으로 PIP 시작: 탭 \(String(tabID.uuidString.prefix(8)))")
@@ -772,7 +618,10 @@ struct CustomWebView: UIViewRepresentable {
                     let siteType = data["siteType"] as? String ?? "unknown"
                     
                     DispatchQueue.main.async {
-                        if shouldExclude { return }
+                        if shouldExclude {
+                            return
+                        }
+                        
                         self.parent.stateModel.dataModel.handleSPANavigation(
                             type: type,
                             url: url,
@@ -823,94 +672,147 @@ struct CustomWebView: UIViewRepresentable {
 
         // MARK: - 🚫 **핵심 추가: 팝업 차단 시스템 통합**
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            
             let sourceURL = webView.url
             let targetURL = navigationAction.request.url
+            
+            // 🚫 **팝업 차단 확인**
             if PopupBlockManager.shared.shouldBlockPopup(from: sourceURL, targetURL: targetURL) {
+                // 팝업 차단 및 알림 발송
                 PopupBlockManager.shared.blockPopup(from: sourceURL, targetURL: targetURL)
+                
                 TabPersistenceManager.debugMessages.append("🚫 팝업 차단됨: \(targetURL?.absoluteString ?? "알 수 없음")")
+                
+                // 팝업 차단 - nil 반환으로 새 창 생성 방지
                 return nil
             }
+            
+            // 팝업 허용 - 현재 웹뷰에서 로드
             TabPersistenceManager.debugMessages.append("✅ 팝업 허용: \(targetURL?.absoluteString ?? "알 수 없음")")
             webView.load(navigationAction.request)
             return nil
         }
         
         // MARK: - 📷 이미지 저장 컨텍스트 메뉴 처리
+        
+        /// 웹뷰 컨텍스트 메뉴 커스터마이징
         func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo, completionHandler: @escaping (UIContextMenuConfiguration?) -> Void) {
+            
+            // 이미지 요소인지 확인
             guard let url = elementInfo.linkURL ?? extractImageURL(from: elementInfo) else {
                 completionHandler(nil)
                 return
             }
+            
             let configuration = UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
                 return self.createImageContextMenu(for: url, webView: webView)
             }
+            
             completionHandler(configuration)
         }
         
+        /// 이미지 URL 추출
         private func extractImageURL(from elementInfo: WKContextMenuElementInfo) -> URL? {
+            // iOS 15+에서 사용 가능한 방법
             if #available(iOS 15.0, *) {
                 return elementInfo.linkURL
             }
             return nil
         }
         
+        /// 이미지 컨텍스트 메뉴 생성
         private func createImageContextMenu(for url: URL, webView: WKWebView) -> UIMenu {
             var actions: [UIAction] = []
-            let saveAction = UIAction(title: "사진에 저장", image: UIImage(systemName: "square.and.arrow.down")) { [weak self] _ in
-                self?.saveImageToPhotoLibrary(from: url)
-            }
+            
+            // 이미지 저장 액션
+            let saveAction = UIAction(
+                title: "사진에 저장",
+                image: UIImage(systemName: "square.and.arrow.down"),
+                handler: { [weak self] _ in
+                    self?.saveImageToPhotoLibrary(from: url)
+                }
+            )
             actions.append(saveAction)
-            let copyAction = UIAction(title: "이미지 복사", image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                self?.copyImageToPasteboard(from: url)
-            }
+            
+            // 이미지 복사 액션
+            let copyAction = UIAction(
+                title: "이미지 복사",
+                image: UIImage(systemName: "doc.on.doc"),
+                handler: { [weak self] _ in
+                    self?.copyImageToPasteboard(from: url)
+                }
+            )
             actions.append(copyAction)
-            let shareAction = UIAction(title: "공유", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
-                self?.shareImage(from: url)
-            }
+            
+            // 이미지 공유 액션
+            let shareAction = UIAction(
+                title: "공유",
+                image: UIImage(systemName: "square.and.arrow.up"),
+                handler: { [weak self] _ in
+                    self?.shareImage(from: url)
+                }
+            )
             actions.append(shareAction)
+            
             return UIMenu(title: "", children: actions)
         }
         
+        /// 사진 라이브러리에 이미지 저장
         private func saveImageToPhotoLibrary(from url: URL) {
+            // 1. 권한 확인
             checkPhotoLibraryPermission { [weak self] granted in
-                guard granted else { self?.showPermissionAlert(); return }
+                guard granted else {
+                    self?.showPermissionAlert()
+                    return
+                }
+                
+                // 2. 이미지 다운로드 및 저장
                 self?.downloadAndSaveImage(from: url)
             }
         }
         
+        /// 사진 라이브러리 권한 확인
         private func checkPhotoLibraryPermission(completion: @escaping (Bool) -> Void) {
             let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+            
             switch status {
-            case .authorized, .limited: completion(true)
-            case .denied, .restricted:  completion(false)
+            case .authorized, .limited:
+                completion(true)
+            case .denied, .restricted:
+                completion(false)
             case .notDetermined:
                 PHPhotoLibrary.requestAuthorization(for: .addOnly) { newStatus in
                     DispatchQueue.main.async {
                         completion(newStatus == .authorized || newStatus == .limited)
                     }
                 }
-            @unknown default: completion(false)
+            @unknown default:
+                completion(false)
             }
         }
         
+        /// 이미지 다운로드 및 저장
         private func downloadAndSaveImage(from url: URL) {
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
                 DispatchQueue.main.async {
                     if let error = error {
                         self?.showErrorAlert(message: "이미지 다운로드 실패: \(error.localizedDescription)")
                         TabPersistenceManager.debugMessages.append("📷 이미지 다운로드 실패: \(error.localizedDescription)")
                         return
                     }
+                    
                     guard let data = data, let image = UIImage(data: data) else {
                         self?.showErrorAlert(message: "이미지 변환에 실패했습니다.")
                         TabPersistenceManager.debugMessages.append("📷 이미지 변환 실패")
                         return
                     }
+                    
                     self?.saveImageToLibrary(image)
                 }
             }.resume()
         }
         
+        /// 실제 이미지 저장
         private func saveImageToLibrary(_ image: UIImage) {
             PHPhotoLibrary.shared().performChanges({
                 PHAssetChangeRequest.creationRequestForAsset(from: image)
@@ -928,31 +830,40 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
+        /// 이미지를 클립보드에 복사
         private func copyImageToPasteboard(from url: URL) {
-            URLSession.shared.dataTask(with: url) { data, _, _ in
+            URLSession.shared.dataTask(with: url) { data, response, error in
                 DispatchQueue.main.async {
                     guard let data = data, let image = UIImage(data: data) else {
                         TabPersistenceManager.debugMessages.append("📷 이미지 복사 실패")
                         return
                     }
+                    
                     UIPasteboard.general.image = image
                     TabPersistenceManager.debugMessages.append("📷 이미지 클립보드 복사 완료")
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    
+                    // 성공 피드백
+                    let feedback = UIImpactFeedbackGenerator(style: .light)
+                    feedback.impactOccurred()
                 }
             }.resume()
         }
         
+        /// 이미지 공유
         private func shareImage(from url: URL) {
-            URLSession.shared.dataTask(with: url) { data, _, _ in
+            URLSession.shared.dataTask(with: url) { data, response, error in
                 DispatchQueue.main.async {
                     guard let data = data, let image = UIImage(data: data) else {
                         TabPersistenceManager.debugMessages.append("📷 이미지 공유 실패")
                         return
                     }
+                    
                     guard let topVC = getTopViewController() else { return }
+                    
                     let activityVC = UIActivityViewController(activityItems: [image, url], applicationActivities: nil)
                     activityVC.popoverPresentationController?.sourceView = topVC.view
                     activityVC.popoverPresentationController?.sourceRect = topVC.view.bounds
+                    
                     topVC.present(activityVC, animated: true)
                     TabPersistenceManager.debugMessages.append("📷 이미지 공유 시트 표시")
                 }
@@ -960,33 +871,53 @@ struct CustomWebView: UIViewRepresentable {
         }
 
        // MARK: - 알림 메시지들
+        
         private func showPermissionAlert() {
             guard let topVC = getTopViewController() else { return }
-            let alert = UIAlertController(title: "사진 접근 권한 필요",
-                                          message: "이미지를 사진 앱에 저장하려면 사진 접근 권한이 필요합니다.\n\n설정 > 개인정보 보호 및 보안 > 사진에서 권한을 허용해주세요.",
-                                          preferredStyle: .alert)
+            
+            let alert = UIAlertController(
+                title: "사진 접근 권한 필요",
+                message: "이미지를 사진 앱에 저장하려면 사진 접근 권한이 필요합니다.\n\n설정 > 개인정보 보호 및 보안 > 사진에서 권한을 허용해주세요.",
+                preferredStyle: .alert
+            )
+            
             alert.addAction(UIAlertAction(title: "설정으로 이동", style: .default) { _ in
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(settingsURL)
                 }
             })
+            
             alert.addAction(UIAlertAction(title: "취소", style: .cancel))
+            
             topVC.present(alert, animated: true)
         }
         
         private func showErrorAlert(message: String) {
             guard let topVC = getTopViewController() else { return }
-            let alert = UIAlertController(title: "오류", message: message, preferredStyle: .alert)
+            
+            let alert = UIAlertController(
+                title: "오류",
+                message: message,
+                preferredStyle: .alert
+            )
             alert.addAction(UIAlertAction(title: "확인", style: .default))
             topVC.present(alert, animated: true)
         }
         
         private func showSuccessAlert() {
             guard let topVC = getTopViewController() else { return }
-            let alert = UIAlertController(title: "완료", message: "이미지가 사진 앱에 저장되었습니다.", preferredStyle: .alert)
+            
+            let alert = UIAlertController(
+                title: "완료",
+                message: "이미지가 사진 앱에 저장되었습니다.",
+                preferredStyle: .alert
+            )
             alert.addAction(UIAlertAction(title: "확인", style: .default))
             topVC.present(alert, animated: true)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            
+            // 성공 피드백
+            let feedback = UINotificationFeedbackGenerator()
+            feedback.notificationOccurred(.success)
         }
 
         // MARK: 📁 **다운로드 이벤트 핸들러 (헬퍼 호출)**
