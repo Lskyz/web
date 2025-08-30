@@ -21,10 +21,10 @@ fileprivate func ts() -> String {
 // MARK: - 📸 BFCache 페이지 스냅샷
 struct BFCacheSnapshot {
     let pageRecord: PageRecord
-    let domSnapshot: String?
+    var domSnapshot: String?
     let scrollPosition: CGPoint
-    let jsState: [String: Any]?
-    let formData: [String: Any]?
+    var jsState: [String: Any]?
+    var formData: [String: Any]?
     let timestamp: Date
     let webViewSnapshot: UIImage?
     
@@ -282,7 +282,7 @@ final class BFCacheTransitionSystem: NSObject {
     private func beginGestureTransition(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection) {
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
@@ -381,12 +381,12 @@ final class BFCacheTransitionSystem: NSObject {
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
-              let tabID = stateModel.tabID,
+              let _ = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
@@ -398,12 +398,12 @@ final class BFCacheTransitionSystem: NSObject {
     
     func navigateForward(stateModel: WebViewStateModel) {
         guard stateModel.canGoForward,
-              let tabID = stateModel.tabID,
+              let _ = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
@@ -418,12 +418,18 @@ final class BFCacheTransitionSystem: NSObject {
     private func performNavigation(context: TransitionContext) {
         guard let stateModel = context.stateModel else { return }
         
-        // 복원큐 시스템 사용
+        // 복원큐 시스템 사용 (safariStyle 메서드 대체)
         switch context.direction {
         case .back:
+            // 기존 safariStyleGoBack 로직 흡수
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goBack()
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
+            // 기존 safariStyleGoForward 로직 흡수
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goForward()
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
         // BFCache 복원 시도
@@ -495,6 +501,23 @@ final class BFCacheTransitionSystem: NSObject {
         
         webView.addSubview(overlayView)
         return overlayView
+    }
+    
+    // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
+    
+    static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
+        // 기존 DataModel.handleSwipeGestureDetected 로직 흡수
+        // 복원 중이면 무시
+        if stateModel.dataModel.isHistoryNavigationActive() {
+            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
+            return
+        }
+        
+        // 절대 원칙: 히스토리에서 찾더라도 무조건 새 페이지로 추가
+        // 세션 점프 완전 방지
+        stateModel.dataModel.addNewPage(url: url, title: "")
+        stateModel.syncCurrentURL(url)
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
     // MARK: - pageshow/pagehide 스크립트
