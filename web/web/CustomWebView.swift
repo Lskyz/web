@@ -845,7 +845,7 @@ struct CustomWebView: UIViewRepresentable {
         
         // 🎭 페이지 로드 완료 후 프리뷰 캡처
         private func capturePreviewAfterDelay() {
-            guard let webView = webView,
+            guard let _ = webView,
                   let tabID = parent.stateModel.tabID else { return }
             
             let currentIndex = parent.stateModel.dataModel.currentPageIndex
