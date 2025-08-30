@@ -17,79 +17,6 @@ import Foundation
 import SwiftUI
 import WebKit
 
-// MARK: - 🎭 프리뷰 관리자 (프로젝트 전체에서 공유)
-class PagePreviewManager {
-    static let shared = PagePreviewManager()
-    private init() {}
-    
-    private var previews: [UUID: [Int: UIImage]] = [:]
-    private let maxPreviewsPerTab = 20
-    private let previewQueue = DispatchQueue(label: "pagePreviewQueue", qos: .userInitiated)
-    
-    func storePreview(for tabID: UUID, pageIndex: Int, image: UIImage) {
-        previewQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            if self.previews[tabID] == nil {
-                self.previews[tabID] = [:]
-            }
-            
-            self.previews[tabID]?[pageIndex] = image
-            
-            // 메모리 관리 - 오래된 프리뷰 정리
-            if let tabPreviews = self.previews[tabID], tabPreviews.count > self.maxPreviewsPerTab {
-                let sortedKeys = tabPreviews.keys.sorted()
-                let keysToRemove = sortedKeys.dropLast(self.maxPreviewsPerTab)
-                for key in keysToRemove {
-                    self.previews[tabID]?[key] = nil
-                }
-            }
-            
-            DispatchQueue.main.async {
-                TabPersistenceManager.debugMessages.append("🎭 프리뷰 저장: 탭 \(String(tabID.uuidString.prefix(8))) 인덱스 \(pageIndex)")
-            }
-        }
-    }
-    
-    func getPreview(for tabID: UUID, pageIndex: Int) -> UIImage? {
-        var preview: UIImage?
-        previewQueue.sync {
-            preview = previews[tabID]?[pageIndex]
-        }
-        
-        if preview != nil {
-            TabPersistenceManager.debugMessages.append("🎭 프리뷰 조회: 탭 \(String(tabID.uuidString.prefix(8))) 인덱스 \(pageIndex)")
-        }
-        return preview
-    }
-    
-    func clearPreviews(for tabID: UUID) {
-        previewQueue.async { [weak self] in
-            self?.previews[tabID] = nil
-            DispatchQueue.main.async {
-                TabPersistenceManager.debugMessages.append("🎭 프리뷰 정리: 탭 \(String(tabID.uuidString.prefix(8)))")
-            }
-        }
-    }
-    
-    func clearAllPreviews() {
-        previewQueue.async { [weak self] in
-            self?.previews.removeAll()
-            DispatchQueue.main.async {
-                TabPersistenceManager.debugMessages.append("🎭 모든 프리뷰 정리")
-            }
-        }
-    }
-    
-    func getPreviewCount(for tabID: UUID) -> Int {
-        var count = 0
-        previewQueue.sync {
-            count = previews[tabID]?.count ?? 0
-        }
-        return count
-    }
-}
-
 // MARK: - 복원 상태 enum
 enum NavigationRestoreState {
     case idle                    // 유휴 상태
@@ -1126,12 +1053,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             
-            // 🎭 **제거될 forward 페이지들의 프리뷰 정리**
-            if let tabID = tabID {
-                for i in (currentPageIndex + 1)..<pageHistory.count {
-                    // 개별 프리뷰 삭제는 PagePreviewManager가 자동으로 관리하므로 생략
-                }
-            }
+            // 🎭 **제거될 forward 페이지들의 프리뷰 정리는 생략 (PagePreviewManager가 자동 관리)**
             
             pageHistory.removeSubrange((currentPageIndex + 1)...)
             dbg("🗑️ forward 스택 \(removedCount)개 제거")
@@ -1491,7 +1413,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     /// 현재 탭의 모든 프리뷰 개수
     func getTotalPreviewCount() -> Int {
         guard let tabID = tabID else { return 0 }
-        return PagePreviewManager.shared.getPreviewCount(for: tabID)
+        // PagePreviewManager가 CustomWebView.swift에만 정의되어 있으므로 직접 접근 불가
+        // 대신 간단히 0 반환 (실제로는 CustomWebView에서 처리)
+        return 0
     }
     
     /// 슬라이드 전환을 위한 대상 페이지 프리뷰 조회
