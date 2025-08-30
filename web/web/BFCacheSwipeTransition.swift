@@ -359,6 +359,11 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("📸 BFCache 저장: \(String(pageID.uuidString.prefix(8))) - \(snapshot.pageRecord.title)")
     }
     
+    // 외부에서 스냅샷을 주입하는 인터페이스 추가
+    func ingest(snapshot: BFCacheSnapshot) {
+        storeSnapshot(snapshot, for: snapshot.pageRecord.id)
+    }
+    
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         cacheQueue.sync {
             cache[pageID]
@@ -528,7 +533,7 @@ final class BFCacheTransitionSystem: NSObject {
             currentView = imageView
         } else {
             // 스냅샷 캡처 실패시 fallback (snapshotView 사용)
-            currentView = webView.snapshotView(afterScreenUpdates: false) ?? UIView(frame: webView.bounds)
+            currentView = webView.snapshotView(afterScreenUpdates: true) ?? UIView(frame: webView.bounds)
             if currentView.frame.isEmpty {
                 currentView.frame = webView.bounds
             }
