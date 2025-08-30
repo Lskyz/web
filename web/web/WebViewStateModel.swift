@@ -5,6 +5,7 @@
 //  🚫 캐시 시스템 및 조용한 새로고침 제거
 //  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
+//  🎯 **BFCache 통합 - 제스처 로직 제거**
 //
 
 import Foundation
@@ -372,36 +373,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dbg("🔄 복원 로드: \(url.absoluteString)")
     }
     
-    // MARK: - 🏄‍♂️ 사파리 스타일 제스처 네비게이션 (단순화)
-    
-// 햅틱 피드백
-        func safariStyleGoBack(progress: Double = 1.0) {
-        guard canGoBack else { return }
-        
-        // 햅틱 피드백
-        if progress >= 1.0 {
-            let feedback = UIImpactFeedbackGenerator(style: .heavy)
-            feedback.impactOccurred()
-            
-            // 실제 뒤로가기 실행
-            goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
-        }
-    }
-    
-    func safariStyleGoForward(progress: Double = 1.0) {
-        guard canGoForward else { return }
-        
-        // 햅틱 피드백
-        if progress >= 1.0 {
-            let feedback = UIImpactFeedbackGenerator(style: .heavy)
-            feedback.impactOccurred()
-            
-            // 실제 앞으로가기 실행
-            goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
-        }
-    }
+    // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
+    // safariStyleGoBack - 제거됨 (BFCacheTransitionSystem으로 이관)
+    // safariStyleGoForward - 제거됨 (BFCacheTransitionSystem으로 이관)
+    // handleSwipeGestureDetected - 제거됨 (BFCacheTransitionSystem으로 이관)
     
     func reload() { 
         guard let webView = webView else { return }
@@ -413,16 +388,6 @@ final class WebViewStateModel: NSObject, ObservableObject {
     /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
     func setNavigatingFromWebView(_ value: Bool) {
         self.isNavigatingFromWebView = value
-    }
-    
-    // CustomWebView에서 호출할 수 있는 스와이프 감지 메서드 (단순화됨)
-    func handleSwipeGestureDetected(to url: URL) {
-        // 이제 커스텀 제스처로 직접 처리하므로 단순화
-        guard !dataModel.isHistoryNavigationActive() else {
-            return
-        }
-        
-        dataModel.handleSwipeGestureDetected(to: url)
     }
     
     // ✅ 쿠키 동기화 처리
