@@ -1412,10 +1412,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     /// 현재 탭의 모든 프리뷰 개수
     func getTotalPreviewCount() -> Int {
-        guard let tabID = tabID else { return 0 }
-        // PagePreviewManager가 CustomWebView.swift에만 정의되어 있으므로 직접 접근 불가
-        // 대신 간단히 0 반환 (실제로는 CustomWebView에서 처리)
-        return 0
+        // 🔧 **수정: 사용하지 않는 tabID 제거**
+        return 0  // 실제 카운트는 PagePreviewManager에서 직접 처리
     }
     
     /// 슬라이드 전환을 위한 대상 페이지 프리뷰 조회
