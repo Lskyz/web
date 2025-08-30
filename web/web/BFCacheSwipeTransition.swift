@@ -277,7 +277,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
             
         case .changed:
-            updateGestureProgress(tabID: tabID, progress: progress, translation: translation.x)
+            // translation.x 값 그대로 전달 (양수/음수 구분 중요)
+            updateGestureProgress(tabID: tabID, progress: progress, translation: translation.x, isLeftEdge: isLeftEdge)
             
         case .ended:
             let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
@@ -314,6 +315,7 @@ final class BFCacheTransitionSystem: NSObject {
         if targetIndex >= 0, targetIndex < stateModel.dataModel.pageHistory.count {
             let targetRecord = stateModel.dataModel.pageHistory[targetIndex]
             targetSnapshot = retrieveSnapshot(for: targetRecord.id)?.webViewSnapshot
+            dbg("🖼️ 타겟 스냅샷 \(targetSnapshot != nil ? "있음" : "없음"): \(targetRecord.title)")
         }
         
         // 오버레이 생성
@@ -329,9 +331,11 @@ final class BFCacheTransitionSystem: NSObject {
             direction: direction
         )
         activeTransitions[tabID] = context
+        
+        dbg("🎬 제스처 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
-    private func updateGestureProgress(tabID: UUID, progress: CGFloat, translation: CGFloat) {
+    private func updateGestureProgress(tabID: UUID, progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
         guard let context = activeTransitions[tabID],
               let containerView = context.overlayView,
               let webView = context.webView else { return }
@@ -340,14 +344,21 @@ final class BFCacheTransitionSystem: NSObject {
         let currentPageView = containerView.viewWithTag(101)
         let targetPageView = containerView.viewWithTag(102)
         
-        if context.direction == .back {
-            // 뒤로가기: 현재 페이지는 오른쪽으로, 타겟 페이지는 왼쪽에서 들어옴
-            currentPageView?.frame.origin.x = translation
-            targetPageView?.frame.origin.x = -screenWidth + translation
+        // 디버그 로그
+        dbg("📱 제스처 진행: progress=\(progress), translation=\(translation), leftEdge=\(isLeftEdge)")
+        
+        if isLeftEdge {
+            // 왼쪽 에지에서 시작 (뒤로가기): translation.x는 양수
+            let moveDistance = max(0, min(screenWidth, translation))
+            currentPageView?.frame.origin.x = moveDistance
+            targetPageView?.frame.origin.x = -screenWidth + moveDistance
+            dbg("⬅️ 뒤로가기 제스처: current=\(moveDistance), target=\(-screenWidth + moveDistance)")
         } else {
-            // 앞으로가기: 현재 페이지는 왼쪽으로, 타겟 페이지는 오른쪽에서 들어옴
-            currentPageView?.frame.origin.x = translation
-            targetPageView?.frame.origin.x = screenWidth + translation
+            // 오른쪽 에지에서 시작 (앞으로가기): translation.x는 음수
+            let moveDistance = max(-screenWidth, min(0, translation))
+            currentPageView?.frame.origin.x = moveDistance
+            targetPageView?.frame.origin.x = screenWidth + moveDistance
+            dbg("➡️ 앞으로가기 제스처: current=\(moveDistance), target=\(screenWidth + moveDistance)")
         }
         
         // 그림자 투명도 조절
@@ -525,27 +536,39 @@ final class BFCacheTransitionSystem: NSObject {
         let currentPageView = UIImageView(image: currentSnapshot)
         currentPageView.frame = webView.bounds
         currentPageView.contentMode = .scaleAspectFill
+        currentPageView.tag = 101
         containerView.addSubview(currentPageView)
         
         // 타겟 페이지 뷰 (들어올 페이지)
         let targetPageView: UIImageView
         if let targetSnapshot = targetSnapshot {
             targetPageView = UIImageView(image: targetSnapshot)
+            dbg("✅ 타겟 스냅샷 적용됨")
         } else {
-            // 스냅샷이 없으면 기본 배경
+            // 스냅샷이 없으면 흰색 배경에 로딩 텍스트
             targetPageView = UIImageView()
             targetPageView.backgroundColor = .systemBackground
+            
+            let label = UILabel()
+            label.text = "Loading..."
+            label.textAlignment = .center
+            label.frame = CGRect(x: 0, y: webView.bounds.height/2 - 20, width: webView.bounds.width, height: 40)
+            targetPageView.addSubview(label)
+            dbg("⚠️ 타겟 스냅샷 없음 - 기본 배경 사용")
         }
         targetPageView.frame = webView.bounds
         targetPageView.contentMode = .scaleAspectFill
+        targetPageView.tag = 102
         
         // 초기 위치 설정
         if direction == .back {
             // 뒤로가기: 타겟 페이지는 왼쪽에서 시작
             targetPageView.frame.origin.x = -webView.bounds.width
+            dbg("📍 타겟 페이지 초기 위치: 왼쪽 (-\(webView.bounds.width))")
         } else {
             // 앞으로가기: 타겟 페이지는 오른쪽에서 시작
             targetPageView.frame.origin.x = webView.bounds.width
+            dbg("📍 타겟 페이지 초기 위치: 오른쪽 (\(webView.bounds.width))")
         }
         
         // 타겟 페이지를 현재 페이지 아래에 추가
@@ -557,12 +580,8 @@ final class BFCacheTransitionSystem: NSObject {
         currentPageView.layer.shadowOffset = CGSize(width: -5, height: 0)
         currentPageView.layer.shadowRadius = 10
         
-        // 컨테이너에 저장 (나중에 애니메이션용)
-        containerView.tag = 100 // 현재 페이지 식별용
-        currentPageView.tag = 101
-        targetPageView.tag = 102
-        
         webView.addSubview(containerView)
+        dbg("🎨 오버레이 생성 완료: 현재페이지=tag101, 타겟페이지=tag102")
         return containerView
     }
     
