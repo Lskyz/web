@@ -188,13 +188,10 @@ struct BFCacheSnapshot {
         var stepResults: [Bool] = []
         var currentStep = 0
         
-        // 로컬 재귀 클로저로 전환 (self의 저장 프로퍼티 대입 금지)
         var nextStep: (() -> Void)!
         nextStep = {
             if currentStep < restoreSteps.count {
-                let step = restoreSteps[currentStep]
-                currentStep += 1
-                step()
+                let step = restoreSteps[currentStep]; currentStep += 1; step()
             } else {
                 let successCount = stepResults.filter { $0 }.count
                 let totalSteps = stepResults.count
@@ -204,131 +201,67 @@ struct BFCacheSnapshot {
             }
         }
         
-        // 스크롤 위치부터 복원 (가장 안전)
-        restoreSteps.append { [weak self] in
-            guard let self = self else { return }
-            
-            // 웹뷰 스크롤 복원
-            webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-            
-            // JS 스크롤도 시도 (실패해도 무시)
-            let scrollScript = """
-            try {
-                window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                console.log('기본 스크롤 복원 성공');
-            } catch(e) { 
-                console.log('JS 스크롤 실패:', e.message); 
-            }
-            """
-            webView.evaluateJavaScript(scrollScript) { _, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("스크롤 복원 JS 실패: \(error.localizedDescription)")
-                } else {
-                    TabPersistenceManager.debugMessages.append("스크롤 복원 완료: \(self.scrollPosition)")
-                }
-                stepResults.append(error == nil)
+        // 스크롤 복원
+        restoreSteps.append {
+            let pos = self.scrollPosition
+            webView.scrollView.setContentOffset(pos, animated: false)
+            let js = "try{window.scrollTo(\(pos.x),\(pos.y));true}catch(e){false}"
+            webView.evaluateJavaScript(js) { result, _ in
+                stepResults.append((result as? Bool) ?? false)
                 nextStep()
             }
         }
         
-        // 폼 데이터 복원 (에러 방어적)
-        if let formData = self.formData, !formData.isEmpty {
-            restoreSteps.append { [weak self] in
-                guard let self = self else { return }
-                
-                let safeFormScript = """
-                try {
-                    let restored = 0;
-                    const formData = \(self.convertFormDataToJSObject(formData));
-                    
-                    for (const [key, value] of Object.entries(formData)) {
-                        try {
-                            const element = document.querySelector(`[name="${key}"], #${key}`);
-                            if (element) {
-                                if (element.type === 'checkbox' || element.type === 'radio') {
-                                    element.checked = Boolean(value);
-                                } else {
-                                    element.value = String(value || '');
-                                }
-                                restored++;
-                            }
-                        } catch(elementError) {
-                            console.log('폼 요소 복원 실패:', key, elementError.message);
+        // 폼 복원
+        if let form = self.formData, !form.isEmpty {
+            restoreSteps.append {
+                let js = """
+                (function(){
+                    try{
+                        const d=\(self.convertFormDataToJSObject(form)); let ok=0;
+                        for (const [k,v] of Object.entries(d)) {
+                            const el=document.querySelector(`[name="${k}"], #${k}`); if(!el) continue;
+                            if(el.type==='checkbox'||el.type==='radio'){ el.checked=Boolean(v); } else { el.value=String(v??''); }
+                            ok++;
                         }
-                    }
-                    
-                    console.log(`폼 복원 완료: ${restored}개 요소`);
-                    true; // 성공 반환
-                } catch(e) { 
-                    console.error('폼 복원 전체 실패:', e.message);
-                    false; // 실패 반환
-                }
+                        return ok>=0;
+                    }catch(e){return false;}
+                })()
                 """
-                
-                webView.evaluateJavaScript(safeFormScript) { result, error in
-                    let success = (result as? Bool) ?? false
-                    if success {
-                        TabPersistenceManager.debugMessages.append("폼 데이터 복원 성공")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("폼 데이터 복원 실패: \(error?.localizedDescription ?? "알 수 없는 오류")")
-                    }
-                    stepResults.append(success)
+                webView.evaluateJavaScript(js) { result, _ in
+                    stepResults.append((result as? Bool) ?? false)
                     nextStep()
                 }
             }
         }
         
-        // 고급 스크롤 복원 (개별 요소들)
+        // 고급 스크롤 복원
         if let jsState = self.jsState,
-           let scrollData = jsState["scroll"] as? [String: Any],
-           let elements = scrollData["elements"] as? [[String: Any]],
-           !elements.isEmpty {
-            
-            restoreSteps.append { [weak self] in
-                guard let self = self else { return }
-                
-                let advancedScrollScript = """
-                try {
-                    let restored = 0;
-                    const scrollElements = \(self.convertScrollElementsToJSArray(elements));
-                    
-                    for (const item of scrollElements) {
-                        try {
-                            if (item.selector) {
-                                const element = document.querySelector(item.selector);
-                                if (element && element.scrollTop !== undefined) {
-                                    element.scrollTop = item.top || 0;
-                                    element.scrollLeft = item.left || 0;
-                                    restored++;
-                                }
+           let s = jsState["scroll"] as? [String:Any],
+           let els = s["elements"] as? [[String:Any]], !els.isEmpty {
+            restoreSteps.append {
+                let js = """
+                (function(){
+                    try{
+                        const arr=\(self.convertScrollElementsToJSArray(els)); let ok=0;
+                        for(const it of arr){
+                            if(!it.selector) continue;
+                            const el=document.querySelector(it.selector);
+                            if(el && el.scrollTop !== undefined){
+                                el.scrollTop=it.top||0; el.scrollLeft=it.left||0; ok++;
                             }
-                        } catch(elementError) {
-                            console.log('요소 스크롤 복원 실패:', item.selector, elementError.message);
                         }
-                    }
-                    
-                    console.log(`고급 스크롤 복원: ${restored}개 요소`);
-                    true;
-                } catch(e) { 
-                    console.error('고급 스크롤 복원 실패:', e.message);
-                    false;
-                }
+                        return ok>=0;
+                    }catch(e){return false;}
+                })()
                 """
-                
-                webView.evaluateJavaScript(advancedScrollScript) { result, error in
-                    let success = (result as? Bool) ?? false
-                    if success {
-                        TabPersistenceManager.debugMessages.append("고급 스크롤 복원 성공")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("고급 스크롤 복원 실패: \(error?.localizedDescription ?? "알 수 없는 오류")")
-                    }
-                    stepResults.append(success)
+                webView.evaluateJavaScript(js) { result, _ in
+                    stepResults.append((result as? Bool) ?? false)
                     nextStep()
                 }
             }
         }
         
-        // 실행 시작
         nextStep()
     }
     
@@ -565,8 +498,13 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용)
-    private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage?) -> UIView {
+    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용) - 시그니처 수정
+    private func createPreviewContainer(
+        webView: WKWebView, 
+        direction: NavigationDirection, 
+        stateModel: WebViewStateModel,
+        currentSnapshot: UIImage? = nil
+    ) -> UIView {
         let container = UIView(frame: webView.bounds)
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
