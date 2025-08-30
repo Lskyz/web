@@ -5,6 +5,7 @@
 //  🔄 복원큐와 단일 경로 통합 (영향 없이 협력)
 //  🏄‍♂️ 제스처/버튼 네비게이션 통합 처리
 //  📸 DOM/JS/스크롤 상태 완벽 복원
+//  🔧 제스처 시작 문제 수정 - .began에서 임계값 검사 제거
 //
 
 import UIKit
@@ -414,11 +415,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            guard horizontalEnough && signOK else { 
-                gesture.state = .cancelled
-                return 
-            }
-            
+            // 🔧 수정: .began에서는 임계값 검사 제거, 방향과 가능 여부만 확인
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
@@ -429,6 +426,7 @@ final class BFCacheTransitionSystem: NSObject {
             }
             
         case .changed:
+            // ✅ 임계값 검사는 실제 이동이 발생한 후에만 적용
             guard horizontalEnough && signOK else { return }
             updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
             
