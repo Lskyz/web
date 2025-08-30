@@ -1,5 +1,4 @@
-//
-//  WebViewDataModel.swift - Part 1 (Core Model)
+//  WebViewDataModel.swift
 //  🎯 단순화된 정상 히스토리 시스템 + 직렬화 큐 복원 시스템
 //  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
@@ -11,8 +10,7 @@
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
-//  🔥 **BFCache 프리히트 추가 - 페이지 로드 완료 및 네비게이션 직전 스냅샷**
-//  🚫 **레이어 fallback 완전 제거 - takeSnapshot만 사용**
+
 //
 
 import Foundation
@@ -27,7 +25,7 @@ enum NavigationRestoreState {
     case preparing(Int)         // 복원 준비 중
     case completed              // 복원 완료
     case failed                 // 복원 실패
-    
+
     var isActive: Bool {
         switch self {
         case .idle, .completed, .failed:
@@ -36,7 +34,7 @@ enum NavigationRestoreState {
             return true
         }
     }
-    
+
     var targetIndex: Int? {
         switch self {
         case .queueRestoring(let index), .preparing(let index):
@@ -72,7 +70,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
     var lastAccessed: Date
     var siteType: String?
     var navigationType: NavigationType = .normal
-    
+
     init(url: URL, title: String = "", siteType: String? = nil, navigationType: NavigationType = .normal) {
         self.id = UUID()
         self.url = url
@@ -82,25 +80,25 @@ struct PageRecord: Codable, Identifiable, Hashable {
         self.siteType = siteType
         self.navigationType = navigationType
     }
-    
+
     mutating func updateTitle(_ title: String) {
         if !title.isEmpty {
             self.title = title
         }
         lastAccessed = Date()
     }
-    
+
     mutating func updateAccess() {
         lastAccessed = Date()
     }
-    
+
     // 🔧 트래킹/광고 파라미터(무시 대상) — 필요시 여기에만 추가
     private static let ignoredTrackingKeys: Set<String> = [
         "utm_source","utm_medium","utm_campaign","utm_term","utm_content","utm_id",
         "gclid","fbclid","igshid","msclkid","yclid","ref","ref_src","ref_url",
         "ved","ei","sclient","source","sourceid","gbv","lr","hl","biw","bih","dpr"
     ]
-    
+
     // 값 부재(nil)와 빈값("")을 **구분 보존**하여 미세 차이도 잡는다.
     private static func normalizedQueryMapPreservingEmpty(_ comps: URLComponents?) -> [String: [String?]] {
         let items = comps?.queryItems ?? []
@@ -123,7 +121,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
         }
         return dict
     }
-    
+
     // 경로 정규화: 중복/트레일링 슬래시 정리, http→https 승격
     private static func normalizedComponents(for url: URL) -> URLComponents? {
         var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -135,7 +133,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
         }
         return comps
     }
-    
+
     // 🔧 쿼리 차이 로깅 (디버깅용)
     static func logDiffIfSamePathButDifferentQuery(prev: URL, curr: URL) {
         guard let a = normalizedComponents(for: prev), let b = normalizedComponents(for: curr) else { return }
@@ -154,16 +152,16 @@ struct PageRecord: Codable, Identifiable, Hashable {
             }
         }
     }
-    
+
     // ✅ 범용 정규화: **트래킹만 제거**, 그 외 파라미터는 전부 보존
     static func normalizeURL(_ url: URL) -> String {
         // 검색엔진은 기존 특화 정규화 유지
         if isSearchURL(url) {
             return normalizeSearchURL(url)
         }
-        
+
         guard var comps = normalizedComponents(for: url) else { return url.absoluteString }
-        
+
         // 쿼리: 트래킹 키 제외하고 **모든 키/값 보존**
         let kept = normalizedQueryMapPreservingEmpty(comps)
         if kept.isEmpty {
@@ -178,51 +176,51 @@ struct PageRecord: Codable, Identifiable, Hashable {
             }
             comps.queryItems = items
         }
-        
+
         // 프래그먼트: 기본적으로 제거(필요 시 정책적으로 남길 수 있음)
         comps.fragment = nil
-        
+
         return comps.url?.absoluteString ?? url.absoluteString
     }
-    
+
     func normalizedURL() -> String {
         return Self.normalizeURL(self.url)
     }
-    
+
     // 🔍 검색 URL인지 확인
     static func isSearchURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
-        
+
         let searchHosts = ["google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com"]
         let isSearchHost = searchHosts.contains { host.contains($0) }
-        
+
         if !isSearchHost { return false }
-        
+
         // 검색 파라미터 확인
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let queryItems = components.queryItems else { return false }
-        
+
         let searchParams = ["q", "query", "search", "p"]
         return queryItems.contains { searchParams.contains($0.name) }
     }
-    
+
     // 🔍 **핵심 해결책 2: 강화된 구글 검색 URL 정규화** (임시 파라미터 적극 제거)
     static func normalizeSearchURL(_ url: URL) -> String {
         guard let host = url.host?.lowercased(),
               host.contains("google.com") || host.contains("bing.com") || host.contains("yahoo.com") else {
             return normalizeURL(url)
         }
-        
+
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        
+
         if components?.scheme == "http" {
             components?.scheme = "https"
         }
-        
+
         // 🚫 **강화된 파라미터 필터링** - 검색 엔진별 핵심 파라미터만 유지
         if let queryItems = components?.queryItems {
             let essentialParams: [String]
-            
+
             if host.contains("google.com") {
                 // 구글 검색에서 핵심적인 파라미터만 유지
                 essentialParams = ["q"] // 검색 쿼리만 중요
@@ -233,7 +231,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
             } else {
                 essentialParams = ["q", "query", "search"]
             }
-            
+
             // 🚫 **구글의 임시/추적 파라미터들 제거**
             let ignoredParams = Set([
                 "sbfbu", "pi", "sei", "sca_esv", "ei", "oq", "gs_lp", "sclient",
@@ -242,19 +240,19 @@ struct PageRecord: Codable, Identifiable, Hashable {
                 "udm", "uule", "near", "cad", "rct", "cd", "ved", "usg",
                 "biw", "bih", "dpr", "pf", "pws", "nobiw", "uact", "ijn"
             ])
-            
+
             let filteredItems = queryItems.filter { item in
                 // 필수 파라미터이고 무시 목록에 없는 것만 유지
                 essentialParams.contains(item.name) && !ignoredParams.contains(item.name)
             }
-            
+
             if !filteredItems.isEmpty {
                 components?.queryItems = filteredItems.sorted { $0.name < $1.name }
             } else {
                 components?.query = nil
             }
         }
-        
+
         // 🆕 **Hash fragment도 정규화** (Google SPA 파라미터 제거)
         if let fragment = components?.fragment {
             // Hash 내의 파라미터들도 정규화
@@ -264,7 +262,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
                 let paramName = component.components(separatedBy: "=").first ?? ""
                 return !hashIgnoredParams.contains(paramName)
             }
-            
+
             if filteredHashComponents.isEmpty || filteredHashComponents.joined().isEmpty {
                 components?.fragment = nil
             } else {
@@ -273,10 +271,10 @@ struct PageRecord: Codable, Identifiable, Hashable {
         } else {
             components?.fragment = nil
         }
-        
+
         return components?.url?.absoluteString ?? url.absoluteString
     }
-    
+
     // 로그인 관련 URL 감지
     static func isLoginRelatedURL(_ url: URL) -> Bool {
         let urlString = url.absoluteString.lowercased()
@@ -295,7 +293,7 @@ struct WebViewSession: Codable {
     let currentIndex: Int
     let sessionId: UUID
     let createdAt: Date
-    
+
     init(pageRecords: [PageRecord], currentIndex: Int) {
         self.pageRecords = pageRecords
         self.currentIndex = currentIndex
@@ -322,47 +320,47 @@ fileprivate func ts() -> String {
 // MARK: - 🎯 **WebViewDataModel - enum 기반 단순화된 큐 복원 시스템**
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
-    
+
     // ✅ 순수 히스토리 배열 (정상 기록, 정상 배열)
     @Published private(set) var pageHistory: [PageRecord] = []
     @Published private(set) var currentPageIndex: Int = -1
-    
+
     // ✅ 단순한 네비게이션 상태
     @Published private(set) var canGoBack: Bool = false
     @Published private(set) var canGoForward: Bool = false
-    
+
     // 🎯 **핵심: enum 기반 복원 상태 관리**
     @Published private(set) var restoreState: NavigationRestoreState = .idle
     private var restoreQueue: [RestoreQueueItem] = []
     private var expectedNormalizedURL: String? = nil
-    
+
     // 🎯 **비루트 네비 직후 루트 pop 무시용**: provisional 네비게이션 추적
     private var lastProvisionalNavAt: Date?
     private var lastProvisionalURL: URL?
     private static let rootPopNavWindow: TimeInterval = 0.6 // 600ms
-    
+
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
-    
+
     // ✅ 전역 히스토리
     static var globalHistory: [HistoryEntry] = [] {
         didSet { saveGlobalHistory() }
     }
-    
+
     // ✅ StateModel 참조
     weak var stateModel: WebViewStateModel?
-    
+
     override init() {
         super.init()
         Self.loadGlobalHistory()
     }
-    
+
     // MARK: - 🎯 **핵심: 단순한 네비게이션 상태 관리**
-    
+
     private func updateNavigationState() {
         let newCanGoBack = currentPageIndex > 0
         let newCanGoForward = currentPageIndex < pageHistory.count - 1
-        
+
         if canGoBack != newCanGoBack || canGoForward != newCanGoForward {
             canGoBack = newCanGoBack
             canGoForward = newCanGoForward
@@ -370,133 +368,133 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             dbg("🎯 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
         }
     }
-    
+
     // MARK: - 🎯 **enum 기반 복원 시스템 관리 (모든 로직을 DataModel로 통합)**
-    
+
     func enqueueRestore(to targetIndex: Int) -> PageRecord? {
         guard targetIndex >= 0, targetIndex < pageHistory.count else {
             dbg("❌ 잘못된 복원 인덱스: \(targetIndex)")
             return nil
         }
-        
+
         let item = RestoreQueueItem(targetIndex: targetIndex, requestedAt: Date())
         restoreQueue.append(item)
         dbg("📥 복원 큐 추가: 인덱스 \(targetIndex) (큐 길이: \(restoreQueue.count))")
-        
+
         // 미리 타겟 레코드 반환 (UI 즉시 업데이트용)
         let targetRecord = pageHistory[targetIndex]
-        
+
         if !restoreState.isActive {
             processNextRestore()
         }
-        
+
         return targetRecord
     }
-    
+
     private func processNextRestore() {
         guard !restoreQueue.isEmpty, !restoreState.isActive else { return }
-        
+
         let item = restoreQueue.removeFirst()
         let targetIndex = item.targetIndex
-        
+
         guard targetIndex >= 0, targetIndex < pageHistory.count else {
             dbg("❌ 잘못된 복원 인덱스: \(targetIndex), 다음 큐 처리")
             processNextRestore()
             return
         }
-        
+
         restoreState = .preparing(targetIndex)
         currentPageIndex = targetIndex
         updateNavigationState()
-        
+
         let targetRecord = pageHistory[targetIndex]
         expectedNormalizedURL = targetRecord.normalizedURL()
-        
+
         dbg("🔄 복원 시작: 인덱스 \(targetIndex) → '\(targetRecord.title)' (큐 남은 건수: \(restoreQueue.count))")
-        
+
         // StateModel에 복원 요청
         stateModel?.performQueuedRestore(to: targetRecord.url)
-        
+
         // 복원 중 상태로 전환
         restoreState = .queueRestoring(targetIndex)
     }
-    
+
     func finishCurrentRestore() {
         guard restoreState.isActive else { return }
-        
+
         restoreState = .completed
         expectedNormalizedURL = nil
         dbg("✅ 복원 완료, 다음 큐 처리 시작")
-        
+
         // 상태 리셋 후 다음 큐 처리
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.restoreState = .idle
             self.processNextRestore()
         }
     }
-    
+
     func failCurrentRestore() {
         guard restoreState.isActive else { return }
-        
+
         restoreState = .failed
         expectedNormalizedURL = nil
         dbg("❌ 복원 실패, 다음 큐 처리")
-        
+
         // 상태 리셋 후 다음 큐 처리
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.restoreState = .idle
             self.processNextRestore()
         }
     }
-    
+
     func isHistoryNavigationActive() -> Bool {
         return restoreState.isActive
     }
-    
+
     // MARK: - 🎯 **단순화된 네비게이션 메서드**
-    
+
     func navigateBack() -> PageRecord? {
         guard canGoBack, currentPageIndex > 0 else { 
             dbg("❌ navigateBack 실패: canGoBack=\(canGoBack), currentIndex=\(currentPageIndex)")
             return nil
         }
-        
+
         let targetIndex = currentPageIndex - 1
         return enqueueRestore(to: targetIndex)
     }
-    
+
     func navigateForward() -> PageRecord? {
         guard canGoForward, currentPageIndex < pageHistory.count - 1 else { 
             dbg("❌ navigateForward 실패: canGoForward=\(canGoForward), currentIndex=\(currentPageIndex)")
             return nil
         }
-        
+
         let targetIndex = currentPageIndex + 1
         return enqueueRestore(to: targetIndex)
     }
-    
+
     func navigateToIndex(_ index: Int) -> PageRecord? {
         guard index >= 0, index < pageHistory.count else { 
             dbg("❌ navigateToIndex 실패: 잘못된 인덱스 \(index), 범위: 0..<\(pageHistory.count)")
             return nil 
         }
-        
+
         return enqueueRestore(to: index)
     }
-    
+
     // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기**
-    
+
     private func findSearchPageIndex(for url: URL) -> Int? {
         guard PageRecord.isSearchURL(url) else { return nil }
-        
+
         let searchURL = PageRecord.normalizeSearchURL(url)
-        
+
         for (index, record) in pageHistory.enumerated().reversed() {
             // 🚫 **현재 페이지는 제외** (SPA pop에서 현재 페이지로 돌아가는 경우 방지)
             if index == currentPageIndex {
                 continue
             }
-            
+
             if PageRecord.isSearchURL(record.url) {
                 let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
                 if recordSearchURL == searchURL {
@@ -504,30 +502,30 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 }
             }
         }
-        
+
         return nil
     }
-    
+
     // MARK: - 🌐 **SPA 네비게이션 처리** (🏠 루트 Replace 오염 방지 적용)
-    
+
     func handleSPANavigation(type: String, url: URL, title: String, timestamp: Double, siteType: String = "unknown") {
         dbg("🌐 SPA \(type): \(siteType) | \(url.absoluteString)")
-        
+
         // 로그인 관련은 무시
         if PageRecord.isLoginRelatedURL(url) {
             dbg("🔒 로그인 페이지 무시: \(url.absoluteString)")
             return
         }
-        
+
         switch type {
         case "push":
             if isHistoryNavigationActive() {
                 dbg("🤫 복원(활성) 중 SPA push 무시: \(url.absoluteString)")
                 return
             }
-            
+
             addNewPage(url: url, title: title)
-            
+
         case "replace":
             let isRoot = (url.path == "/" || url.path.isEmpty)
 
@@ -555,7 +553,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             // 정상 replace
             replaceCurrentPage(url: url, title: title, siteType: siteType)
-            
+
         case "pop":
             let isRoot = (url.path == "/" || url.path.isEmpty)
 
@@ -583,13 +581,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // 🔍 **검색 URL 특수 처리** (구글 검색어 복귀 방지)
             if PageRecord.isSearchURL(url) {
                 dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
-                
+
                 // 검색 URL의 경우 쿼리 파라미터 변경을 확인
                 if let existingIndex = findSearchPageIndex(for: url) {
                     let existingRecord = pageHistory[existingIndex]
                     let existingSearchURL = PageRecord.normalizeSearchURL(existingRecord.url)
                     let newSearchURL = PageRecord.normalizeSearchURL(url)
-                    
+
                     if existingSearchURL == newSearchURL {
                         // 검색 쿼리가 동일하면 복원
                         dbg("🔄 SPA pop - 동일한 검색 쿼리, 복원: \(existingIndex)")
@@ -631,7 +629,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                 }
             }
-            
+
         case "hash", "dom":
             // 홈페이지면 새 페이지, 아니면 현재 페이지 교체
             if isHomepageURL(url) && !isHistoryNavigationActive() {
@@ -639,23 +637,23 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             } else {
                 replaceCurrentPage(url: url, title: title, siteType: siteType)
             }
-            
+
         case "title":
             // 🔧 **수정**: URL 기반 제목 업데이트 사용
             updatePageTitle(for: url, title: title)
-            
+
         default:
             dbg("🌐 알 수 없는 SPA 타입: \(type)")
         }
-        
+
         // 🎯 **복원 중에는 전역 히스토리 추가 금지**
         if type != "title" && !isHistoryNavigationActive() && !Self.globalHistory.contains(where: { $0.url == url }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
     }
-    
+
     // MARK: - 🌐 **SPA 훅 JavaScript 스크립트** (🏠 루트 Replace 디바운싱 적용)
-    
+
     static func makeSPANavigationScript() -> WKUserScript {
         let scriptSource = """
         // 🌐 완전형 SPA 네비게이션 & DOM 변경 감지 훅 + 🏠 루트 Replace 디바운싱
@@ -900,19 +898,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
-    
+
     private func isHomepageURL(_ url: URL) -> Bool {
         let path = url.path
         let query = url.query
-        
+
         // 쿼리 파라미터가 있으면 홈페이지가 아님
         if let query = query, !query.isEmpty {
             return false
         }
-        
+
         return path == "/" || path.isEmpty || path == "/main" || path == "/home"
     }
-    
+
     private func replaceCurrentPage(url: URL, title: String, siteType: String) {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
             if !isHistoryNavigationActive() {
@@ -920,40 +918,40 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
             return
         }
-        
+
         var record = pageHistory[currentPageIndex]
         record.url = url
         record.updateTitle(title)
         record.siteType = siteType
         record.navigationType = .reload
         pageHistory[currentPageIndex] = record
-        
+
         dbg("🔄 SPA Replace - 현재 페이지 교체: '\(title)'")
         stateModel?.syncCurrentURL(url)
     }
-    
+
     // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용)**
-    
+
     func addNewPage(url: URL, title: String = "") {
         if PageRecord.isLoginRelatedURL(url) {
             dbg("🔒 로그인 페이지 히스토리 제외: \(url.absoluteString)")
             return
         }
-        
+
         // ✅ 복원 중에는 차단
         if isHistoryNavigationActive() {
             dbg("🤫 복원 중 새 페이지 추가 차단: \(url.absoluteString)")
             return
         }
-        
+
         // ✅ **핵심 로직 (범용 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
         if let currentRecord = currentPageRecord {
             let currentNormalized = currentRecord.normalizedURL()
             let newNormalized = PageRecord.normalizeURL(url)
-            
+
             // 🔧 쿼리 차이 로깅 (디버깅용)
             PageRecord.logDiffIfSamePathButDifferentQuery(prev: currentRecord.url, curr: url)
-            
+
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
                 dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
@@ -964,42 +962,42 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 dbg("   신규: \(newNormalized)")
             }
         }
-        
+
         // ✅ **새 페이지 추가**: forward 스택 제거 후 추가
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
             pageHistory.removeSubrange((currentPageIndex + 1)...)
             dbg("🗑️ forward 스택 \(removedCount)개 제거")
         }
-        
+
         let newRecord = PageRecord(url: url, title: title, navigationType: .normal)
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
-        
+
         updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
-        
+
         // 전역 히스토리 추가 (복원 중에는 금지)
         if !Self.globalHistory.contains(where: { $0.url == url }) {
             Self.globalHistory.append(HistoryEntry(url: url, title: title, date: Date()))
         }
     }
-    
+
     // MARK: - 🔧 **제목 덮어쓰기 문제 해결**: URL 검증 추가된 제목 업데이트
-    
+
     func updateCurrentPageTitle(_ title: String) {
         guard currentPageIndex >= 0, 
               currentPageIndex < pageHistory.count,
               !title.isEmpty else { 
             return 
         }
-        
+
         // 🔧 **핵심 수정**: StateModel의 현재 URL과 매칭되는 레코드만 업데이트
         if let stateModelURL = stateModel?.currentURL {
             let currentRecord = pageHistory[currentPageIndex]
             let currentNormalizedURL = currentRecord.normalizedURL()
             let stateNormalizedURL = PageRecord.normalizeURL(stateModelURL)
-            
+
             // URL이 일치하지 않으면 제목 업데이트 거부
             if currentNormalizedURL != stateNormalizedURL {
                 dbg("⚠️ 제목 업데이트 거부: 인덱스[\(currentPageIndex)] URL 불일치")
@@ -1008,19 +1006,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return
             }
         }
-        
+
         var updatedRecord = pageHistory[currentPageIndex]
         updatedRecord.updateTitle(title)
         pageHistory[currentPageIndex] = updatedRecord
         dbg("📝 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
     }
-    
+
     // 🔧 **개선된 제목 업데이트**: 공백 제목 보정 추가
     func updatePageTitle(for url: URL, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeTitle = trimmed.isEmpty ? (url.host ?? "제목 없음") : trimmed
         let normalizedURL = PageRecord.normalizeURL(url)
-        
+
         // 해당 URL을 가진 가장 최근 레코드 찾기
         for i in stride(from: pageHistory.count - 1, through: 0, by: -1) {
             let record = pageHistory[i]
@@ -1032,18 +1030,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return
             }
         }
-        
+
         dbg("⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - \(url.absoluteString)")
     }
-    
+
     var currentPageRecord: PageRecord? {
         guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else { return nil }
         return pageHistory[currentPageIndex]
     }
-    
+
     // 🎯 **BFCache 통합 - handleSwipeGestureDetected 제거**
     // 모든 스와이프 제스처 처리는 BFCacheTransitionSystem으로 이관
-    
+
     func findPageIndex(for url: URL) -> Int? {
         // ⚠️ **주의**: 이 함수는 미리보기용만 사용
         // 절대로 이 결과로 navigateToIndex 하지 말 것!
@@ -1053,37 +1051,37 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         return matchingIndices.last // 참고용만 - 점프 금지!
     }
-    
+
     // MARK: - 세션 저장/복원
-    
+
     func saveSession() -> WebViewSession? {
         guard !pageHistory.isEmpty, currentPageIndex >= 0 else {
             dbg("💾 세션 저장 실패: 히스토리 없음")
             return nil
         }
-        
+
         let session = WebViewSession(pageRecords: pageHistory, currentIndex: currentPageIndex)
         dbg("💾 세션 저장: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
         return session
     }
-    
+
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
         restoreState = .sessionRestoring
-        
+
         pageHistory = session.pageRecords
         currentPageIndex = max(0, min(session.currentIndex, pageHistory.count - 1))
-        
+
         updateNavigationState()
         dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
     }
-    
+
     func finishSessionRestore() {
         restoreState = .idle
     }
-    
+
     // MARK: - 유틸리티
-    
+
     func clearHistory() {
         Self.globalHistory.removeAll()
         Self.saveGlobalHistory()
@@ -1092,7 +1090,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         updateNavigationState()
         dbg("🧹 전체 히스토리 삭제")
     }
-    
+
     func resetNavigationFlags() {
         restoreState = .idle
         expectedNormalizedURL = nil
@@ -1101,20 +1099,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         lastProvisionalURL = nil
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
-    
+
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
-    
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // 🔥 **BFCache 프리히트**: 메인 프레임 네비게이션 직전 현재 페이지 스냅샷 저장
-        if navigationAction.targetFrame?.isMainFrame == true &&
-           navigationAction.navigationType != .backForward,
-           let currentRecord = currentPageRecord {
-            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { snapshot in
-                BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
-            }
-            dbg("🔥 BFCache 프리히트 (네비게이션 직전): \(currentRecord.title)")
-        }
-        
+
+
+
+
+
+
+
+
+
+
         // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
         switch navigationAction.navigationType {
         case .linkActivated, .formSubmitted, .formResubmitted:
@@ -1135,65 +1133,53 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         default:
             break
         }
-        
+
         decisionHandler(.allow)
     }
-    
+
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용)
-    
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         stateModel?.handleLoadingStart()
-        
+
         dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
-        
+
         // 🎯 **비루트 네비 감지용 스탬프**
         if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
             lastProvisionalNavAt = Date()
             lastProvisionalURL = u
         }
     }
-    
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         stateModel?.handleLoadingFinish()
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
-        
+
         if let finalURL = webView.url {
-            // 🔥 **BFCache 프리히트**: 페이지 로드 완료 시 현재 페이지 스냅샷 저장
-            if let currentRecord = currentPageRecord {
-                // 페이지 렌더링 완료 대기 (JS 한 프레임 보장)
-                webView.evaluateJavaScript("new Promise(r=>requestAnimationFrame(()=>r(true)))") { [weak webView, weak self] _, _ in
-                    guard let webView = webView else { return }
-                    
-                    if #available(iOS 11.0, *) {
-                        let config = WKSnapshotConfiguration()
-                        if #available(iOS 13.0, *) {
-                            config.afterScreenUpdates = true
-                        }
-                        // 🚫 bounds만 캡처 (보이는 영역만)
-                        config.rect = webView.bounds
-                        
-                        webView.takeSnapshot(with: config) { [weak self] image, error in
-                            if let error = error {
-                                self?.dbg("🔥 BFCache 프리히트 실패: \(error.localizedDescription)")
-                                // 🚫 레이어 fallback 제거 - 실패시 그냥 스킵
-                            } else {
-                                let snapshot = BFCacheSnapshot(
-                                    pageRecord: currentRecord,
-                                    scrollPosition: webView.scrollView.contentOffset,
-                                    timestamp: Date(),
-                                    webViewSnapshot: image
-                                )
-                                BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
-                                self?.dbg("🔥 BFCache 프리히트 (로드 완료): \(currentRecord.title) - 이미지 크기: \(image?.size ?? .zero)")
-                            }
-                        }
-                    } else {
-                        // iOS 11 미만: 스냅샷 없이 진행
-                        self?.dbg("🔥 BFCache 프리히트 스킵 (iOS 11 미만)")
-                    }
-                }
-            }
-            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             // 🎯 **핵심: didFinish enum 기반 분기 처리**
             switch restoreState {
             case .sessionRestoring:
@@ -1201,13 +1187,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 updatePageTitle(for: finalURL, title: title)
                 finishSessionRestore()
                 dbg("🔄 세션 복원 완료: '\(title)'")
-                
+
             case .queueRestoring(_):
                 // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
-                
+
                 if let expectedNormalized = expectedNormalizedURL {
                     let actualNormalized = PageRecord.normalizeURL(finalURL)
-                    
+
                     if expectedNormalized == actualNormalized {
                         // URL이 예상과 일치 - 제목만 업데이트
                         updatePageTitle(for: finalURL, title: title)
@@ -1222,17 +1208,17 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     updatePageTitle(for: finalURL, title: title)
                     dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
                 }
-                
+
                 // 📸 현재 레코드 업데이트
                 if let currentRecord = currentPageRecord {
                     var mutableRecord = currentRecord
                     mutableRecord.updateAccess()
                     pageHistory[currentPageIndex] = mutableRecord
                 }
-                
+
                 // 큐 기반 복원 완료
                 finishCurrentRestore()
-                
+
             case .idle, .completed, .failed, .preparing:
                 // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
                 addNewPage(url: finalURL, title: title)
@@ -1240,68 +1226,68 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
         }
-        
+
         stateModel?.triggerNavigationFinished()
         dbg("✅ 네비게이션 완료")
     }
-    
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
-        
+
         // 복원 중이면 해당 복원 실패 처리
         if restoreState.isActive {
             failCurrentRestore()
             dbg("🤫 복원 실패 - 다음 큐 처리")
         }
     }
-    
+
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
-        
+
         // 복원 중이면 해당 복원 실패 처리
         if restoreState.isActive {
             failCurrentRestore()
             dbg("🤫 복원 실패 - 다음 큐 처리")
         }
     }
-    
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         if let httpResponse = navigationResponse.response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
             stateModel?.notifyHTTPError(httpResponse.statusCode, url: navigationResponse.response.url?.absoluteString ?? "")
         }
-        
+
         // 📁 **다운로드 처리 헬퍼 호출**
         shouldDownloadResponse(navigationResponse, decisionHandler: decisionHandler)
     }
-    
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         stateModel?.handleDidCommitNavigation(webView)
     }
-    
+
     // 📁 **다운로드 델리게이트 연결 (헬퍼 호출)**
     @available(iOS 14.0, *)
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
         // 헬퍼 함수로 다운로드 델리게이트 연결
         handleDownloadStart(download: download, stateModel: stateModel)
     }
-    
+
     @available(iOS 14.0, *)
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         // 헬퍼 함수로 다운로드 델리게이트 연결
         handleDownloadStart(download: download, stateModel: stateModel)
     }
-    
+
     // MARK: - 전역 히스토리 관리
-    
+
     private static func saveGlobalHistory() {
         if let data = try? JSONEncoder().encode(globalHistory) {
             UserDefaults.standard.set(data, forKey: "globalHistory")
             TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 저장: \(globalHistory.count)개")
         }
     }
-    
+
     static func loadGlobalHistory() {
         if let data = UserDefaults.standard.data(forKey: "globalHistory"),
            let loaded = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -1309,27 +1295,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             TabPersistenceManager.debugMessages.append("[\(ts())] ☁️ 전역 방문 기록 로드: \(loaded.count)개")
         }
     }
-    
+
     // MARK: - 기존 호환성 API
-    
+
     var historyURLs: [String] {
         return pageHistory.map { $0.url.absoluteString }
     }
-    
+
     var currentHistoryIndex: Int {
         return max(0, currentPageIndex)
     }
-    
+
     func historyStackIfAny() -> [URL] {
         return pageHistory.map { $0.url }
     }
-    
+
     func currentIndexInSafeBounds() -> Int {
         return max(0, min(currentPageIndex, pageHistory.count - 1))
     }
-    
+
     // MARK: - 디버그
-    
+
     private func dbg(_ msg: String) {
         let id = tabID?.uuidString.prefix(6) ?? "noTab"
         let navState = "B:\(canGoBack ? "✅" : "❌") F:\(canGoForward ? "✅" : "❌")"
@@ -1346,10 +1332,10 @@ extension WebViewDataModel {
         @ObservedObject var dataModel: WebViewDataModel
         let onNavigateToPage: (PageRecord) -> Void
         let onNavigateToURL: (URL) -> Void
-        
+
         @State private var searchQuery: String = ""
         @Environment(\.dismiss) private var dismiss
-        
+
         private var dateFormatter: DateFormatter = {
             let df = DateFormatter()
             df.dateStyle = .medium
@@ -1370,7 +1356,7 @@ extension WebViewDataModel {
         private var sessionHistory: [PageRecord] {
             return dataModel.pageHistory.reversed()
         }
-        
+
         private var filteredGlobalHistory: [HistoryEntry] {
             let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if q.isEmpty { return WebViewDataModel.globalHistory.sorted { $0.date > $1.date } }
@@ -1395,7 +1381,7 @@ extension WebViewDataModel {
                         }
                     }
                 }
-                
+
                 Section("전체 기록 (\(filteredGlobalHistory.count)개)") {
                     ForEach(filteredGlobalHistory) { item in
                         VStack(alignment: .leading, spacing: 4) {
@@ -1403,18 +1389,18 @@ extension WebViewDataModel {
                                 Image(systemName: "globe")
                                     .frame(width: 16, height: 16)
                                     .foregroundColor(.blue)
-                                
+
                                 Text(item.title)
                                     .font(.headline)
                                     .lineLimit(1)
-                                
+
                                 Spacer()
-                                
+
                                 Text(dateFormatter.string(from: item.date))
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
-                            
+
                             Text(item.url.absoluteString)
                                 .font(.caption)
                                 .foregroundColor(.gray)
@@ -1454,7 +1440,7 @@ extension WebViewDataModel {
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
-    
+
     private var navigationTypeIcon: String {
         switch record.navigationType {
         case .home: return "house.fill"
@@ -1464,7 +1450,7 @@ struct SessionHistoryRowView: View {
         default: return "circle"
         }
     }
-    
+
     private var navigationTypeColor: Color {
         switch record.navigationType {
         case .home: return .green
@@ -1474,20 +1460,20 @@ struct SessionHistoryRowView: View {
         default: return .gray
         }
     }
-    
+
     var body: some View {
         HStack {
             Image(systemName: isCurrent ? "arrow.right.circle.fill" : navigationTypeIcon)
                 .foregroundColor(isCurrent ? .blue : navigationTypeColor)
                 .frame(width: 20)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(record.title)
                         .font(isCurrent ? .headline : .body)
                         .fontWeight(isCurrent ? .bold : .regular)
                         .lineLimit(1)
-                    
+
                     if let siteType = record.siteType {
                         Text("[\(siteType)]")
                             .font(.caption2)
@@ -1497,7 +1483,7 @@ struct SessionHistoryRowView: View {
                             .background(Color.orange.opacity(0.1))
                             .cornerRadius(4)
                     }
-                    
+
                     if record.navigationType != .normal {
                         Text(record.navigationType.rawValue)
                             .font(.caption2)
@@ -1507,28 +1493,28 @@ struct SessionHistoryRowView: View {
                             .background(navigationTypeColor.opacity(0.1))
                             .cornerRadius(4)
                     }
-                    
+
                     Spacer()
                 }
-                
+
                 Text(record.url.absoluteString)
                     .font(.caption)
                     .foregroundColor(.gray)
                     .lineLimit(1)
-                
+
                 HStack {
                     Text("ID: \(String(record.id.uuidString.prefix(8)))")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    
+
                     Spacer()
-                    
+
                     Text(DateFormatter.shortTime.string(from: record.timestamp))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
             }
-            
+
             Spacer()
         }
         .padding(.vertical, 4)
