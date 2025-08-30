@@ -10,6 +10,7 @@
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
+//  🔄 **리다이렉트 중복 방지** - 동일 도메인 리다이렉트 감지 및 필터링
 
 //
 
@@ -52,6 +53,7 @@ enum NavigationType: String, Codable, CaseIterable {
     case home = "home"
     case spaNavigation = "spa"
     case userClick = "userClick"
+    case redirect = "redirect"  // 🔄 리다이렉트 타입 추가
 }
 
 // MARK: - 복원 큐 아이템
@@ -59,6 +61,59 @@ struct RestoreQueueItem {
     let targetIndex: Int
     let requestedAt: Date
     let id: UUID = UUID()
+}
+
+// MARK: - 🔄 리다이렉트 추적 구조체
+private struct RedirectTracker {
+    let originalURL: URL
+    let timestamp: Date
+    let redirectChain: [URL]
+    
+    init(originalURL: URL) {
+        self.originalURL = originalURL
+        self.timestamp = Date()
+        self.redirectChain = [originalURL]
+    }
+    
+    mutating func addRedirect(_ url: URL) -> RedirectTracker {
+        var newTracker = self
+        newTracker.redirectChain.append(url)
+        return newTracker
+    }
+    
+    // 리다이렉트 체인이 완료되었는지 확인 (3초 타임아웃)
+    func isExpired() -> Bool {
+        Date().timeIntervalSince(timestamp) > 3.0
+    }
+    
+    // 같은 도메인군인지 확인
+    func isSameDomainFamily(_ url: URL) -> Bool {
+        let originalHost = normalizeHost(originalURL.host)
+        let newHost = normalizeHost(url.host)
+        return originalHost == newHost
+    }
+    
+    private func normalizeHost(_ host: String?) -> String {
+        guard let host = host?.lowercased() else { return "" }
+        
+        // www 제거
+        let withoutWWW = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        
+        // m. 제거 (모바일 서브도메인)
+        let withoutMobile = withoutWWW.hasPrefix("m.") ? String(withoutWWW.dropFirst(2)) : withoutWWW
+        
+        return withoutMobile
+    }
+    
+    // 최종 URL (체인의 마지막)
+    var finalURL: URL {
+        return redirectChain.last ?? originalURL
+    }
+    
+    // 리다이렉트인지 확인
+    var isRedirect: Bool {
+        return redirectChain.count > 1
+    }
 }
 
 // MARK: - 페이지 기록
@@ -70,8 +125,9 @@ struct PageRecord: Codable, Identifiable, Hashable {
     var lastAccessed: Date
     var siteType: String?
     var navigationType: NavigationType = .normal
+    var redirectChain: [URL]? // 🔄 리다이렉트 체인 저장
 
-    init(url: URL, title: String = "", siteType: String? = nil, navigationType: NavigationType = .normal) {
+    init(url: URL, title: String = "", siteType: String? = nil, navigationType: NavigationType = .normal, redirectChain: [URL]? = nil) {
         self.id = UUID()
         self.url = url
         self.title = title.isEmpty ? (url.host ?? "제목 없음") : title
@@ -79,6 +135,7 @@ struct PageRecord: Codable, Identifiable, Hashable {
         self.lastAccessed = Date()
         self.siteType = siteType
         self.navigationType = navigationType
+        self.redirectChain = redirectChain
     }
 
     mutating func updateTitle(_ title: String) {
@@ -285,6 +342,28 @@ struct PageRecord: Codable, Identifiable, Hashable {
         ]
         return loginPatterns.contains { urlString.contains($0) }
     }
+
+    // 🔄 **도메인 패밀리 확인** (리다이렉트 중복 방지용)
+    static func isSameDomainFamily(_ url1: URL, _ url2: URL) -> Bool {
+        let host1 = normalizeDomainForComparison(url1.host)
+        let host2 = normalizeDomainForComparison(url2.host)
+        return host1 == host2 && !host1.isEmpty
+    }
+    
+    private static func normalizeDomainForComparison(_ host: String?) -> String {
+        guard let host = host?.lowercased() else { return "" }
+        
+        // www. 제거
+        var normalized = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        
+        // m. 제거 (모바일 서브도메인)
+        normalized = normalized.hasPrefix("m.") ? String(normalized.dropFirst(2)) : normalized
+        
+        // mobile. 제거
+        normalized = normalized.hasPrefix("mobile.") ? String(normalized.dropFirst(7)) : normalized
+        
+        return normalized
+    }
 }
 
 // MARK: - 세션 저장/복원
@@ -334,6 +413,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     private var restoreQueue: [RestoreQueueItem] = []
     private var expectedNormalizedURL: String? = nil
 
+    // 🔄 **리다이렉트 추적**
+    private var currentRedirectTracker: RedirectTracker? = nil
+    private var lastNavigationTime: Date = Date(timeIntervalSince1970: 0)
+    private static let redirectDetectionWindow: TimeInterval = 3.0 // 3초 이내 연속 네비게이션은 리다이렉트로 간주
+
     // 🎯 **비루트 네비 직후 루트 pop 무시용**: provisional 네비게이션 추적
     private var lastProvisionalNavAt: Date?
     private var lastProvisionalURL: URL?
@@ -355,7 +439,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         Self.loadGlobalHistory()
     }
 
-    // MARK: - 🎯 **핵심: 단순한 네비게이션 상태 관리**
+// MARK: - 🎯 **핵심: 단순한 네비게이션 상태 관리**
 
     private func updateNavigationState() {
         let newCanGoBack = currentPageIndex > 0
@@ -366,6 +450,98 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             canGoForward = newCanGoForward
             objectWillChange.send()
             dbg("🎯 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
+        }
+    }
+
+    // MARK: - 🔄 **리다이렉트 감지 및 처리**
+
+    private func shouldTreatAsRedirect(from previousURL: URL?, to newURL: URL) -> Bool {
+        guard let prevURL = previousURL else { return false }
+        
+        let timeSinceLast = Date().timeIntervalSince(lastNavigationTime)
+        
+        // 빠른 연속 네비게이션 + 같은 도메인 패밀리 = 리다이렉트
+        let isQuickNavigation = timeSinceLast < Self.redirectDetectionWindow
+        let isSameDomainFamily = PageRecord.isSameDomainFamily(prevURL, newURL)
+        
+        // 특별한 리다이렉트 패턴들
+        let isKnownRedirectPattern = detectKnownRedirectPattern(from: prevURL, to: newURL)
+        
+        let shouldTreat = (isQuickNavigation && isSameDomainFamily) || isKnownRedirectPattern
+        
+        if shouldTreat {
+            dbg("🔄 리다이렉트 감지: \(prevURL.absoluteString) → \(newURL.absoluteString)")
+            dbg("   시간차: \(String(format: "%.2f", timeSinceLast))초, 도메인패밀리: \(isSameDomainFamily), 알려진패턴: \(isKnownRedirectPattern)")
+        }
+        
+        return shouldTreat
+    }
+
+    private func detectKnownRedirectPattern(from oldURL: URL, to newURL: URL) -> Bool {
+        let oldHost = oldURL.host?.lowercased() ?? ""
+        let newHost = newURL.host?.lowercased() ?? ""
+        
+        // 네이버: www.naver.com → m.naver.com
+        if oldHost.contains("naver.com") && newHost.contains("naver.com") {
+            if (oldHost.hasPrefix("www.") && newHost.hasPrefix("m.")) ||
+               (oldHost == "naver.com" && newHost == "m.naver.com") {
+                return true
+            }
+        }
+        
+        // 다음: www.daum.net → m.daum.net
+        if oldHost.contains("daum.net") && newHost.contains("daum.net") {
+            if (oldHost.hasPrefix("www.") && newHost.hasPrefix("m.")) ||
+               (oldHost == "daum.net" && newHost == "m.daum.net") {
+                return true
+            }
+        }
+        
+        // 구글: www.google.com → m.google.com (모바일 검색)
+        if oldHost.contains("google.com") && newHost.contains("google.com") {
+            if oldHost.hasPrefix("www.") && newHost.hasPrefix("m.") {
+                return true
+            }
+        }
+        
+        // 일반적인 www → mobile 패턴
+        if oldHost.contains("www.") && (newHost.contains("m.") || newHost.contains("mobile.")) {
+            let baseDomain1 = oldHost.replacingOccurrences(of: "www.", with: "")
+            let baseDomain2 = newHost.replacingOccurrences(of: "m.", with: "").replacingOccurrences(of: "mobile.", with: "")
+            return baseDomain1 == baseDomain2
+        }
+        
+        return false
+    }
+
+    private func handleRedirect(from originalURL: URL, to finalURL: URL) {
+        guard currentPageIndex >= 0, currentPageIndex < pageHistory.count else {
+            // 히스토리가 비어있으면 정상적으로 새 페이지 추가
+            addNewPageInternal(url: finalURL, title: "", navigationType: .redirect, redirectChain: [originalURL, finalURL])
+            return
+        }
+        
+        var currentRecord = pageHistory[currentPageIndex]
+        
+        // 현재 레코드가 리다이렉트의 원본 URL과 일치하는지 확인
+        if PageRecord.isSameDomainFamily(currentRecord.url, originalURL) {
+            // 기존 레코드를 최종 URL로 업데이트
+            currentRecord.url = finalURL
+            currentRecord.navigationType = .redirect
+            currentRecord.redirectChain = [originalURL, finalURL]
+            currentRecord.updateAccess()
+            
+            pageHistory[currentPageIndex] = currentRecord
+            
+            dbg("🔄 리다이렉트 처리: 기존 레코드 업데이트")
+            dbg("   원본: \(originalURL.absoluteString)")
+            dbg("   최종: \(finalURL.absoluteString)")
+            
+            // StateModel URL 동기화
+            stateModel?.syncCurrentURL(finalURL)
+        } else {
+            // 일치하지 않으면 새 페이지로 추가 (안전장치)
+            addNewPageInternal(url: finalURL, title: "", navigationType: .redirect, redirectChain: [originalURL, finalURL])
         }
     }
 
@@ -930,9 +1106,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
 
-    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용)**
+    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용) + 리다이렉트 중복 방지**
 
     func addNewPage(url: URL, title: String = "") {
+        addNewPageInternal(url: url, title: title, navigationType: .normal, redirectChain: nil)
+    }
+
+    private func addNewPageInternal(url: URL, title: String = "", navigationType: NavigationType = .normal, redirectChain: [URL]? = nil) {
         if PageRecord.isLoginRelatedURL(url) {
             dbg("🔒 로그인 페이지 히스토리 제외: \(url.absoluteString)")
             return
@@ -942,6 +1122,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if isHistoryNavigationActive() {
             dbg("🤫 복원 중 새 페이지 추가 차단: \(url.absoluteString)")
             return
+        }
+
+        // 🔄 **리다이렉트 중복 방지 검사**
+        if let currentRecord = currentPageRecord, navigationType != .redirect {
+            // 현재 페이지와의 리다이렉트 관계 확인
+            if shouldTreatAsRedirect(from: currentRecord.url, to: url) {
+                handleRedirect(from: currentRecord.url, to: url)
+                return
+            }
         }
 
         // ✅ **핵심 로직 (범용 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
@@ -955,6 +1144,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
                 dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
+                
+                // 네비게이션 시간 업데이트 (리다이렉트 감지를 위해)
+                lastNavigationTime = Date()
                 return
             } else {
                 dbg("🆕 URL 차이 감지 - 새 페이지 추가")
@@ -970,12 +1162,24 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             dbg("🗑️ forward 스택 \(removedCount)개 제거")
         }
 
-        let newRecord = PageRecord(url: url, title: title, navigationType: .normal)
+        let newRecord = PageRecord(
+            url: url, 
+            title: title, 
+            navigationType: navigationType,
+            redirectChain: redirectChain
+        )
         pageHistory.append(newRecord)
         currentPageIndex = pageHistory.count - 1
 
+        // 네비게이션 시간 업데이트 (리다이렉트 감지용)
+        lastNavigationTime = Date()
+
         updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
+        
+        if let chain = redirectChain, chain.count > 1 {
+            dbg("🔄 리다이렉트 체인: \(chain.map { $0.absoluteString }.joined(separator: " → "))")
+        }
 
         // 전역 히스토리 추가 (복원 중에는 금지)
         if !Self.globalHistory.contains(where: { $0.url == url }) {
@@ -1097,22 +1301,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         restoreQueue.removeAll()
         lastProvisionalNavAt = nil
         lastProvisionalURL = nil
+        currentRedirectTracker = nil
+        lastNavigationTime = Date(timeIntervalSince1970: 0)
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
 
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-
-
-
-
-
-
-
-
-
-
         // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
         switch navigationAction.navigationType {
         case .linkActivated, .formSubmitted, .formResubmitted:
@@ -1137,7 +1333,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         decisionHandler(.allow)
     }
 
-    // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용)
+    // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용 + 리다이렉트 감지)
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         stateModel?.handleLoadingStart()
@@ -1149,6 +1345,29 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             lastProvisionalNavAt = Date()
             lastProvisionalURL = u
         }
+
+        // 🔄 **리다이렉트 추적 시작**
+        if let url = webView.url {
+            if let tracker = currentRedirectTracker {
+                if tracker.isExpired() {
+                    // 기존 추적 만료 - 새로운 추적 시작
+                    currentRedirectTracker = RedirectTracker(originalURL: url)
+                    dbg("🔄 리다이렉트 추적 만료 후 새 시작: \(url.absoluteString)")
+                } else if tracker.isSameDomainFamily(url) {
+                    // 같은 도메인 패밀리 - 체인에 추가
+                    currentRedirectTracker = tracker.addRedirect(url)
+                    dbg("🔄 리다이렉트 체인 추가: \(url.absoluteString) (체인 길이: \(currentRedirectTracker?.redirectChain.count ?? 0))")
+                } else {
+                    // 다른 도메인 - 새로운 추적 시작
+                    currentRedirectTracker = RedirectTracker(originalURL: url)
+                    dbg("🔄 도메인 변경으로 새 리다이렉트 추적 시작: \(url.absoluteString)")
+                }
+            } else {
+                // 첫 번째 추적 시작
+                currentRedirectTracker = RedirectTracker(originalURL: url)
+                dbg("🔄 첫 번째 리다이렉트 추적 시작: \(url.absoluteString)")
+            }
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -1156,29 +1375,20 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
 
         if let finalURL = webView.url {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            // 🔄 **리다이렉트 처리 확인**
+            var shouldHandleAsRedirect = false
+            var redirectChain: [URL]? = nil
+            
+            if let tracker = currentRedirectTracker {
+                if tracker.isRedirect && tracker.isSameDomainFamily(finalURL) {
+                    // 리다이렉트가 완료됨
+                    shouldHandleAsRedirect = true
+                    redirectChain = tracker.redirectChain + [finalURL]
+                    dbg("🔄 리다이렉트 완료 감지: \(tracker.originalURL.absoluteString) → \(finalURL.absoluteString)")
+                }
+                // 추적 완료
+                currentRedirectTracker = nil
+            }
 
             // 🎯 **핵심: didFinish enum 기반 분기 처리**
             switch restoreState {
@@ -1190,7 +1400,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             case .queueRestoring(_):
                 // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
-
                 if let expectedNormalized = expectedNormalizedURL {
                     let actualNormalized = PageRecord.normalizeURL(finalURL)
 
@@ -1220,10 +1429,23 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 finishCurrentRestore()
 
             case .idle, .completed, .failed, .preparing:
-                // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
-                addNewPage(url: finalURL, title: title)
-                stateModel?.syncCurrentURL(finalURL)
-                dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                // ✅ **일반적인 새 탐색**: 리다이렉트 처리 포함
+                if shouldHandleAsRedirect {
+                    // 🔄 리다이렉트로 처리
+                    if let chain = redirectChain {
+                        handleRedirect(from: chain.first!, to: finalURL)
+                    }
+                } else {
+                    // 일반 새 페이지 추가
+                    addNewPageInternal(
+                        url: finalURL, 
+                        title: title, 
+                        navigationType: .normal,
+                        redirectChain: redirectChain
+                    )
+                    stateModel?.syncCurrentURL(finalURL)
+                    dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                }
             }
         }
 
@@ -1235,6 +1457,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
 
+        // 🔄 리다이렉트 추적 리셋
+        currentRedirectTracker = nil
+
         // 복원 중이면 해당 복원 실패 처리
         if restoreState.isActive {
             failCurrentRestore()
@@ -1245,6 +1470,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
         stateModel?.notifyError(error, url: webView.url?.absoluteString ?? "")
+
+        // 🔄 리다이렉트 추적 리셋
+        currentRedirectTracker = nil
 
         // 복원 중이면 해당 복원 실패 처리
         if restoreState.isActive {
@@ -1322,7 +1550,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let historyCount = "[\(pageHistory.count)]"
         let stateFlag = restoreState.isActive ? "[\(restoreState)]" : ""
         let queueState = restoreQueue.isEmpty ? "" : "[Q:\(restoreQueue.count)]"
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(stateFlag)\(queueState) \(msg)")
+        let redirectState = currentRedirectTracker != nil ? "[🔄]" : ""
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(stateFlag)\(queueState)\(redirectState) \(msg)")
     }
 }
 
@@ -1436,7 +1665,7 @@ extension WebViewDataModel {
     }
 }
 
-// MARK: - 세션 히스토리 행 뷰
+// MARK: - 세션 히스토리 행 뷰 (🔄 리다이렉트 표시 추가)
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
@@ -1447,6 +1676,7 @@ struct SessionHistoryRowView: View {
         case .reload: return "arrow.clockwise"
         case .spaNavigation: return "sparkles"
         case .userClick: return "hand.tap.fill"
+        case .redirect: return "arrow.triangle.turn.up.right.diamond.fill" // 🔄 리다이렉트 아이콘
         default: return "circle"
         }
     }
@@ -1457,6 +1687,7 @@ struct SessionHistoryRowView: View {
         case .reload: return .orange
         case .spaNavigation: return .blue
         case .userClick: return .red
+        case .redirect: return .purple // 🔄 리다이렉트 색상
         default: return .gray
         }
     }
@@ -1501,6 +1732,14 @@ struct SessionHistoryRowView: View {
                     .font(.caption)
                     .foregroundColor(.gray)
                     .lineLimit(1)
+
+                // 🔄 리다이렉트 체인 표시
+                if let redirectChain = record.redirectChain, redirectChain.count > 1 {
+                    Text("🔄 \(redirectChain.count)단계 리다이렉트: \(redirectChain.first?.host ?? "?") → \(redirectChain.last?.host ?? "?")")
+                        .font(.caption2)
+                        .foregroundColor(.purple)
+                        .padding(.top, 2)
+                }
 
                 HStack {
                     Text("ID: \(String(record.id.uuidString.prefix(8)))")
