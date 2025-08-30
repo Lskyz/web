@@ -333,26 +333,35 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func updateGestureProgress(tabID: UUID, progress: CGFloat, translation: CGFloat) {
         guard let context = activeTransitions[tabID],
-              let overlayView = context.overlayView,
+              let containerView = context.overlayView,
               let webView = context.webView else { return }
         
         let screenWidth = webView.bounds.width
-        let isLeftEdge = context.direction == .back
+        let currentPageView = containerView.viewWithTag(101)
+        let targetPageView = containerView.viewWithTag(102)
         
-        if isLeftEdge {
-            let translateX = max(-screenWidth, -screenWidth + translation)
-            overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+        if context.direction == .back {
+            // 뒤로가기: 현재 페이지는 오른쪽으로, 타겟 페이지는 왼쪽에서 들어옴
+            currentPageView?.frame.origin.x = translation
+            targetPageView?.frame.origin.x = -screenWidth + translation
         } else {
-            let translateX = min(screenWidth, screenWidth + translation)
-            overlayView.transform = CGAffineTransform(translationX: translateX, y: 0)
+            // 앞으로가기: 현재 페이지는 왼쪽으로, 타겟 페이지는 오른쪽에서 들어옴
+            currentPageView?.frame.origin.x = translation
+            targetPageView?.frame.origin.x = screenWidth + translation
         }
         
-        overlayView.alpha = 0.3 + (progress * 0.7)
+        // 그림자 투명도 조절
+        currentPageView?.layer.shadowOpacity = Float(0.3 * (1 - progress))
     }
     
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
-              let overlayView = context.overlayView else { return }
+              let containerView = context.overlayView,
+              let webView = context.webView else { return }
+        
+        let screenWidth = webView.bounds.width
+        let currentPageView = containerView.viewWithTag(101)
+        let targetPageView = containerView.viewWithTag(102)
         
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         
@@ -363,12 +372,20 @@ final class BFCacheTransitionSystem: NSObject {
             initialSpringVelocity: 0.5,
             options: [.curveEaseOut],
             animations: {
-                overlayView.transform = .identity
-                overlayView.alpha = 1.0
+                if context.direction == .back {
+                    // 뒤로가기 완료: 현재 페이지는 완전히 오른쪽으로
+                    currentPageView?.frame.origin.x = screenWidth
+                    targetPageView?.frame.origin.x = 0
+                } else {
+                    // 앞으로가기 완료: 현재 페이지는 완전히 왼쪽으로
+                    currentPageView?.frame.origin.x = -screenWidth
+                    targetPageView?.frame.origin.x = 0
+                }
+                currentPageView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
                 self?.performNavigation(context: context)
-                overlayView.removeFromSuperview()
+                containerView.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: tabID)
             }
         )
@@ -376,20 +393,29 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
-              let overlayView = context.overlayView,
+              let containerView = context.overlayView,
               let webView = context.webView else { return }
         
         let screenWidth = webView.bounds.width
-        let cancelX: CGFloat = overlayView.transform.tx > 0 ? screenWidth : -screenWidth
+        let currentPageView = containerView.viewWithTag(101)
+        let targetPageView = containerView.viewWithTag(102)
         
         UIView.animate(
             withDuration: 0.25,
             animations: {
-                overlayView.transform = CGAffineTransform(translationX: cancelX, y: 0)
-                overlayView.alpha = 0.0
+                // 원래 위치로 복귀
+                currentPageView?.frame.origin.x = 0
+                
+                if context.direction == .back {
+                    targetPageView?.frame.origin.x = -screenWidth
+                } else {
+                    targetPageView?.frame.origin.x = screenWidth
+                }
+                
+                currentPageView?.layer.shadowOpacity = 0.3
             },
             completion: { _ in
-                overlayView.removeFromSuperview()
+                containerView.removeFromSuperview()
                 self.activeTransitions.removeValue(forKey: tabID)
             }
         )
@@ -484,41 +510,60 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 오버레이 생성
     
     private func createTransitionOverlay(webView: WKWebView, direction: NavigationDirection, targetSnapshot: UIImage?) -> UIView {
+        // 오버레이 컨테이너 (전체 화면)
+        let containerView = UIView(frame: webView.bounds)
+        containerView.backgroundColor = .clear
+        containerView.clipsToBounds = true
+        
         // 현재 페이지 스크린샷
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
         let currentSnapshot = renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
         
-        // 오버레이 컨테이너
-        let overlayView = UIView(frame: webView.bounds)
-        overlayView.backgroundColor = .systemBackground
+        // 현재 페이지 뷰 (밀려나갈 페이지)
+        let currentPageView = UIImageView(image: currentSnapshot)
+        currentPageView.frame = webView.bounds
+        currentPageView.contentMode = .scaleAspectFill
+        containerView.addSubview(currentPageView)
         
-        // 현재 페이지 이미지
-        let currentImageView = UIImageView(image: currentSnapshot)
-        currentImageView.frame = webView.bounds
-        overlayView.addSubview(currentImageView)
-        
-        // 타겟 페이지 이미지 (있다면)
+        // 타겟 페이지 뷰 (들어올 페이지)
+        let targetPageView: UIImageView
         if let targetSnapshot = targetSnapshot {
-            let targetImageView = UIImageView(image: targetSnapshot)
-            targetImageView.frame = webView.bounds
-            overlayView.insertSubview(targetImageView, at: 0)
+            targetPageView = UIImageView(image: targetSnapshot)
+        } else {
+            // 스냅샷이 없으면 기본 배경
+            targetPageView = UIImageView()
+            targetPageView.backgroundColor = .systemBackground
+        }
+        targetPageView.frame = webView.bounds
+        targetPageView.contentMode = .scaleAspectFill
+        
+        // 초기 위치 설정
+        if direction == .back {
+            // 뒤로가기: 타겟 페이지는 왼쪽에서 시작
+            targetPageView.frame.origin.x = -webView.bounds.width
+        } else {
+            // 앞으로가기: 타겟 페이지는 오른쪽에서 시작
+            targetPageView.frame.origin.x = webView.bounds.width
         }
         
-        // 그림자
-        let shadowView = UIView()
-        shadowView.backgroundColor = .black
-        shadowView.alpha = 0.2
-        shadowView.frame = CGRect(x: direction == .back ? -10 : webView.bounds.width + 10, y: 0, width: 10, height: webView.bounds.height)
-        overlayView.addSubview(shadowView)
+        // 타겟 페이지를 현재 페이지 아래에 추가
+        containerView.insertSubview(targetPageView, at: 0)
         
-        // 초기 위치
-        let initialX: CGFloat = direction == .back ? -webView.bounds.width : webView.bounds.width
-        overlayView.transform = CGAffineTransform(translationX: initialX, y: 0)
+        // 그림자 효과
+        currentPageView.layer.shadowColor = UIColor.black.cgColor
+        currentPageView.layer.shadowOpacity = 0.3
+        currentPageView.layer.shadowOffset = CGSize(width: -5, height: 0)
+        currentPageView.layer.shadowRadius = 10
         
-        webView.addSubview(overlayView)
-        return overlayView
+        // 컨테이너에 저장 (나중에 애니메이션용)
+        containerView.tag = 100 // 현재 페이지 식별용
+        currentPageView.tag = 101
+        targetPageView.tag = 102
+        
+        webView.addSubview(containerView)
+        return containerView
     }
     
     // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
