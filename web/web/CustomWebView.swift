@@ -516,54 +516,54 @@ struct CustomWebView: UIViewRepresentable {
         private func createTransitionViews(for webView: WKWebView, previewImage: UIImage?, isLeftEdge: Bool) {
             cleanupTransitionViews()
             
-            // 🔧 **수정: 컨테이너 뷰 생성 및 설정**
+            // 🔧 **핵심 수정: 컨테이너를 웹뷰 위에 올림**
             let containerView = UIView(frame: webView.bounds)
             containerView.clipsToBounds = true
-            containerView.backgroundColor = .clear
+            containerView.backgroundColor = .systemBackground // 배경색 설정
             webView.addSubview(containerView)
             self.transitionContainerView = containerView
             
-            // 🔧 **수정: 현재 페이지 스크린샷 캡처**
+            // 🔧 **그림자 뷰를 먼저 추가 (가장 아래층)**
+            let shadowView = UIView()
+            shadowView.backgroundColor = .black
+            shadowView.alpha = 0
+            shadowView.frame = containerView.bounds
+            containerView.addSubview(shadowView)
+            self.shadowView = shadowView
+            
+            // 🔧 **프리뷰 페이지를 그림자 위에 추가**
+            let previewPageView = UIImageView(image: previewImage ?? createPlaceholderImage(for: webView))
+            previewPageView.frame = containerView.bounds
+            previewPageView.contentMode = .scaleAspectFill
+            previewPageView.clipsToBounds = true
+            previewPageView.backgroundColor = .systemBackground
+            
+            // 초기 위치 설정 (화면 밖)
+            if isLeftEdge {
+                // 뒤로가기: 프리뷰가 왼쪽에서 들어옴
+                previewPageView.frame.origin.x = -containerView.bounds.width
+            } else {
+                // 앞으로가기: 프리뷰가 오른쪽에서 들어옴
+                previewPageView.frame.origin.x = containerView.bounds.width
+            }
+            
+            containerView.addSubview(previewPageView)
+            self.previewPageView = previewPageView
+            
+            // 🔧 **현재 페이지를 가장 위에 추가**
             let currentScreenshot = captureWebViewScreenshot(webView)
             let currentPageView = UIImageView(image: currentScreenshot)
             currentPageView.frame = containerView.bounds
             currentPageView.contentMode = .scaleAspectFill
             currentPageView.clipsToBounds = true
+            currentPageView.backgroundColor = .systemBackground
             containerView.addSubview(currentPageView)
             self.currentPageView = currentPageView
             
-            // 🔧 **수정: 프리뷰 페이지 뷰 생성 및 초기 위치 설정**
-            if let previewImage = previewImage {
-                let previewPageView = UIImageView(image: previewImage)
-                previewPageView.frame = containerView.bounds
-                previewPageView.contentMode = .scaleAspectFill
-                previewPageView.clipsToBounds = true
-                previewPageView.backgroundColor = .systemBackground
-                
-                // 초기 위치 설정 (화면 밖)
-                if isLeftEdge {
-                    // 뒤로가기: 왼쪽에서 들어옴
-                    previewPageView.frame.origin.x = -containerView.bounds.width
-                } else {
-                    // 앞으로가기: 오른쪽에서 들어옴
-                    previewPageView.frame.origin.x = containerView.bounds.width
-                }
-                
-                containerView.addSubview(previewPageView)
-                self.previewPageView = previewPageView
-                
-                TabPersistenceManager.debugMessages.append("🎭 프리뷰 뷰 생성: frame=\(previewPageView.frame)")
-            }
+            // 웹뷰를 숨김 (전환 중에는 스크린샷만 보임)
+            webView.scrollView.isHidden = true
             
-            // 🔧 **수정: 그림자 효과 추가**
-            let shadowView = UIView()
-            shadowView.backgroundColor = .black
-            shadowView.alpha = 0
-            shadowView.frame = containerView.bounds
-            containerView.insertSubview(shadowView, belowSubview: currentPageView)
-            self.shadowView = shadowView
-            
-            TabPersistenceManager.debugMessages.append("🎭 전환 UI 생성 완료: 컨테이너=\(containerView.frame)")
+            TabPersistenceManager.debugMessages.append("🎭 전환 UI 생성: current=\(currentPageView.frame), preview=\(previewPageView.frame)")
         }
         
         private func updateTransitionViews(progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
@@ -730,6 +730,11 @@ struct CustomWebView: UIViewRepresentable {
         }
         
         private func cleanupTransitionViews() {
+            // 웹뷰 다시 표시
+            if let webView = webView {
+                webView.scrollView.isHidden = false
+            }
+            
             transitionContainerView?.removeFromSuperview()
             transitionContainerView = nil
             currentPageView = nil
