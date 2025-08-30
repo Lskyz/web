@@ -10,7 +10,6 @@
 //  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
-//  🎭 프리뷰 기반 슬라이드 전환 연동 - 네비게이션 시점 프리뷰 저장 + 복원 상태 확인
 //
 
 import Foundation
@@ -317,12 +316,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 🎭 **슬라이드 방향 enum (CustomWebView와 공유)**
-enum SlideDirection {
-    case none, back, forward
-}
-
-// MARK: - 🎯 **WebViewDataModel - enum 기반 단순화된 큐 복원 시스템 + 프리뷰 연동**
+// MARK: - 🎯 **WebViewDataModel - enum 기반 단순화된 큐 복원 시스템**
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     var tabID: UUID?
     
@@ -346,10 +340,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     // 🎯 큐 상태 조회용 (StateModel에서 로깅용)
     var queueCount: Int { restoreQueue.count }
-    
-    // 🎭 **프리뷰 관리를 위한 스케줄링 큐**
-    private let previewCaptureQueue = DispatchQueue(label: "previewCapture", qos: .userInitiated)
-    private var pendingPreviewCapture: DispatchWorkItem?
     
     // ✅ 전역 히스토리
     static var globalHistory: [HistoryEntry] = [] {
@@ -376,39 +366,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             objectWillChange.send()
             dbg("🎯 네비게이션 상태: back=\(canGoBack), forward=\(canGoForward), index=\(currentPageIndex)/\(pageHistory.count)")
         }
-    }
-    
-    // MARK: - 🎭 **프리뷰 캡처 스케줄링 (네비게이션 완료 후 자동 실행)**
-    
-    private func schedulePreviewCapture(for pageIndex: Int, delay: TimeInterval = 1.0) {
-        guard let tabID = tabID, pageIndex >= 0, pageIndex < pageHistory.count else { return }
-        
-        // 기존 스케줄 취소
-        pendingPreviewCapture?.cancel()
-        
-        // 새 스케줄 생성
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self, 
-                  let webView = self.stateModel?.webView,
-                  self.currentPageIndex == pageIndex, // 현재 인덱스와 일치할 때만 캡처
-                  !self.restoreState.isActive else { return } // 복원 중이 아닐 때만
-            
-            // 🎭 스크린샷 캡처 및 저장
-            DispatchQueue.main.async {
-                let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
-                let screenshot = renderer.image { context in
-                    webView.layer.render(in: context.cgContext)
-                }
-                
-                PagePreviewManager.shared.storePreview(for: tabID, pageIndex: pageIndex, image: screenshot)
-                TabPersistenceManager.debugMessages.append("🎭 자동 프리뷰 캡처 완료: 인덱스 \(pageIndex)")
-            }
-        }
-        
-        pendingPreviewCapture = workItem
-        previewCaptureQueue.asyncAfter(deadline: .now() + delay, execute: workItem)
-        
-        dbg("🎭 프리뷰 캡처 스케줄: 인덱스 \(pageIndex), 지연 \(delay)초")
     }
     
     // MARK: - 🎯 **enum 기반 복원 시스템 관리 (모든 로직을 DataModel로 통합)**
@@ -454,9 +411,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         dbg("🔄 복원 시작: 인덱스 \(targetIndex) → '\(targetRecord.title)' (큐 남은 건수: \(restoreQueue.count))")
         
-        // 🎭 **현재 페이지 프리뷰 미리 저장 (복원 실행 전)**
-        captureCurrentPagePreview()
-        
         // StateModel에 복원 요청
         stateModel?.performQueuedRestore(to: targetRecord.url)
         
@@ -467,13 +421,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func finishCurrentRestore() {
         guard restoreState.isActive else { return }
         
-        let completedIndex = currentPageIndex
         restoreState = .completed
         expectedNormalizedURL = nil
         dbg("✅ 복원 완료, 다음 큐 처리 시작")
-        
-        // 🎭 **복원 완료 후 프리뷰 스케줄링**
-        schedulePreviewCapture(for: completedIndex, delay: 0.8)
         
         // 상태 리셋 후 다음 큐 처리
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -498,32 +448,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     
     func isHistoryNavigationActive() -> Bool {
         return restoreState.isActive
-    }
-    
-    // MARK: - 🎭 **프리뷰 관련 유틸리티 메서드**
-    
-    private func captureCurrentPagePreview() {
-        guard let tabID = tabID, 
-              let webView = stateModel?.webView,
-              currentPageIndex >= 0,
-              currentPageIndex < pageHistory.count else { return }
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
-            let screenshot = renderer.image { context in
-                webView.layer.render(in: context.cgContext)
-            }
-            
-            PagePreviewManager.shared.storePreview(for: tabID, pageIndex: self.currentPageIndex, image: screenshot)
-            TabPersistenceManager.debugMessages.append("🎭 현재 페이지 프리뷰 캡처: 인덱스 \(self.currentPageIndex)")
-        }
-    }
-    
-    // 🎯 **프리뷰 기반 슬라이드 전환을 위한 복원 상태 확인**
-    func canPerformSlideTransition() -> Bool {
-        return !restoreState.isActive
     }
     
     // MARK: - 🎯 **단순화된 네비게이션 메서드**
@@ -1003,12 +927,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         dbg("🔄 SPA Replace - 현재 페이지 교체: '\(title)'")
         stateModel?.syncCurrentURL(url)
-        
-        // 🎭 **페이지 교체 후 프리뷰 스케줄링**
-        schedulePreviewCapture(for: currentPageIndex, delay: 0.5)
     }
     
-    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용 + 프리뷰 스케줄링)**
+    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용)**
     
     func addNewPage(url: URL, title: String = "") {
         if PageRecord.isLoginRelatedURL(url) {
@@ -1022,11 +943,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
         
-        // 🎭 **현재 페이지 프리뷰 미리 저장** (새 페이지 추가 전)
-        if currentPageIndex >= 0 && currentPageIndex < pageHistory.count {
-            captureCurrentPagePreview()
-        }
-        
         // ✅ **핵심 로직 (범용 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
         if let currentRecord = currentPageRecord {
             let currentNormalized = currentRecord.normalizedURL()
@@ -1038,9 +954,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
                 dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
-                
-                // 🎭 **제목 업데이트 후 프리뷰 스케줄링**
-                schedulePreviewCapture(for: currentPageIndex, delay: 0.3)
                 return
             } else {
                 dbg("🆕 URL 차이 감지 - 새 페이지 추가")
@@ -1052,9 +965,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         // ✅ **새 페이지 추가**: forward 스택 제거 후 추가
         if currentPageIndex >= 0 && currentPageIndex < pageHistory.count - 1 {
             let removedCount = pageHistory.count - currentPageIndex - 1
-            
-            // 🎭 **제거될 forward 페이지들의 프리뷰 정리는 생략 (PagePreviewManager가 자동 관리)**
-            
             pageHistory.removeSubrange((currentPageIndex + 1)...)
             dbg("🗑️ forward 스택 \(removedCount)개 제거")
         }
@@ -1065,9 +975,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         updateNavigationState()
         dbg("📄 새 페이지 추가: '\(newRecord.title)' [ID: \(String(newRecord.id.uuidString.prefix(8)))] (총 \(pageHistory.count)개)")
-        
-        // 🎭 **새 페이지 추가 후 프리뷰 스케줄링**
-        schedulePreviewCapture(for: currentPageIndex, delay: 1.2)
         
         // 전역 히스토리 추가 (복원 중에는 금지)
         if !Self.globalHistory.contains(where: { $0.url == url }) {
@@ -1103,9 +1010,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         updatedRecord.updateTitle(title)
         pageHistory[currentPageIndex] = updatedRecord
         dbg("📝 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
-        
-        // 🎭 **제목 업데이트 후 프리뷰 스케줄링**
-        schedulePreviewCapture(for: currentPageIndex, delay: 0.5)
     }
     
     // 🔧 **개선된 제목 업데이트**: 공백 제목 보정 추가
@@ -1122,9 +1026,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 updatedRecord.updateTitle(safeTitle)
                 pageHistory[i] = updatedRecord
                 dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString)")
-                
-                // 🎭 **제목 업데이트 후 프리뷰 스케줄링**
-                schedulePreviewCapture(for: i, delay: 0.4)
                 return
             }
         }
@@ -1183,9 +1084,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         
         updateNavigationState()
         dbg("🔄 세션 복원: \(pageHistory.count)개 페이지, 현재 인덱스 \(currentPageIndex)")
-        
-        // 🎭 **세션 복원 후 프리뷰 스케줄링**
-        schedulePreviewCapture(for: currentPageIndex, delay: 1.5)
     }
     
     func finishSessionRestore() {
@@ -1201,11 +1099,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         currentPageIndex = -1
         updateNavigationState()
         dbg("🧹 전체 히스토리 삭제")
-        
-        // 🎭 **히스토리 정리 시 프리뷰 정리**
-        if let tabID = tabID {
-            PagePreviewManager.shared.clearPreviews(for: tabID)
-        }
     }
     
     func resetNavigationFlags() {
@@ -1214,11 +1107,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         restoreQueue.removeAll()
         lastProvisionalNavAt = nil
         lastProvisionalURL = nil
-        
-        // 🎭 **플래그 리셋 시 스케줄된 프리뷰 캡처 취소**
-        pendingPreviewCapture?.cancel()
-        pendingPreviewCapture = nil
-        
         dbg("🔄 네비게이션 플래그 및 큐 전체 리셋")
     }
     
@@ -1402,40 +1290,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return max(0, min(currentPageIndex, pageHistory.count - 1))
     }
     
-    // MARK: - 🎭 **프리뷰 시스템 연동 API**
-    
-    /// 특정 페이지의 프리뷰가 있는지 확인
-    func hasPreview(for pageIndex: Int) -> Bool {
-        guard let tabID = tabID else { return false }
-        return PagePreviewManager.shared.getPreview(for: tabID, pageIndex: pageIndex) != nil
-    }
-    
-    /// 현재 탭의 모든 프리뷰 개수
-    func getTotalPreviewCount() -> Int {
-        // 🔧 **수정: 사용하지 않는 tabID 제거**
-        return 0  // 실제 카운트는 PagePreviewManager에서 직접 처리
-    }
-    
-    /// 슬라이드 전환을 위한 대상 페이지 프리뷰 조회
-    func getPreviewForNavigation(direction: SlideDirection) -> (targetIndex: Int, previewImage: UIImage?)? {
-        guard let tabID = tabID else { return nil }
-        
-        let targetIndex: Int
-        switch direction {
-        case .back:
-            guard canGoBack, currentPageIndex > 0 else { return nil }
-            targetIndex = currentPageIndex - 1
-        case .forward:
-            guard canGoForward, currentPageIndex < pageHistory.count - 1 else { return nil }
-            targetIndex = currentPageIndex + 1
-        case .none:
-            return nil
-        }
-        
-        let previewImage = PagePreviewManager.shared.getPreview(for: tabID, pageIndex: targetIndex)
-        return (targetIndex: targetIndex, previewImage: previewImage)
-    }
-    
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
@@ -1444,23 +1298,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let historyCount = "[\(pageHistory.count)]"
         let stateFlag = restoreState.isActive ? "[\(restoreState)]" : ""
         let queueState = restoreQueue.isEmpty ? "" : "[Q:\(restoreQueue.count)]"
-        let previewCount = getTotalPreviewCount()
-        let previewFlag = previewCount > 0 ? "[P:\(previewCount)]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(stateFlag)\(queueState)\(previewFlag) \(msg)")
-    }
-    
-    // MARK: - 메모리 정리
-    deinit {
-        // 🎭 **메모리 정리 시 프리뷰 정리**
-        if let tabID = tabID {
-            PagePreviewManager.shared.clearPreviews(for: tabID)
-        }
-        
-        // 스케줄된 프리뷰 캡처 취소
-        pendingPreviewCapture?.cancel()
-        pendingPreviewCapture = nil
-        
-        TabPersistenceManager.debugMessages.append("🎭 WebViewDataModel deinit - 프리뷰 및 스케줄 정리 완료")
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(historyCount)\(stateFlag)\(queueState) \(msg)")
     }
 }
 
@@ -1510,8 +1348,7 @@ extension WebViewDataModel {
                         ForEach(sessionHistory) { record in
                             SessionHistoryRowView(
                                 record: record, 
-                                isCurrent: record.id == dataModel.currentPageRecord?.id,
-                                hasPreview: dataModel.hasPreview(for: dataModel.pageHistory.firstIndex(of: record) ?? -1)
+                                isCurrent: record.id == dataModel.currentPageRecord?.id
                             )
                             .onTapGesture {
                                 onNavigateToPage(record)
@@ -1562,17 +1399,6 @@ extension WebViewDataModel {
                         dataModel.clearHistory()
                     }
                 }
-                
-                // 🎭 **프리뷰 상태 표시**
-                ToolbarItem(placement: .navigationBarLeading) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "photo.stack")
-                            .font(.caption)
-                        Text("\(dataModel.getTotalPreviewCount())")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                }
             }
         }
 
@@ -1586,11 +1412,10 @@ extension WebViewDataModel {
     }
 }
 
-// MARK: - 세션 히스토리 행 뷰 (프리뷰 상태 표시 추가)
+// MARK: - 세션 히스토리 행 뷰
 struct SessionHistoryRowView: View {
     let record: PageRecord
     let isCurrent: Bool
-    let hasPreview: Bool
     
     private var navigationTypeIcon: String {
         switch record.navigationType {
@@ -1624,13 +1449,6 @@ struct SessionHistoryRowView: View {
                         .font(isCurrent ? .headline : .body)
                         .fontWeight(isCurrent ? .bold : .regular)
                         .lineLimit(1)
-                    
-                    // 🎭 **프리뷰 상태 표시**
-                    if hasPreview {
-                        Image(systemName: "photo.fill")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
                     
                     if let siteType = record.siteType {
                         Text("[\(siteType)]")
