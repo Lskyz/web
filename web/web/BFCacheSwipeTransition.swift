@@ -455,18 +455,45 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 🎯 직접 전환 처리 (오버레이 없이)
     
     private func beginGestureTransition(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection) {
-        // 현재 페이지 BFCache 저장
+        // 🔧 수정: 프리히트된 스냅샷 먼저 확인
+        var currentSnapshot: UIImage? = nil
+        
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
-                self?.storeSnapshot(snapshot, for: currentRecord.id)
+            // 1. 캐시된 스냅샷 확인
+            if let cached = retrieveSnapshot(for: currentRecord.id) {
+                currentSnapshot = cached.webViewSnapshot
+                dbg("📸 프리히트된 스냅샷 사용: \(currentRecord.title)")
+            }
+            
+            // 2. 캐시가 없으면 동기적으로 즉시 캡처
+            if currentSnapshot == nil {
+                // layer.render 방식으로 즉시 캡처
+                UIGraphicsBeginImageContextWithOptions(webView.bounds.size, false, UIScreen.main.scale)
+                if let context = UIGraphicsGetCurrentContext() {
+                    webView.layer.render(in: context)
+                    currentSnapshot = UIGraphicsGetImageFromCurrentImageContext()
+                }
+                UIGraphicsEndImageContext()
+                
+                dbg("📸 즉시 캡처 스냅샷 생성: \(currentSnapshot != nil ? "성공" : "실패")")
+                
+                // 비동기로도 더 나은 스냅샷 저장 시도
+                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+                    self?.storeSnapshot(snapshot, for: currentRecord.id)
+                }
             }
         }
         
         // 웹뷰의 초기 transform 저장
         let initialTransform = webView.transform
         
-        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성
-        let previewContainer = createPreviewContainer(webView: webView, direction: direction, stateModel: stateModel)
+        // 🎯 수정: currentSnapshot을 실제로 전달
+        let previewContainer = createPreviewContainer(
+            webView: webView, 
+            direction: direction, 
+            stateModel: stateModel,
+            currentSnapshot: currentSnapshot  // ✅ 실제 스냅샷 전달
+        )
         
         // 컨텍스트 저장
         let context = TransitionContext(
@@ -514,7 +541,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용) - 시그니처 수정
+    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용)
     private func createPreviewContainer(
         webView: WKWebView, 
         direction: NavigationDirection, 
@@ -525,17 +552,35 @@ final class BFCacheTransitionSystem: NSObject {
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
         
-        // 현재 웹뷰의 실제 스냅샷 사용 (takeSnapshot으로 캡처된 것)
+        // 🔧 수정: 현재 웹뷰의 스냅샷 처리 개선
         let currentView: UIView
         if let snapshot = currentSnapshot {
             let imageView = UIImageView(image: snapshot)
             imageView.contentMode = .scaleAspectFill
+            imageView.frame = webView.bounds  // 프레임 명시적 설정
             currentView = imageView
+            dbg("📸 현재 뷰: 프리히트 스냅샷 사용")
         } else {
-            // 스냅샷 캡처 실패시 fallback (snapshotView 사용)
-            currentView = webView.snapshotView(afterScreenUpdates: true) ?? UIView(frame: webView.bounds)
-            if currentView.frame.isEmpty {
-                currentView.frame = webView.bounds
+            // 스냅샷이 없으면 layer.render로 즉시 캡처
+            UIGraphicsBeginImageContextWithOptions(webView.bounds.size, false, UIScreen.main.scale)
+            var capturedImage: UIImage? = nil
+            if let context = UIGraphicsGetCurrentContext() {
+                webView.layer.render(in: context)
+                capturedImage = UIGraphicsGetImageFromCurrentImageContext()
+            }
+            UIGraphicsEndImageContext()
+            
+            if let image = capturedImage {
+                let imageView = UIImageView(image: image)
+                imageView.contentMode = .scaleAspectFill
+                imageView.frame = webView.bounds
+                currentView = imageView
+                dbg("📸 현재 뷰: 즉시 캡처 성공")
+            } else {
+                // 최후의 수단: 단색 배경
+                currentView = UIView(frame: webView.bounds)
+                currentView.backgroundColor = .systemBackground
+                dbg("📸 현재 뷰: 스냅샷 실패, 단색 배경 사용")
             }
         }
         
@@ -563,33 +608,50 @@ final class BFCacheTransitionSystem: NSObject {
             // BFCache에서 스냅샷 가져오기
             if let snapshot = retrieveSnapshot(for: targetRecord.id),
                let targetImage = snapshot.webViewSnapshot {
-                targetView = UIImageView(image: targetImage)
-                (targetView as? UIImageView)?.contentMode = .scaleAspectFill
+                let imageView = UIImageView(image: targetImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.frame = webView.bounds  // 프레임 명시적 설정
+                targetView = imageView
+                dbg("📸 타겟 뷰: BFCache 스냅샷 사용 - \(targetRecord.title)")
             } else {
-                // 스냅샷이 없으면 기본 배경
-                targetView = UIView()
+                // 스냅샷이 없으면 정보 카드 표시
+                targetView = UIView(frame: webView.bounds)
                 targetView.backgroundColor = .systemBackground
                 
+                // 제목 라벨
                 let label = UILabel()
                 label.text = targetRecord.title
                 label.textAlignment = .center
                 label.font = .systemFont(ofSize: 18, weight: .medium)
                 label.textColor = .label
-                label.frame = CGRect(x: 20, y: webView.bounds.height/2 - 20, width: webView.bounds.width - 40, height: 40)
+                label.numberOfLines = 2
+                label.frame = CGRect(x: 20, y: webView.bounds.height/2 - 40, width: webView.bounds.width - 40, height: 80)
                 targetView.addSubview(label)
                 
+                // URL 라벨
                 let urlLabel = UILabel()
-                urlLabel.text = targetRecord.url.host
+                urlLabel.text = targetRecord.url.host ?? targetRecord.url.absoluteString
                 urlLabel.textAlignment = .center
                 urlLabel.font = .systemFont(ofSize: 14)
                 urlLabel.textColor = .secondaryLabel
-                urlLabel.frame = CGRect(x: 20, y: webView.bounds.height/2 + 30, width: webView.bounds.width - 40, height: 20)
+                urlLabel.frame = CGRect(x: 20, y: webView.bounds.height/2 + 50, width: webView.bounds.width - 40, height: 20)
                 targetView.addSubview(urlLabel)
+                
+                // 아이콘
+                let iconLabel = UILabel()
+                iconLabel.text = "🌐"
+                iconLabel.font = .systemFont(ofSize: 48)
+                iconLabel.textAlignment = .center
+                iconLabel.frame = CGRect(x: webView.bounds.width/2 - 30, y: webView.bounds.height/2 - 120, width: 60, height: 60)
+                targetView.addSubview(iconLabel)
+                
+                dbg("📸 타겟 뷰: 정보 카드 표시 - \(targetRecord.title)")
             }
         } else {
             // 타겟이 없으면 빈 뷰
-            targetView = UIView()
+            targetView = UIView(frame: webView.bounds)
             targetView.backgroundColor = .systemBackground
+            dbg("📸 타겟 뷰: 빈 뷰 (인덱스 범위 초과)")
         }
         
         targetView.frame = webView.bounds
