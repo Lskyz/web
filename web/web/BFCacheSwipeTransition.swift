@@ -1,4 +1,31 @@
-//
+private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool, webView: WKWebView) {
+        guard let context = activeTransitions[tabID],
+              let previewContainer = context.previewContainer else { return }
+        
+        let screenWidth = webView.bounds.width
+        let targetPreview = previewContainer.viewWithTag(1002)
+        
+        // 🎯 실제 웹뷰를 transform으로 이동
+        if isLeftEdge {
+            // 뒤로가기: 현재 웹뷰는 오른쪽으로, 타겟은 왼쪽에서 들어옴
+            let moveDistance = max(0, min(screenWidth, translation))
+            webView.transform = CGAffineTransform(translationX: moveDistance, y: 0)
+            targetPreview?.frame.origin.x = screenWidth + moveDistance
+            
+            // 그림자 효과 (진행도에 따라 증가)
+            let shadowOpacity = Float(0.3 * (abs(moveDistance) / screenWidth))
+            webView.layer.shadowOpacity = shadowOpacity
+        }
+    }?.frame.origin.x = -screenWidth + moveDistance
+            
+            // 그림자 효과 (진행도에 따라 증가)
+            let shadowOpacity = Float(0.3 * (moveDistance / screenWidth))
+            webView.layer.shadowOpacity = shadowOpacity
+        } else {
+            // 앞으로가기: 현재 웹뷰는 왼쪽으로, 타겟은 오른쪽에서 들어옴
+            let moveDistance = max(-screenWidth, min(0, translation))
+            webView.transform = CGAffineTransform(translationX: moveDistance, y: 0)
+            targetPreview//
 //  BFCacheSwipeTransition.swift
 //  🎯 **BFCache 전환 시스템 - 직접 전환 방식**
 //  ✅ 오버레이 제거 - 웹뷰 자체가 밀려나가는 자연스러운 전환
@@ -431,14 +458,9 @@ final class BFCacheTransitionSystem: NSObject {
         let isLeftEdge = (gesture.edges == .left)
         let width = gesture.view?.bounds.width ?? 1
         
-        // 수직 슬롭/부호 반대 방지
-        let absX = abs(translation.x), absY = abs(translation.y)
-        let horizontalEnough = absX > 8 && absX > absY
-        let signOK = isLeftEdge ? (translation.x >= 0) : (translation.x <= 0)
-        
         switch gesture.state {
         case .began:
-            // 🔧 수정: .began에서는 임계값 검사 제거, 방향과 가능 여부만 확인
+            // 🔧 수정: .began에서는 방향과 가능 여부만 확인
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
@@ -449,11 +471,11 @@ final class BFCacheTransitionSystem: NSObject {
             }
             
         case .changed:
-            // ✅ 임계값 검사는 실제 이동이 발생한 후에만 적용
-            guard horizontalEnough && signOK else { return }
+            // 🎯 핵심 수정: 수평 임계값 가드 제거 - 즉시 밀어내기 시작
             updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge, webView: webView)
             
         case .ended:
+            let absX = abs(translation.x)
             let progress = min(1.0, absX / width)
             let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
             if shouldComplete {
@@ -536,11 +558,17 @@ final class BFCacheTransitionSystem: NSObject {
         direction: NavigationDirection, 
         stateModel: WebViewStateModel
     ) -> UIView {
-        let container = UIView(frame: webView.bounds)
-        container.backgroundColor = .systemBackground
-        container.clipsToBounds = true
+        // 🎯 핵심 수정: host 좌표계에 맞게 컨테이너 생성
+        guard let host = webView.superview else {
+            dbg("⚠️ webView.superview가 없음!")
+            return UIView()
+        }
         
-        // 🚫 현재 웹뷰의 스냅샷은 만들지 않음 (실제 웹뷰를 직접 움직일 것이므로)
+        let container = UIView(frame: host.bounds)
+        container.backgroundColor = .clear
+        container.clipsToBounds = true
+        // 🎯 autoresizingMask 추가로 화면 회전 대응
+        container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         
         // 타겟 페이지 미리보기 생성
         let targetIndex = direction == .back ?
@@ -557,6 +585,7 @@ final class BFCacheTransitionSystem: NSObject {
                let targetImage = snapshot.webViewSnapshot {
                 targetView = UIImageView(image: targetImage)
                 (targetView as? UIImageView)?.contentMode = .scaleAspectFill
+                targetView.clipsToBounds = true
             } else {
                 // 스냅샷이 없으면 기본 배경
                 targetView = UIView()
@@ -567,7 +596,7 @@ final class BFCacheTransitionSystem: NSObject {
                 label.textAlignment = .center
                 label.font = .systemFont(ofSize: 18, weight: .medium)
                 label.textColor = .label
-                label.frame = CGRect(x: 20, y: webView.bounds.height/2 - 20, width: webView.bounds.width - 40, height: 40)
+                label.autoresizingMask = [.flexibleTopMargin, .flexibleBottomMargin, .flexibleLeftMargin, .flexibleRightMargin]
                 targetView.addSubview(label)
                 
                 let urlLabel = UILabel()
@@ -575,8 +604,16 @@ final class BFCacheTransitionSystem: NSObject {
                 urlLabel.textAlignment = .center
                 urlLabel.font = .systemFont(ofSize: 14)
                 urlLabel.textColor = .secondaryLabel
-                urlLabel.frame = CGRect(x: 20, y: webView.bounds.height/2 + 30, width: webView.bounds.width - 40, height: 20)
+                urlLabel.autoresizingMask = [.flexibleTopMargin, .flexibleBottomMargin, .flexibleLeftMargin, .flexibleRightMargin]
                 targetView.addSubview(urlLabel)
+                
+                // 레이블 위치는 나중에 설정
+                DispatchQueue.main.async {
+                    label.frame = CGRect(x: 20, y: targetView.bounds.height/2 - 20, 
+                                       width: targetView.bounds.width - 40, height: 40)
+                    urlLabel.frame = CGRect(x: 20, y: targetView.bounds.height/2 + 30, 
+                                          width: targetView.bounds.width - 40, height: 20)
+                }
             }
         } else {
             // 타겟이 없으면 빈 뷰
@@ -584,26 +621,27 @@ final class BFCacheTransitionSystem: NSObject {
             targetView.backgroundColor = .systemBackground
         }
         
-        targetView.frame = webView.bounds
+        // 🎯 핵심 수정: container.bounds 기준으로 타겟 뷰 프레임 설정
+        targetView.frame = container.bounds
+        targetView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         targetView.tag = 1002
         
-        // 초기 위치 설정
+        // 초기 위치 설정 (화면 밖에 대기)
         if direction == .back {
-            targetView.frame.origin.x = -webView.bounds.width
+            targetView.frame.origin.x = -container.bounds.width
         } else {
-            targetView.frame.origin.x = webView.bounds.width
+            targetView.frame.origin.x = container.bounds.width
         }
         
         // 타겟 뷰를 컨테이너에 추가
         container.addSubview(targetView)
         
-        // 🎯 webView의 superview에 컨테이너 추가 (webView 내부가 아님)
-        let host = webView.superview ?? webView
+        // 🎯 핵심: 컨테이너를 webView 뒤에 삽입
         host.insertSubview(container, belowSubview: webView)
         
         // 그림자 설정 (실제 웹뷰에)
         webView.layer.shadowColor = UIColor.black.cgColor
-        webView.layer.shadowOpacity = 0.3
+        webView.layer.shadowOpacity = 0
         webView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
         webView.layer.shadowRadius = 10
         
