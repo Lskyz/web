@@ -28,10 +28,10 @@ struct BFCacheSnapshot {
     let timestamp: Date
     let webViewSnapshot: UIImage?
     
-    init(pageRecord: PageRecord, webView: WKWebView?, completion: @escaping (BFCacheSnapshot) -> Void) {
-        self.pageRecord = pageRecord
-        self.scrollPosition = webView?.scrollView.contentOffset ?? .zero
-        self.timestamp = Date()
+    // 정적 팩토리 메서드로 변경
+    static func create(pageRecord: PageRecord, webView: WKWebView?, completion: @escaping (BFCacheSnapshot) -> Void) {
+        let scrollPosition = webView?.scrollView.contentOffset ?? .zero
+        let timestamp = Date()
         
         // 시각적 스냅샷 생성
         var visualSnapshot: UIImage? = nil
@@ -41,7 +41,6 @@ struct BFCacheSnapshot {
                 webView.layer.render(in: context.cgContext)
             }
         }
-        self.webViewSnapshot = visualSnapshot
         
         // DOM과 JS 상태 캡처
         var tempDom: String? = nil
@@ -109,12 +108,31 @@ struct BFCacheSnapshot {
         }
         
         group.notify(queue: .main) {
-            var snapshot = self
+            var snapshot = BFCacheSnapshot(
+                pageRecord: pageRecord,
+                domSnapshot: tempDom,
+                scrollPosition: scrollPosition,
+                jsState: tempJs,
+                formData: tempForm,
+                timestamp: timestamp,
+                webViewSnapshot: visualSnapshot
+            )
             snapshot.domSnapshot = tempDom
             snapshot.jsState = tempJs
             snapshot.formData = tempForm
             completion(snapshot)
         }
+    }
+    
+    // 직접 초기화용 init
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, formData: [String: Any]? = nil, timestamp: Date, webViewSnapshot: UIImage? = nil) {
+        self.pageRecord = pageRecord
+        self.domSnapshot = domSnapshot
+        self.scrollPosition = scrollPosition
+        self.jsState = jsState
+        self.formData = formData
+        self.timestamp = timestamp
+        self.webViewSnapshot = webViewSnapshot
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
@@ -282,7 +300,7 @@ final class BFCacheTransitionSystem: NSObject {
     private func beginGestureTransition(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection) {
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
@@ -386,7 +404,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
@@ -403,7 +421,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            _ = BFCacheSnapshot(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
                 self?.storeSnapshot(snapshot, for: currentRecord.id)
             }
         }
