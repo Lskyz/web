@@ -18,6 +18,19 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
+// MARK: - 약한 참조 제스처 컨텍스트 (순환 참조 방지)
+private class WeakGestureContext {
+    let tabID: UUID
+    weak var webView: WKWebView?
+    weak var stateModel: WebViewStateModel?
+    
+    init(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
+        self.tabID = tabID
+        self.webView = webView
+        self.stateModel = stateModel
+    }
+}
+
 // MARK: - 📸 BFCache 페이지 스냅샷
 struct BFCacheSnapshot {
     let pageRecord: PageRecord
