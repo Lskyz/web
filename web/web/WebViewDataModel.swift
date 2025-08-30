@@ -1,5 +1,5 @@
 //
-//  WebViewDataModel.swift
+//  WebViewDataModel.swift - Part 1 (Core Model)
 //  🎯 단순화된 정상 히스토리 시스템 + 직렬화 큐 복원 시스템
 //  ✅ 정상 기록, 정상 배열 - 예측 가능한 동작
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
@@ -11,6 +11,7 @@
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
+//  🔥 **BFCache 프리히트 추가 - 페이지 로드 완료 및 네비게이션 직전 스냅샷**
 //
 
 import Foundation
@@ -1103,6 +1104,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // 🔥 **BFCache 프리히트**: 메인 프레임 네비게이션 직전 현재 페이지 스냅샷 저장
+        if navigationAction.targetFrame?.isMainFrame == true &&
+           navigationAction.navigationType != .backForward,
+           let currentRecord = currentPageRecord {
+            BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { snapshot in
+                BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
+            }
+            dbg("🔥 BFCache 프리히트 (네비게이션 직전): \(currentRecord.title)")
+        }
+        
         // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
         switch navigationAction.navigationType {
         case .linkActivated, .formSubmitted, .formResubmitted:
@@ -1146,6 +1157,30 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
         
         if let finalURL = webView.url {
+            // 🔥 **BFCache 프리히트**: 페이지 로드 완료 시 현재 페이지 스냅샷 저장
+            if let currentRecord = currentPageRecord {
+                if #available(iOS 11.0, *) {
+                    let config = WKSnapshotConfiguration()
+                    if #available(iOS 13.0, *) {
+                        config.afterScreenUpdates = true
+                    }
+                    webView.takeSnapshot(with: config) { [weak self] image, error in
+                        if let error = error {
+                            self?.dbg("🔥 BFCache 프리히트 실패: \(error.localizedDescription)")
+                        } else {
+                            let snapshot = BFCacheSnapshot(
+                                pageRecord: currentRecord,
+                                scrollPosition: webView.scrollView.contentOffset,
+                                timestamp: Date(),
+                                webViewSnapshot: image
+                            )
+                            BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
+                            self?.dbg("🔥 BFCache 프리히트 (로드 완료): \(currentRecord.title)")
+                        }
+                    }
+                }
+            }
+            
             // 🎯 **핵심: didFinish enum 기반 분기 처리**
             switch restoreState {
             case .sessionRestoring:
