@@ -67,7 +67,7 @@ struct RestoreQueueItem {
 private struct RedirectTracker {
     let originalURL: URL
     let timestamp: Date
-    let redirectChain: [URL]
+    var redirectChain: [URL]  // 🔧 let → var 변경
     
     init(originalURL: URL) {
         self.originalURL = originalURL
@@ -75,7 +75,7 @@ private struct RedirectTracker {
         self.redirectChain = [originalURL]
     }
     
-    mutating func addRedirect(_ url: URL) -> RedirectTracker {
+    func addRedirect(_ url: URL) -> RedirectTracker {  // 🔧 mutating 제거
         var newTracker = self
         newTracker.redirectChain.append(url)
         return newTracker
