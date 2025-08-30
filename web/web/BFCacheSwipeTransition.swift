@@ -6,6 +6,7 @@
 //  🏄‍♂️ 제스처/버튼 네비게이션 통합 처리
 //  📸 DOM/JS/스크롤 상태 완벽 복원
 //  🔧 제스처 시작 문제 수정 - .began에서 임계값 검사 제거
+//  🎯 **스냅샷 문제 해결** - 비동기 캡처 타이밍 수정
 //
 
 import UIKit
@@ -336,6 +337,7 @@ final class BFCacheTransitionSystem: NSObject {
         var direction: NavigationDirection
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
+        var currentSnapshot: UIImage? // 🎯 현재 페이지 스냅샷 저장
     }
     
     enum NavigationDirection {
@@ -420,7 +422,16 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                beginGestureTransition(tabID: tabID, webView: webView, stateModel: stateModel, direction: direction)
+                // 🎯 핵심 수정: 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
+                captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
+                    self?.beginGestureTransitionWithSnapshot(
+                        tabID: tabID,
+                        webView: webView,
+                        stateModel: stateModel,
+                        direction: direction,
+                        currentSnapshot: snapshot
+                    )
+                }
             } else {
                 gesture.state = .cancelled
             }
@@ -447,9 +458,40 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 직접 전환 처리 (오버레이 없이)
+    // MARK: - 🎯 현재 페이지 스냅샷 캡처 (새로운 메서드)
     
-    private func beginGestureTransition(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection) {
+    private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
+        webView.takeSnapshot(with: nil) { image, error in
+            if let error = error {
+                self.dbg("📸 현재 페이지 스냅샷 실패: \(error.localizedDescription)")
+                // 실패시 snapshotView 사용
+                DispatchQueue.main.async {
+                    let fallbackView = webView.snapshotView(afterScreenUpdates: false)
+                    let fallbackImage = self.imageFromView(fallbackView ?? webView)
+                    completion(fallbackImage)
+                }
+            } else {
+                self.dbg("📸 현재 페이지 스냅샷 성공: \(image?.size ?? CGSize.zero)")
+                completion(image)
+            }
+        }
+    }
+    
+    // UIView를 UIImage로 변환하는 헬퍼 메서드
+    private func imageFromView(_ view: UIView) -> UIImage? {
+        UIGraphicsBeginImageContextWithOptions(view.bounds.size, view.isOpaque, 0.0)
+        defer { UIGraphicsEndImageContext() }
+        
+        if let context = UIGraphicsGetCurrentContext() {
+            view.layer.render(in: context)
+            return UIGraphicsGetImageFromCurrentImageContext()
+        }
+        return nil
+    }
+    
+    // MARK: - 🎯 직접 전환 처리 (스냅샷과 함께)
+    
+    private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
         // 현재 페이지 BFCache 저장
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
@@ -460,10 +502,15 @@ final class BFCacheTransitionSystem: NSObject {
         // 웹뷰의 초기 transform 저장
         let initialTransform = webView.transform
         
-        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성
-        let previewContainer = createPreviewContainer(webView: webView, direction: direction, stateModel: stateModel)
+        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성 (스냅샷 포함)
+        let previewContainer = createPreviewContainer(
+            webView: webView,
+            direction: direction,
+            stateModel: stateModel,
+            currentSnapshot: currentSnapshot
+        )
         
-        // 컨텍스트 저장
+        // 컨텍스트 저장 (스냅샷 포함)
         let context = TransitionContext(
             tabID: tabID,
             webView: webView,
@@ -471,12 +518,15 @@ final class BFCacheTransitionSystem: NSObject {
             isGesture: true,
             direction: direction,
             initialTransform: initialTransform,
-            previewContainer: previewContainer
+            previewContainer: previewContainer,
+            currentSnapshot: currentSnapshot
         )
         activeTransitions[tabID] = context
         
-        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기") (스냅샷: \(currentSnapshot != nil ? "✅" : "❌"))")
     }
+    
+    // 기존 beginGestureTransition 메서드는 제거 (위 메서드로 대체)
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
         guard let context = activeTransitions[tabID],
@@ -509,7 +559,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용) - 시그니처 수정
+    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용)
     private func createPreviewContainer(
         webView: WKWebView, 
         direction: NavigationDirection, 
@@ -520,18 +570,22 @@ final class BFCacheTransitionSystem: NSObject {
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
         
-        // 현재 웹뷰의 실제 스냅샷 사용 (takeSnapshot으로 캡처된 것)
+        // 🎯 핵심 수정: 현재 웹뷰의 실제 스냅샷 사용
         let currentView: UIView
         if let snapshot = currentSnapshot {
             let imageView = UIImageView(image: snapshot)
             imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
             currentView = imageView
+            dbg("📸 현재 페이지 스냅샷 사용")
         } else {
             // 스냅샷 캡처 실패시 fallback (snapshotView 사용)
             currentView = webView.snapshotView(afterScreenUpdates: false) ?? UIView(frame: webView.bounds)
             if currentView.frame.isEmpty {
                 currentView.frame = webView.bounds
             }
+            currentView.backgroundColor = .systemBackground
+            dbg("⚠️ 현재 페이지 fallback 뷰 사용")
         }
         
         currentView.frame = webView.bounds
@@ -558,33 +612,21 @@ final class BFCacheTransitionSystem: NSObject {
             // BFCache에서 스냅샷 가져오기
             if let snapshot = retrieveSnapshot(for: targetRecord.id),
                let targetImage = snapshot.webViewSnapshot {
-                targetView = UIImageView(image: targetImage)
-                (targetView as? UIImageView)?.contentMode = .scaleAspectFill
+                let imageView = UIImageView(image: targetImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                targetView = imageView
+                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
             } else {
-                // 스냅샷이 없으면 기본 배경
-                targetView = UIView()
-                targetView.backgroundColor = .systemBackground
-                
-                let label = UILabel()
-                label.text = targetRecord.title
-                label.textAlignment = .center
-                label.font = .systemFont(ofSize: 18, weight: .medium)
-                label.textColor = .label
-                label.frame = CGRect(x: 20, y: webView.bounds.height/2 - 20, width: webView.bounds.width - 40, height: 40)
-                targetView.addSubview(label)
-                
-                let urlLabel = UILabel()
-                urlLabel.text = targetRecord.url.host
-                urlLabel.textAlignment = .center
-                urlLabel.font = .systemFont(ofSize: 14)
-                urlLabel.textColor = .secondaryLabel
-                urlLabel.frame = CGRect(x: 20, y: webView.bounds.height/2 + 30, width: webView.bounds.width - 40, height: 20)
-                targetView.addSubview(urlLabel)
+                // 스냅샷이 없으면 정보 카드 표시
+                targetView = createInfoCard(for: targetRecord, in: webView.bounds)
+                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
             }
         } else {
             // 타겟이 없으면 빈 뷰
             targetView = UIView()
             targetView.backgroundColor = .systemBackground
+            dbg("⚠️ 타겟 페이지 없음 - 빈 뷰 생성")
         }
         
         targetView.frame = webView.bounds
@@ -602,6 +644,93 @@ final class BFCacheTransitionSystem: NSObject {
         
         webView.addSubview(container)
         return container
+    }
+    
+    // 정보 카드 생성 헬퍼 메서드
+    private func createInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
+        let card = UIView(frame: bounds)
+        card.backgroundColor = .systemBackground
+        
+        // 카드 내용을 담을 컨테이너
+        let contentView = UIView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.backgroundColor = .secondarySystemBackground
+        contentView.layer.cornerRadius = 12
+        contentView.layer.shadowColor = UIColor.black.cgColor
+        contentView.layer.shadowOpacity = 0.1
+        contentView.layer.shadowOffset = CGSize(width: 0, height: 2)
+        contentView.layer.shadowRadius = 8
+        card.addSubview(contentView)
+        
+        // 파비콘 또는 기본 아이콘
+        let iconView = UIImageView()
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = UIImage(systemName: "globe")
+        iconView.tintColor = .systemBlue
+        iconView.contentMode = .scaleAspectFit
+        contentView.addSubview(iconView)
+        
+        // 제목 레이블
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = record.title
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textColor = .label
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 2
+        contentView.addSubview(titleLabel)
+        
+        // URL 레이블
+        let urlLabel = UILabel()
+        urlLabel.translatesAutoresizingMaskIntoConstraints = false
+        urlLabel.text = record.url.host ?? record.url.absoluteString
+        urlLabel.font = .systemFont(ofSize: 14)
+        urlLabel.textColor = .secondaryLabel
+        urlLabel.textAlignment = .center
+        urlLabel.numberOfLines = 1
+        contentView.addSubview(urlLabel)
+        
+        // 시간 레이블
+        let timeLabel = UILabel()
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        timeLabel.text = formatter.string(from: record.lastAccessed)
+        timeLabel.font = .systemFont(ofSize: 12)
+        timeLabel.textColor = .tertiaryLabel
+        timeLabel.textAlignment = .center
+        contentView.addSubview(timeLabel)
+        
+        // Auto Layout 설정
+        NSLayoutConstraint.activate([
+            // 컨테이너
+            contentView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            contentView.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            contentView.widthAnchor.constraint(equalToConstant: min(300, bounds.width - 60)),
+            contentView.heightAnchor.constraint(equalToConstant: 180),
+            
+            // 아이콘
+            iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            iconView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 40),
+            iconView.heightAnchor.constraint(equalToConstant: 40),
+            
+            // 제목
+            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            
+            // URL
+            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            
+            // 시간
+            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            timeLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
+        ])
+        
+        return card
     }
     
     private func completeGestureTransition(tabID: UUID) {
