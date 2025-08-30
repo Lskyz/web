@@ -28,14 +28,21 @@ class PagePreviewManager {
     private init() {}
     
     private var previews: [UUID: [Int: UIImage]] = [:]
-    private let maxPreviewsPerTab = 20
+    private let maxPreviewsPerTab = 10  // 🔧 20에서 10으로 줄임
+    private let previewQuality: CGFloat = 0.7  // 🔧 압축 품질 추가
     
     func storePreview(for tabID: UUID, pageIndex: Int, image: UIImage) {
+        // 🔧 이미지 압축하여 저장
+        guard let compressedData = image.jpegData(compressionQuality: previewQuality),
+              let compressedImage = UIImage(data: compressedData) else {
+            return
+        }
+        
         if previews[tabID] == nil {
             previews[tabID] = [:]
         }
         
-        previews[tabID]?[pageIndex] = image
+        previews[tabID]?[pageIndex] = compressedImage
         
         // 메모리 관리 - 오래된 프리뷰 정리
         if let tabPreviews = previews[tabID], tabPreviews.count > maxPreviewsPerTab {
@@ -46,7 +53,7 @@ class PagePreviewManager {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🎭 프리뷰 저장: 탭 \(String(tabID.uuidString.prefix(8))) 인덱스 \(pageIndex)")
+        TabPersistenceManager.debugMessages.append("🎭 프리뷰 저장 (압축): 탭 \(String(tabID.uuidString.prefix(8))) 인덱스 \(pageIndex)")
     }
     
     func getPreview(for tabID: UUID, pageIndex: Int) -> UIImage? {
@@ -476,7 +483,7 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            // 🎭 **타겟 페이지의 프리뷰 가져오기 (없어도 진행)**
+            // 🎭 **타겟 페이지의 프리뷰 가져오기 (없으면 즉석 생성)**
             var previewImage: UIImage?
             if let tabID = parent.stateModel.tabID {
                 previewImage = PagePreviewManager.shared.getPreview(for: tabID, pageIndex: targetIndex)
@@ -484,8 +491,9 @@ struct CustomWebView: UIViewRepresentable {
                 if previewImage != nil {
                     TabPersistenceManager.debugMessages.append("🎭 프리뷰 이미지 로드 성공: 인덱스 \(targetIndex)")
                 } else {
-                    // 프리뷰가 없어도 계속 진행 (빈 화면 표시)
-                    TabPersistenceManager.debugMessages.append("🎭 프리뷰 없음: 인덱스 \(targetIndex) - 빈 화면으로 진행")
+                    // 🎯 **프리뷰가 없으면 즉석에서 생성 (Safari 스타일)**
+                    previewImage = createQuickPreview(for: targetIndex)
+                    TabPersistenceManager.debugMessages.append("🎭 즉석 프리뷰 생성: 인덱스 \(targetIndex)")
                 }
             }
             
@@ -523,59 +531,16 @@ struct CustomWebView: UIViewRepresentable {
         private func createTransitionViews(for webView: WKWebView, previewImage: UIImage?, isLeftEdge: Bool) {
             cleanupTransitionViews()
             
-            // 🔧 **핵심 수정: 컨테이너를 웹뷰 위에 올림**
+            // 🔧 **Safari 스타일: 프리뷰만 컨테이너에 추가, 실제 웹뷰는 그대로 표시**
             let containerView = UIView(frame: webView.bounds)
             containerView.clipsToBounds = true
             containerView.backgroundColor = UIColor.systemBackground
-            webView.addSubview(containerView)
-            self.transitionContainerView = containerView
-            
-            // 🔧 **그림자 뷰를 먼저 추가 (가장 아래층)**
-            let shadowView = UIView()
-            shadowView.backgroundColor = .black
-            shadowView.alpha = 0
-            shadowView.frame = containerView.bounds
-            containerView.addSubview(shadowView)
-            self.shadowView = shadowView
-            
-            // 🔧 **프리뷰 페이지를 그림자 위에 추가**
-            let previewPageView = UIImageView(image: previewImage)
-            previewPageView.frame = containerView.bounds
-            previewPageView.contentMode = UIView.ContentMode.scaleAspectFill
-            previewPageView.clipsToBounds = true
-            previewPageView.backgroundColor = UIColor.systemBackground
-            
-            // 초기 위치 설정 (화면 밖)
-            if isLeftEdge {
-                // 뒤로가기: 프리뷰가 왼쪽에서 들어옴
-                previewPageView.frame.origin.x = -containerView.bounds.width
-            } else {
-                // 앞으로가기: 프리뷰가 오른쪽에서 들어옴
-                previewPageView.frame.origin.x = containerView.bounds.width
-            }
-            
-            containerView.addSubview(previewPageView)
-            self.previewPageView = previewPageView
-            
-            // 🔧 **현재 페이지를 가장 위에 추가**
-            let currentScreenshot = captureWebViewScreenshot(webView)
-            let currentPageView = UIImageView(image: currentScreenshot)
-            currentPageView.frame = containerView.bounds
-            currentPageView.contentMode = UIView.ContentMode.scaleAspectFill
-            currentPageView.clipsToBounds = true
-            currentPageView.backgroundColor = UIColor.systemBackground
-            containerView.addSubview(currentPageView)
-            self.currentPageView = currentPageView
-            
-            // 웹뷰를 숨김 (전환 중에는 스크린샷만 보임)
-            webView.scrollView.isHidden = true
-            
-            TabPersistenceManager.debugMessages.append("🎭 전환 UI 생성: current=\(currentPageView.frame), preview=\(previewPageView.frame)")
-        }
+            webView.superview?.insertSubview(containerView, belowSubview: webView)
+            self.transitionContainerView
         
         private func updateTransitionViews(progress: CGFloat, translation: CGFloat, isLeftEdge: Bool) {
-            guard let containerView = transitionContainerView,
-                  let currentPageView = currentPageView,
+            guard let webView = webView,
+                  let containerView = transitionContainerView,
                   let previewPageView = previewPageView,
                   let shadowView = shadowView else { 
                 TabPersistenceManager.debugMessages.append("🎭 전환 뷰 없음")
@@ -585,32 +550,44 @@ struct CustomWebView: UIViewRepresentable {
             let screenWidth = containerView.bounds.width
             let clampedProgress = max(0, min(1, progress))
             
-            // 🔧 **수정: 뷰 위치 업데이트 로직**
+            // 🎯 **Safari 스타일: 실제 웹뷰를 이동**
             if isLeftEdge {
-                // 뒤로가기: 현재 페이지는 오른쪽으로, 이전 페이지는 왼쪽에서 들어옴
-                currentPageView.frame.origin.x = max(0, translation)
-                previewPageView.frame.origin.x = -screenWidth + translation
+                // 뒤로가기: 웹뷰는 오른쪽으로 이동
+                webView.transform = CGAffineTransform(translationX: max(0, translation), y: 0)
+                
+                // 프리뷰는 왼쪽에서 들어오며 점점 커짐
+                let previewScale = 0.95 + (0.05 * clampedProgress)
+                let previewX = -screenWidth * 0.3 * (1 - clampedProgress)
+                previewPageView.transform = CGAffineTransform(scaleX: previewScale, y: previewScale)
+                    .translatedBy(x: previewX / previewScale, y: 0)
             } else {
-                // 앞으로가기: 현재 페이지는 왼쪽으로, 다음 페이지는 오른쪽에서 들어옴
-                currentPageView.frame.origin.x = min(0, translation)
-                previewPageView.frame.origin.x = screenWidth + translation
+                // 앞으로가기: 웹뷰는 왼쪽으로 이동
+                webView.transform = CGAffineTransform(translationX: min(0, translation), y: 0)
+                
+                // 프리뷰는 오른쪽에서 들어오며 점점 커짐
+                let previewScale = 0.95 + (0.05 * clampedProgress)
+                let previewX = screenWidth * 0.3 * (1 - clampedProgress)
+                previewPageView.transform = CGAffineTransform(scaleX: previewScale, y: previewScale)
+                    .translatedBy(x: previewX / previewScale, y: 0)
             }
             
-            // 그림자 투명도 조절
-            shadowView.alpha = clampedProgress * 0.3
+            // 그림자 효과 (프리뷰 위에)
+            shadowView.alpha = clampedProgress * 0.2
             
-            // 현재 페이지 약간 어둡게
-            currentPageView.alpha = 1.0 - (clampedProgress * 0.15)
+            // 웹뷰에 약간의 그림자 효과
+            webView.layer.shadowOpacity = Float(clampedProgress * 0.3)
+            webView.layer.shadowOffset = CGSize(width: isLeftEdge ? -5 : 5, height: 0)
+            webView.layer.shadowRadius = 10
             
             // 디버깅 로그
             if Int(clampedProgress * 100) % 10 == 0 {
-                TabPersistenceManager.debugMessages.append("🎭 전환 진행: \(Int(clampedProgress * 100))% current.x=\(currentPageView.frame.origin.x) preview.x=\(previewPageView.frame.origin.x)")
+                TabPersistenceManager.debugMessages.append("🎭 Safari 전환: \(Int(clampedProgress * 100))%")
             }
         }
         
         private func completeTransition(isLeftEdge: Bool) {
-            guard let containerView = transitionContainerView,
-                  let currentPageView = currentPageView,
+            guard let webView = webView,
+                  let containerView = transitionContainerView,
                   let previewPageView = previewPageView,
                   let shadowView = shadowView else {
                 TabPersistenceManager.debugMessages.append("🎭 전환 완료 실패: 뷰 없음")
@@ -618,26 +595,27 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            TabPersistenceManager.debugMessages.append("🎭 전환 완료 시작")
+            TabPersistenceManager.debugMessages.append("🎭 Safari 전환 완료 시작")
             
-            // 🔧 **수정: 완료 애니메이션**
+            // 🎯 **Safari 스타일 완료 애니메이션**
             UIView.animate(
                 withDuration: 0.25,
                 delay: 0,
                 options: [.curveEaseOut],
                 animations: {
                     if isLeftEdge {
-                        // 뒤로가기 완료
-                        currentPageView.frame.origin.x = containerView.bounds.width
-                        previewPageView.frame.origin.x = 0
+                        // 뒤로가기 완료: 웹뷰는 완전히 오른쪽으로
+                        webView.transform = CGAffineTransform(translationX: containerView.bounds.width, y: 0)
+                        // 프리뷰는 정위치로
+                        previewPageView.transform = .identity
                     } else {
-                        // 앞으로가기 완료
-                        currentPageView.frame.origin.x = -containerView.bounds.width
-                        previewPageView.frame.origin.x = 0
+                        // 앞으로가기 완료: 웹뷰는 완전히 왼쪽으로
+                        webView.transform = CGAffineTransform(translationX: -containerView.bounds.width, y: 0)
+                        // 프리뷰는 정위치로
+                        previewPageView.transform = .identity
                     }
                     shadowView.alpha = 0
-                    currentPageView.alpha = 0.8
-                    previewPageView.alpha = 1.0
+                    webView.layer.shadowOpacity = 0
                 },
                 completion: { [weak self] _ in
                     self?.executeNavigation(isLeftEdge: isLeftEdge)
@@ -649,7 +627,7 @@ struct CustomWebView: UIViewRepresentable {
         }
         
         private func cancelTransition() {
-            guard let currentPageView = currentPageView,
+            guard let webView = webView,
                   let previewPageView = previewPageView,
                   let shadowView = shadowView else {
                 TabPersistenceManager.debugMessages.append("🎭 전환 취소 실패: 뷰 없음")
@@ -657,24 +635,27 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            TabPersistenceManager.debugMessages.append("🎭 전환 취소 시작")
+            TabPersistenceManager.debugMessages.append("🎭 Safari 전환 취소 시작")
             
-            // 🔧 **수정: 취소 애니메이션**
+            // 🎯 **Safari 스타일 취소 애니메이션**
             UIView.animate(
                 withDuration: 0.2,
                 delay: 0,
                 options: [.curveEaseInOut],
                 animations: {
-                    currentPageView.frame.origin.x = 0
+                    // 웹뷰를 원위치로
+                    webView.transform = .identity
+                    webView.layer.shadowOpacity = 0
                     
+                    // 프리뷰를 원래 위치로
+                    let scaleTransform = CGAffineTransform(scaleX: 0.95, y: 0.95)
                     if self.slideTransitionState.direction == .back {
-                        previewPageView.frame.origin.x = -previewPageView.bounds.width
+                        previewPageView.transform = scaleTransform.translatedBy(x: -webView.bounds.width * 0.3, y: 0)
                     } else {
-                        previewPageView.frame.origin.x = previewPageView.bounds.width
+                        previewPageView.transform = scaleTransform.translatedBy(x: webView.bounds.width * 0.3, y: 0)
                     }
                     
                     shadowView.alpha = 0
-                    currentPageView.alpha = 1.0
                 },
                 completion: { [weak self] _ in
                     self?.cleanupTransitionState()
@@ -695,6 +676,12 @@ struct CustomWebView: UIViewRepresentable {
             }
             
             TabPersistenceManager.debugMessages.append("🎭 네비게이션 실행: 인덱스 \(targetIndex)")
+            
+            // 🎯 **Safari 스타일: 웹뷰 원위치 (네비게이션 직전)**
+            if let webView = webView {
+                webView.transform = .identity
+                webView.layer.shadowOpacity = 0
+            }
             
             // 🎯 **핵심**: 복원 큐에 안전하게 추가하여 상태 불일치 방지
             if isLeftEdge && parent.stateModel.canGoBack {
@@ -737,9 +724,12 @@ struct CustomWebView: UIViewRepresentable {
         }
         
         private func cleanupTransitionViews() {
-            // 웹뷰 다시 표시
+            // 🎯 **Safari 스타일: 웹뷰 원상복구**
             if let webView = webView {
-                webView.scrollView.isHidden = false
+                webView.transform = .identity
+                webView.layer.shadowOpacity = 0
+                webView.layer.shadowOffset = .zero
+                webView.layer.shadowRadius = 0
             }
             
             transitionContainerView?.removeFromSuperview()
@@ -752,9 +742,85 @@ struct CustomWebView: UIViewRepresentable {
         // MARK: - 🎭 스크린샷 캡처 유틸리티
         
         private func captureWebViewScreenshot(_ webView: WKWebView) -> UIImage? {
-            let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+            // 🔧 메모리 효율을 위해 축소된 크기로 캡처
+            let scale: CGFloat = 0.5  // 50% 크기로 축소
+            let scaledSize = CGSize(
+                width: webView.bounds.width * scale,
+                height: webView.bounds.height * scale
+            )
+            
+            let renderer = UIGraphicsImageRenderer(size: scaledSize)
             return renderer.image { context in
+                // 스케일 변환 적용
+                context.cgContext.scaleBy(x: scale, y: scale)
                 webView.layer.render(in: context.cgContext)
+            }
+        }
+        
+        // MARK: - 🎭 즉석 프리뷰 생성 (Safari 스타일)
+        
+        private func createQuickPreview(for pageIndex: Int) -> UIImage? {
+            guard let webView = webView,
+                  pageIndex >= 0,
+                  pageIndex < parent.stateModel.dataModel.pageHistory.count else {
+                return nil
+            }
+            
+            let pageRecord = parent.stateModel.dataModel.pageHistory[pageIndex]
+            let renderer = UIGraphicsImageRenderer(size: webView.bounds.size)
+            
+            return renderer.image { context in
+                // 배경색
+                UIColor.systemBackground.setFill()
+                context.fill(CGRect(origin: .zero, size: webView.bounds.size))
+                
+                // 사이트 정보 표시
+                let titleAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 24, weight: .medium),
+                    .foregroundColor: UIColor.label
+                ]
+                
+                let urlAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 16),
+                    .foregroundColor: UIColor.secondaryLabel
+                ]
+                
+                // 제목
+                let title = pageRecord.title
+                let titleSize = title.size(withAttributes: titleAttributes)
+                let titleRect = CGRect(
+                    x: 20,
+                    y: 100,
+                    width: webView.bounds.width - 40,
+                    height: titleSize.height
+                )
+                title.draw(in: titleRect, withAttributes: titleAttributes)
+                
+                // URL
+                let urlString = pageRecord.url.host ?? pageRecord.url.absoluteString
+                let urlRect = CGRect(
+                    x: 20,
+                    y: titleRect.maxY + 10,
+                    width: webView.bounds.width - 40,
+                    height: 30
+                )
+                urlString.draw(in: urlRect, withAttributes: urlAttributes)
+                
+                // 아이콘
+                let iconRect = CGRect(x: 20, y: 40, width: 40, height: 40)
+                if pageRecord.url.scheme == "https" {
+                    UIColor.systemGreen.setFill()
+                    UIBezierPath(roundedRect: iconRect, cornerRadius: 8).fill()
+                    
+                    let lockIcon = UIImage(systemName: "lock.fill")?.withTintColor(.white)
+                    lockIcon?.draw(in: iconRect.insetBy(dx: 10, dy: 10))
+                } else {
+                    UIColor.systemGray.setFill()
+                    UIBezierPath(roundedRect: iconRect, cornerRadius: 8).fill()
+                    
+                    let globeIcon = UIImage(systemName: "globe")?.withTintColor(.white)
+                    globeIcon?.draw(in: iconRect.insetBy(dx: 10, dy: 10))
+                }
             }
         }
         
