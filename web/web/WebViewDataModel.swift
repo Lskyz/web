@@ -12,6 +12,7 @@
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
 //  🔥 **BFCache 프리히트 추가 - 페이지 로드 완료 및 네비게이션 직전 스냅샷**
+//  🚫 **레이어 fallback 완전 제거 - takeSnapshot만 사용**
 //
 
 import Foundation
@@ -317,15 +318,6 @@ fileprivate func ts() -> String {
     f.dateFormat = "HH:mm:ss.SSS"
     return f.string(from: Date())
 }
-
-//
-//  WebViewDataModel+Navigation.swift - Part 2 (Navigation & Delegates)
-//  메인 WebViewDataModel 클래스 및 네비게이션 관련 기능
-//
-
-import Foundation
-import SwiftUI
-import WebKit
 
 // MARK: - 🎯 **WebViewDataModel - enum 기반 단순화된 큐 복원 시스템**
 final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
@@ -1168,8 +1160,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         if let finalURL = webView.url {
             // 🔥 **BFCache 프리히트**: 페이지 로드 완료 시 현재 페이지 스냅샷 저장
             if let currentRecord = currentPageRecord {
-                // 페이지 렌더링 완료 대기
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak webView, weak self] in
+                // 페이지 렌더링 완료 대기 (JS 한 프레임 보장)
+                webView.evaluateJavaScript("new Promise(r=>requestAnimationFrame(()=>r(true)))") { [weak webView, weak self] _, _ in
                     guard let webView = webView else { return }
                     
                     if #available(iOS 11.0, *) {
@@ -1177,31 +1169,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                         if #available(iOS 13.0, *) {
                             config.afterScreenUpdates = true
                         }
-                        // rect 지정으로 전체 콘텐츠 캡처
-                        config.rect = CGRect(origin: .zero, size: webView.scrollView.contentSize)
+                        // 🚫 bounds만 캡처 (보이는 영역만)
+                        config.rect = webView.bounds
                         
                         webView.takeSnapshot(with: config) { [weak self] image, error in
                             if let error = error {
                                 self?.dbg("🔥 BFCache 프리히트 실패: \(error.localizedDescription)")
-                                
-                                // fallback: layer.render 방식 시도
-                                DispatchQueue.main.async {
-                                    UIGraphicsBeginImageContextWithOptions(webView.bounds.size, false, UIScreen.main.scale)
-                                    if let context = UIGraphicsGetCurrentContext() {
-                                        webView.layer.render(in: context)
-                                        if let fallbackImage = UIGraphicsGetImageFromCurrentImageContext() {
-                                            let snapshot = BFCacheSnapshot(
-                                                pageRecord: currentRecord,
-                                                scrollPosition: webView.scrollView.contentOffset,
-                                                timestamp: Date(),
-                                                webViewSnapshot: fallbackImage
-                                            )
-                                            BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
-                                            self?.dbg("🔥 BFCache 프리히트 (fallback 성공): \(currentRecord.title)")
-                                        }
-                                    }
-                                    UIGraphicsEndImageContext()
-                                }
+                                // 🚫 레이어 fallback 제거 - 실패시 그냥 스킵
                             } else {
                                 let snapshot = BFCacheSnapshot(
                                     pageRecord: currentRecord,
@@ -1214,22 +1188,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                             }
                         }
                     } else {
-                        // iOS 11 미만: layer.render 사용
-                        UIGraphicsBeginImageContextWithOptions(webView.bounds.size, false, UIScreen.main.scale)
-                        if let context = UIGraphicsGetCurrentContext() {
-                            webView.layer.render(in: context)
-                            if let image = UIGraphicsGetImageFromCurrentImageContext() {
-                                let snapshot = BFCacheSnapshot(
-                                    pageRecord: currentRecord,
-                                    scrollPosition: webView.scrollView.contentOffset,
-                                    timestamp: Date(),
-                                    webViewSnapshot: image
-                                )
-                                BFCacheTransitionSystem.shared.ingest(snapshot: snapshot)
-                                self?.dbg("🔥 BFCache 프리히트 (iOS 10): \(currentRecord.title)")
-                            }
-                        }
-                        UIGraphicsEndImageContext()
+                        // iOS 11 미만: 스냅샷 없이 진행
+                        self?.dbg("🔥 BFCache 프리히트 스킵 (iOS 11 미만)")
                     }
                 }
             }
