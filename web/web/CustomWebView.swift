@@ -526,7 +526,7 @@ struct CustomWebView: UIViewRepresentable {
             // 🔧 **핵심 수정: 컨테이너를 웹뷰 위에 올림**
             let containerView = UIView(frame: webView.bounds)
             containerView.clipsToBounds = true
-            containerView.backgroundColor = .systemBackground // 배경색 설정
+            containerView.backgroundColor = UIColor.systemBackground
             webView.addSubview(containerView)
             self.transitionContainerView = containerView
             
@@ -539,11 +539,11 @@ struct CustomWebView: UIViewRepresentable {
             self.shadowView = shadowView
             
             // 🔧 **프리뷰 페이지를 그림자 위에 추가**
-            let previewPageView = UIImageView(image: previewImage ?? createPlaceholderImage(for: webView))
+            let previewPageView = UIImageView(image: previewImage)
             previewPageView.frame = containerView.bounds
-            previewPageView.contentMode = .scaleAspectFill
+            previewPageView.contentMode = UIView.ContentMode.scaleAspectFill
             previewPageView.clipsToBounds = true
-            previewPageView.backgroundColor = .systemBackground
+            previewPageView.backgroundColor = UIColor.systemBackground
             
             // 초기 위치 설정 (화면 밖)
             if isLeftEdge {
@@ -561,9 +561,9 @@ struct CustomWebView: UIViewRepresentable {
             let currentScreenshot = captureWebViewScreenshot(webView)
             let currentPageView = UIImageView(image: currentScreenshot)
             currentPageView.frame = containerView.bounds
-            currentPageView.contentMode = .scaleAspectFill
+            currentPageView.contentMode = UIView.ContentMode.scaleAspectFill
             currentPageView.clipsToBounds = true
-            currentPageView.backgroundColor = .systemBackground
+            currentPageView.backgroundColor = UIColor.systemBackground
             containerView.addSubview(currentPageView)
             self.currentPageView = currentPageView
             
@@ -757,8 +757,6 @@ struct CustomWebView: UIViewRepresentable {
                 webView.layer.render(in: context.cgContext)
             }
         }
-        
-        // 🔧 **삭제: 플레이스홀더 이미지 생성 (더 이상 불필요)**
         
         // MARK: - UIGestureRecognizerDelegate
         
