@@ -451,6 +451,16 @@ struct CustomWebView: UIViewRepresentable {
             var targetIndex: Int = -1
             var canProceed = false
             
+            // 🎭 **먼저 현재 페이지 프리뷰 저장**
+            let currentIndex = parent.stateModel.dataModel.currentPageIndex
+            if let tabID = parent.stateModel.tabID, currentIndex >= 0 {
+                let currentScreenshot = captureWebViewScreenshot(webView)
+                if let screenshot = currentScreenshot {
+                    PagePreviewManager.shared.storePreview(for: tabID, pageIndex: currentIndex, image: screenshot)
+                    TabPersistenceManager.debugMessages.append("🎭 현재 페이지 프리뷰 저장: 인덱스 \(currentIndex)")
+                }
+            }
+            
             if isLeftEdge && parent.stateModel.canGoBack {
                 targetIndex = parent.stateModel.dataModel.currentPageIndex - 1
                 canProceed = true
@@ -466,20 +476,17 @@ struct CustomWebView: UIViewRepresentable {
                 return
             }
             
-            // 🎭 **수정: 프리뷰 이미지 가져오기 또는 생성**
+            // 🎭 **타겟 페이지의 프리뷰 가져오기 (없어도 진행)**
             var previewImage: UIImage?
             if let tabID = parent.stateModel.tabID {
                 previewImage = PagePreviewManager.shared.getPreview(for: tabID, pageIndex: targetIndex)
+                
                 if previewImage != nil {
                     TabPersistenceManager.debugMessages.append("🎭 프리뷰 이미지 로드 성공: 인덱스 \(targetIndex)")
+                } else {
+                    // 프리뷰가 없어도 계속 진행 (빈 화면 표시)
+                    TabPersistenceManager.debugMessages.append("🎭 프리뷰 없음: 인덱스 \(targetIndex) - 빈 화면으로 진행")
                 }
-            }
-            
-            // 프리뷰가 없으면 플레이스홀더 생성
-            if previewImage == nil {
-                // 단색 플레이스홀더 이미지 생성
-                previewImage = createPlaceholderImage(for: webView)
-                TabPersistenceManager.debugMessages.append("🎭 프리뷰 없음, 플레이스홀더 생성")
             }
             
             // 전환 상태 설정
@@ -489,7 +496,7 @@ struct CustomWebView: UIViewRepresentable {
             slideTransitionState.startTime = Date()
             pendingTransitionIndex = targetIndex
             
-            // 전환 UI 생성
+            // 전환 UI 생성 (프리뷰가 없어도 생성)
             createTransitionViews(for: webView, previewImage: previewImage, isLeftEdge: isLeftEdge)
             
             TabPersistenceManager.debugMessages.append("🎭 제스처 시작: 방향=\(isLeftEdge ? "뒤로" : "앞으로"), 목표=\(targetIndex)")
@@ -751,32 +758,7 @@ struct CustomWebView: UIViewRepresentable {
             }
         }
         
-        // 🔧 **추가: 플레이스홀더 이미지 생성**
-        private func createPlaceholderImage(for webView: WKWebView) -> UIImage {
-            let renderer = UIGraphicsImageRenderer(size: webView.bounds.size)
-            return renderer.image { context in
-                // 배경색 설정
-                UIColor.systemBackground.setFill()
-                context.fill(webView.bounds)
-                
-                // 플레이스홀더 텍스트
-                let text = "Loading..."
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 24, weight: .medium),
-                    .foregroundColor: UIColor.secondaryLabel
-                ]
-                
-                let textSize = text.size(withAttributes: attributes)
-                let textRect = CGRect(
-                    x: (webView.bounds.width - textSize.width) / 2,
-                    y: (webView.bounds.height - textSize.height) / 2,
-                    width: textSize.width,
-                    height: textSize.height
-                )
-                
-                text.draw(in: textRect, withAttributes: attributes)
-            }
-        }
+        // 🔧 **삭제: 플레이스홀더 이미지 생성 (더 이상 불필요)**
         
         // MARK: - UIGestureRecognizerDelegate
         
@@ -803,7 +785,8 @@ struct CustomWebView: UIViewRepresentable {
             return true
         }
 
-        // MARK: - 단순화된 로딩 옵저버 (복잡한 캐시 로직 제거)
+        // MARK: - 🎭 프리뷰 자동 캡처 (페이지 로드 완료 시)
+        
         func setupLoadingObservers(for webView: WKWebView) {
             loadingObserver = webView.observe(\.isLoading, options: [.new]) { [weak self] webView, change in
                 guard let self = self else { return }
@@ -812,6 +795,11 @@ struct CustomWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     if self.parent.stateModel.isLoading != isLoading {
                         self.parent.stateModel.isLoading = isLoading
+                    }
+                    
+                    // 🎭 로딩 완료 시 프리뷰 자동 캡처
+                    if !isLoading {
+                        self.capturePreviewAfterDelay()
                     }
                 }
             }
@@ -851,6 +839,28 @@ struct CustomWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     // 🔧 URL 기반 제목 업데이트
                     self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
+                }
+            }
+        }
+        
+        // 🎭 페이지 로드 완료 후 프리뷰 캡처
+        private func capturePreviewAfterDelay() {
+            guard let webView = webView,
+                  let tabID = parent.stateModel.tabID else { return }
+            
+            let currentIndex = parent.stateModel.dataModel.currentPageIndex
+            guard currentIndex >= 0 else { return }
+            
+            // 0.5초 후 캡처 (페이지가 완전히 렌더링될 시간)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self,
+                      let webView = self.webView,
+                      self.parent.stateModel.dataModel.currentPageIndex == currentIndex else { return }
+                
+                let screenshot = self.captureWebViewScreenshot(webView)
+                if let screenshot = screenshot {
+                    PagePreviewManager.shared.storePreview(for: tabID, pageIndex: currentIndex, image: screenshot)
+                    TabPersistenceManager.debugMessages.append("🎭 페이지 로드 완료 - 프리뷰 자동 캡처: 인덱스 \(currentIndex)")
                 }
             }
         }
