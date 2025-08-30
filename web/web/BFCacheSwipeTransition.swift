@@ -171,100 +171,193 @@ struct BFCacheSnapshot {
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        // URL 로드
-        webView.load(URLRequest(url: pageRecord.url))
+        // 더 안전한 복원 전략: 점진적 복원
         
-        // 페이지 로드 완료 후 상태 복원
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            let group = DispatchGroup()
-            var restoreSuccess = true
-            
-            // 폼 데이터 복원
-            if let formData = self.formData, !formData.isEmpty {
-                group.enter()
-                var restoreScript = "try {\n"
-                for (key, value) in formData {
-                    let escapedKey = key.replacingOccurrences(of: "'", with: "\\'")
-                    if let boolValue = value as? Bool {
-                        restoreScript += "  const el_\(key.hashValue) = document.querySelector('[name=\"\(escapedKey)\"], #\(escapedKey)');\n"
-                        restoreScript += "  if (el_\(key.hashValue)) { el_\(key.hashValue).checked = \(boolValue); }\n"
-                    } else if let stringValue = value as? String {
-                        let escapedValue = stringValue.replacingOccurrences(of: "'", with: "\\\"")
-                        restoreScript += "  const el_\(key.hashValue) = document.querySelector('[name=\"\(escapedKey)\"], #\(escapedKey)');\n"
-                        restoreScript += "  if (el_\(key.hashValue)) { el_\(key.hashValue).value = '\(escapedValue)'; }\n"
-                    }
-                }
-                restoreScript += "  console.log('✅ 폼 데이터 복원 완료');\n} catch(e) { console.error('❌ 폼 복원 실패:', e); }"
-                
-                webView.evaluateJavaScript(restoreScript) { _, error in
-                    if let error = error {
-                        TabPersistenceManager.debugMessages.append("❌ 폼 복원 실패: \(error.localizedDescription)")
-                        restoreSuccess = false
-                    } else {
-                        TabPersistenceManager.debugMessages.append("✅ 폼 데이터 복원 완료")
-                    }
-                    group.leave()
-                }
+        // 1단계: 기본 URL 로드 (캐시된 DOM 사용 안함)
+        let request = URLRequest(url: pageRecord.url, cachePolicy: .returnCacheDataElseLoad)
+        webView.load(request)
+        
+        // 2단계: 페이지 로드 후 상태 복원 (더 긴 대기 시간)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.restorePageState(to: webView, completion: completion)
+        }
+    }
+    
+    private func restorePageState(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        var restoreSteps: [() -> Void] = []
+        var stepResults: [Bool] = []
+        var currentStep = 0
+        
+        // 로컬 재귀 클로저로 전환 (self의 저장 프로퍼티 대입 금지)
+        var nextStep: (() -> Void)!
+        nextStep = {
+            if currentStep < restoreSteps.count {
+                let step = restoreSteps[currentStep]
+                currentStep += 1
+                step()
+            } else {
+                let successCount = stepResults.filter { $0 }.count
+                let totalSteps = stepResults.count
+                let overallSuccess = successCount > totalSteps / 2
+                TabPersistenceManager.debugMessages.append("BFCache 복원 완료: \(successCount)/\(totalSteps) 성공 -> \(overallSuccess ? "성공" : "실패")")
+                completion(overallSuccess)
             }
+        }
+        
+        // 스크롤 위치부터 복원 (가장 안전)
+        restoreSteps.append { [weak self] in
+            guard let self = self else { return }
             
-            // 스크롤 위치 복원
-            if let jsState = self.jsState,
-               let scrollData = jsState["scroll"] as? [String: Any] {
+            // 웹뷰 스크롤 복원
+            webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+            
+            // JS 스크롤도 시도 (실패해도 무시)
+            let scrollScript = """
+            try {
+                window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                console.log('기본 스크롤 복원 성공');
+            } catch(e) { 
+                console.log('JS 스크롤 실패:', e.message); 
+            }
+            """
+            webView.evaluateJavaScript(scrollScript) { _, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("스크롤 복원 JS 실패: \(error.localizedDescription)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("스크롤 복원 완료: \(self.scrollPosition)")
+                }
+                stepResults.append(error == nil)
+                nextStep()
+            }
+        }
+        
+        // 폼 데이터 복원 (에러 방어적)
+        if let formData = self.formData, !formData.isEmpty {
+            restoreSteps.append { [weak self] in
+                guard let self = self else { return }
                 
-                group.enter()
-                let scrollX = scrollData["x"] as? CGFloat ?? self.scrollPosition.x
-                let scrollY = scrollData["y"] as? CGFloat ?? self.scrollPosition.y
-                
-                var scrollRestoreScript = "try {\n"
-                scrollRestoreScript += "  window.scrollTo(\(scrollX), \(scrollY));\n"
-                
-                // 개별 요소들의 스크롤 위치도 복원
-                if let elements = scrollData["elements"] as? [[String: Any]] {
-                    for element in elements {
-                        if let selector = element["selector"] as? String,
-                           let top = element["top"] as? CGFloat,
-                           let left = element["left"] as? CGFloat {
-                            scrollRestoreScript += "  const el = document.querySelector('\(selector)');\n"
-                            scrollRestoreScript += "  if (el) { el.scrollTop = \(top); el.scrollLeft = \(left); }\n"
+                let safeFormScript = """
+                try {
+                    let restored = 0;
+                    const formData = \(self.convertFormDataToJSObject(formData));
+                    
+                    for (const [key, value] of Object.entries(formData)) {
+                        try {
+                            const element = document.querySelector(`[name="${key}"], #${key}`);
+                            if (element) {
+                                if (element.type === 'checkbox' || element.type === 'radio') {
+                                    element.checked = Boolean(value);
+                                } else {
+                                    element.value = String(value || '');
+                                }
+                                restored++;
+                            }
+                        } catch(elementError) {
+                            console.log('폼 요소 복원 실패:', key, elementError.message);
                         }
                     }
+                    
+                    console.log(`폼 복원 완료: ${restored}개 요소`);
+                    true; // 성공 반환
+                } catch(e) { 
+                    console.error('폼 복원 전체 실패:', e.message);
+                    false; // 실패 반환
                 }
+                """
                 
-                scrollRestoreScript += "  console.log('✅ 스크롤 복원 완료: x=\(scrollX), y=\(scrollY)');\n"
-                scrollRestoreScript += "} catch(e) { console.error('❌ 스크롤 복원 실패:', e); }"
-                
-                webView.evaluateJavaScript(scrollRestoreScript) { _, error in
-                    if let error = error {
-                        TabPersistenceManager.debugMessages.append("❌ 스크롤 복원 실패: \(error.localizedDescription)")
-                        restoreSuccess = false
+                webView.evaluateJavaScript(safeFormScript) { result, error in
+                    let success = (result as? Bool) ?? false
+                    if success {
+                        TabPersistenceManager.debugMessages.append("폼 데이터 복원 성공")
                     } else {
-                        TabPersistenceManager.debugMessages.append("✅ 스크롤 복원 완료: \(self.scrollPosition)")
+                        TabPersistenceManager.debugMessages.append("폼 데이터 복원 실패: \(error?.localizedDescription ?? "알 수 없는 오류")")
+                    }
+                    stepResults.append(success)
+                    nextStep()
+                }
+            }
+        }
+        
+        // 고급 스크롤 복원 (개별 요소들)
+        if let jsState = self.jsState,
+           let scrollData = jsState["scroll"] as? [String: Any],
+           let elements = scrollData["elements"] as? [[String: Any]],
+           !elements.isEmpty {
+            
+            restoreSteps.append { [weak self] in
+                guard let self = self else { return }
+                
+                let advancedScrollScript = """
+                try {
+                    let restored = 0;
+                    const scrollElements = \(self.convertScrollElementsToJSArray(elements));
+                    
+                    for (const item of scrollElements) {
+                        try {
+                            if (item.selector) {
+                                const element = document.querySelector(item.selector);
+                                if (element && element.scrollTop !== undefined) {
+                                    element.scrollTop = item.top || 0;
+                                    element.scrollLeft = item.left || 0;
+                                    restored++;
+                                }
+                            }
+                        } catch(elementError) {
+                            console.log('요소 스크롤 복원 실패:', item.selector, elementError.message);
+                        }
                     }
                     
-                    // 웹뷰의 스크롤뷰도 동기화
-                    DispatchQueue.main.async {
-                        webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                        group.leave()
-                    }
+                    console.log(`고급 스크롤 복원: ${restored}개 요소`);
+                    true;
+                } catch(e) { 
+                    console.error('고급 스크롤 복원 실패:', e.message);
+                    false;
                 }
-            } else {
-                // JS 상태가 없으면 기본 스크롤 위치만 복원
-                webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("📍 기본 스크롤 복원: \(self.scrollPosition)")
+                """
+                
+                webView.evaluateJavaScript(advancedScrollScript) { result, error in
+                    let success = (result as? Bool) ?? false
+                    if success {
+                        TabPersistenceManager.debugMessages.append("고급 스크롤 복원 성공")
+                    } else {
+                        TabPersistenceManager.debugMessages.append("고급 스크롤 복원 실패: \(error?.localizedDescription ?? "알 수 없는 오류")")
+                    }
+                    stepResults.append(success)
+                    nextStep()
+                }
             }
-            
-            // 모든 복원 작업 완료 후
-            group.notify(queue: .main) {
-                TabPersistenceManager.debugMessages.append("🔄 BFCache 복원 \(restoreSuccess ? "성공" : "부분성공"): \(self.pageRecord.title)")
-                completion(restoreSuccess)
-            }
+        }
+        
+        // 실행 시작
+        nextStep()
+    }
+    
+    // 안전한 JSON 변환 함수들
+    private func convertFormDataToJSObject(_ formData: [String: Any]) -> String {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: formData, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "{}"
+        } catch {
+            TabPersistenceManager.debugMessages.append("폼 데이터 JSON 변환 실패: \(error.localizedDescription)")
+            return "{}"
+        }
+    }
+    
+    private func convertScrollElementsToJSArray(_ elements: [[String: Any]]) -> String {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: elements, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "[]"
+        } catch {
+            TabPersistenceManager.debugMessages.append("스크롤 요소 JSON 변환 실패: \(error.localizedDescription)")
+            return "[]"
         }
     }
     
     func needsRefresh() -> Bool {
         let elapsed = Date().timeIntervalSince(timestamp)
+        let type = pageRecord.siteType?.lowercased() ?? ""
         let dynamicPatterns = ["search", "feed", "timeline", "live", "realtime", "stream"]
-        let isDynamic = dynamicPatterns.contains { pageRecord.siteType?.contains($0) ?? false }
+        let isDynamic = dynamicPatterns.contains { type.contains($0) }
         let isSearch = PageRecord.isSearchURL(pageRecord.url)
         return (isDynamic || isSearch) && elapsed > 300
     }
@@ -295,6 +388,7 @@ final class BFCacheTransitionSystem: NSObject {
         var isGesture: Bool
         var direction: NavigationDirection
         var initialTransform: CGAffineTransform
+        var previewContainer: UIView?
     }
     
     enum NavigationDirection {
@@ -342,27 +436,43 @@ final class BFCacheTransitionSystem: NSObject {
         rightEdge.delegate = self
         webView.addGestureRecognizer(rightEdge)
         
-        // 컨텍스트 저장
+        // 약한 참조 컨텍스트 생성 및 연결 (순환 참조 방지)
         if let tabID = stateModel.tabID {
-            objc_setAssociatedObject(leftEdge, "context", (tabID, webView, stateModel), .OBJC_ASSOCIATION_RETAIN)
-            objc_setAssociatedObject(rightEdge, "context", (tabID, webView, stateModel), .OBJC_ASSOCIATION_RETAIN)
+            let ctx = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
+            objc_setAssociatedObject(leftEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("🎯 BFCache 제스처 설정 완료")
+        dbg("BFCache 제스처 설정 완료")
     }
     
     // MARK: - 제스처 핸들러
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard let (tabID, webView, stateModel) = objc_getAssociatedObject(gesture, "context") as? (UUID, WKWebView, WebViewStateModel) else { return }
+        // 약한 참조 컨텍스트 조회 (순환 참조 방지)
+        guard let ctx = objc_getAssociatedObject(gesture, "bfcache_ctx") as? WeakGestureContext,
+              let stateModel = ctx.stateModel else { return }
+        let webView = ctx.webView ?? (gesture.view as? WKWebView)
+        guard let webView else { return }
         
+        let tabID = ctx.tabID
         let translation = gesture.translation(in: gesture.view)
         let velocity = gesture.velocity(in: gesture.view)
         let isLeftEdge = (gesture.edges == .left)
-        let progress = abs(translation.x) / (gesture.view?.bounds.width ?? 1)
+        let width = gesture.view?.bounds.width ?? 1
+        
+        // 수직 슬롭/부호 반대 방지
+        let absX = abs(translation.x), absY = abs(translation.y)
+        let horizontalEnough = absX > 8 && absX > absY
+        let signOK = isLeftEdge ? (translation.x >= 0) : (translation.x <= 0)
         
         switch gesture.state {
         case .began:
+            guard horizontalEnough && signOK else { 
+                gesture.state = .cancelled
+                return 
+            }
+            
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
@@ -373,9 +483,11 @@ final class BFCacheTransitionSystem: NSObject {
             }
             
         case .changed:
+            guard horizontalEnough && signOK else { return }
             updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
             
         case .ended:
+            let progress = min(1.0, absX / width)
             let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
             if shouldComplete {
                 completeGestureTransition(tabID: tabID)
@@ -404,6 +516,9 @@ final class BFCacheTransitionSystem: NSObject {
         // 웹뷰의 초기 transform 저장
         let initialTransform = webView.transform
         
+        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성
+        let previewContainer = createPreviewContainer(webView: webView, direction: direction, stateModel: stateModel)
+        
         // 컨텍스트 저장
         let context = TransitionContext(
             tabID: tabID,
@@ -411,7 +526,8 @@ final class BFCacheTransitionSystem: NSObject {
             stateModel: stateModel,
             isGesture: true,
             direction: direction,
-            initialTransform: initialTransform
+            initialTransform: initialTransform,
+            previewContainer: previewContainer
         )
         activeTransitions[tabID] = context
         
@@ -420,57 +536,135 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
         guard let context = activeTransitions[tabID],
-              let webView = context.webView else { return }
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
         
         let screenWidth = webView.bounds.width
+        let currentWebView = previewContainer.viewWithTag(1001)
+        let targetPreview = previewContainer.viewWithTag(1002)
         
-        // 웹뷰 자체를 직접 이동
+        // 실제 현재 웹뷰와 타겟 미리보기를 함께 이동
         if isLeftEdge {
-            // 왼쪽 에지 (뒤로가기): translation.x는 양수
-            let moveDistance = max(0, min(screenWidth * 0.8, translation))
-            webView.transform = context.initialTransform.translatedBy(x: moveDistance, y: 0)
+            // 뒤로가기: 현재 웹뷰는 오른쪽으로, 타겟은 왼쪽에서 들어옴
+            let moveDistance = max(0, min(screenWidth, translation))
+            currentWebView?.frame.origin.x = moveDistance
+            targetPreview?.frame.origin.x = -screenWidth + moveDistance
             
-            // 그림자 효과 추가
-            let shadowOpacity = Float(0.3 * (1 - moveDistance / screenWidth))
-            webView.layer.shadowColor = UIColor.black.cgColor
-            webView.layer.shadowOpacity = shadowOpacity
-            webView.layer.shadowOffset = CGSize(width: -5, height: 0)
-            webView.layer.shadowRadius = 10
-            
-            dbg("⬅️ 뒤로가기 제스처: move=\(moveDistance)")
+            // 그림자 효과
+            let shadowOpacity = Float(0.3 * (moveDistance / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
         } else {
-            // 오른쪽 에지 (앞으로가기): translation.x는 음수
-            let moveDistance = max(-screenWidth * 0.8, min(0, translation))
-            webView.transform = context.initialTransform.translatedBy(x: moveDistance, y: 0)
+            // 앞으로가기: 현재 웹뷰는 왼쪽으로, 타겟은 오른쪽에서 들어옴
+            let moveDistance = max(-screenWidth, min(0, translation))
+            currentWebView?.frame.origin.x = moveDistance
+            targetPreview?.frame.origin.x = screenWidth + moveDistance
             
-            // 그림자 효과 추가
-            let shadowOpacity = Float(0.3 * (1 - abs(moveDistance) / screenWidth))
-            webView.layer.shadowColor = UIColor.black.cgColor
-            webView.layer.shadowOpacity = shadowOpacity
-            webView.layer.shadowOffset = CGSize(width: 5, height: 0)
-            webView.layer.shadowRadius = 10
-            
-            dbg("➡️ 앞으로가기 제스처: move=\(moveDistance)")
+            // 그림자 효과
+            let shadowOpacity = Float(0.3 * (abs(moveDistance) / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
         }
+    }
+    
+    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용)
+    private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage?) -> UIView {
+        let container = UIView(frame: webView.bounds)
+        container.backgroundColor = .systemBackground
+        container.clipsToBounds = true
+        
+        // 현재 웹뷰의 실제 스냅샷 사용 (takeSnapshot으로 캡처된 것)
+        let currentView: UIView
+        if let snapshot = currentSnapshot {
+            let imageView = UIImageView(image: snapshot)
+            imageView.contentMode = .scaleAspectFill
+            currentView = imageView
+        } else {
+            // 스냅샷 캡처 실패시 fallback (snapshotView 사용)
+            currentView = webView.snapshotView(afterScreenUpdates: false) ?? UIView(frame: webView.bounds)
+            if currentView.frame.isEmpty {
+                currentView.frame = webView.bounds
+            }
+        }
+        
+        currentView.frame = webView.bounds
+        currentView.tag = 1001
+        
+        // 그림자 설정
+        currentView.layer.shadowColor = UIColor.black.cgColor
+        currentView.layer.shadowOpacity = 0.3
+        currentView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
+        currentView.layer.shadowRadius = 10
+        
+        container.addSubview(currentView)
+        
+        // 타겟 페이지 미리보기 생성
+        let targetIndex = direction == .back ?
+            stateModel.dataModel.currentPageIndex - 1 :
+            stateModel.dataModel.currentPageIndex + 1
+        
+        var targetView: UIView
+        
+        if targetIndex >= 0, targetIndex < stateModel.dataModel.pageHistory.count {
+            let targetRecord = stateModel.dataModel.pageHistory[targetIndex]
+            
+            // BFCache에서 스냅샷 가져오기
+            if let snapshot = retrieveSnapshot(for: targetRecord.id),
+               let targetImage = snapshot.webViewSnapshot {
+                targetView = UIImageView(image: targetImage)
+                (targetView as? UIImageView)?.contentMode = .scaleAspectFill
+            } else {
+                // 스냅샷이 없으면 기본 배경
+                targetView = UIView()
+                targetView.backgroundColor = .systemBackground
+                
+                let label = UILabel()
+                label.text = targetRecord.title
+                label.textAlignment = .center
+                label.font = .systemFont(ofSize: 18, weight: .medium)
+                label.textColor = .label
+                label.frame = CGRect(x: 20, y: webView.bounds.height/2 - 20, width: webView.bounds.width - 40, height: 40)
+                targetView.addSubview(label)
+                
+                let urlLabel = UILabel()
+                urlLabel.text = targetRecord.url.host
+                urlLabel.textAlignment = .center
+                urlLabel.font = .systemFont(ofSize: 14)
+                urlLabel.textColor = .secondaryLabel
+                urlLabel.frame = CGRect(x: 20, y: webView.bounds.height/2 + 30, width: webView.bounds.width - 40, height: 20)
+                targetView.addSubview(urlLabel)
+            }
+        } else {
+            // 타겟이 없으면 빈 뷰
+            targetView = UIView()
+            targetView.backgroundColor = .systemBackground
+        }
+        
+        targetView.frame = webView.bounds
+        targetView.tag = 1002
+        
+        // 초기 위치 설정
+        if direction == .back {
+            targetView.frame.origin.x = -webView.bounds.width
+        } else {
+            targetView.frame.origin.x = webView.bounds.width
+        }
+        
+        // 타겟 뷰를 현재 뷰 아래에 추가
+        container.insertSubview(targetView, at: 0)
+        
+        webView.addSubview(container)
+        return container
     }
     
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
-              let webView = context.webView else { return }
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
         
         let screenWidth = webView.bounds.width
+        let currentView = previewContainer.viewWithTag(1001)
+        let targetView = previewContainer.viewWithTag(1002)
         
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        
-        // 웹뷰를 화면 밖으로 완전히 밀어내기
-        let finalTransform: CGAffineTransform
-        if context.direction == .back {
-            // 뒤로가기: 오른쪽으로 완전히 밀어내기
-            finalTransform = context.initialTransform.translatedBy(x: screenWidth, y: 0)
-        } else {
-            // 앞으로가기: 왼쪽으로 완전히 밀어내기
-            finalTransform = context.initialTransform.translatedBy(x: -screenWidth, y: 0)
-        }
         
         UIView.animate(
             withDuration: 0.3,
@@ -479,35 +673,53 @@ final class BFCacheTransitionSystem: NSObject {
             initialSpringVelocity: 0.5,
             options: [.curveEaseOut],
             animations: {
-                webView.transform = finalTransform
-                webView.layer.shadowOpacity = 0
+                if context.direction == .back {
+                    // 뒤로가기: 현재 뷰를 완전히 오른쪽으로, 타겟 뷰를 센터로
+                    currentView?.frame.origin.x = screenWidth
+                    targetView?.frame.origin.x = 0
+                } else {
+                    // 앞으로가기: 현재 뷰를 완전히 왼쪽으로, 타겟 뷰를 센터로
+                    currentView?.frame.origin.x = -screenWidth
+                    targetView?.frame.origin.x = 0
+                }
+                currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
                 // 네비게이션 실행
                 self?.performNavigation(context: context)
                 
-                // 웹뷰 원래 위치로 복구 (새 페이지 로드 후)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    webView.transform = context.initialTransform
-                    webView.layer.shadowOpacity = 0
-                    self?.activeTransitions.removeValue(forKey: tabID)
-                }
+                // 컨테이너 제거
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: tabID)
             }
         )
     }
     
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
-              let webView = context.webView else { return }
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
         
-        // 원래 위치로 복귀
+        let screenWidth = webView.bounds.width
+        let currentView = previewContainer.viewWithTag(1001)
+        let targetView = previewContainer.viewWithTag(1002)
+        
         UIView.animate(
             withDuration: 0.25,
             animations: {
-                webView.transform = context.initialTransform
-                webView.layer.shadowOpacity = 0
+                // 원래 위치로 복귀
+                currentView?.frame.origin.x = 0
+                
+                if context.direction == .back {
+                    targetView?.frame.origin.x = -screenWidth
+                } else {
+                    targetView?.frame.origin.x = screenWidth
+                }
+                
+                currentView?.layer.shadowOpacity = 0.3
             },
             completion: { _ in
+                previewContainer.removeFromSuperview()
                 self.activeTransitions.removeValue(forKey: tabID)
             }
         )
@@ -583,18 +795,19 @@ final class BFCacheTransitionSystem: NSObject {
                 webView.reload()
                 dbg("🔄 동적 페이지 리로드: \(currentRecord.title)")
             } else {
-                // 정적 페이지는 BFCache 복원
+                // 🎯 핵심 수정: 실패시에도 리로드 안하기
                 snapshot.restore(to: webView) { [weak self] success in
                     if success {
                         self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title)")
                     } else {
-                        webView.reload()
-                        self?.dbg("⚠️ BFCache 복원 실패, 리로드: \(currentRecord.title)")
+                        // ❌ 기존: webView.reload() → 제거!
+                        // ✅ 새로운 전략: 그냥 현재 상태 유지
+                        self?.dbg("⚠️ BFCache 복원 실패했지만 현재 상태 유지: \(currentRecord.title)")
                     }
                 }
             }
         } else {
-            // BFCache 미스 - 일반 로드
+            // BFCache 미스 - 일반적으로는 네비게이션 시스템이 알아서 로드함
             dbg("❌ BFCache 미스: \(currentRecord.title)")
         }
     }
@@ -648,7 +861,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[\(ts())][BFCache] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
     }
 }
 
