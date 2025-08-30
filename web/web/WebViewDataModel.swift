@@ -10,6 +10,7 @@
 //  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
+//  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
 //
 
 import Foundation
@@ -1038,19 +1039,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return pageHistory[currentPageIndex]
     }
     
-    // MARK: - 🏄‍♂️ **스와이프 제스처 처리** (과거 점프 완전 방지)
-    
-    func handleSwipeGestureDetected(to url: URL) {
-        // ✅ **절대 원칙**: 히스토리에서 찾더라도 무조건 새 페이지로 추가
-        // 세션 점프 완전 방지
-        if !isHistoryNavigationActive() {
-            addNewPage(url: url, title: "")
-            stateModel?.syncCurrentURL(url)
-            dbg("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
-        } else {
-            dbg("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
-        }
-    }
+    // 🎯 **BFCache 통합 - handleSwipeGestureDetected 제거**
+    // 모든 스와이프 제스처 처리는 BFCacheTransitionSystem으로 이관
     
     func findPageIndex(for url: URL) -> Int? {
         // ⚠️ **주의**: 이 함수는 미리보기용만 사용
