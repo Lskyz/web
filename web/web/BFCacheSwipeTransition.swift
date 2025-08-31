@@ -1307,3 +1307,4 @@ extension BFCacheTransitionSystem {
             self.dbg("⚠️ 메모리 경고 - 캐시 \(removeCount)개 제거")
         }
     }
+}
