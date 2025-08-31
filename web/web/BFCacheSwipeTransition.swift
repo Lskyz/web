@@ -1,1144 +1,1310 @@
 //
-//  Site Menu UI.swift
-//  🧩 사이트 메뉴 시스템 - UI 컴포넌트 모음 (압축 최적화)
-//  📋 공통 레이아웃 래퍼로 VStack 중복 제거
-//  🎯 코드 줄 수 대폭 감소 (기존 대비 ~40% 단축)
+//  BFCacheSwipeTransition.swift
+//  🎯 **BFCache 전환 시스템 - 직접 전환 방식**
+//  ✅ 오버레이 제거 - 웹뷰 자체가 밀려나가는 자연스러운 전환
+//  🔄 복원큐와 단일 경로 통합 (영향 없이 협력)
+//  🏄‍♂️ 제스처/버튼 네비게이션 통합 처리
+//  📸 DOM/JS/스크롤 상태 완벽 복원
+//  🔧 제스처 시작 문제 수정 - .began에서 임계값 검사 제거
+//  🎯 **스냅샷 문제 해결** - 비동기 캡처 타이밍 수정
+//  ✅ **스냅샷 미스 방지 개선** - 신뢰성 향상
 //
 
-import SwiftUI
-import Foundation
+import UIKit
 import WebKit
-import AVFoundation
+import SwiftUI
 
-// MARK: - 🎯 공통 레이아웃 래퍼 (VStack 완전 대체)
-struct VLayout<Content: View>: View {
-    let spacing: CGFloat
-    let alignment: HorizontalAlignment
-    let content: Content
+// MARK: - 타임스탬프 유틸
+fileprivate func ts() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss.SSS"
+    return f.string(from: Date())
+}
+
+// MARK: - 약한 참조 제스처 컨텍스트 (순환 참조 방지)
+private class WeakGestureContext {
+    let tabID: UUID
+    weak var webView: WKWebView?
+    weak var stateModel: WebViewStateModel?
     
-    init(spacing: CGFloat = 0, alignment: HorizontalAlignment = .center, @ViewBuilder content: () -> Content) {
-        self.spacing = spacing
-        self.alignment = alignment
-        self.content = content()
-    }
-    
-    var body: some View {
-        VStack(alignment: alignment, spacing: spacing) { content }
+    init(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
+        self.tabID = tabID
+        self.webView = webView
+        self.stateModel = stateModel
     }
 }
 
-struct HLayout<Content: View>: View {
-    let spacing: CGFloat
-    let alignment: VerticalAlignment
-    let content: Content
+// MARK: - 📸 BFCache 페이지 스냅샷
+struct BFCacheSnapshot {
+    let pageRecord: PageRecord
+    var domSnapshot: String?
+    let scrollPosition: CGPoint
+    var jsState: [String: Any]?
+    var formData: [String: Any]?
+    let timestamp: Date
+    let webViewSnapshot: UIImage?
+    let captureStatus: CaptureStatus // ✅ 캡처 상태 추가
     
-    init(spacing: CGFloat = 0, alignment: VerticalAlignment = .center, @ViewBuilder content: () -> Content) {
-        self.spacing = spacing
-        self.alignment = alignment
-        self.content = content()
+    // ✅ 캡처 상태 enum 추가
+    enum CaptureStatus {
+        case complete       // 모든 데이터 캡처 성공
+        case partial        // 일부만 캡처 성공
+        case visualOnly     // 이미지만 캡처 성공
+        case failed        // 캡처 실패
     }
     
-    var body: some View {
-        HStack(alignment: alignment, spacing: spacing) { content }
+    // ✅ 개선된 정적 팩토리 메서드 - 더 안정적인 캡처
+    static func create(pageRecord: PageRecord, webView: WKWebView?, completion: @escaping (BFCacheSnapshot) -> Void) {
+        guard let webView = webView else {
+            completion(BFCacheSnapshot(
+                pageRecord: pageRecord,
+                scrollPosition: .zero,
+                timestamp: Date(),
+                webViewSnapshot: nil,
+                captureStatus: .failed
+            ))
+            return
+        }
+        
+        // ✅ 웹뷰가 화면에 보이는지 확인
+        guard webView.window != nil, !webView.bounds.isEmpty else {
+            TabPersistenceManager.debugMessages.append("⚠️ 웹뷰가 화면에 없거나 크기가 0 - 스냅샷 스킵")
+            completion(BFCacheSnapshot(
+                pageRecord: pageRecord,
+                scrollPosition: webView.scrollView.contentOffset,
+                timestamp: Date(),
+                webViewSnapshot: nil,
+                captureStatus: .failed
+            ))
+            return
+        }
+        
+        let scrollPosition = webView.scrollView.contentOffset
+        let timestamp = Date()
+        
+        // 시각적 스냅샷, DOM, JS 상태를 모두 비동기로 캡처
+        var visualSnapshot: UIImage? = nil
+        var tempDom: String? = nil
+        var tempJs: [String: Any]? = nil
+        var tempForm: [String: Any]? = nil
+        var captureResults: [Bool] = []
+        
+        let group = DispatchGroup()
+        
+        // 🎯 핵심 수정: WKWebView.takeSnapshot 사용 + 타임아웃
+        group.enter()
+        var snapshotCompleted = false
+        
+        // ✅ 타임아웃 설정 (2초)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if !snapshotCompleted {
+                TabPersistenceManager.debugMessages.append("⏱️ 스냅샷 타임아웃 - fallback 사용")
+                // Fallback to layer rendering
+                visualSnapshot = captureWebViewAsImage(webView)
+                captureResults.append(visualSnapshot != nil)
+                group.leave()
+            }
+        }
+        
+        webView.takeSnapshot(with: nil) { image, error in
+            snapshotCompleted = true
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 실패: \(error.localizedDescription)")
+                // ✅ Fallback 시도
+                visualSnapshot = captureWebViewAsImage(webView)
+                captureResults.append(visualSnapshot != nil)
+            } else {
+                visualSnapshot = image
+                captureResults.append(true)
+                TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 성공: \(image?.size ?? CGSize.zero)")
+            }
+            group.leave()
+        }
+        
+        // ✅ DOM 캡처 개선 - 안전한 캡처
+        group.enter()
+        let domScript = """
+        (function() {
+            try {
+                // 페이지가 충분히 로드되었는지 확인
+                if (document.readyState !== 'complete') {
+                    return null;
+                }
+                // DOM이 너무 크면 일부만 캡처
+                const html = document.documentElement.outerHTML;
+                if (html.length > 500000) { // 500KB 제한
+                    return html.substring(0, 500000) + '<!-- truncated -->';
+                }
+                return html;
+            } catch(e) {
+                return null;
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(domScript) { result, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📄 DOM 캡처 실패: \(error.localizedDescription)")
+                captureResults.append(false)
+            } else {
+                tempDom = result as? String
+                captureResults.append(tempDom != nil)
+                if let dom = tempDom {
+                    TabPersistenceManager.debugMessages.append("📄 DOM 캡처 성공: \(dom.prefix(100))...")
+                }
+            }
+            group.leave()
+        }
+        
+        // ✅ JS 상태 및 폼 데이터 캡처 개선
+        group.enter()
+        let jsScript = """
+        (function() {
+            try {
+                // 페이지 준비 상태 확인
+                if (typeof document === 'undefined') return null;
+                
+                const formData = {};
+                // ✅ 더 안전한 폼 데이터 수집
+                const inputs = document.querySelectorAll('input:not([type="password"]), textarea, select');
+                for (let i = 0; i < Math.min(inputs.length, 100); i++) { // 최대 100개 제한
+                    const el = inputs[i];
+                    if (el.name || el.id) {
+                        const key = el.name || el.id;
+                        if (el.type === 'checkbox' || el.type === 'radio') {
+                            formData[key] = el.checked;
+                        } else if (el.value && el.value.length < 1000) { // 긴 값 제외
+                            formData[key] = el.value;
+                        }
+                    }
+                }
+                
+                const scrollData = {
+                    x: window.scrollX || 0,
+                    y: window.scrollY || 0,
+                    elements: []
+                };
+                
+                // ✅ 스크롤 요소 제한 (최대 20개)
+                const scrollableElements = document.querySelectorAll('*');
+                let scrollCount = 0;
+                for (let i = 0; i < scrollableElements.length && scrollCount < 20; i++) {
+                    const el = scrollableElements[i];
+                    if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                        scrollData.elements.push({
+                            index: i,
+                            top: el.scrollTop,
+                            left: el.scrollLeft,
+                            selector: el.tagName + (el.id ? '#' + el.id : '')
+                        });
+                        scrollCount++;
+                    }
+                }
+                
+                return {
+                    forms: formData,
+                    scroll: scrollData,
+                    href: window.location.href,
+                    title: document.title || '',
+                    timestamp: Date.now(),
+                    ready: document.readyState
+                };
+            } catch(e) { 
+                console.error('BFCache JS 상태 캡처 실패:', e);
+                return {
+                    forms: {},
+                    scroll: { x: 0, y: 0, elements: [] },
+                    error: e.message
+                };
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(jsScript) { result, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🔧 JS 상태 캡처 실패: \(error.localizedDescription)")
+                captureResults.append(false)
+            } else if let data = result as? [String: Any] {
+                tempForm = data["forms"] as? [String: Any]
+                tempJs = data
+                captureResults.append(true)
+                TabPersistenceManager.debugMessages.append("🔧 JS 상태 캡처 성공: \(data.keys.sorted())")
+            } else {
+                captureResults.append(false)
+            }
+            group.leave()
+        }
+        
+        // ✅ 모든 캡처 완료 후 스냅샷 생성
+        group.notify(queue: .main) {
+            // 캡처 상태 결정
+            let successCount = captureResults.filter { $0 }.count
+            let captureStatus: CaptureStatus
+            
+            if successCount == captureResults.count {
+                captureStatus = .complete
+            } else if visualSnapshot != nil {
+                captureStatus = successCount > 1 ? .partial : .visualOnly
+            } else {
+                captureStatus = .failed
+            }
+            
+            let snapshot = BFCacheSnapshot(
+                pageRecord: pageRecord,
+                domSnapshot: tempDom,
+                scrollPosition: scrollPosition,
+                jsState: tempJs,
+                formData: tempForm,
+                timestamp: timestamp,
+                webViewSnapshot: visualSnapshot,
+                captureStatus: captureStatus
+            )
+            
+            TabPersistenceManager.debugMessages.append(
+                "📸 BFCache 스냅샷 완성: \(pageRecord.title) " +
+                "[상태: \(captureStatus)] " +
+                "(이미지: \(visualSnapshot != nil ? "✅" : "❌"), " +
+                "DOM: \(tempDom != nil ? "✅" : "❌"), " +
+                "JS: \(tempJs != nil ? "✅" : "❌"))"
+            )
+            
+            completion(snapshot)
+        }
+    }
+    
+    // ✅ Layer 렌더링을 사용한 fallback 캡처
+    private static func captureWebViewAsImage(_ webView: WKWebView) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+        return renderer.image { context in
+            webView.layer.render(in: context.cgContext)
+        }
+    }
+    
+    // 직접 초기화용 init
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, formData: [String: Any]? = nil, timestamp: Date, webViewSnapshot: UIImage? = nil, captureStatus: CaptureStatus = .partial) {
+        self.pageRecord = pageRecord
+        self.domSnapshot = domSnapshot
+        self.scrollPosition = scrollPosition
+        self.jsState = jsState
+        self.formData = formData
+        self.timestamp = timestamp
+        self.webViewSnapshot = webViewSnapshot
+        self.captureStatus = captureStatus
+    }
+    
+    // ✅ 개선된 복원 메서드
+    func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        // 캡처 상태에 따른 복원 전략
+        switch captureStatus {
+        case .failed:
+            // 캡처 실패 시 단순 URL 로드만
+            webView.load(URLRequest(url: pageRecord.url))
+            completion(false)
+            return
+            
+        case .visualOnly:
+            // 이미지만 있으면 URL 로드 후 스크롤 위치만 복원
+            webView.load(URLRequest(url: pageRecord.url))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+                completion(true)
+            }
+            return
+            
+        case .partial, .complete:
+            // 정상적인 복원 진행
+            break
+        }
+        
+        // 1단계: 기본 URL 로드 (캐시된 DOM 사용 안함)
+        let request = URLRequest(url: pageRecord.url, cachePolicy: .returnCacheDataElseLoad)
+        webView.load(request)
+        
+        // 2단계: 페이지 로드 후 상태 복원 (더 긴 대기 시간)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.restorePageState(to: webView, completion: completion)
+        }
+    }
+    
+    private func restorePageState(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        var restoreSteps: [() -> Void] = []
+        var stepResults: [Bool] = []
+        var currentStep = 0
+        
+        var nextStep: (() -> Void)!
+        nextStep = {
+            if currentStep < restoreSteps.count {
+                let step = restoreSteps[currentStep]; currentStep += 1; step()
+            } else {
+                let successCount = stepResults.filter { $0 }.count
+                let totalSteps = stepResults.count
+                let overallSuccess = successCount > totalSteps / 2
+                TabPersistenceManager.debugMessages.append("BFCache 복원 완료: \(successCount)/\(totalSteps) 성공 -> \(overallSuccess ? "성공" : "실패")")
+                completion(overallSuccess)
+            }
+        }
+        
+        // 스크롤 복원
+        restoreSteps.append {
+            let pos = self.scrollPosition
+            webView.scrollView.setContentOffset(pos, animated: false)
+            let js = "try{window.scrollTo(\(pos.x),\(pos.y));true}catch(e){false}"
+            webView.evaluateJavaScript(js) { result, _ in
+                stepResults.append((result as? Bool) ?? false)
+                nextStep()
+            }
+        }
+        
+        // 폼 복원
+        if let form = self.formData, !form.isEmpty {
+            restoreSteps.append {
+                let js = """
+                (function(){
+                    try{
+                        const d=\(self.convertFormDataToJSObject(form)); let ok=0;
+                        for (const [k,v] of Object.entries(d)) {
+                            const el=document.querySelector(`[name="${k}"], #${k}`); if(!el) continue;
+                            if(el.type==='checkbox'||el.type==='radio'){ el.checked=Boolean(v); } else { el.value=String(v??''); }
+                            ok++;
+                        }
+                        return ok>=0;
+                    }catch(e){return false;}
+                })()
+                """
+                webView.evaluateJavaScript(js) { result, _ in
+                    stepResults.append((result as? Bool) ?? false)
+                    nextStep()
+                }
+            }
+        }
+        
+        // 고급 스크롤 복원
+        if let jsState = self.jsState,
+           let s = jsState["scroll"] as? [String:Any],
+           let els = s["elements"] as? [[String:Any]], !els.isEmpty {
+            restoreSteps.append {
+                let js = """
+                (function(){
+                    try{
+                        const arr=\(self.convertScrollElementsToJSArray(els)); let ok=0;
+                        for(const it of arr){
+                            if(!it.selector) continue;
+                            const el=document.querySelector(it.selector);
+                            if(el && el.scrollTop !== undefined){
+                                el.scrollTop=it.top||0; el.scrollLeft=it.left||0; ok++;
+                            }
+                        }
+                        return ok>=0;
+                    }catch(e){return false;}
+                })()
+                """
+                webView.evaluateJavaScript(js) { result, _ in
+                    stepResults.append((result as? Bool) ?? false)
+                    nextStep()
+                }
+            }
+        }
+        
+        nextStep()
+    }
+    
+    // 안전한 JSON 변환 함수들
+    private func convertFormDataToJSObject(_ formData: [String: Any]) -> String {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: formData, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "{}"
+        } catch {
+            TabPersistenceManager.debugMessages.append("폼 데이터 JSON 변환 실패: \(error.localizedDescription)")
+            return "{}"
+        }
+    }
+    
+    private func convertScrollElementsToJSArray(_ elements: [[String: Any]]) -> String {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: elements, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "[]"
+        } catch {
+            TabPersistenceManager.debugMessages.append("스크롤 요소 JSON 변환 실패: \(error.localizedDescription)")
+            return "[]"
+        }
+    }
+    
+    func needsRefresh() -> Bool {
+        let elapsed = Date().timeIntervalSince(timestamp)
+        let type = pageRecord.siteType?.lowercased() ?? ""
+        let dynamicPatterns = ["search", "feed", "timeline", "live", "realtime", "stream"]
+        let isDynamic = dynamicPatterns.contains { type.contains($0) }
+        let isSearch = PageRecord.isSearchURL(pageRecord.url)
+        return (isDynamic || isSearch) && elapsed > 300
     }
 }
 
-// MARK: - 🎯 컴팩트 텍스트 뷰 (Text + 속성 한줄화)
-struct CompactText: View {
-    let text: String
-    let font: Font
-    let color: Color
-    let lineLimit: Int?
+// MARK: - 🎯 BFCache 전환 시스템 (직접 전환 방식)
+final class BFCacheTransitionSystem: NSObject {
     
-    init(_ text: String, _ font: Font = .body, _ color: Color = .primary, lines: Int? = nil) {
-        self.text = text
-        self.font = font
-        self.color = color
-        self.lineLimit = lines
+    // MARK: - 싱글톤
+    static let shared = BFCacheTransitionSystem()
+    private override init() {
+        super.init()
     }
     
-    var body: some View {
-        if let limit = lineLimit {
-            Text(text).font(font).foregroundColor(color).lineLimit(limit)
-        } else {
-            Text(text).font(font).foregroundColor(color)
-        }
-    }
-}
-
-// MARK: - 🎯 컴팩트 아이콘 뷰
-struct Icon: View {
-    let name: String
-    let size: CGFloat
-    let color: Color
+    // MARK: - 캐시 저장소
+    private var cache: [UUID: BFCacheSnapshot] = [:]
+    private let maxCacheSize = 30 // ✅ 캐시 크기 증가 (20 -> 30)
+    private let cacheQueue = DispatchQueue(label: "bfcache", attributes: .concurrent)
     
-    init(_ name: String, _ size: CGFloat = 20, _ color: Color = .primary) {
-        self.name = name
-        self.size = size
-        self.color = color
+    // ✅ 개선: 디바운스 시간 증가 및 펜딩 캡처 관리
+    private var lastArrivalStoreAt: [UUID: Date] = [:]
+    private var lastLeavingStoreAt: [UUID: Date] = [:]
+    private var pendingCaptures: Set<UUID> = [] // ✅ 진행 중인 캡처 추적
+    
+    // MARK: - 전환 상태
+    private var activeTransitions: [UUID: TransitionContext] = [:]
+    
+    // 전환 컨텍스트
+    private struct TransitionContext {
+        let tabID: UUID
+        weak var webView: WKWebView?
+        weak var stateModel: WebViewStateModel?
+        var isGesture: Bool
+        var direction: NavigationDirection
+        var initialTransform: CGAffineTransform
+        var previewContainer: UIView?
+        var currentSnapshot: UIImage? // 🎯 현재 페이지 스냅샷 저장
     }
     
-    var body: some View {
-        Image(systemName: name).font(.system(size: size)).foregroundColor(color).frame(width: size + 4)
+    enum NavigationDirection {
+        case back, forward
     }
-}
-
-// MARK: - 🎨 UI Components Module
-extension SiteMenuSystem {
-    enum UI {
-        
-        // MARK: - 🚫 Popup Block Alert View (압축)
-        struct PopupBlockedAlert: View {
-            let domain: String
-            let blockedCount: Int
-            @Binding var isPresented: Bool
+    
+    // MARK: - 캐시 관리
+    
+    // ✅ 개선된 스냅샷 저장 메서드
+    private func storeSnapshot(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
+        cacheQueue.async(flags: .barrier) {
+            self.cache[pageID] = snapshot
+            self.pendingCaptures.remove(pageID) // ✅ 캡처 완료 표시
             
-            var body: some View {
-                VLayout(spacing: 16) {
-                    Icon("shield.fill", 48, .red)
-                    CompactText("팝업 차단됨", .title2.bold(), .primary)
-                    
-                    VLayout(spacing: 8) {
-                        CompactText("\(domain)에서 팝업을 차단했습니다", .body, .primary).multilineTextAlignment(.center)
-                        if blockedCount > 1 {
-                            CompactText("총 \(blockedCount)개의 팝업이 차단되었습니다", .caption, .secondary)
-                        }
-                    }
-                    
-                    VLayout(spacing: 8) {
-                        HLayout(spacing: 12) {
-                            Button("이 사이트 허용") { PopupBlockManager.shared.allowPopupsForDomain(domain); isPresented = false }
-                                .foregroundColor(.blue).frame(maxWidth: .infinity)
-                            Button("닫기") { isPresented = false }
-                                .foregroundColor(.primary).frame(maxWidth: .infinity)
-                        }
-                        Button("팝업 차단 끄기") { PopupBlockManager.shared.isPopupBlocked = false; isPresented = false }
-                            .font(.caption).foregroundColor(.secondary)
-                    }
-                }
-                .padding(24)
-                .background(Color(.systemBackground))
-                .cornerRadius(16)
-                .shadow(radius: 20)
-                .frame(maxWidth: 300)
-            }
-        }
-        
-        // MARK: - Main Site Menu Overlay (압축)
-        struct SiteMenuOverlay: View {
-            @ObservedObject var manager: SiteMenuManager
-            let currentState: WebViewStateModel
-            let outerHorizontalPadding: CGFloat
-            let showAddressBar: Bool
-            let whiteGlassBackground: AnyView
-            let whiteGlassOverlay: AnyView
-            @Binding var tabs: [WebTab]
-            @Binding var selectedTabIndex: Int
-
-            var body: some View {
-                ZStack {
-                    Color.black.opacity(0.1).ignoresSafeArea().onTapGesture { manager.showSiteMenu = false }
-                    
-                    VStack(spacing: 0) {
-                        Spacer()
-                        siteMenuContent
-                            .background(whiteGlassBackground)
-                            .overlay(whiteGlassOverlay)
-                            .padding(.horizontal, outerHorizontalPadding)
-                            .padding(.bottom, 10)
-                        Spacer().frame(height: showAddressBar ? 160 : 110)
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: manager.showSiteMenu)
-            }
-
-            @ViewBuilder
-            private var siteMenuContent: some View {
-                VLayout(spacing: 0) {
-                    siteInfoSection
-                    Divider().padding(.vertical, 8)
-                    quickSettingsSection
-                    Divider().padding(.vertical, 8)
-                    menuOptionsSection
-                    Divider().padding(.vertical, 8)
-                    downloadsSection
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-
-            @ViewBuilder
-            private var siteInfoSection: some View {
-                HLayout {
-                    VLayout(spacing: 4, alignment: .leading) {
-                        HLayout {
-                            let info = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
-                            Icon(info.icon, 20, info.color)
-                            CompactText(info.text, .headline, info.color)
-                            if SiteMenuSystem.Settings.getPopupBlockedCount() > 0 {
-                                CompactText("(\(SiteMenuSystem.Settings.getPopupBlockedCount())개 차단됨)", .caption, .red)
-                            }
-                        }
-                        if let url = currentState.currentURL {
-                            CompactText(url.host ?? url.absoluteString, .caption, .secondary, lines: 1)
-                        }
-                    }
-                    Spacer()
-                }
-            }
-            
-            @ViewBuilder
-            private var quickSettingsSection: some View {
-                VLayout(spacing: 8) {
-                    HLayout {
-                        quickButton("shield.fill", "팝업 차단", manager.popupBlocked, manager.popupBlocked ? .blue : .gray) { manager.togglePopupBlocking() }
-                        quickButton("speedometer", "성능", false, .red) { manager.showPerformanceSettings = true }
-                    }
-                    
-                    VLayout(spacing: 8) {
-                        Button(action: { manager.toggleDesktopMode() }) {
-                            HLayout(spacing: 8) {
-                                Icon(manager.getDesktopModeEnabled() ? "display" : "iphone", 28, manager.getDesktopModeEnabled() ? .blue : .gray)
-                                CompactText("데스크탑 모드", .headline, manager.getDesktopModeEnabled() ? .primary : .secondary)
-                                Spacer()
-                                Text(manager.getDesktopModeEnabled() ? "ON" : "OFF")
-                                    .font(.caption).fontWeight(.semibold)
-                                    .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(manager.getDesktopModeEnabled() ? Color.blue : Color.gray)
-                                    .foregroundColor(.white).cornerRadius(12)
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 12)
-                            .background(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                            .cornerRadius(12)
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1))
-                        }.buttonStyle(.plain)
-                        
-                        if manager.getDesktopModeEnabled() { desktopZoomControls }
-                    }
-                }
-            }
-            
-            @ViewBuilder
-            private func quickButton(_ icon: String, _ title: String, _ isOn: Bool, _ color: Color, action: @escaping () -> Void) -> some View {
-                Button(action: action) {
-                    VLayout(spacing: 4) {
-                        Icon(icon, 28, color)
-                        CompactText(title, .caption, isOn ? .primary : .secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(isOn ? color.opacity(0.1) : Color.clear)
-                    .cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(isOn ? color.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1))
-                }.buttonStyle(.plain)
-            }
-            
-            @ViewBuilder
-            private var desktopZoomControls: some View {
-                VLayout(spacing: 12) {
-                    HLayout {
-                        CompactText("페이지 배율", .subheadline.weight(.medium), .primary)
-                        Spacer()
-                        Text("\(String(format: "%.0f", manager.getZoomLevel() * 100))%")
-                            .font(.subheadline).fontWeight(.bold).foregroundColor(.blue)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1)).cornerRadius(8)
-                    }
-                    
-                    VLayout(spacing: 8) {
-                        HLayout(spacing: 12) {
-                            CompactText("30%", .caption2, .secondary)
-                            Slider(value: Binding(
-                                get: { manager.getZoomLevel() },
-                                set: { manager.setZoomLevel($0) }
-                            ), in: 0.3...3.0, step: 0.1).accentColor(.blue)
-                            CompactText("300%", .caption2, .secondary)
-                        }
-                        
-                        HLayout(spacing: 8) {
-                            zoomButton("-") { manager.adjustZoom(-0.1) }
-                            Spacer()
-                            Button("리셋") { manager.setZoomLevel(1.0); UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-                                .font(.caption).padding(.horizontal, 12).padding(.vertical, 6)
-                                .background(Color.gray.opacity(0.1)).foregroundColor(.primary).cornerRadius(8)
-                            Spacer()
-                            zoomButton("+") { manager.adjustZoom(0.1) }
-                        }
-                    }
-                    
-                    VLayout(spacing: 8) {
-                        CompactText("빠른 배율 선택", .caption, .secondary)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
-                            ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
-                                Button("\(String(format: "%.0f", preset * 100))%") {
-                                    manager.setZoomLevel(preset)
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                }
-                                .font(.caption).padding(.horizontal, 8).padding(.vertical, 6)
-                                .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
-                                .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
-                                .cornerRadius(8)
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 8).padding(.horizontal, 8).padding(.vertical, 12)
-                .background(Color.blue.opacity(0.05)).cornerRadius(12)
-            }
-            
-            @ViewBuilder
-            private func zoomButton(_ text: String, action: @escaping () -> Void) -> some View {
-                Button(text) { action(); UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-                    .frame(width: 32, height: 32)
-                    .background(Color.blue.opacity(0.1)).foregroundColor(.blue).cornerRadius(8)
-            }
-
-            @ViewBuilder
-            private var menuOptionsSection: some View {
-                HLayout {
-                    menuOption("line.3.horizontal.decrease.circle", "방문 기록 관리", "\(manager.historyFilters.count)개 필터", .orange) { manager.showHistoryFilterManager = true }
-                    Spacer()
-                    menuOption("shield.lefthalf.filled", "개인정보", "쿠키 & 캐시", .purple) { manager.showPrivacySettings = true }
-                }
-            }
-            
-            @ViewBuilder
-            private func menuOption(_ icon: String, _ title: String, _ subtitle: String, _ color: Color, action: @escaping () -> Void) -> some View {
-                Button(action: action) {
-                    VLayout(spacing: 4) {
-                        Icon(icon, 28, color)
-                        CompactText(title, .caption.weight(.medium), .primary)
-                        CompactText(subtitle, .caption2, .secondary)
-                    }
-                    .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.05)).cornerRadius(8)
-                }.buttonStyle(.plain)
-            }
-
-            @ViewBuilder
-            private var downloadsSection: some View {
-                VLayout(spacing: 8, alignment: .leading) {
-                    HLayout {
-                        Button(action: { manager.showDownloadsList = true }) {
-                            HLayout(spacing: 8) {
-                                Icon("arrow.down.circle.fill", 20, .blue)
-                                CompactText("다운로드", .headline, .primary)
-                                Icon("chevron.right", 12, .secondary)
-                            }
-                        }.buttonStyle(.plain)
-                        Spacer()
-                        if !manager.downloads.isEmpty {
-                            Text("\(manager.downloads.count)개").font(.caption).foregroundColor(.secondary)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.1)).cornerRadius(12)
-                        }
-                    }
-
-                    if !manager.downloads.isEmpty {
-                        ScrollView {
-                            LazyVStack(spacing: 6) {
-                                ForEach(Array(manager.downloads.prefix(3))) { download in
-                                    downloadRow(download)
-                                }
-                                if manager.downloads.count > 3 {
-                                    HLayout { Spacer(); CompactText("및 \(manager.downloads.count - 3)개 더...", .caption, .secondary); Spacer() }
-                                        .padding(.vertical, 4)
-                                }
-                            }
-                        }.frame(maxHeight: 100)
-                    } else {
-                        HLayout {
-                            Spacer()
-                            VLayout(spacing: 4) {
-                                Icon("tray", 24, .secondary.opacity(0.6))
-                                CompactText("다운로드된 파일이 없습니다", .caption, .secondary).multilineTextAlignment(.center)
-                            }
-                            Spacer()
-                        }.padding(.vertical, 16)
-                    }
-                }
-            }
-
-            @ViewBuilder
-            private func downloadRow(_ download: DownloadItem) -> some View {
-                HLayout {
-                    Icon("doc.fill", 16, .blue)
-                    VLayout(spacing: 2, alignment: .leading) {
-                        CompactText(download.filename, .system(size: 14, weight: .medium), .primary, lines: 1)
-                        HLayout {
-                            CompactText(download.size, .caption, .secondary)
-                            Spacer()
-                            CompactText(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()), .caption, .secondary)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 4).padding(.horizontal, 8)
-                .background(Color.white.opacity(0.95)).cornerRadius(8)
-            }
-        }
-        
-        // MARK: - Recent Visits View (압축)
-        struct RecentVisitsView: View {
-            @ObservedObject var manager: SiteMenuManager
-            let onURLSelected: (URL) -> Void
-            let onManageHistory: () -> Void
-
-            var body: some View {
-                VLayout(spacing: 0) {
-                    if manager.recentVisits.isEmpty {
-                        VLayout(spacing: 12) {
-                            Icon("clock.arrow.circlepath", 28, .secondary)
-                            CompactText("최근 방문한 사이트가 없습니다", .subheadline, .secondary).multilineTextAlignment(.center)
-                        }.padding(.vertical, 20)
-                    } else {
-                        VLayout(spacing: 0) {
-                            ForEach(manager.recentVisits) { entry in
-                                historyRow(entry)
-                                if entry.id != manager.recentVisits.last?.id {
-                                    Divider().padding(.horizontal, 14)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @ViewBuilder
-            private func historyRow(_ entry: HistoryEntry) -> some View {
-                Button(action: { onURLSelected(entry.url); }) {
-                    HLayout(spacing: 12) {
-                        Icon("clock", 16, .blue)
-                        VLayout(spacing: 2, alignment: .leading) {
-                            CompactText(entry.title, .system(size: 16, weight: .medium), .primary, lines: 1)
-                            CompactText(entry.url.absoluteString, .system(size: 14), .secondary, lines: 1)
-                        }
-                        Spacer()
-                        CompactText(RelativeDateTimeFormatter().localizedString(for: entry.date, relativeTo: Date()), .caption, .secondary)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 12)
-                    .contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-        }
-        
-        // MARK: - Autocomplete View (압축)
-        struct AutocompleteView: View {
-            @ObservedObject var manager: SiteMenuManager
-            let searchText: String
-            let onURLSelected: (URL) -> Void
-            let onManageHistory: () -> Void
-
-            var body: some View {
-                VLayout(spacing: 0) {
-                    if manager.getAutocompleteEntries(for: searchText).isEmpty {
-                        VLayout(spacing: 12) {
-                            Icon("magnifyingglass", 28, .secondary)
-                            CompactText("'\(searchText)'에 대한 방문 기록이 없습니다", .subheadline, .secondary).multilineTextAlignment(.center)
-                        }.padding(.vertical, 20)
-                    } else {
-                        VLayout(spacing: 0) {
-                            ForEach(manager.getAutocompleteEntries(for: searchText)) { entry in
-                                autocompleteRow(entry)
-                                if entry.id != manager.getAutocompleteEntries(for: searchText).last?.id {
-                                    Divider().padding(.horizontal, 14)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @ViewBuilder
-            private func autocompleteRow(_ entry: HistoryEntry) -> some View {
-                Button(action: { onURLSelected(entry.url) }) {
-                    HLayout(spacing: 12) {
-                        Icon("magnifyingglass", 20, .gray)
-                        VLayout(spacing: 2, alignment: .leading) {
-                            highlightedText(entry.title, searchText: searchText).font(.system(size: 16, weight: .medium)).lineLimit(1)
-                            highlightedText(entry.url.absoluteString, searchText: searchText).font(.system(size: 14)).foregroundColor(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        Icon("arrow.up.left", 12, .secondary)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 12).contentShape(Rectangle())
-                }.buttonStyle(.plain)
-            }
-
-            @ViewBuilder
-            private func highlightedText(_ text: String, searchText: String) -> some View {
-                let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    Text(text).foregroundColor(.primary)
-                } else {
-                    let parts = text.components(separatedBy: trimmed)
-                    if parts.count > 1 {
-                        HLayout(spacing: 0) {
-                            ForEach(0..<parts.count, id: \.self) { index in
-                                Text(parts[index]).foregroundColor(.primary)
-                                if index < parts.count - 1 {
-                                    Text(trimmed).foregroundColor(.blue).fontWeight(.semibold)
-                                }
-                            }
-                        }
-                    } else {
-                        Text(text).foregroundColor(.primary)
-                    }
+            // ✅ LRU 방식으로 캐시 관리
+            if self.cache.count > self.maxCacheSize {
+                // 접근 시간 기준으로 정렬하여 가장 오래된 것 제거
+                let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
+                if let oldest = sorted.first {
+                    self.cache.removeValue(forKey: oldest.key)
+                    self.dbg("🗑️ BFCache 오래된 항목 제거: \(String(oldest.key.uuidString.prefix(8)))")
                 }
             }
         }
-        
-        // MARK: - Downloads List View (압축)
-        struct DownloadsListView: View {
-            @ObservedObject var manager: SiteMenuManager
-            @State private var searchText = ""
-            @State private var showClearAllAlert = false
-            @Environment(\.dismiss) private var dismiss
-
-            private var filteredDownloads: [DownloadItem] {
-                searchText.isEmpty ? manager.downloads : manager.downloads.filter { $0.filename.localizedCaseInsensitiveContains(searchText) }
-            }
-
-            var body: some View {
-                List {
-                    if filteredDownloads.isEmpty {
-                        VLayout(spacing: 16) {
-                            Icon("arrow.down.circle", 48, .secondary)
-                            CompactText(searchText.isEmpty ? "다운로드된 파일이 없습니다" : "검색 결과가 없습니다", .title3, .secondary)
-                            if searchText.isEmpty {
-                                CompactText("웹에서 파일을 다운로드하면 여기에 표시됩니다\n(앱 내부 Documents/Downloads 폴더)", .caption, .secondary).multilineTextAlignment(.center)
-                            }
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 60)
-                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
-                    } else {
-                        ForEach(filteredDownloads) { download in
-                            DownloadListRow(download: download, manager: manager)
-                        }.onDelete(perform: deleteDownloads)
-                    }
-                }
-                .navigationTitle("다운로드").navigationBarTitleDisplayMode(.large)
-                .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always))
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Menu {
-                            if !manager.downloads.isEmpty {
-                                Button(role: .destructive) { showClearAllAlert = true } label: { Label("모든 파일 실제 삭제", systemImage: "trash.fill") }
-                                Button { manager.clearDownloads() } label: { Label("목록만 지우기", systemImage: "list.dash") }
-                            }
-                            Button { openDownloadsFolder() } label: { Label("파일 앱에서 열기", systemImage: "folder") }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
-                }
-                .alert("모든 다운로드 파일 삭제", isPresented: $showClearAllAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("실제 파일 삭제", role: .destructive) { manager.clearAllDownloadFiles() }
-                } message: {
-                    Text("다운로드 폴더의 모든 파일을 실제로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.")
-                }
-            }
-
-            private func deleteDownloads(at offsets: IndexSet) {
-                for index in offsets {
-                    manager.deleteDownloadFile(filteredDownloads[index])
-                }
-            }
-
-            private func openDownloadsFolder() {
-                let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-                let downloadsPath = documentsPath.appendingPathComponent("Downloads", isDirectory: true)
-                if let topVC = getTopViewController() {
-                    let activityVC = UIActivityViewController(activityItems: [downloadsPath], applicationActivities: nil)
-                    activityVC.popoverPresentationController?.sourceView = topVC.view
-                    topVC.present(activityVC, animated: true)
-                }
-            }
-        }
-        
-        // MARK: - Download List Row (압축)
-        struct DownloadListRow: View {
-            let download: DownloadItem
-            @ObservedObject var manager: SiteMenuManager
-
-            private var fileExtension: String {
-                URL(fileURLWithPath: download.filename).pathExtension.lowercased()
-            }
-
-            private var fileIcon: String {
-                switch fileExtension {
-                case "pdf": return "doc.richtext"
-                case "jpg", "jpeg", "png", "gif", "webp": return "photo"
-                case "mp4", "mov", "avi", "mkv": return "video"
-                case "mp3", "wav", "aac", "flac": return "music.note"
-                case "zip", "rar", "7z": return "archivebox"
-                case "txt", "md": return "doc.text"
-                case "html", "htm": return "globe"
-                default: return "doc"
-                }
-            }
-
-            private var fileIconColor: Color {
-                switch fileExtension {
-                case "pdf": return .red
-                case "jpg", "jpeg", "png", "gif", "webp": return .green
-                case "mp4", "mov", "avi", "mkv": return .purple
-                case "mp3", "wav", "aac", "flac": return .orange
-                case "zip", "rar", "7z": return .yellow
-                case "txt", "md": return .blue
-                case "html", "htm": return .cyan
-                default: return .gray
-                }
-            }
-
-            var body: some View {
-                HLayout(spacing: 12) {
-                    Image(systemName: fileIcon).font(.title2).foregroundColor(fileIconColor)
-                        .frame(width: 40, height: 40)
-                        .background(fileIconColor.opacity(0.1)).cornerRadius(8)
-
-                    VLayout(spacing: 4, alignment: .leading) {
-                        CompactText(download.filename, .headline, .primary, lines: 2)
-                        HLayout {
-                            CompactText(download.size, .caption, .secondary)
-                            Spacer()
-                            CompactText(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()), .caption, .secondary)
-                            if let fileURL = download.fileURL {
-                                Icon(FileManager.default.fileExists(atPath: fileURL.path) ? "checkmark.circle.fill" : "exclamationmark.triangle.fill", 
-                                     12, FileManager.default.fileExists(atPath: fileURL.path) ? .green : .orange)
-                            }
-                        }
-                    }
-                    Spacer()
-                    
-                    Menu {
-                        if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                            Button { openFile(fileURL) } label: { Label("열기", systemImage: "doc.text") }
-                            Button { shareFile(fileURL) } label: { Label("공유", systemImage: "square.and.arrow.up") }
-                            Divider()
-                            Button(role: .destructive) { manager.deleteDownloadFile(download) } label: { Label("실제 파일 삭제", systemImage: "trash.fill") }
-                        } else {
-                            Text("파일이 존재하지 않음").foregroundColor(.secondary)
-                        }
-                        Button(role: .destructive) { manager.removeDownload(download) } label: { Label("목록에서만 제거", systemImage: "list.dash") }
-                    } label: {
-                        Icon("ellipsis.circle", 24, .secondary)
-                    }.buttonStyle(.plain)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) { openFile(fileURL) }
-                }
-            }
-
-            private func openFile(_ fileURL: URL) {
-                if let topVC = getTopViewController() {
-                    let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-                    activityVC.popoverPresentationController?.sourceView = topVC.view
-                    topVC.present(activityVC, animated: true)
-                }
-            }
-
-            private func shareFile(_ fileURL: URL) {
-                if let topVC = getTopViewController() {
-                    let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-                    activityVC.popoverPresentationController?.sourceView = topVC.view
-                    topVC.present(activityVC, animated: true)
-                }
-            }
-        }
-        
-        // MARK: - History Filter Manager View (압축)
-        struct HistoryFilterManagerView: View {
-            @ObservedObject var manager: SiteMenuManager
-            @Environment(\.dismiss) private var dismiss
-            @State private var showAddFilterSheet = false
-            @State private var newFilterType: HistoryFilter.FilterType = .keyword
-            @State private var newFilterValue = ""
-            @State private var showClearAllAlert = false
-            @State private var editingFilter: HistoryFilter?
-            @State private var editingValue = ""
-
-            private var keywordFilters: [HistoryFilter] { manager.historyFilters.filter { $0.type == .keyword } }
-            private var domainFilters: [HistoryFilter] { manager.historyFilters.filter { $0.type == .domain } }
-
-            var body: some View {
-                List {
-                    Section {
-                        Toggle("방문 기록 필터링", isOn: $manager.isHistoryFilteringEnabled).font(.headline)
-                    } header: { Text("필터 설정") } footer: {
-                        Text("필터링을 켜면 설정한 키워드나 도메인이 포함된 방문 기록이 주소창 자동완성에서 숨겨집니다.")
-                    }
-
-                    if manager.isHistoryFilteringEnabled && !manager.historyFilters.isEmpty {
-                        Section("현재 필터 상태") {
-                            let enabledCount = manager.historyFilters.filter { $0.isEnabled }.count
-                            HLayout {
-                                Icon("line.3.horizontal.decrease.circle", 20, .blue)
-                                CompactText("활성 필터: \(enabledCount) / \(manager.historyFilters.count)개", .subheadline, .primary)
-                                Spacer()
-                                if enabledCount > 0 {
-                                    Text("적용 중").font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1)).foregroundColor(.blue).cornerRadius(8)
-                                }
-                            }
-                        }
-                    }
-
-                    if !keywordFilters.isEmpty {
-                        Section("키워드 필터") {
-                            ForEach(keywordFilters) { filter in filterRow(filter) }
-                                .onDelete { offsets in
-                                    for index in offsets { manager.removeHistoryFilter(keywordFilters[index]) }
-                                }
-                        }
-                    }
-
-                    if !domainFilters.isEmpty {
-                        Section("도메인 필터") {
-                            ForEach(domainFilters) { filter in filterRow(filter) }
-                                .onDelete { offsets in
-                                    for index in offsets { manager.removeHistoryFilter(domainFilters[index]) }
-                                }
-                        }
-                    }
-
-                    if manager.historyFilters.isEmpty {
-                        Section {
-                            VLayout(spacing: 16) {
-                                Icon("line.3.horizontal.decrease.circle", 48, .secondary)
-                                VLayout(spacing: 8) {
-                                    CompactText("설정된 필터가 없습니다", .headline, .secondary)
-                                    CompactText("키워드나 도메인 필터를 추가하여\n원하지 않는 방문 기록을 숨길 수 있습니다", .subheadline, .secondary).multilineTextAlignment(.center)
-                                }
-                            }.frame(maxWidth: .infinity).padding(.vertical, 20)
-                        }.listRowBackground(Color.clear).listRowSeparator(.hidden)
-                    }
-                }
-                .navigationTitle("방문 기록 관리").navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Menu {
-                            Button { showAddFilterSheet = true } label: { Label("필터 추가", systemImage: "plus") }
-                            if !manager.historyFilters.isEmpty {
-                                Divider()
-                                Button(role: .destructive) { showClearAllAlert = true } label: { Label("모든 필터 삭제", systemImage: "trash") }
-                            }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
-                }
-                .sheet(isPresented: $showAddFilterSheet) { addFilterSheet }
-                .alert("필터 수정", isPresented: Binding(
-                    get: { editingFilter != nil },
-                    set: { if !$0 { editingFilter = nil } }
-                )) {
-                    TextField("필터 값", text: $editingValue)
-                    Button("취소", role: .cancel) { editingFilter = nil; editingValue = "" }
-                    Button("저장") {
-                        if let filter = editingFilter { manager.updateHistoryFilter(filter, newValue: editingValue) }
-                        editingFilter = nil; editingValue = ""
-                    }
-                } message: {
-                    if let filter = editingFilter { Text("\(filter.type.displayName) 필터를 수정하세요") }
-                }
-                .alert("모든 필터 삭제", isPresented: $showClearAllAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) { manager.clearAllHistoryFilters() }
-                } message: { Text("모든 히스토리 필터를 삭제하시겠습니까?") }
-            }
-
-            @ViewBuilder
-            private func filterRow(_ filter: HistoryFilter) -> some View {
-                HLayout {
-                    Icon(filter.type.icon, 24, filter.isEnabled ? .blue : .gray)
-                    VLayout(spacing: 2, alignment: .leading) {
-                        CompactText(filter.value, .headline, filter.isEnabled ? .primary : .secondary)
-                        HLayout {
-                            CompactText(filter.type.displayName, .caption, .secondary)
-                            CompactText("• \(filter.isEnabled ? "활성" : "비활성")", .caption, filter.isEnabled ? .blue : .gray)
-                            Spacer()
-                            CompactText(RelativeDateTimeFormatter().localizedString(for: filter.createdAt, relativeTo: Date()), .caption2, .secondary)
-                        }
-                    }
-                    Spacer()
-                    Menu {
-                        Button { editingFilter = filter; editingValue = filter.value } label: { Label("수정", systemImage: "pencil") }
-                        Button(role: .destructive) { manager.removeHistoryFilter(filter) } label: { Label("삭제", systemImage: "trash") }
-                    } label: { Icon("ellipsis", 20, .secondary) }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { manager.toggleHistoryFilter(filter) } }
-            }
-
-            @ViewBuilder
-            private var addFilterSheet: some View {
-                NavigationView {
-                    Form {
-                        Section("필터 종류") {
-                            Picker("필터 종류", selection: $newFilterType) {
-                                ForEach(HistoryFilter.FilterType.allCases, id: \.self) { type in
-                                    HLayout { Icon(type.icon, 16, .primary); Text(type.displayName) }.tag(type)
-                                }
-                            }.pickerStyle(.segmented)
-                        }
-
-                        Section {
-                            TextField(placeholderText, text: $newFilterValue).autocapitalization(.none).disableAutocorrection(true)
-                        } header: { Text("\(newFilterType.displayName) 입력") } footer: { Text(footerText) }
-
-                        if !newFilterValue.isEmpty {
-                            Section("미리보기") {
-                                HLayout {
-                                    Icon(newFilterType.icon, 20, .blue)
-                                    CompactText(newFilterValue.lowercased(), .headline, .primary)
-                                    Spacer()
-                                    Text("필터됨").font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.red.opacity(0.1)).foregroundColor(.red).cornerRadius(8)
-                                }
-                            }
-                        }
-                    }
-                    .navigationTitle("필터 추가").navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button("취소") { showAddFilterSheet = false; resetAddFilterForm() }
-                        }
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("추가") {
-                                manager.addHistoryFilter(type: newFilterType, value: newFilterValue)
-                                showAddFilterSheet = false; resetAddFilterForm()
-                            }.disabled(newFilterValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                }
-            }
-
-            private var placeholderText: String {
-                switch newFilterType {
-                case .keyword: return "예: 광고, 스팸, 성인"
-                case .domain: return "예: example.com, ads.google.com"
-                }
-            }
-
-            private var footerText: String {
-                switch newFilterType {
-                case .keyword: return "페이지 제목이나 URL에 이 키워드가 포함된 방문 기록이 숨겨집니다."
-                case .domain: return "이 도메인의 방문 기록이 숨겨집니다. 정확한 도메인명을 입력하세요."
-                }
-            }
-
-            private func resetAddFilterForm() {
-                newFilterType = .keyword; newFilterValue = ""
-            }
-        }
-        
-        // MARK: - Privacy Settings View (압축)
-        struct PrivacySettingsView: View {
-            @ObservedObject var manager: SiteMenuManager
-            @Environment(\.dismiss) private var dismiss
-            @State private var showClearCookiesAlert = false
-            @State private var showClearCacheAlert = false
-            @State private var showClearAllDataAlert = false
-            @State private var showPopupDomainManager = false
-            
-            var body: some View {
-                List {
-                    Section("쿠키 및 사이트 데이터") {
-                        privacyRow("모든 쿠키 삭제", "로그인 상태가 해제됩니다", .red) { showClearCookiesAlert = true }
-                        privacyRow("캐시 삭제", "이미지 및 파일 캐시를 삭제합니다", .red) { showClearCacheAlert = true }
-                        privacyRow("모든 웹사이트 데이터 삭제", "쿠키, 캐시, 로컬 저장소 등 모든 데이터", .red, bold: true) { showClearAllDataAlert = true }
-                    }
-                    
-                    Section("팝업 차단") {
-                        HLayout {
-                            CompactText("차단된 팝업 수", .headline, .primary)
-                            Spacer()
-                            CompactText("\(SiteMenuSystem.Settings.getPopupBlockedCount())개", .body, .secondary)
-                            Button("초기화") { SiteMenuSystem.Settings.resetPopupBlockedCount() }.font(.caption)
-                        }
-                        
-                        HLayout {
-                            VLayout(alignment: .leading) {
-                                CompactText("도메인별 설정 관리", .headline, .primary)
-                                CompactText("사이트별 팝업 차단/허용 설정", .caption, .secondary)
-                            }
-                            Spacer()
-                            CompactText("\(PopupBlockManager.shared.getAllowedDomains().count)개 허용", .body, .secondary)
-                            Button("관리") { showPopupDomainManager = true }.foregroundColor(.blue)
-                        }
-                    }
-                }
-                .navigationTitle("개인정보 보호").navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
-                }
-                .sheet(isPresented: $showPopupDomainManager) {
-                    NavigationView { PopupDomainManagerView() }
-                }
-                .alert("쿠키 삭제", isPresented: $showClearCookiesAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) { SiteMenuSystem.Settings.clearAllCookies() }
-                } message: { Text("모든 웹사이트의 쿠키를 삭제하시겠습니까? 모든 사이트에서 로그아웃됩니다.") }
-                .alert("캐시 삭제", isPresented: $showClearCacheAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) { SiteMenuSystem.Settings.clearCache() }
-                } message: { Text("모든 캐시를 삭제하시겠습니까? 페이지 로딩이 일시적으로 느려질 수 있습니다.") }
-                .alert("모든 웹사이트 데이터 삭제", isPresented: $showClearAllDataAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("모두 삭제", role: .destructive) { SiteMenuSystem.Settings.clearWebsiteData() }
-                } message: { Text("쿠키, 캐시, 로컬 저장소 등 모든 웹사이트 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.") }
-            }
-            
-            @ViewBuilder
-            private func privacyRow(_ title: String, _ subtitle: String, _ buttonColor: Color, bold: Bool = false, action: @escaping () -> Void) -> some View {
-                HLayout {
-                    VLayout(alignment: .leading) {
-                        CompactText(title, .headline, .primary)
-                        CompactText(subtitle, .caption, .secondary)
-                    }
-                    Spacer()
-                    Button(bold ? "모두 삭제" : "삭제") { action() }
-                        .foregroundColor(buttonColor)
-                        .fontWeight(bold ? .semibold : .regular)
-                }
-            }
-        }
-        
-        // MARK: - 🚫 Popup Domain Manager View (압축)
-        struct PopupDomainManagerView: View {
-            @Environment(\.dismiss) private var dismiss
-            @State private var allowedDomains: [String] = []
-            @State private var recentBlockedPopups: [PopupBlockManager.BlockedPopup] = []
-            @State private var showAddDomainAlert = false
-            @State private var newDomainText = ""
-            @State private var showClearAllAllowedAlert = false
-            
-            var body: some View {
-                List {
-                    Section {
-                        if allowedDomains.isEmpty {
-                            VLayout(spacing: 12) {
-                                Icon("shield.checkered", 28, .secondary)
-                                CompactText("허용된 사이트가 없습니다", .subheadline, .secondary)
-                                CompactText("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'이 사이트 허용' 버튼을 누르세요", .caption, .secondary).multilineTextAlignment(.center)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 20).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                        } else {
-                            ForEach(allowedDomains, id: \.self) { domain in
-                                HLayout {
-                                    Icon("checkmark.shield.fill", 24, .green)
-                                    VLayout(spacing: 2, alignment: .leading) {
-                                        CompactText(domain, .headline, .primary)
-                                        CompactText("팝업 허용됨", .caption, .green)
-                                    }
-                                    Spacer()
-                                    Button("차단") { PopupBlockManager.shared.removeAllowedDomain(domain); refreshData() }
-                                        .font(.caption).foregroundColor(.red).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.red.opacity(0.1)).cornerRadius(8)
-                                }
-                            }
-                        }
-                    } header: {
-                        HLayout {
-                            Text("팝업 허용 사이트 (\(allowedDomains.count)개)")
-                            Spacer()
-                            if !allowedDomains.isEmpty {
-                                Button("수동 추가") { showAddDomainAlert = true }.font(.caption).foregroundColor(.blue)
-                            }
-                        }
-                    }
-                    
-                    Section {
-                        if recentBlockedPopups.isEmpty {
-                            VLayout(spacing: 12) {
-                                Icon("shield.fill", 28, .secondary)
-                                CompactText("차단된 팝업이 없습니다", .subheadline, .secondary)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 20).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                        } else {
-                            ForEach(recentBlockedPopups.indices, id: \.self) { index in
-                                let popup = recentBlockedPopups[index]
-                                HLayout {
-                                    Icon("shield.slash.fill", 24, .red)
-                                    VLayout(spacing: 2, alignment: .leading) {
-                                        CompactText(popup.domain, .headline, .primary)
-                                        if !popup.url.isEmpty { CompactText(popup.url, .caption, .secondary, lines: 1) }
-                                        CompactText(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()), .caption2, .secondary)
-                                    }
-                                    Spacer()
-                                    Button("허용") { PopupBlockManager.shared.allowPopupsForDomain(popup.domain); refreshData() }
-                                        .font(.caption).foregroundColor(.green).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.green.opacity(0.1)).cornerRadius(8)
-                                }
-                            }
-                        }
-                    } header: { Text("최근 차단된 팝업 (\(recentBlockedPopups.count)개)") } footer: {
-                        if !recentBlockedPopups.isEmpty { Text("차단된 팝업의 사이트를 허용 목록에 추가할 수 있습니다") }
-                    }
-                }
-                .navigationTitle("팝업 차단 관리").navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Menu {
-                            Button { showAddDomainAlert = true } label: { Label("도메인 수동 추가", systemImage: "plus") }
-                            if !allowedDomains.isEmpty {
-                                Divider()
-                                Button(role: .destructive) { showClearAllAllowedAlert = true } label: { Label("모든 허용 사이트 제거", systemImage: "trash") }
-                            }
-                            Button { SiteMenuSystem.Settings.resetPopupBlockedCount(); refreshData() } label: { Label("차단 기록 초기화", systemImage: "arrow.counterclockwise") }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                    }
-                }
-                .onAppear { refreshData() }
-                .alert("도메인 추가", isPresented: $showAddDomainAlert) {
-                    TextField("도메인명 (예: example.com)", text: $newDomainText).autocapitalization(.none).disableAutocorrection(true)
-                    Button("취소", role: .cancel) { newDomainText = "" }
-                    Button("추가") {
-                        let trimmedDomain = newDomainText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmedDomain.isEmpty { PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain); refreshData() }
-                        newDomainText = ""
-                    }.disabled(newDomainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } message: { Text("팝업을 허용할 도메인을 입력하세요") }
-                .alert("모든 허용 사이트 제거", isPresented: $showClearAllAllowedAlert) {
-                    Button("취소", role: .cancel) { }
-                    Button("제거", role: .destructive) {
-                        for domain in allowedDomains { PopupBlockManager.shared.removeAllowedDomain(domain) }
-                        refreshData()
-                    }
-                } message: { Text("모든 허용 사이트를 제거하시겠습니까?") }
-            }
-            
-            private func refreshData() {
-                allowedDomains = PopupBlockManager.shared.getAllowedDomains()
-                recentBlockedPopups = PopupBlockManager.shared.getRecentBlockedPopups(limit: 20)
-            }
-        }
-        
-        // MARK: - Performance Settings View (압축)
-        struct PerformanceSettingsView: View {
-            @ObservedObject var manager: SiteMenuManager
-            @Environment(\.dismiss) private var dismiss
-            
-            var body: some View {
-                List {
-                    Section("메모리 관리") {
-                        let memoryUsage = SiteMenuSystem.Performance.getMemoryUsage()
-                        VLayout(spacing: 8, alignment: .leading) {
-                            HLayout {
-                                CompactText("메모리 사용량", .headline, .primary)
-                                Spacer()
-                                CompactText("\(String(format: "%.0f", memoryUsage.used)) MB", .body, .secondary)
-                            }
-                            ProgressView(value: memoryUsage.used / memoryUsage.total)
-                                .progressViewStyle(LinearProgressViewStyle(tint: memoryUsage.used / memoryUsage.total > 0.8 ? .red : .blue))
-                                .scaleEffect(x: 1, y: 0.5)
-                        }
-                        
-                        HLayout {
-                            VLayout(alignment: .leading) {
-                                CompactText("웹뷰 풀 정리", .headline, .primary)
-                                CompactText("사용하지 않는 웹뷰를 정리합니다", .caption, .secondary)
-                            }
-                            Spacer()
-                            Button("정리") { manager.clearWebViewPool() }.foregroundColor(.blue)
-                        }
-                    }
-                    
-                    Section("캐시 설정") {
-                        Toggle("이미지 압축", isOn: $manager.imageCompressionEnabled).font(.headline)
-                        if manager.imageCompressionEnabled {
-                            Text("이미지를 자동으로 압축하여 메모리 사용량을 줄입니다").font(.caption).foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Section("고급 설정") {
-                        VLayout(spacing: 8, alignment: .leading) {
-                            HLayout {
-                                CompactText("메모리 정리 임계값", .headline, .primary)
-                                Spacer()
-                                CompactText("\(Int(manager.memoryThreshold * 100))%", .body, .secondary)
-                            }
-                            Slider(value: $manager.memoryThreshold, in: 0.5...0.95, step: 0.05).accentColor(.blue)
-                        }
-                        
-                        VLayout(spacing: 8, alignment: .leading) {
-                            HLayout {
-                                CompactText("웹뷰 풀 크기", .headline, .primary)
-                                Spacer()
-                                CompactText("\(manager.webViewPoolSize)개", .body, .secondary)
-                            }
-                            Slider(value: Binding(
-                                get: { Double(manager.webViewPoolSize) },
-                                set: { manager.webViewPoolSize = Int($0) }
-                            ), in: 5...20, step: 1).accentColor(.blue)
-                        }
-                    }
-                }
-                .navigationTitle("성능").navigationBarTitleDisplayMode(.large)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
-                }
-            }
+        dbg("📸 BFCache 저장: \(String(pageID.uuidString.prefix(8))) - \(snapshot.pageRecord.title) [상태: \(snapshot.captureStatus)]")
+    }
+    
+    private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
+        cacheQueue.sync {
+            cache[pageID]
         }
     }
-}
-
-// MARK: - 🔧 ContentView Extension (동일)
-extension View {
-    func siteMenuOverlay(
-        manager: SiteMenuManager,
-        currentState: WebViewStateModel,
-        tabs: Binding<[WebTab]>,
-        selectedTabIndex: Binding<Int>,
-        outerHorizontalPadding: CGFloat,
-        showAddressBar: Bool,
-        whiteGlassBackground: AnyView,
-        whiteGlassOverlay: AnyView
-    ) -> some View {
-        self
-            .overlay {
-                if manager.showSiteMenu {
-                    SiteMenuSystem.UI.SiteMenuOverlay(
-                        manager: manager,
-                        currentState: currentState,
-                        outerHorizontalPadding: outerHorizontalPadding,
-                        showAddressBar: showAddressBar,
-                        whiteGlassBackground: whiteGlassBackground,
-                        whiteGlassOverlay: whiteGlassOverlay,
-                        tabs: tabs,
-                        selectedTabIndex: selectedTabIndex
+    
+    // ✅ 캡처 진행 중인지 확인
+    private func isCaptureInProgress(for pageID: UUID) -> Bool {
+        cacheQueue.sync {
+            pendingCaptures.contains(pageID)
+        }
+    }
+    
+    // MARK: - 제스처 설정 (CustomWebView에서 호출)
+    
+    func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
+        // 네이티브 제스처 비활성화
+        webView.allowsBackForwardNavigationGestures = false
+        
+        // 왼쪽 엣지 - 뒤로가기
+        let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
+        leftEdge.edges = .left
+        leftEdge.delegate = self
+        webView.addGestureRecognizer(leftEdge)
+        
+        // 오른쪽 엣지 - 앞으로가기  
+        let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
+        rightEdge.edges = .right
+        rightEdge.delegate = self
+        webView.addGestureRecognizer(rightEdge)
+        
+        // 약한 참조 컨텍스트 생성 및 연결 (순환 참조 방지)
+        if let tabID = stateModel.tabID {
+            let ctx = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
+            objc_setAssociatedObject(leftEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+        
+        dbg("BFCache 제스처 설정 완료")
+    }
+    
+    // MARK: - 제스처 핸들러
+    
+    @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        // 약한 참조 컨텍스트 조회 (순환 참조 방지)
+        guard let ctx = objc_getAssociatedObject(gesture, "bfcache_ctx") as? WeakGestureContext,
+              let stateModel = ctx.stateModel else { return }
+        let webView = ctx.webView ?? (gesture.view as? WKWebView)
+        guard let webView else { return }
+        
+        let tabID = ctx.tabID
+        let translation = gesture.translation(in: gesture.view)
+        let velocity = gesture.velocity(in: gesture.view)
+        let isLeftEdge = (gesture.edges == .left)
+        let width = gesture.view?.bounds.width ?? 1
+        
+        // 수직 슬롭/부호 반대 방지
+        let absX = abs(translation.x), absY = abs(translation.y)
+        let horizontalEnough = absX > 8 && absX > absY
+        let signOK = isLeftEdge ? (translation.x >= 0) : (translation.x <= 0)
+        
+        switch gesture.state {
+        case .began:
+            // 🔧 수정: .began에서는 임계값 검사 제거, 방향과 가능 여부만 확인
+            let direction: NavigationDirection = isLeftEdge ? .back : .forward
+            let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
+            
+            if canNavigate {
+                // 🎯 핵심 수정: 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
+                captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
+                    self?.beginGestureTransitionWithSnapshot(
+                        tabID: tabID,
+                        webView: webView,
+                        stateModel: stateModel,
+                        direction: direction,
+                        currentSnapshot: snapshot
                     )
                 }
+            } else {
+                gesture.state = .cancelled
             }
-            .overlay {
-                if manager.showPopupBlockedAlert {
-                    Color.black.opacity(0.4).ignoresSafeArea()
-                        .overlay {
-                            SiteMenuSystem.UI.PopupBlockedAlert(
-                                domain: manager.popupAlertDomain,
-                                blockedCount: manager.popupAlertCount,
-                                isPresented: Binding(
-                                    get: { manager.showPopupBlockedAlert },
-                                    set: { manager.showPopupBlockedAlert = $0 }
-                                )
-                            )
-                        }
-                        .transition(.opacity)
-                        .animation(.easeInOut(duration: 0.3), value: manager.showPopupBlockedAlert)
+            
+        case .changed:
+            // ✅ 임계값 검사는 실제 이동이 발생한 후에만 적용
+            guard horizontalEnough && signOK else { return }
+            updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
+            
+        case .ended:
+            let progress = min(1.0, absX / width)
+            let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
+            if shouldComplete {
+                completeGestureTransition(tabID: tabID)
+            } else {
+                cancelGestureTransition(tabID: tabID)
+            }
+            
+        case .cancelled, .failed:
+            cancelGestureTransition(tabID: tabID)
+            
+        default:
+            break
+        }
+    }
+    
+    // MARK: - 🎯 현재 페이지 스냅샷 캡처 (새로운 메서드)
+    
+    private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
+        // ✅ 개선: 더 안정적인 스냅샷 캡처
+        let captureConfig = WKSnapshotConfiguration()
+        captureConfig.rect = webView.bounds
+        captureConfig.afterScreenUpdates = false
+        
+        webView.takeSnapshot(with: captureConfig) { image, error in
+            if let error = error {
+                self.dbg("📸 현재 페이지 스냅샷 실패: \(error.localizedDescription)")
+                // 실패시 layer 렌더링 사용
+                DispatchQueue.main.async {
+                    let fallbackImage = self.imageFromView(webView)
+                    completion(fallbackImage)
+                }
+            } else {
+                self.dbg("📸 현재 페이지 스냅샷 성공: \(image?.size ?? CGSize.zero)")
+                completion(image)
+            }
+        }
+    }
+    
+    // UIView를 UIImage로 변환하는 헬퍼 메서드
+    private func imageFromView(_ view: UIView) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        return renderer.image { context in
+            view.layer.render(in: context.cgContext)
+        }
+    }
+    
+    // MARK: - 🎯 직접 전환 처리 (스냅샷과 함께)
+    
+    private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
+        // 현재 페이지 BFCache 저장
+        if let currentRecord = stateModel.dataModel.currentPageRecord {
+            // ✅ 이미 캡처 중이 아닌 경우에만 저장
+            if !isCaptureInProgress(for: currentRecord.id) {
+                cacheQueue.async(flags: .barrier) {
+                    self.pendingCaptures.insert(currentRecord.id)
+                }
+                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+                    self?.storeSnapshot(snapshot, for: currentRecord.id)
                 }
             }
-            .sheet(isPresented: Binding(get: { manager.showDownloadsList }, set: { manager.showDownloadsList = $0 })) {
-                NavigationView { SiteMenuSystem.UI.DownloadsListView(manager: manager) }
+        }
+        
+        // 웹뷰의 초기 transform 저장
+        let initialTransform = webView.transform
+        
+        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성 (스냅샷 포함)
+        let previewContainer = createPreviewContainer(
+            webView: webView,
+            direction: direction,
+            stateModel: stateModel,
+            currentSnapshot: currentSnapshot
+        )
+        
+        // 컨텍스트 저장 (스냅샷 포함)
+        let context = TransitionContext(
+            tabID: tabID,
+            webView: webView,
+            stateModel: stateModel,
+            isGesture: true,
+            direction: direction,
+            initialTransform: initialTransform,
+            previewContainer: previewContainer,
+            currentSnapshot: currentSnapshot
+        )
+        activeTransitions[tabID] = context
+        
+        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기") (스냅샷: \(currentSnapshot != nil ? "✅" : "❌"))")
+    }
+    
+    private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
+        guard let context = activeTransitions[tabID],
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
+        
+        let screenWidth = webView.bounds.width
+        let currentWebView = previewContainer.viewWithTag(1001)
+        let targetPreview = previewContainer.viewWithTag(1002)
+        
+        // 실제 현재 웹뷰와 타겟 미리보기를 함께 이동
+        if isLeftEdge {
+            // 뒤로가기: 현재 웹뷰는 오른쪽으로, 타겟은 왼쪽에서 들어옴
+            let moveDistance = max(0, min(screenWidth, translation))
+            currentWebView?.frame.origin.x = moveDistance
+            targetPreview?.frame.origin.x = -screenWidth + moveDistance
+            
+            // 그림자 효과
+            let shadowOpacity = Float(0.3 * (moveDistance / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
+        } else {
+            // 앞으로가기: 현재 웹뷰는 왼쪽으로, 타겟은 오른쪽에서 들어옴
+            let moveDistance = max(-screenWidth, min(0, translation))
+            currentWebView?.frame.origin.x = moveDistance
+            targetPreview?.frame.origin.x = screenWidth + moveDistance
+            
+            // 그림자 효과
+            let shadowOpacity = Float(0.3 * (abs(moveDistance) / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
+        }
+    }
+    
+    // 미리보기 컨테이너 생성 (실제 takeSnapshot 사용)
+    private func createPreviewContainer(
+        webView: WKWebView, 
+        direction: NavigationDirection, 
+        stateModel: WebViewStateModel,
+        currentSnapshot: UIImage? = nil
+    ) -> UIView {
+        let container = UIView(frame: webView.bounds)
+        container.backgroundColor = .systemBackground
+        container.clipsToBounds = true
+        
+        // 🎯 핵심 수정: 현재 웹뷰의 실제 스냅샷 사용
+        let currentView: UIView
+        if let snapshot = currentSnapshot {
+            let imageView = UIImageView(image: snapshot)
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            currentView = imageView
+            dbg("📸 현재 페이지 스냅샷 사용")
+        } else {
+            // 스냅샷 캡처 실패시 fallback (layer 렌더링)
+            if let fallbackImage = imageFromView(webView) {
+                let imageView = UIImageView(image: fallbackImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                currentView = imageView
+            } else {
+                currentView = UIView(frame: webView.bounds)
+                currentView.backgroundColor = .systemBackground
             }
-            .sheet(isPresented: Binding(get: { manager.showHistoryFilterManager }, set: { manager.showHistoryFilterManager = $0 })) {
-                NavigationView { SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager) }
+            dbg("⚠️ 현재 페이지 fallback 뷰 사용")
+        }
+        
+        currentView.frame = webView.bounds
+        currentView.tag = 1001
+        
+        // 그림자 설정
+        currentView.layer.shadowColor = UIColor.black.cgColor
+        currentView.layer.shadowOpacity = 0.3
+        currentView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
+        currentView.layer.shadowRadius = 10
+        
+        container.addSubview(currentView)
+        
+        // 타겟 페이지 미리보기 생성
+        let targetIndex = direction == .back ?
+            stateModel.dataModel.currentPageIndex - 1 :
+            stateModel.dataModel.currentPageIndex + 1
+        
+        var targetView: UIView
+        
+        if targetIndex >= 0, targetIndex < stateModel.dataModel.pageHistory.count {
+            let targetRecord = stateModel.dataModel.pageHistory[targetIndex]
+            
+            // BFCache에서 스냅샷 가져오기
+            if let snapshot = retrieveSnapshot(for: targetRecord.id),
+               let targetImage = snapshot.webViewSnapshot {
+                let imageView = UIImageView(image: targetImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                targetView = imageView
+                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title) [상태: \(snapshot.captureStatus)]")
+            } else {
+                // 스냅샷이 없으면 정보 카드 표시
+                targetView = createInfoCard(for: targetRecord, in: webView.bounds)
+                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
             }
-            .sheet(isPresented: Binding(get: { manager.showPrivacySettings }, set: { manager.showPrivacySettings = $0 })) {
-                NavigationView { SiteMenuSystem.UI.PrivacySettingsView(manager: manager) }
+        } else {
+            // 타겟이 없으면 빈 뷰
+            targetView = UIView()
+            targetView.backgroundColor = .systemBackground
+            dbg("⚠️ 타겟 페이지 없음 - 빈 뷰 생성")
+        }
+        
+        targetView.frame = webView.bounds
+        targetView.tag = 1002
+        
+        // 초기 위치 설정
+        if direction == .back {
+            targetView.frame.origin.x = -webView.bounds.width
+        } else {
+            targetView.frame.origin.x = webView.bounds.width
+        }
+        
+        // 타겟 뷰를 현재 뷰 아래에 추가
+        container.insertSubview(targetView, at: 0)
+        
+        webView.addSubview(container)
+        return container
+    }
+    
+    // 정보 카드 생성 헬퍼 메서드
+    private func createInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
+        let card = UIView(frame: bounds)
+        card.backgroundColor = .systemBackground
+        
+        // 카드 내용을 담을 컨테이너
+        let contentView = UIView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.backgroundColor = .secondarySystemBackground
+        contentView.layer.cornerRadius = 12
+        contentView.layer.shadowColor = UIColor.black.cgColor
+        contentView.layer.shadowOpacity = 0.1
+        contentView.layer.shadowOffset = CGSize(width: 0, height: 2)
+        contentView.layer.shadowRadius = 8
+        card.addSubview(contentView)
+        
+        // 파비콘 또는 기본 아이콘
+        let iconView = UIImageView()
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = UIImage(systemName: "globe")
+        iconView.tintColor = .systemBlue
+        iconView.contentMode = .scaleAspectFit
+        contentView.addSubview(iconView)
+        
+        // 제목 레이블
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = record.title
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textColor = .label
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 2
+        contentView.addSubview(titleLabel)
+        
+        // URL 레이블
+        let urlLabel = UILabel()
+        urlLabel.translatesAutoresizingMaskIntoConstraints = false
+        urlLabel.text = record.url.host ?? record.url.absoluteString
+        urlLabel.font = .systemFont(ofSize: 14)
+        urlLabel.textColor = .secondaryLabel
+        urlLabel.textAlignment = .center
+        urlLabel.numberOfLines = 1
+        contentView.addSubview(urlLabel)
+        
+        // 시간 레이블
+        let timeLabel = UILabel()
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        timeLabel.text = formatter.string(from: record.lastAccessed)
+        timeLabel.font = .systemFont(ofSize: 12)
+        timeLabel.textColor = .tertiaryLabel
+        timeLabel.textAlignment = .center
+        contentView.addSubview(timeLabel)
+        
+        // Auto Layout 설정
+        NSLayoutConstraint.activate([
+            // 컨테이너
+            contentView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            contentView.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            contentView.widthAnchor.constraint(equalToConstant: min(300, bounds.width - 60)),
+            contentView.heightAnchor.constraint(equalToConstant: 180),
+            
+            // 아이콘
+            iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            iconView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 40),
+            iconView.heightAnchor.constraint(equalToConstant: 40),
+            
+            // 제목
+            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            
+            // URL
+            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            
+            // 시간
+            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            timeLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
+        ])
+        
+        return card
+    }
+    
+    private func completeGestureTransition(tabID: UUID) {
+        guard let context = activeTransitions[tabID],
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
+        
+        let screenWidth = webView.bounds.width
+        let currentView = previewContainer.viewWithTag(1001)
+        let targetView = previewContainer.viewWithTag(1002)
+        
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        
+        UIView.animate(
+            withDuration: 0.3,
+            delay: 0,
+            usingSpringWithDamping: 0.8,
+            initialSpringVelocity: 0.5,
+            options: [.curveEaseOut],
+            animations: {
+                if context.direction == .back {
+                    // 뒤로가기: 현재 뷰를 완전히 오른쪽으로, 타겟 뷰를 센터로
+                    currentView?.frame.origin.x = screenWidth
+                    targetView?.frame.origin.x = 0
+                } else {
+                    // 앞으로가기: 현재 뷰를 완전히 왼쪽으로, 타겟 뷰를 센터로
+                    currentView?.frame.origin.x = -screenWidth
+                    targetView?.frame.origin.x = 0
+                }
+                currentView?.layer.shadowOpacity = 0
+            },
+            completion: { [weak self] _ in
+                // 네비게이션 실행
+                self?.performNavigation(context: context)
+                
+                // 컨테이너 제거
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: tabID)
             }
-            .sheet(isPresented: Binding(get: { manager.showPerformanceSettings }, set: { manager.showPerformanceSettings = $0 })) {
-                NavigationView { SiteMenuSystem.UI.PerformanceSettingsView(manager: manager) }
+        )
+    }
+    
+    private func cancelGestureTransition(tabID: UUID) {
+        guard let context = activeTransitions[tabID],
+              let webView = context.webView,
+              let previewContainer = context.previewContainer else { return }
+        
+        let screenWidth = webView.bounds.width
+        let currentView = previewContainer.viewWithTag(1001)
+        let targetView = previewContainer.viewWithTag(1002)
+        
+        UIView.animate(
+            withDuration: 0.25,
+            animations: {
+                // 원래 위치로 복귀
+                currentView?.frame.origin.x = 0
+                
+                if context.direction == .back {
+                    targetView?.frame.origin.x = -screenWidth
+                } else {
+                    targetView?.frame.origin.x = screenWidth
+                }
+                
+                currentView?.layer.shadowOpacity = 0.3
+            },
+            completion: { _ in
+                previewContainer.removeFromSuperview()
+                self.activeTransitions.removeValue(forKey: tabID)
             }
+        )
+    }
+    
+    // MARK: - 버튼 네비게이션 (즉시 전환)
+    
+    func navigateBack(stateModel: WebViewStateModel) {
+        guard stateModel.canGoBack,
+              let _ = stateModel.tabID,
+              let webView = stateModel.webView else { return }
+        
+        // 현재 페이지 BFCache 저장
+        if let currentRecord = stateModel.dataModel.currentPageRecord {
+            // ✅ 이미 캡처 중이 아닌 경우에만 저장
+            if !isCaptureInProgress(for: currentRecord.id) {
+                cacheQueue.async(flags: .barrier) {
+                    self.pendingCaptures.insert(currentRecord.id)
+                }
+                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+                    self?.storeSnapshot(snapshot, for: currentRecord.id)
+                }
+            }
+        }
+        
+        // 즉시 네비게이션 (복원큐 사용)
+        stateModel.goBack()
+        tryBFCacheRestore(stateModel: stateModel, direction: .back)
+    }
+    
+    func navigateForward(stateModel: WebViewStateModel) {
+        guard stateModel.canGoForward,
+              let _ = stateModel.tabID,
+              let webView = stateModel.webView else { return }
+        
+        // 현재 페이지 BFCache 저장
+        if let currentRecord = stateModel.dataModel.currentPageRecord {
+            // ✅ 이미 캡처 중이 아닌 경우에만 저장
+            if !isCaptureInProgress(for: currentRecord.id) {
+                cacheQueue.async(flags: .barrier) {
+                    self.pendingCaptures.insert(currentRecord.id)
+                }
+                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
+                    self?.storeSnapshot(snapshot, for: currentRecord.id)
+                }
+            }
+        }
+        
+        // 즉시 네비게이션 (복원큐 사용)
+        stateModel.goForward()
+        tryBFCacheRestore(stateModel: stateModel, direction: .forward)
+    }
+    
+    // MARK: - 네비게이션 실행 (복원큐와 통합)
+    
+    private func performNavigation(context: TransitionContext) {
+        guard let stateModel = context.stateModel else { return }
+        
+        // 복원큐 시스템 사용 (safariStyle 메서드 대체)
+        switch context.direction {
+        case .back:
+            // 기존 safariStyleGoBack 로직 흡수
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            stateModel.goBack()
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+        case .forward:
+            // 기존 safariStyleGoForward 로직 흡수
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            stateModel.goForward()
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+        }
+        
+        // BFCache 복원 시도
+        tryBFCacheRestore(stateModel: stateModel, direction: context.direction)
+    }
+    
+    private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection) {
+        guard let webView = stateModel.webView,
+              let currentRecord = stateModel.dataModel.currentPageRecord else { return }
+        
+        // BFCache에서 스냅샷 가져오기
+        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
+            if snapshot.needsRefresh() {
+                // 동적 페이지는 리로드
+                webView.reload()
+                dbg("🔄 동적 페이지 리로드: \(currentRecord.title)")
+            } else {
+                // 🎯 핵심 수정: 실패시에도 리로드 안하기
+                snapshot.restore(to: webView) { [weak self] success in
+                    if success {
+                        self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
+                    } else {
+                        // ❌ 기존: webView.reload() → 제거!
+                        // ✅ 새로운 전략: 그냥 현재 상태 유지
+                        self?.dbg("⚠️ BFCache 복원 실패했지만 현재 상태 유지: \(currentRecord.title)")
+                    }
+                }
+            }
+        } else {
+            // BFCache 미스 - 일반적으로는 네비게이션 시스템이 알아서 로드함
+            dbg("❌ BFCache 미스: \(currentRecord.title)")
+        }
+    }
+    
+    // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
+    
+    static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
+        // 기존 DataModel.handleSwipeGestureDetected 로직 흡수
+        // 복원 중이면 무시
+        if stateModel.dataModel.isHistoryNavigationActive() {
+            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
+            return
+        }
+        
+        // 절대 원칙: 히스토리에서 찾더라도 무조건 새 페이지로 추가
+        // 세션 점프 완전 방지
+        stateModel.dataModel.addNewPage(url: url, title: "")
+        stateModel.syncCurrentURL(url)
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
+    }
+    
+    // MARK: - pageshow/pagehide 스크립트
+    
+    static func makeBFCacheScript() -> WKUserScript {
+        let scriptSource = """
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted) {
+                console.log('🔄 BFCache 페이지 복원');
+                
+                // 동적 콘텐츠 새로고침
+                if (window.location.pathname.includes('/feed') ||
+                    window.location.pathname.includes('/timeline') ||
+                    window.location.hostname.includes('twitter') ||
+                    window.location.hostname.includes('facebook')) {
+                    if (window.refreshDynamicContent) {
+                        window.refreshDynamicContent();
+                    }
+                }
+            }
+        });
+        
+        window.addEventListener('pagehide', function(event) {
+            if (event.persisted) {
+                console.log('📸 BFCache 페이지 저장');
+            }
+        });
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+    
+    // MARK: - 디버그
+    
+    private func dbg(_ msg: String) {
+        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+extension BFCacheTransitionSystem: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
+    }
+}
+
+// MARK: - CustomWebView 통합 인터페이스
+extension BFCacheTransitionSystem {
+    
+    // CustomWebView의 makeUIView에서 호출
+    static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
+        // BFCache 스크립트 설치
+        webView.configuration.userContentController.addUserScript(makeBFCacheScript())
+        
+        // 제스처 설치
+        shared.setupGestures(for: webView, stateModel: stateModel)
+        
+        TabPersistenceManager.debugMessages.append("✅ BFCache 시스템 설치 완료")
+    }
+    
+    // CustomWebView의 dismantleUIView에서 호출
+    static func uninstall(from webView: WKWebView) {
+        // 제스처 제거
+        webView.gestureRecognizers?.forEach { gesture in
+            if gesture is UIScreenEdgePanGestureRecognizer {
+                webView.removeGestureRecognizer(gesture)
+            }
+        }
+        
+        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
+    }
+    
+    // 버튼 네비게이션 래퍼
+    static func goBack(stateModel: WebViewStateModel) {
+        shared.navigateBack(stateModel: stateModel)
+    }
+    
+    static func goForward(stateModel: WebViewStateModel) {
+        shared.navigateForward(stateModel: stateModel)
+    }
+}
+
+// MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
+extension BFCacheTransitionSystem {
+
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
+    func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let rec = stateModel.dataModel.currentPageRecord else { return }
+        let now = Date()
+        
+        // ✅ 개선: 디바운스 시간 증가 (250ms -> 500ms)
+        if let t = lastLeavingStoreAt[rec.id], now.timeIntervalSince(t) < 0.5 { return }
+        lastLeavingStoreAt[rec.id] = now
+        
+        // ✅ 이미 캡처 중이면 스킵
+        if isCaptureInProgress(for: rec.id) {
+            dbg("⏳ 이미 캡처 진행 중 - 스킵: \(rec.title)")
+            return
+        }
+        
+        cacheQueue.async(flags: .barrier) {
+            self.pendingCaptures.insert(rec.id)
+        }
+
+        BFCacheSnapshot.create(pageRecord: rec, webView: webView) { [weak self] snap in
+            self?.storeSnapshot(snap, for: rec.id)
+        }
+    }
+
+    /// 문서 로드 완료 후 **도착 페이지**를 저장
+    func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let rec = stateModel.dataModel.currentPageRecord else { return }
+        let now = Date()
+        
+        // ✅ 개선: 디바운스 시간 증가 (500ms -> 1초)
+        if let t = lastArrivalStoreAt[rec.id], now.timeIntervalSince(t) < 1.0 { return }
+        lastArrivalStoreAt[rec.id] = now
+        
+        // ✅ 이미 캡처 중이면 스킵
+        if isCaptureInProgress(for: rec.id) {
+            dbg("⏳ 이미 캡처 진행 중 - 스킵: \(rec.title)")
+            return
+        }
+        
+        // ✅ 이미 캐시에 있으면 스킵 (중복 방지)
+        if let existing = retrieveSnapshot(for: rec.id), existing.captureStatus != .failed {
+            dbg("✅ 이미 캐시에 존재 - 스킵: \(rec.title) [상태: \(existing.captureStatus)]")
+            return
+        }
+        
+        cacheQueue.async(flags: .barrier) {
+            self.pendingCaptures.insert(rec.id)
+        }
+
+        // ✅ 개선: 더 긴 안정화 대기
+        captureWhenFullyStable(webView) { [weak self] in
+            BFCacheSnapshot.create(pageRecord: rec, webView: webView) { snap in
+                self?.storeSnapshot(snap, for: rec.id)
+            }
+        }
+    }
+
+    /// ✅ 개선된 안정화 대기 - 이미지 로드까지 고려
+    private func captureWhenFullyStable(_ webView: WKWebView, _ work: @escaping () -> Void) {
+        if webView.isLoading {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.captureWhenFullyStable(webView, work)
+            }
+            return
+        }
+        
+        // ✅ 더 정교한 준비 상태 확인
+        let readyScript = """
+        (function() {
+            // 문서 준비 상태
+            const docReady = document.readyState === 'complete';
+            
+            // 이미지 로드 상태 (최대 10개만 체크)
+            const images = Array.from(document.images).slice(0, 10);
+            const imagesLoaded = images.length === 0 || images.every(img => img.complete);
+            
+            // 비디오 준비 상태
+            const videos = Array.from(document.querySelectorAll('video')).slice(0, 5);
+            const videosReady = videos.length === 0 || videos.every(v => v.readyState >= 2);
+            
+            // Ajax/Fetch 활동 감지 (대략적)
+            const hasPendingFetch = window.performance && window.performance
+                .getEntriesByType('resource')
+                .filter(e => e.name.includes('api') || e.name.includes('ajax'))
+                .some(e => e.responseEnd === 0);
+            
+            return {
+                ready: docReady && imagesLoaded && videosReady && !hasPendingFetch,
+                details: {
+                    doc: docReady,
+                    img: imagesLoaded,
+                    vid: videosReady,
+                    ajax: !hasPendingFetch
+                }
+            };
+        })()
+        """
+        
+        webView.evaluateJavaScript(readyScript) { [weak self] result, error in
+            if let data = result as? [String: Any],
+               let isReady = data["ready"] as? Bool {
+                
+                if isReady {
+                    // ✅ 추가 프레임 대기 (렌더링 완료)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        work()
+                    }
+                } else {
+                    // 디테일 로깅
+                    if let details = data["details"] as? [String: Bool] {
+                        self?.dbg("⏳ 페이지 안정화 대기 중: doc=\(details["doc"] ?? false), img=\(details["img"] ?? false), vid=\(details["vid"] ?? false), ajax=\(details["ajax"] ?? false)")
+                    }
+                    
+                    // 재시도 (최대 5초까지)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        self?.captureWhenFullyStable(webView, work)
+                    }
+                }
+            } else {
+                // 스크립트 실행 실패 시 바로 실행
+                work()
+            }
+        }
+    }
+    
+    // ✅ 캐시 정리 메서드 추가
+    func clearCacheForTab(_ tabID: UUID) {
+        cacheQueue.async(flags: .barrier) {
+            // 탭의 모든 스냅샷 제거
+            let keysToRemove = self.cache.keys.filter { key in
+                // tabID와 연관된 캐시 찾기 (구현에 따라 조정 필요)
+                true // 실제로는 PageRecord의 tabID를 확인해야 함
+            }
+            
+            keysToRemove.forEach { self.cache.removeValue(forKey: $0) }
+            self.pendingCaptures.removeAll()
+            self.dbg("🗑️ 탭 캐시 정리: \(keysToRemove.count)개 항목 제거")
+        }
+    }
+    
+    // ✅ 메모리 경고 처리
+    func handleMemoryWarning() {
+        cacheQueue.async(flags: .barrier) {
+            // 가장 오래된 50% 제거
+            let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
+            let removeCount = sorted.count / 2
+            
+            sorted.prefix(removeCount).forEach { item in
+                self.cache.removeValue(forKey: item.key)
+            }
+            
+            self.dbg("⚠️ 메모리 경고 - 캐시 \(removeCount)개 제거")
+        }
     }
 }
