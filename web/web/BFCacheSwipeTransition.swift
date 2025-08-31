@@ -803,25 +803,6 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 🎯 자동 스냅샷 저장 (모든 이동 이벤트에서 호출)
-    
-    func saveCurrentPageSnapshot(stateModel: WebViewStateModel) {
-        guard let webView = stateModel.webView,
-              let currentRecord = stateModel.dataModel.currentPageRecord else { return }
-        
-        // 이미 캐시에 있으면 스킵 (중복 저장 방지)
-        if let existing = retrieveSnapshot(for: currentRecord.id),
-           Date().timeIntervalSince(existing.timestamp) < 60 { // 1분 이내 캐시는 재사용
-            dbg("📸 스냅샷 이미 존재 (스킵): \(currentRecord.title)")
-            return
-        }
-        
-        BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
-            self?.storeSnapshot(snapshot, for: currentRecord.id)
-            self?.dbg("📸 자동 스냅샷 저장 완료: \(currentRecord.title)")
-        }
-    }
-    
     // MARK: - 버튼 네비게이션 (즉시 전환)
     
     func navigateBack(stateModel: WebViewStateModel) {
@@ -1002,10 +983,5 @@ extension BFCacheTransitionSystem {
     
     static func goForward(stateModel: WebViewStateModel) {
         shared.navigateForward(stateModel: stateModel)
-    }
-    
-    // 🎯 자동 스냅샷 저장 (WebViewDataModel에서 호출)
-    static func saveSnapshotIfNeeded(stateModel: WebViewStateModel) {
-        shared.saveCurrentPageSnapshot(stateModel: stateModel)
     }
 }
