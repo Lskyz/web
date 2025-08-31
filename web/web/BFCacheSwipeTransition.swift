@@ -1079,7 +1079,8 @@ final class BFCacheTransitionSystem: NSObject {
         let currentView = previewContainer.viewWithTag(1001)
         let targetView = previewContainer.viewWithTag(1002)
         
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // 🔧 햅틱 제거 - 깜빡임 감소
+        // UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         
         UIView.animate(
             withDuration: 0.3,
@@ -1177,14 +1178,15 @@ final class BFCacheTransitionSystem: NSObject {
     private func performNavigation(context: TransitionContext) {
         guard let stateModel = context.stateModel else { return }
         
+        // 🔧 햅틱 제거 - 깜빡임 감소
         // 복원큐 시스템 사용 (safariStyle 메서드 대체)
         switch context.direction {
         case .back:
-            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            // UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goBack()
             dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
-            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+            // UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goForward()
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
