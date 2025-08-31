@@ -364,7 +364,7 @@ extension SiteMenuSystem {
             private func downloadRow(_ download: DownloadItem) -> some View {
                 HLayout {
                     Icon("doc.fill", 16, .blue)
-                    VLayout(alignment: .leading, spacing: 2) {
+                    VLayout(spacing: 2, alignment: .leading) {
                         CompactText(download.filename, .system(size: 14, weight: .medium), .primary, lines: 1)
                         HLayout {
                             CompactText(download.size, .caption, .secondary)
@@ -1053,7 +1053,7 @@ extension SiteMenuSystem {
                     }
                     
                     Section("고급 설정") {
-                        VLayout(alignment: .leading, spacing: 8) {
+                        VLayout(spacing: 8, alignment: .leading) {
                             HLayout {
                                 CompactText("메모리 정리 임계값", .headline, .primary)
                                 Spacer()
@@ -1062,7 +1062,7 @@ extension SiteMenuSystem {
                             Slider(value: $manager.memoryThreshold, in: 0.5...0.95, step: 0.05).accentColor(.blue)
                         }
                         
-                        VLayout(alignment: .leading, spacing: 8) {
+                        VLayout(spacing: 8, alignment: .leading) {
                             HLayout {
                                 CompactText("웹뷰 풀 크기", .headline, .primary)
                                 Spacer()
