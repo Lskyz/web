@@ -6,6 +6,7 @@
 //  📸 하이브리드 우선순위 시스템 (현재=높음, 과거=일반)
 //  ♾️ 캐시 크기 무제한 (탭 닫을 때만 정리)
 //  💾 메모리 + 디스크 2단계 캐싱 시스템
+//  🔧 **URL 중복 로드 제거 - StateModel이 이미 처리**
 //
 
 import UIKit
@@ -128,36 +129,37 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 개선된 복원 메서드
+    // 🔧 **개선된 복원 메서드 - URL 로드 제거**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
         case .failed:
-            // 캡처 실패 시 단순 URL 로드만
-            webView.load(URLRequest(url: pageRecord.url))
+            // ✅ URL 로드 제거! StateModel이 이미 로드함
+            // 캡처 실패시 그냥 실패 리턴
+            TabPersistenceManager.debugMessages.append("BFCache 캡처 실패 - StateModel이 URL 로드 처리")
             completion(false)
             return
             
         case .visualOnly:
-            // 이미지만 있으면 URL 로드 후 스크롤 위치만 복원
-            webView.load(URLRequest(url: pageRecord.url))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // ✅ URL 로드 제거! 스크롤 위치만 복원
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+                TabPersistenceManager.debugMessages.append("BFCache 스크롤 위치만 복원")
                 completion(true)
             }
             return
             
         case .partial, .complete:
-            // 정상적인 복원 진행
+            // 정상적인 복원 진행 (URL 로드 없이)
             break
         }
         
-        // 1단계: 기본 URL 로드 (캐시된 DOM 사용 안함)
-        let request = URLRequest(url: pageRecord.url, cachePolicy: .returnCacheDataElseLoad)
-        webView.load(request)
+        // ✅ URL 로드 제거! StateModel이 이미 처리
+        // 바로 상태 복원으로 진행
+        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (URL 로드 스킵)")
         
-        // 2단계: 페이지 로드 후 상태 복원 (더 긴 대기 시간)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // 페이지가 이미 로드되었다고 가정하고 상태만 복원
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.restorePageState(to: webView, completion: completion)
         }
     }
@@ -1191,30 +1193,25 @@ final class BFCacheTransitionSystem: NSObject {
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction)
     }
     
+    // 🔧 **개선된 BFCache 복원 - URL 로드는 StateModel에 위임**
     private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { return }
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            if snapshot.needsRefresh() {
-                // 동적 페이지는 리로드
-                webView.reload()
-                dbg("🔄 동적 페이지 리로드: \(currentRecord.title)")
-            } else {
-                // 복원 시도
-                snapshot.restore(to: webView) { [weak self] success in
-                    if success {
-                        self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
-                    } else {
-                        // 실패해도 현재 상태 유지
-                        self?.dbg("⚠️ BFCache 복원 실패했지만 현재 상태 유지: \(currentRecord.title)")
-                    }
+            // 🔧 동적 페이지 판단 제거 - 무조건 캐시된 상태 복원 시도
+            // StateModel이 이미 URL을 로드했으므로 여기서는 상태만 복원
+            snapshot.restore(to: webView) { [weak self] success in
+                if success {
+                    self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
+                } else {
+                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title) - StateModel이 처리")
                 }
             }
         } else {
-            // BFCache 미스 - 일반적으로는 네비게이션 시스템이 알아서 로드함
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            // BFCache 미스 - StateModel이 이미 URL을 로드함
+            dbg("❌ BFCache 미스: \(currentRecord.title) - StateModel이 처리")
         }
     }
     
@@ -1242,7 +1239,7 @@ final class BFCacheTransitionSystem: NSObject {
             if (event.persisted) {
                 console.log('🔄 BFCache 페이지 복원');
                 
-                // 동적 콘텐츠 새로고침
+                // 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
                     window.location.pathname.includes('/timeline') ||
                     window.location.hostname.includes('twitter') ||
