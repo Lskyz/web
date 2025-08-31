@@ -679,7 +679,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
 
                 // 검색 URL의 경우 쿼리 파라미터 변경을 확인
-                if let existingIndex = findSearchPageIndex(for: url) {
+                if 
+                //let existingIndex = findSearchPageIndex(for: url) {
                     let existingRecord = pageHistory[existingIndex]
                     let existingSearchURL = PageRecord.normalizeSearchURL(existingRecord.url)
                     let newSearchURL = PageRecord.normalizeSearchURL(url)
