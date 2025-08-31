@@ -1103,38 +1103,38 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-
-
-
-
-
-
-
-
-
-
-        // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
-        switch navigationAction.navigationType {
-        case .linkActivated, .formSubmitted, .formResubmitted:
-            dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
-        case .backForward:
-            dbg("🚫 네이티브 뒤로/앞으로 차단")
-            // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
-            if let url = navigationAction.request.url {
-                if let existingIndex = findPageIndex(for: url) {
-                    dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                    _ = enqueueRestore(to: existingIndex)
-                } else {
-                    dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
-                }
-            }
-            decisionHandler(.cancel)
-            return
-        default:
-            break
+    // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
+    switch navigationAction.navigationType {
+    case .linkActivated, .formSubmitted, .formResubmitted:
+        dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+        
+        // 🎯 **BFCache 캡처 추가 - 페이지 이동 전 현재 페이지 저장**
+        if let stateModel = stateModel {
+            BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
+                webView: webView,
+                stateModel: stateModel
+            )
+            dbg("📸 사용자 클릭 - 현재 페이지 BFCache 캡처")
         }
+        
+    case .backForward:
+        dbg("🚫 네이티브 뒤로/앞으로 차단")
+        // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
+        if let url = navigationAction.request.url {
+            if let existingIndex = findPageIndex(for: url) {
+                dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
+                _ = enqueueRestore(to: existingIndex)
+            } else {
+                dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+            }
+        }
+        decisionHandler(.cancel)
+        return
+    default:
+        break
+    }
 
-        decisionHandler(.allow)
+    decisionHandler(.allow)
     }
 
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용)
