@@ -434,8 +434,7 @@ struct BFCacheSnapshot {
         let type = pageRecord.siteType?.lowercased() ?? ""
         let dynamicPatterns = ["search", "feed", "timeline", "live", "realtime", "stream"]
         let isDynamic = dynamicPatterns.contains { type.contains($0) }
-        let isSearch = PageRecord.isSearchURL(pageRecord.url)
-        return (isDynamic || isSearch) && elapsed > 300
+        return isDynamic && elapsed > 300
     }
 }
 
