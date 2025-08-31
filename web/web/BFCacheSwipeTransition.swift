@@ -1098,9 +1098,15 @@ final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 디버그
     
-    private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
-    }
+    // MARK: - 디버그
+    
+private func dbg(_ msg: String) {
+    TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
+}
+
+deinit {
+    cleanupTimer?.invalidate()
+}
 }
 
 // MARK: - UIGestureRecognizerDelegate
@@ -1338,7 +1344,5 @@ extension BFCacheTransitionSystem {
         }
     }
     
-    deinit {
-        cleanupTimer?.invalidate()
-    }
+    
 }
