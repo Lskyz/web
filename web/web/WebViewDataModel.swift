@@ -1093,9 +1093,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let currentNormalized = currentRecord.normalizedURL()
             let newNormalized = PageRecord.normalizeURL(url)
 
-            // 🔧 쿼리 차이 로깅 (디버깅용)
-            PageRecord.logDiffIfSamePathButDifferentQuery(prev: currentRecord.url, curr: url)
-
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
                 dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
