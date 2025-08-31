@@ -1,7 +1,8 @@
 //
 //  Site Menu UI.swift
-//  🧩 사이트 메뉴 시스템 - UI 컴포넌트 모음
-//  📋 모든 설정 화면 및 오버레이 UI 컴포넌트 - 데스크탑 모드 확장
+//  🧩 사이트 메뉴 시스템 - UI 컴포넌트 모음 (압축 최적화)
+//  📋 공통 레이아웃 래퍼로 VStack 중복 제거
+//  🎯 코드 줄 수 대폭 감소 (기존 대비 ~40% 단축)
 //
 
 import SwiftUI
@@ -9,64 +10,110 @@ import Foundation
 import WebKit
 import AVFoundation
 
-// MARK: - 🎨 UI Components Module (Complete with Enhanced Popup Blocking and Extended Desktop Mode)
+// MARK: - 🎯 공통 레이아웃 래퍼 (VStack 완전 대체)
+struct VLayout<Content: View>: View {
+    let spacing: CGFloat
+    let alignment: HorizontalAlignment
+    let content: Content
+    
+    init(spacing: CGFloat = 0, alignment: HorizontalAlignment = .center, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.alignment = alignment
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: alignment, spacing: spacing) { content }
+    }
+}
+
+struct HLayout<Content: View>: View {
+    let spacing: CGFloat
+    let alignment: VerticalAlignment
+    let content: Content
+    
+    init(spacing: CGFloat = 0, alignment: VerticalAlignment = .center, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.alignment = alignment
+        self.content = content()
+    }
+    
+    var body: some View {
+        HStack(alignment: alignment, spacing: spacing) { content }
+    }
+}
+
+// MARK: - 🎯 컴팩트 텍스트 뷰 (Text + 속성 한줄화)
+struct CompactText: View {
+    let text: String
+    let font: Font
+    let color: Color
+    let lineLimit: Int?
+    
+    init(_ text: String, _ font: Font = .body, _ color: Color = .primary, lines: Int? = nil) {
+        self.text = text
+        self.font = font
+        self.color = color
+        self.lineLimit = lines
+    }
+    
+    var body: some View {
+        if let limit = lineLimit {
+            Text(text).font(font).foregroundColor(color).lineLimit(limit)
+        } else {
+            Text(text).font(font).foregroundColor(color)
+        }
+    }
+}
+
+// MARK: - 🎯 컴팩트 아이콘 뷰
+struct Icon: View {
+    let name: String
+    let size: CGFloat
+    let color: Color
+    
+    init(_ name: String, _ size: CGFloat = 20, _ color: Color = .primary) {
+        self.name = name
+        self.size = size
+        self.color = color
+    }
+    
+    var body: some View {
+        Image(systemName: name).font(.system(size: size)).foregroundColor(color).frame(width: size + 4)
+    }
+}
+
+// MARK: - 🎨 UI Components Module
 extension SiteMenuSystem {
     enum UI {
         
-        // MARK: - 🚫 Popup Block Alert View
+        // MARK: - 🚫 Popup Block Alert View (압축)
         struct PopupBlockedAlert: View {
             let domain: String
             let blockedCount: Int
             @Binding var isPresented: Bool
             
             var body: some View {
-                VStack(spacing: 16) {
-                    // 아이콘
-                    Image(systemName: "shield.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.red)
+                VLayout(spacing: 16) {
+                    Icon("shield.fill", 48, .red)
+                    CompactText("팝업 차단됨", .title2.bold(), .primary)
                     
-                    // 제목
-                    Text("팝업 차단됨")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    
-                    // 메시지
-                    VStack(spacing: 8) {
-                        Text("\(domain)에서 팝업을 차단했습니다")
-                            .font(.body)
-                            .multilineTextAlignment(.center)
-                        
+                    VLayout(spacing: 8) {
+                        CompactText("\(domain)에서 팝업을 차단했습니다", .body, .primary).multilineTextAlignment(.center)
                         if blockedCount > 1 {
-                            Text("총 \(blockedCount)개의 팝업이 차단되었습니다")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            CompactText("총 \(blockedCount)개의 팝업이 차단되었습니다", .caption, .secondary)
                         }
                     }
                     
-                    // 버튼들
-                    VStack(spacing: 8) {
-                        HStack(spacing: 12) {
-                            Button("이 사이트 허용") {
-                                PopupBlockManager.shared.allowPopupsForDomain(domain)
-                                isPresented = false
-                            }
-                            .foregroundColor(.blue)
-                            .frame(maxWidth: .infinity)
-                            
-                            Button("닫기") {
-                                isPresented = false
-                            }
-                            .foregroundColor(.primary)
-                            .frame(maxWidth: .infinity)
+                    VLayout(spacing: 8) {
+                        HLayout(spacing: 12) {
+                            Button("이 사이트 허용") { PopupBlockManager.shared.allowPopupsForDomain(domain); isPresented = false }
+                                .foregroundColor(.blue).frame(maxWidth: .infinity)
+                            Button("닫기") { isPresented = false }
+                                .foregroundColor(.primary).frame(maxWidth: .infinity)
                         }
-                        
-                        Button("팝업 차단 끄기") {
-                            PopupBlockManager.shared.isPopupBlocked = false
-                            isPresented = false
-                        }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        Button("팝업 차단 끄기") { PopupBlockManager.shared.isPopupBlocked = false; isPresented = false }
+                            .font(.caption).foregroundColor(.secondary)
                     }
                 }
                 .padding(24)
@@ -77,7 +124,7 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - Main Site Menu Overlay - 🎯 주소창 위로 위치 조정 + 데스크탑 모드 확장
+        // MARK: - Main Site Menu Overlay (압축)
         struct SiteMenuOverlay: View {
             @ObservedObject var manager: SiteMenuManager
             let currentState: WebViewStateModel
@@ -90,33 +137,16 @@ extension SiteMenuSystem {
 
             var body: some View {
                 ZStack {
-                    Color.black.opacity(0.1)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            manager.showSiteMenu = false
-                        }
-
-                    // 🎯 주소창 바로 위로 위치 변경
+                    Color.black.opacity(0.1).ignoresSafeArea().onTapGesture { manager.showSiteMenu = false }
+                    
                     VStack(spacing: 0) {
                         Spacer()
-                        
-                        // 사이트 메뉴를 주소창 위에 표시
-                        VStack(spacing: 0) {
-                            siteMenuContent
-                        }
-                        .background(whiteGlassBackground)
-                        .overlay(whiteGlassOverlay)
-                        .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.bottom, 10) // 주소창과의 간격
-                        
-                        // 주소창 영역을 위한 공간 확보
-                        if showAddressBar {
-                            Spacer()
-                                .frame(height: 160) // 주소창 + 방문기록 영역
-                        } else {
-                            Spacer()
-                                .frame(height: 110) // 툴바 영역만
-                        }
+                        siteMenuContent
+                            .background(whiteGlassBackground)
+                            .overlay(whiteGlassOverlay)
+                            .padding(.horizontal, outerHorizontalPadding)
+                            .padding(.bottom, 10)
+                        Spacer().frame(height: showAddressBar ? 160 : 110)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -125,7 +155,7 @@ extension SiteMenuSystem {
 
             @ViewBuilder
             private var siteMenuContent: some View {
-                VStack(spacing: 0) {
+                VLayout(spacing: 0) {
                     siteInfoSection
                     Divider().padding(.vertical, 8)
                     quickSettingsSection
@@ -140,226 +170,112 @@ extension SiteMenuSystem {
 
             @ViewBuilder
             private var siteInfoSection: some View {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            let securityInfo = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
-                            
-                            Image(systemName: securityInfo.icon)
-                                .foregroundColor(securityInfo.color)
-
-                            Text(securityInfo.text)
-                                .font(.headline)
-                                .foregroundColor(securityInfo.color)
-
+                HLayout {
+                    VLayout(alignment: .leading, spacing: 4) {
+                        HLayout {
+                            let info = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
+                            Icon(info.icon, 20, info.color)
+                            CompactText(info.text, .headline, info.color)
                             if SiteMenuSystem.Settings.getPopupBlockedCount() > 0 {
-                                Text("(\(SiteMenuSystem.Settings.getPopupBlockedCount())개 차단됨)")
-                                    .font(.caption)
-                                    .foregroundColor(.red)
+                                CompactText("(\(SiteMenuSystem.Settings.getPopupBlockedCount())개 차단됨)", .caption, .red)
                             }
                         }
-
                         if let url = currentState.currentURL {
-                            Text(url.host ?? url.absoluteString)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                            CompactText(url.host ?? url.absoluteString, .caption, .secondary, lines: 1)
                         }
                     }
-
                     Spacer()
                 }
             }
             
-            // ⚙️ 퀵 설정 섹션 - 데스크탑 모드 확장 (2배 너비) 및 위치 변경
             @ViewBuilder
             private var quickSettingsSection: some View {
-                VStack(spacing: 8) {
-                    // 첫 번째 줄: 팝업 차단 + 성능 (위치 바뀜)
-                    HStack {
-                        quickSettingButton(
-                            icon: "shield.fill",
-                            title: "팝업 차단",
-                            isOn: manager.popupBlocked,
-                            color: manager.popupBlocked ? .blue : .gray
-                        ) {
-                            manager.togglePopupBlocking()
-                        }
-                        
-                        quickSettingButton(
-                            icon: "speedometer",
-                            title: "성능",
-                            isOn: false,
-                            color: .red
-                        ) {
-                            manager.showPerformanceSettings = true
-                        }
+                VLayout(spacing: 8) {
+                    HLayout {
+                        quickButton("shield.fill", "팝업 차단", manager.popupBlocked, manager.popupBlocked ? .blue : .gray) { manager.togglePopupBlocking() }
+                        quickButton("speedometer", "성능", false, .red) { manager.showPerformanceSettings = true }
                     }
                     
-                    // 두 번째 줄: 데스크탑 모드 (2배 너비로 확장)
-                    VStack(spacing: 8) {
-                        // 데스크탑 모드 토글 버튼 (전체 너비)
-                        Button(action: {
-                            manager.toggleDesktopMode()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: manager.getDesktopModeEnabled() ? "display" : "iphone")
-                                    .font(.title2)
-                                    .foregroundColor(manager.getDesktopModeEnabled() ? .blue : .gray)
-                                
-                                Text("데스크탑 모드")
-                                    .font(.headline)
-                                    .foregroundColor(manager.getDesktopModeEnabled() ? .primary : .secondary)
-                                
+                    VLayout(spacing: 8) {
+                        Button(action: { manager.toggleDesktopMode() }) {
+                            HLayout(spacing: 8) {
+                                Icon(manager.getDesktopModeEnabled() ? "display" : "iphone", 28, manager.getDesktopModeEnabled() ? .blue : .gray)
+                                CompactText("데스크탑 모드", .headline, manager.getDesktopModeEnabled() ? .primary : .secondary)
                                 Spacer()
-                                
                                 Text(manager.getDesktopModeEnabled() ? "ON" : "OFF")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
+                                    .font(.caption).fontWeight(.semibold)
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
                                     .background(manager.getDesktopModeEnabled() ? Color.blue : Color.gray)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(12)
+                                    .foregroundColor(.white).cornerRadius(12)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16).padding(.vertical, 12)
                             .background(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
                             .cornerRadius(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(manager.getDesktopModeEnabled() ? Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1))
+                        }.buttonStyle(.plain)
                         
-                        // 데스크탑 모드가 켜져있을 때만 슬라이더와 배율 컨트롤 표시
-                        if manager.getDesktopModeEnabled() {
-                            desktopZoomControls
-                        }
+                        if manager.getDesktopModeEnabled() { desktopZoomControls }
                     }
                 }
             }
             
             @ViewBuilder
-            private func quickSettingButton(icon: String, title: String, isOn: Bool, color: Color, action: @escaping () -> Void) -> some View {
+            private func quickButton(_ icon: String, _ title: String, _ isOn: Bool, _ color: Color, action: @escaping () -> Void) -> some View {
                 Button(action: action) {
-                    VStack(spacing: 4) {
-                        Image(systemName: icon)
-                            .font(.title2)
-                            .foregroundColor(color)
-                        
-                        Text(title)
-                            .font(.caption)
-                            .foregroundColor(isOn ? .primary : .secondary)
+                    VLayout(spacing: 4) {
+                        Icon(icon, 28, color)
+                        CompactText(title, .caption, isOn ? .primary : .secondary)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                     .background(isOn ? color.opacity(0.1) : Color.clear)
                     .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isOn ? color.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(isOn ? color.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1))
+                }.buttonStyle(.plain)
             }
             
-            // 🖥️ 확장된 데스크탑 줌 컨트롤 (슬라이더 + 배율 프리셋)
             @ViewBuilder
             private var desktopZoomControls: some View {
-                VStack(spacing: 12) {
-                    // 현재 줌 레벨 표시
-                    HStack {
-                        Text("페이지 배율")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
+                VLayout(spacing: 12) {
+                    HLayout {
+                        CompactText("페이지 배율", .subheadline.weight(.medium), .primary)
                         Spacer()
-                        
                         Text("\(String(format: "%.0f", manager.getZoomLevel() * 100))%")
-                            .font(.subheadline)
-                            .fontWeight(.bold)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(8)
+                            .font(.subheadline).fontWeight(.bold).foregroundColor(.blue)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1)).cornerRadius(8)
                     }
                     
-                    // 슬라이더 컨트롤
-                    VStack(spacing: 8) {
-                        HStack(spacing: 12) {
-                            Text("30%")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            
+                    VLayout(spacing: 8) {
+                        HLayout(spacing: 12) {
+                            CompactText("30%", .caption2, .secondary)
                             Slider(value: Binding(
                                 get: { manager.getZoomLevel() },
-                                set: { newValue in
-                                    manager.setZoomLevel(newValue)
-                                }
-                            ), in: 0.3...3.0, step: 0.1)
-                            .accentColor(.blue)
-                            
-                            Text("300%")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                                set: { manager.setZoomLevel($0) }
+                            ), in: 0.3...3.0, step: 0.1).accentColor(.blue)
+                            CompactText("300%", .caption2, .secondary)
                         }
                         
-                        // 빠른 배율 조정 버튼들
-                        HStack(spacing: 8) {
-                            Button("-") {
-                                manager.adjustZoom(-0.1)
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            }
-                            .frame(width: 32, height: 32)
-                            .background(Color.blue.opacity(0.1))
-                            .foregroundColor(.blue)
-                            .cornerRadius(8)
-                            
+                        HLayout(spacing: 8) {
+                            zoomButton("-") { manager.adjustZoom(-0.1) }
                             Spacer()
-                            
-                            Button("리셋") {
-                                manager.setZoomLevel(1.0)
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            }
-                            .font(.caption)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.gray.opacity(0.1))
-                            .foregroundColor(.primary)
-                            .cornerRadius(8)
-                            
+                            Button("리셋") { manager.setZoomLevel(1.0); UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+                                .font(.caption).padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(Color.gray.opacity(0.1)).foregroundColor(.primary).cornerRadius(8)
                             Spacer()
-                            
-                            Button("+") {
-                                manager.adjustZoom(0.1)
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            }
-                            .frame(width: 32, height: 32)
-                            .background(Color.blue.opacity(0.1))
-                            .foregroundColor(.blue)
-                            .cornerRadius(8)
+                            zoomButton("+") { manager.adjustZoom(0.1) }
                         }
                     }
                     
-                    // 배율 프리셋 버튼들
-                    VStack(spacing: 8) {
-                        Text("빠른 배율 선택")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
+                    VLayout(spacing: 8) {
+                        CompactText("빠른 배율 선택", .caption, .secondary)
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
                             ForEach(SiteMenuSystem.Desktop.getZoomPresets(), id: \.self) { preset in
                                 Button("\(String(format: "%.0f", preset * 100))%") {
                                     manager.setZoomLevel(preset)
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 }
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 6)
+                                .font(.caption).padding(.horizontal, 8).padding(.vertical, 6)
                                 .background(abs(manager.getZoomLevel() - preset) < 0.05 ? Color.blue : Color.gray.opacity(0.2))
                                 .foregroundColor(abs(manager.getZoomLevel() - preset) < 0.05 ? .white : .primary)
                                 .cornerRadius(8)
@@ -367,100 +283,55 @@ extension SiteMenuSystem {
                         }
                     }
                 }
-                .padding(.top, 8)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 12)
-                .background(Color.blue.opacity(0.05))
-                .cornerRadius(12)
+                .padding(.top, 8).padding(.horizontal, 8).padding(.vertical, 12)
+                .background(Color.blue.opacity(0.05)).cornerRadius(12)
+            }
+            
+            @ViewBuilder
+            private func zoomButton(_ text: String, action: @escaping () -> Void) -> some View {
+                Button(text) { action(); UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+                    .frame(width: 32, height: 32)
+                    .background(Color.blue.opacity(0.1)).foregroundColor(.blue).cornerRadius(8)
             }
 
             @ViewBuilder
             private var menuOptionsSection: some View {
-                VStack(spacing: 12) {
-                    HStack {
-                        menuOptionRow(
-                            icon: "line.3.horizontal.decrease.circle",
-                            title: "방문 기록 관리",
-                            subtitle: "\(manager.historyFilters.count)개 필터",
-                            color: .orange
-                        ) {
-                            manager.showHistoryFilterManager = true
-                        }
-                        
-                        Spacer()
-                        
-                        menuOptionRow(
-                            icon: "shield.lefthalf.filled",
-                            title: "개인정보",
-                            subtitle: "쿠키 & 캐시",
-                            color: .purple
-                        ) {
-                            manager.showPrivacySettings = true
-                        }
-                    }
-                    
-                    
+                HLayout {
+                    menuOption("line.3.horizontal.decrease.circle", "방문 기록 관리", "\(manager.historyFilters.count)개 필터", .orange) { manager.showHistoryFilterManager = true }
+                    Spacer()
+                    menuOption("shield.lefthalf.filled", "개인정보", "쿠키 & 캐시", .purple) { manager.showPrivacySettings = true }
                 }
             }
             
             @ViewBuilder
-            private func menuOptionRow(icon: String, title: String, subtitle: String, color: Color, action: @escaping () -> Void) -> some View {
+            private func menuOption(_ icon: String, _ title: String, _ subtitle: String, _ color: Color, action: @escaping () -> Void) -> some View {
                 Button(action: action) {
-                    VStack(spacing: 4) {
-                        Image(systemName: icon)
-                            .font(.title2)
-                            .foregroundColor(color)
-                        
-                        Text(title)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                        
-                        Text(subtitle)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                    VLayout(spacing: 4) {
+                        Icon(icon, 28, color)
+                        CompactText(title, .caption.weight(.medium), .primary)
+                        CompactText(subtitle, .caption2, .secondary)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Color.gray.opacity(0.05)).cornerRadius(8)
+                }.buttonStyle(.plain)
             }
 
             @ViewBuilder
             private var downloadsSection: some View {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Button(action: {
-                            manager.showDownloadsList = true
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "arrow.down.circle.fill")
-                                    .foregroundColor(.blue)
-                                    .frame(width: 20)
-
-                                Text("다운로드")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                VLayout(alignment: .leading, spacing: 8) {
+                    HLayout {
+                        Button(action: { manager.showDownloadsList = true }) {
+                            HLayout(spacing: 8) {
+                                Icon("arrow.down.circle.fill", 20, .blue)
+                                CompactText("다운로드", .headline, .primary)
+                                Icon("chevron.right", 12, .secondary)
                             }
-                        }
-                        .buttonStyle(.plain)
-
+                        }.buttonStyle(.plain)
                         Spacer()
-
                         if !manager.downloads.isEmpty {
-                            Text("\(manager.downloads.count)개")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.1))
-                                .cornerRadius(12)
+                            Text("\(manager.downloads.count)개").font(.caption).foregroundColor(.secondary)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.1)).cornerRadius(12)
                         }
                     }
 
@@ -470,114 +341,65 @@ extension SiteMenuSystem {
                                 ForEach(Array(manager.downloads.prefix(3))) { download in
                                     downloadRow(download)
                                 }
-
                                 if manager.downloads.count > 3 {
-                                    HStack {
-                                        Spacer()
-                                        Text("및 \(manager.downloads.count - 3)개 더...")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 4)
+                                    HLayout { Spacer(); CompactText("및 \(manager.downloads.count - 3)개 더...", .caption, .secondary); Spacer() }
+                                        .padding(.vertical, 4)
                                 }
                             }
-                        }
-                        .frame(maxHeight: 100)
+                        }.frame(maxHeight: 100)
                     } else {
-                        HStack {
+                        HLayout {
                             Spacer()
-                            VStack(spacing: 4) {
-                                Image(systemName: "tray")
-                                    .font(.title3)
-                                    .foregroundColor(.secondary.opacity(0.6))
-
-                                Text("다운로드된 파일이 없습니다")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
+                            VLayout(spacing: 4) {
+                                Icon("tray", 24, .secondary.opacity(0.6))
+                                CompactText("다운로드된 파일이 없습니다", .caption, .secondary).multilineTextAlignment(.center)
                             }
                             Spacer()
-                        }
-                        .padding(.vertical, 16)
+                        }.padding(.vertical, 16)
                     }
                 }
             }
 
             @ViewBuilder
             private func downloadRow(_ download: DownloadItem) -> some View {
-                HStack {
-                    Image(systemName: "doc.fill")
-                        .foregroundColor(.blue)
-                        .frame(width: 16)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(download.filename)
-                            .font(.system(size: 14, weight: .medium))
-                            .lineLimit(1)
-
-                        HStack {
-                            Text(download.size)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
+                HLayout {
+                    Icon("doc.fill", 16, .blue)
+                    VLayout(alignment: .leading, spacing: 2) {
+                        CompactText(download.filename, .system(size: 14, weight: .medium), .primary, lines: 1)
+                        HLayout {
+                            CompactText(download.size, .caption, .secondary)
                             Spacer()
-
-                            Text(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            CompactText(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()), .caption, .secondary)
                         }
                     }
-
                     Spacer()
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .background(Color.white.opacity(0.95))
-                .cornerRadius(8)
+                .padding(.vertical, 4).padding(.horizontal, 8)
+                .background(Color.white.opacity(0.95)).cornerRadius(8)
             }
         }
         
-        // MARK: - Recent Visits View
+        // MARK: - Recent Visits View (압축)
         struct RecentVisitsView: View {
             @ObservedObject var manager: SiteMenuManager
             let onURLSelected: (URL) -> Void
             let onManageHistory: () -> Void
 
             var body: some View {
-                VStack(spacing: 0) {
+                VLayout(spacing: 0) {
                     if manager.recentVisits.isEmpty {
-                        emptyStateView
+                        VLayout(spacing: 12) {
+                            Icon("clock.arrow.circlepath", 28, .secondary)
+                            CompactText("최근 방문한 사이트가 없습니다", .subheadline, .secondary).multilineTextAlignment(.center)
+                        }.padding(.vertical, 20)
                     } else {
-                        historyListView
-                    }
-                }
-            }
-
-            @ViewBuilder
-            private var emptyStateView: some View {
-                VStack(spacing: 12) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-
-                    Text("최근 방문한 사이트가 없습니다")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.vertical, 20)
-            }
-
-            @ViewBuilder
-            private var historyListView: some View {
-                VStack(spacing: 0) {
-                    ForEach(manager.recentVisits) { entry in
-                        historyRow(entry)
-
-                        if entry.id != manager.recentVisits.last?.id {
-                            Divider()
-                                .padding(.horizontal, 14)
+                        VLayout(spacing: 0) {
+                            ForEach(manager.recentVisits) { entry in
+                                historyRow(entry)
+                                if entry.id != manager.recentVisits.last?.id {
+                                    Divider().padding(.horizontal, 14)
+                                }
+                            }
                         }
                     }
                 }
@@ -585,41 +407,23 @@ extension SiteMenuSystem {
 
             @ViewBuilder
             private func historyRow(_ entry: HistoryEntry) -> some View {
-                Button(action: {
-                    onURLSelected(entry.url)
-                }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "clock")
-                            .foregroundColor(.blue)
-                            .frame(width: 20)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.title)
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-
-                            Text(entry.url.absoluteString)
-                                .font(.system(size: 14))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                Button(action: { onURLSelected(entry.url); }) {
+                    HLayout(spacing: 12) {
+                        Icon("clock", 16, .blue)
+                        VLayout(alignment: .leading, spacing: 2) {
+                            CompactText(entry.title, .system(size: 16, weight: .medium), .primary, lines: 1)
+                            CompactText(entry.url.absoluteString, .system(size: 14), .secondary, lines: 1)
                         }
-
                         Spacer()
-
-                        Text(RelativeDateTimeFormatter().localizedString(for: entry.date, relativeTo: Date()))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        CompactText(RelativeDateTimeFormatter().localizedString(for: entry.date, relativeTo: Date()), .caption, .secondary)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 14).padding(.vertical, 12)
                     .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                }.buttonStyle(.plain)
             }
         }
         
-        // MARK: - Autocomplete View
+        // MARK: - Autocomplete View (압축)
         struct AutocompleteView: View {
             @ObservedObject var manager: SiteMenuManager
             let searchText: String
@@ -627,39 +431,20 @@ extension SiteMenuSystem {
             let onManageHistory: () -> Void
 
             var body: some View {
-                VStack(spacing: 0) {
+                VLayout(spacing: 0) {
                     if manager.getAutocompleteEntries(for: searchText).isEmpty {
-                        emptyStateView
+                        VLayout(spacing: 12) {
+                            Icon("magnifyingglass", 28, .secondary)
+                            CompactText("'\(searchText)'에 대한 방문 기록이 없습니다", .subheadline, .secondary).multilineTextAlignment(.center)
+                        }.padding(.vertical, 20)
                     } else {
-                        autocompleteListView
-                    }
-                }
-            }
-
-            @ViewBuilder
-            private var emptyStateView: some View {
-                VStack(spacing: 12) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-
-                    Text("'\(searchText)'에 대한 방문 기록이 없습니다")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.vertical, 20)
-            }
-
-            @ViewBuilder
-            private var autocompleteListView: some View {
-                VStack(spacing: 0) {
-                    ForEach(manager.getAutocompleteEntries(for: searchText)) { entry in
-                        autocompleteRow(entry)
-
-                        if entry.id != manager.getAutocompleteEntries(for: searchText).last?.id {
-                            Divider()
-                                .padding(.horizontal, 14)
+                        VLayout(spacing: 0) {
+                            ForEach(manager.getAutocompleteEntries(for: searchText)) { entry in
+                                autocompleteRow(entry)
+                                if entry.id != manager.getAutocompleteEntries(for: searchText).last?.id {
+                                    Divider().padding(.horizontal, 14)
+                                }
+                            }
                         }
                     }
                 }
@@ -667,70 +452,44 @@ extension SiteMenuSystem {
 
             @ViewBuilder
             private func autocompleteRow(_ entry: HistoryEntry) -> some View {
-                Button(action: {
-                    onURLSelected(entry.url)
-                }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.gray)
-                            .frame(width: 20)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            highlightedText(entry.title, searchText: searchText)
-                                .font(.system(size: 16, weight: .medium))
-                                .lineLimit(1)
-
-                            highlightedText(entry.url.absoluteString, searchText: searchText)
-                                .font(.system(size: 14))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                Button(action: { onURLSelected(entry.url) }) {
+                    HLayout(spacing: 12) {
+                        Icon("magnifyingglass", 20, .gray)
+                        VLayout(alignment: .leading, spacing: 2) {
+                            highlightedText(entry.title, searchText: searchText).font(.system(size: 16, weight: .medium)).lineLimit(1)
+                            highlightedText(entry.url.absoluteString, searchText: searchText).font(.system(size: 14)).foregroundColor(.secondary).lineLimit(1)
                         }
-
                         Spacer()
-
-                        Image(systemName: "arrow.up.left")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Icon("arrow.up.left", 12, .secondary)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                    .padding(.horizontal, 14).padding(.vertical, 12).contentShape(Rectangle())
+                }.buttonStyle(.plain)
             }
 
             @ViewBuilder
             private func highlightedText(_ text: String, searchText: String) -> some View {
                 let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-
                 if trimmed.isEmpty {
-                    Text(text)
-                        .foregroundColor(.primary)
+                    Text(text).foregroundColor(.primary)
                 } else {
                     let parts = text.components(separatedBy: trimmed)
-
                     if parts.count > 1 {
-                        HStack(spacing: 0) {
+                        HLayout(spacing: 0) {
                             ForEach(0..<parts.count, id: \.self) { index in
-                                Text(parts[index])
-                                    .foregroundColor(.primary)
-
+                                Text(parts[index]).foregroundColor(.primary)
                                 if index < parts.count - 1 {
-                                    Text(trimmed)
-                                        .foregroundColor(.blue)
-                                        .fontWeight(.semibold)
+                                    Text(trimmed).foregroundColor(.blue).fontWeight(.semibold)
                                 }
                             }
                         }
                     } else {
-                        Text(text)
-                            .foregroundColor(.primary)
+                        Text(text).foregroundColor(.primary)
                     }
                 }
             }
         }
         
-        // MARK: - Downloads List View
+        // MARK: - Downloads List View (압축)
         struct DownloadsListView: View {
             @ObservedObject var manager: SiteMenuManager
             @State private var searchText = ""
@@ -738,86 +497,44 @@ extension SiteMenuSystem {
             @Environment(\.dismiss) private var dismiss
 
             private var filteredDownloads: [DownloadItem] {
-                if searchText.isEmpty {
-                    return manager.downloads
-                } else {
-                    return manager.downloads.filter {
-                        $0.filename.localizedCaseInsensitiveContains(searchText)
-                    }
-                }
+                searchText.isEmpty ? manager.downloads : manager.downloads.filter { $0.filename.localizedCaseInsensitiveContains(searchText) }
             }
 
             var body: some View {
                 List {
                     if filteredDownloads.isEmpty {
-                        VStack(spacing: 16) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 48))
-                                .foregroundColor(.secondary)
-
-                            Text(searchText.isEmpty ? "다운로드된 파일이 없습니다" : "검색 결과가 없습니다")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-
+                        VLayout(spacing: 16) {
+                            Icon("arrow.down.circle", 48, .secondary)
+                            CompactText(searchText.isEmpty ? "다운로드된 파일이 없습니다" : "검색 결과가 없습니다", .title3, .secondary)
                             if searchText.isEmpty {
-                                Text("웹에서 파일을 다운로드하면 여기에 표시됩니다\n(앱 내부 Documents/Downloads 폴더)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
+                                CompactText("웹에서 파일을 다운로드하면 여기에 표시됩니다\n(앱 내부 Documents/Downloads 폴더)", .caption, .secondary).multilineTextAlignment(.center)
                             }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 60)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                        .frame(maxWidth: .infinity).padding(.vertical, 60)
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
                     } else {
                         ForEach(filteredDownloads) { download in
                             DownloadListRow(download: download, manager: manager)
-                        }
-                        .onDelete(perform: deleteDownloads)
+                        }.onDelete(perform: deleteDownloads)
                     }
                 }
-                .navigationTitle("다운로드")
-                .navigationBarTitleDisplayMode(.large)
+                .navigationTitle("다운로드").navigationBarTitleDisplayMode(.large)
                 .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always))
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
-
+                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Menu {
                             if !manager.downloads.isEmpty {
-                                Button(role: .destructive) {
-                                    showClearAllAlert = true
-                                } label: {
-                                    Label("모든 파일 실제 삭제", systemImage: "trash.fill")
-                                }
-
-                                Button {
-                                    manager.clearDownloads()
-                                } label: {
-                                    Label("목록만 지우기", systemImage: "list.dash")
-                                }
+                                Button(role: .destructive) { showClearAllAlert = true } label: { Label("모든 파일 실제 삭제", systemImage: "trash.fill") }
+                                Button { manager.clearDownloads() } label: { Label("목록만 지우기", systemImage: "list.dash") }
                             }
-
-                            Button {
-                                openDownloadsFolder()
-                            } label: {
-                                Label("파일 앱에서 열기", systemImage: "folder")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
+                            Button { openDownloadsFolder() } label: { Label("파일 앱에서 열기", systemImage: "folder") }
+                        } label: { Image(systemName: "ellipsis.circle") }
                     }
                 }
                 .alert("모든 다운로드 파일 삭제", isPresented: $showClearAllAlert) {
                     Button("취소", role: .cancel) { }
-                    Button("실제 파일 삭제", role: .destructive) {
-                        manager.clearAllDownloadFiles()
-                    }
+                    Button("실제 파일 삭제", role: .destructive) { manager.clearAllDownloadFiles() }
                 } message: {
                     Text("다운로드 폴더의 모든 파일을 실제로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.")
                 }
@@ -825,15 +542,13 @@ extension SiteMenuSystem {
 
             private func deleteDownloads(at offsets: IndexSet) {
                 for index in offsets {
-                    let download = filteredDownloads[index]
-                    manager.deleteDownloadFile(download)
+                    manager.deleteDownloadFile(filteredDownloads[index])
                 }
             }
 
             private func openDownloadsFolder() {
                 let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
                 let downloadsPath = documentsPath.appendingPathComponent("Downloads", isDirectory: true)
-
                 if let topVC = getTopViewController() {
                     let activityVC = UIActivityViewController(activityItems: [downloadsPath], applicationActivities: nil)
                     activityVC.popoverPresentationController?.sourceView = topVC.view
@@ -842,7 +557,7 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - Download List Row
+        // MARK: - Download List Row (압축)
         struct DownloadListRow: View {
             let download: DownloadItem
             @ObservedObject var manager: SiteMenuManager
@@ -878,89 +593,42 @@ extension SiteMenuSystem {
             }
 
             var body: some View {
-                HStack(spacing: 12) {
-                    Image(systemName: fileIcon)
-                        .font(.title2)
-                        .foregroundColor(fileIconColor)
+                HLayout(spacing: 12) {
+                    Image(systemName: fileIcon).font(.title2).foregroundColor(fileIconColor)
                         .frame(width: 40, height: 40)
-                        .background(fileIconColor.opacity(0.1))
-                        .cornerRadius(8)
+                        .background(fileIconColor.opacity(0.1)).cornerRadius(8)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(download.filename)
-                            .font(.headline)
-                            .lineLimit(2)
-
-                        HStack {
-                            Text(download.size)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
+                    VLayout(alignment: .leading, spacing: 4) {
+                        CompactText(download.filename, .headline, .primary, lines: 2)
+                        HLayout {
+                            CompactText(download.size, .caption, .secondary)
                             Spacer()
-
-                            Text(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
+                            CompactText(RelativeDateTimeFormatter().localizedString(for: download.date, relativeTo: Date()), .caption, .secondary)
                             if let fileURL = download.fileURL {
-                                if FileManager.default.fileExists(atPath: fileURL.path) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.green)
-                                } else {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.orange)
-                                }
+                                Icon(FileManager.default.fileExists(atPath: fileURL.path) ? "checkmark.circle.fill" : "exclamationmark.triangle.fill", 
+                                     12, FileManager.default.fileExists(atPath: fileURL.path) ? .green : .orange)
                             }
                         }
                     }
-
                     Spacer()
-
+                    
                     Menu {
                         if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                            Button {
-                                openFile(fileURL)
-                            } label: {
-                                Label("열기", systemImage: "doc.text")
-                            }
-
-                            Button {
-                                shareFile(fileURL)
-                            } label: {
-                                Label("공유", systemImage: "square.and.arrow.up")
-                            }
-
+                            Button { openFile(fileURL) } label: { Label("열기", systemImage: "doc.text") }
+                            Button { shareFile(fileURL) } label: { Label("공유", systemImage: "square.and.arrow.up") }
                             Divider()
-
-                            Button(role: .destructive) {
-                                manager.deleteDownloadFile(download)
-                            } label: {
-                                Label("실제 파일 삭제", systemImage: "trash.fill")
-                            }
+                            Button(role: .destructive) { manager.deleteDownloadFile(download) } label: { Label("실제 파일 삭제", systemImage: "trash.fill") }
                         } else {
-                            Text("파일이 존재하지 않음")
-                                .foregroundColor(.secondary)
+                            Text("파일이 존재하지 않음").foregroundColor(.secondary)
                         }
-
-                        Button(role: .destructive) {
-                            manager.removeDownload(download)
-                        } label: {
-                            Label("목록에서만 제거", systemImage: "list.dash")
-                        }
+                        Button(role: .destructive) { manager.removeDownload(download) } label: { Label("목록에서만 제거", systemImage: "list.dash") }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
+                        Icon("ellipsis.circle", 24, .secondary)
+                    }.buttonStyle(.plain)
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
-                        openFile(fileURL)
-                    }
+                    if let fileURL = download.fileURL, FileManager.default.fileExists(atPath: fileURL.path) { openFile(fileURL) }
                 }
             }
 
@@ -981,11 +649,10 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - History Filter Manager View  
+        // MARK: - History Filter Manager View (압축)
         struct HistoryFilterManagerView: View {
             @ObservedObject var manager: SiteMenuManager
             @Environment(\.dismiss) private var dismiss
-
             @State private var showAddFilterSheet = false
             @State private var newFilterType: HistoryFilter.FilterType = .keyword
             @State private var newFilterValue = ""
@@ -993,47 +660,27 @@ extension SiteMenuSystem {
             @State private var editingFilter: HistoryFilter?
             @State private var editingValue = ""
 
-            private var keywordFilters: [HistoryFilter] {
-                manager.historyFilters.filter { $0.type == .keyword }
-            }
-
-            private var domainFilters: [HistoryFilter] {
-                manager.historyFilters.filter { $0.type == .domain }
-            }
+            private var keywordFilters: [HistoryFilter] { manager.historyFilters.filter { $0.type == .keyword } }
+            private var domainFilters: [HistoryFilter] { manager.historyFilters.filter { $0.type == .domain } }
 
             var body: some View {
                 List {
                     Section {
-                        Toggle("방문 기록 필터링", isOn: $manager.isHistoryFilteringEnabled)
-                            .font(.headline)
-                    } header: {
-                        Text("필터 설정")
-                    } footer: {
+                        Toggle("방문 기록 필터링", isOn: $manager.isHistoryFilteringEnabled).font(.headline)
+                    } header: { Text("필터 설정") } footer: {
                         Text("필터링을 켜면 설정한 키워드나 도메인이 포함된 방문 기록이 주소창 자동완성에서 숨겨집니다.")
                     }
 
                     if manager.isHistoryFilteringEnabled && !manager.historyFilters.isEmpty {
                         Section("현재 필터 상태") {
                             let enabledCount = manager.historyFilters.filter { $0.isEnabled }.count
-                            let totalCount = manager.historyFilters.count
-
-                            HStack {
-                                Image(systemName: "line.3.horizontal.decrease.circle")
-                                    .foregroundColor(.blue)
-
-                                Text("활성 필터: \(enabledCount) / \(totalCount)개")
-                                    .font(.subheadline)
-
+                            HLayout {
+                                Icon("line.3.horizontal.decrease.circle", 20, .blue)
+                                CompactText("활성 필터: \(enabledCount) / \(manager.historyFilters.count)개", .subheadline, .primary)
                                 Spacer()
-
                                 if enabledCount > 0 {
-                                    Text("적용 중")
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1))
-                                        .foregroundColor(.blue)
-                                        .cornerRadius(8)
+                                    Text("적용 중").font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color.blue.opacity(0.1)).foregroundColor(.blue).cornerRadius(8)
                                 }
                             }
                         }
@@ -1041,181 +688,88 @@ extension SiteMenuSystem {
 
                     if !keywordFilters.isEmpty {
                         Section("키워드 필터") {
-                            ForEach(keywordFilters) { filter in
-                                filterRow(filter)
-                            }
-                            .onDelete { offsets in
-                                for index in offsets {
-                                    manager.removeHistoryFilter(keywordFilters[index])
+                            ForEach(keywordFilters) { filter in filterRow(filter) }
+                                .onDelete { offsets in
+                                    for index in offsets { manager.removeHistoryFilter(keywordFilters[index]) }
                                 }
-                            }
                         }
                     }
 
                     if !domainFilters.isEmpty {
                         Section("도메인 필터") {
-                            ForEach(domainFilters) { filter in
-                                filterRow(filter)
-                            }
-                            .onDelete { offsets in
-                                for index in offsets {
-                                    manager.removeHistoryFilter(domainFilters[index])
+                            ForEach(domainFilters) { filter in filterRow(filter) }
+                                .onDelete { offsets in
+                                    for index in offsets { manager.removeHistoryFilter(domainFilters[index]) }
                                 }
-                            }
                         }
                     }
 
                     if manager.historyFilters.isEmpty {
                         Section {
-                            VStack(spacing: 16) {
-                                Image(systemName: "line.3.horizontal.decrease.circle")
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.secondary)
-
-                                VStack(spacing: 8) {
-                                    Text("설정된 필터가 없습니다")
-                                        .font(.headline)
-                                        .foregroundColor(.secondary)
-
-                                    Text("키워드나 도메인 필터를 추가하여\n원하지 않는 방문 기록을 숨길 수 있습니다")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.center)
+                            VLayout(spacing: 16) {
+                                Icon("line.3.horizontal.decrease.circle", 48, .secondary)
+                                VLayout(spacing: 8) {
+                                    CompactText("설정된 필터가 없습니다", .headline, .secondary)
+                                    CompactText("키워드나 도메인 필터를 추가하여\n원하지 않는 방문 기록을 숨길 수 있습니다", .subheadline, .secondary).multilineTextAlignment(.center)
                                 }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 20)
-                        }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 20)
+                        }.listRowBackground(Color.clear).listRowSeparator(.hidden)
                     }
                 }
-                .navigationTitle("방문 기록 관리")
-                .navigationBarTitleDisplayMode(.large)
+                .navigationTitle("방문 기록 관리").navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
-
+                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Menu {
-                            Button {
-                                showAddFilterSheet = true
-                            } label: {
-                                Label("필터 추가", systemImage: "plus")
-                            }
-
+                            Button { showAddFilterSheet = true } label: { Label("필터 추가", systemImage: "plus") }
                             if !manager.historyFilters.isEmpty {
                                 Divider()
-
-                                Button(role: .destructive) {
-                                    showClearAllAlert = true
-                                } label: {
-                                    Label("모든 필터 삭제", systemImage: "trash")
-                                }
+                                Button(role: .destructive) { showClearAllAlert = true } label: { Label("모든 필터 삭제", systemImage: "trash") }
                             }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
+                        } label: { Image(systemName: "ellipsis.circle") }
                     }
                 }
-                .sheet(isPresented: $showAddFilterSheet) {
-                    addFilterSheet
-                }
+                .sheet(isPresented: $showAddFilterSheet) { addFilterSheet }
                 .alert("필터 수정", isPresented: Binding(
                     get: { editingFilter != nil },
                     set: { if !$0 { editingFilter = nil } }
                 )) {
                     TextField("필터 값", text: $editingValue)
-                    Button("취소", role: .cancel) {
-                        editingFilter = nil
-                        editingValue = ""
-                    }
+                    Button("취소", role: .cancel) { editingFilter = nil; editingValue = "" }
                     Button("저장") {
-                        if let filter = editingFilter {
-                            manager.updateHistoryFilter(filter, newValue: editingValue)
-                        }
-                        editingFilter = nil
-                        editingValue = ""
+                        if let filter = editingFilter { manager.updateHistoryFilter(filter, newValue: editingValue) }
+                        editingFilter = nil; editingValue = ""
                     }
                 } message: {
-                    if let filter = editingFilter {
-                        Text("\(filter.type.displayName) 필터를 수정하세요")
-                    }
+                    if let filter = editingFilter { Text("\(filter.type.displayName) 필터를 수정하세요") }
                 }
                 .alert("모든 필터 삭제", isPresented: $showClearAllAlert) {
                     Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) {
-                        manager.clearAllHistoryFilters()
-                    }
-                } message: {
-                    Text("모든 히스토리 필터를 삭제하시겠습니까?")
-                }
+                    Button("삭제", role: .destructive) { manager.clearAllHistoryFilters() }
+                } message: { Text("모든 히스토리 필터를 삭제하시겠습니까?") }
             }
 
             @ViewBuilder
             private func filterRow(_ filter: HistoryFilter) -> some View {
-                HStack {
-                    Image(systemName: filter.type.icon)
-                        .foregroundColor(filter.isEnabled ? .blue : .gray)
-                        .frame(width: 24)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(filter.value)
-                            .font(.headline)
-                            .foregroundColor(filter.isEnabled ? .primary : .secondary)
-
-                        HStack {
-                            Text(filter.type.displayName)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            if filter.isEnabled {
-                                Text("• 활성")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
-                            } else {
-                                Text("• 비활성")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-
+                HLayout {
+                    Icon(filter.type.icon, 24, filter.isEnabled ? .blue : .gray)
+                    VLayout(alignment: .leading, spacing: 2) {
+                        CompactText(filter.value, .headline, filter.isEnabled ? .primary : .secondary)
+                        HLayout {
+                            CompactText(filter.type.displayName, .caption, .secondary)
+                            CompactText("• \(filter.isEnabled ? "활성" : "비활성")", .caption, filter.isEnabled ? .blue : .gray)
                             Spacer()
-
-                            Text(RelativeDateTimeFormatter().localizedString(for: filter.createdAt, relativeTo: Date()))
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                            CompactText(RelativeDateTimeFormatter().localizedString(for: filter.createdAt, relativeTo: Date()), .caption2, .secondary)
                         }
                     }
-
                     Spacer()
-
                     Menu {
-                        Button {
-                            editingFilter = filter
-                            editingValue = filter.value
-                        } label: {
-                            Label("수정", systemImage: "pencil")
-                        }
-
-                        Button(role: .destructive) {
-                            manager.removeHistoryFilter(filter)
-                        } label: {
-                            Label("삭제", systemImage: "trash")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundColor(.secondary)
-                    }
+                        Button { editingFilter = filter; editingValue = filter.value } label: { Label("수정", systemImage: "pencil") }
+                        Button(role: .destructive) { manager.removeHistoryFilter(filter) } label: { Label("삭제", systemImage: "trash") }
+                    } label: { Icon("ellipsis", 20, .secondary) }
                 }
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        manager.toggleHistoryFilter(filter)
-                    }
-                }
+                .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { manager.toggleHistoryFilter(filter) } }
             }
 
             @ViewBuilder
@@ -1225,65 +779,37 @@ extension SiteMenuSystem {
                         Section("필터 종류") {
                             Picker("필터 종류", selection: $newFilterType) {
                                 ForEach(HistoryFilter.FilterType.allCases, id: \.self) { type in
-                                    HStack {
-                                        Image(systemName: type.icon)
-                                        Text(type.displayName)
-                                    }
-                                    .tag(type)
+                                    HLayout { Icon(type.icon, 16, .primary); Text(type.displayName) }.tag(type)
                                 }
-                            }
-                            .pickerStyle(.segmented)
+                            }.pickerStyle(.segmented)
                         }
 
                         Section {
-                            TextField(placeholderText, text: $newFilterValue)
-                                .autocapitalization(.none)
-                                .disableAutocorrection(true)
-                        } header: {
-                            Text("\(newFilterType.displayName) 입력")
-                        } footer: {
-                            Text(footerText)
-                        }
+                            TextField(placeholderText, text: $newFilterValue).autocapitalization(.none).disableAutocorrection(true)
+                        } header: { Text("\(newFilterType.displayName) 입력") } footer: { Text(footerText) }
 
                         if !newFilterValue.isEmpty {
                             Section("미리보기") {
-                                HStack {
-                                    Image(systemName: newFilterType.icon)
-                                        .foregroundColor(.blue)
-
-                                    Text(newFilterValue.lowercased())
-                                        .font(.headline)
-
+                                HLayout {
+                                    Icon(newFilterType.icon, 20, .blue)
+                                    CompactText(newFilterValue.lowercased(), .headline, .primary)
                                     Spacer()
-
-                                    Text("필터됨")
-                                        .font(.caption)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.red.opacity(0.1))
-                                        .foregroundColor(.red)
-                                        .cornerRadius(8)
+                                    Text("필터됨").font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color.red.opacity(0.1)).foregroundColor(.red).cornerRadius(8)
                                 }
                             }
                         }
                     }
-                    .navigationTitle("필터 추가")
-                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationTitle("필터 추가").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .navigationBarLeading) {
-                            Button("취소") {
-                                showAddFilterSheet = false
-                                resetAddFilterForm()
-                            }
+                            Button("취소") { showAddFilterSheet = false; resetAddFilterForm() }
                         }
-
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button("추가") {
                                 manager.addHistoryFilter(type: newFilterType, value: newFilterValue)
-                                showAddFilterSheet = false
-                                resetAddFilterForm()
-                            }
-                            .disabled(newFilterValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                showAddFilterSheet = false; resetAddFilterForm()
+                            }.disabled(newFilterValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
                 }
@@ -1291,33 +817,27 @@ extension SiteMenuSystem {
 
             private var placeholderText: String {
                 switch newFilterType {
-                case .keyword:
-                    return "예: 광고, 스팸, 성인"
-                case .domain:
-                    return "예: example.com, ads.google.com"
+                case .keyword: return "예: 광고, 스팸, 성인"
+                case .domain: return "예: example.com, ads.google.com"
                 }
             }
 
             private var footerText: String {
                 switch newFilterType {
-                case .keyword:
-                    return "페이지 제목이나 URL에 이 키워드가 포함된 방문 기록이 숨겨집니다."
-                case .domain:
-                    return "이 도메인의 방문 기록이 숨겨집니다. 정확한 도메인명을 입력하세요."
+                case .keyword: return "페이지 제목이나 URL에 이 키워드가 포함된 방문 기록이 숨겨집니다."
+                case .domain: return "이 도메인의 방문 기록이 숨겨집니다. 정확한 도메인명을 입력하세요."
                 }
             }
 
             private func resetAddFilterForm() {
-                newFilterType = .keyword
-                newFilterValue = ""
+                newFilterType = .keyword; newFilterValue = ""
             }
         }
         
-        // MARK: - Privacy Settings View
+        // MARK: - Privacy Settings View (압축)
         struct PrivacySettingsView: View {
             @ObservedObject var manager: SiteMenuManager
             @Environment(\.dismiss) private var dismiss
-            
             @State private var showClearCookiesAlert = false
             @State private var showClearCacheAlert = false
             @State private var showClearAllDataAlert = false
@@ -1326,139 +846,67 @@ extension SiteMenuSystem {
             var body: some View {
                 List {
                     Section("쿠키 및 사이트 데이터") {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("모든 쿠키 삭제")
-                                    .font(.headline)
-                                Text("로그인 상태가 해제됩니다")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Button("삭제") {
-                                showClearCookiesAlert = true
-                            }
-                            .foregroundColor(.red)
-                        }
-                        
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("캐시 삭제")
-                                    .font(.headline)
-                                Text("이미지 및 파일 캐시를 삭제합니다")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Button("삭제") {
-                                showClearCacheAlert = true
-                            }
-                            .foregroundColor(.red)
-                        }
-                        
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("모든 웹사이트 데이터 삭제")
-                                    .font(.headline)
-                                Text("쿠키, 캐시, 로컬 저장소 등 모든 데이터")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Button("모두 삭제") {
-                                showClearAllDataAlert = true
-                            }
-                            .foregroundColor(.red)
-                            .fontWeight(.semibold)
-                        }
+                        privacyRow("모든 쿠키 삭제", "로그인 상태가 해제됩니다", .red) { showClearCookiesAlert = true }
+                        privacyRow("캐시 삭제", "이미지 및 파일 캐시를 삭제합니다", .red) { showClearCacheAlert = true }
+                        privacyRow("모든 웹사이트 데이터 삭제", "쿠키, 캐시, 로컬 저장소 등 모든 데이터", .red, bold: true) { showClearAllDataAlert = true }
                     }
                     
                     Section("팝업 차단") {
-                        HStack {
-                            Text("차단된 팝업 수")
-                                .font(.headline)
-                            
+                        HLayout {
+                            CompactText("차단된 팝업 수", .headline, .primary)
                             Spacer()
-                            
-                            Text("\(SiteMenuSystem.Settings.getPopupBlockedCount())개")
-                                .foregroundColor(.secondary)
-                            
-                            Button("초기화") {
-                                SiteMenuSystem.Settings.resetPopupBlockedCount()
-                            }
-                            .font(.caption)
+                            CompactText("\(SiteMenuSystem.Settings.getPopupBlockedCount())개", .body, .secondary)
+                            Button("초기화") { SiteMenuSystem.Settings.resetPopupBlockedCount() }.font(.caption)
                         }
                         
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("도메인별 설정 관리")
-                                    .font(.headline)
-                                Text("사이트별 팝업 차단/허용 설정")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                        HLayout {
+                            VLayout(alignment: .leading) {
+                                CompactText("도메인별 설정 관리", .headline, .primary)
+                                CompactText("사이트별 팝업 차단/허용 설정", .caption, .secondary)
                             }
-                            
                             Spacer()
-                            
-                            let allowedCount = PopupBlockManager.shared.getAllowedDomains().count
-                            Text("\(allowedCount)개 허용")
-                                .foregroundColor(.secondary)
-                            
-                            Button("관리") {
-                                showPopupDomainManager = true
-                            }
-                            .foregroundColor(.blue)
+                            CompactText("\(PopupBlockManager.shared.getAllowedDomains().count)개 허용", .body, .secondary)
+                            Button("관리") { showPopupDomainManager = true }.foregroundColor(.blue)
                         }
                     }
                 }
-                .navigationTitle("개인정보 보호")
-                .navigationBarTitleDisplayMode(.large)
+                .navigationTitle("개인정보 보호").navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
+                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
                 }
                 .sheet(isPresented: $showPopupDomainManager) {
-                    NavigationView {
-                        PopupDomainManagerView()
-                    }
+                    NavigationView { PopupDomainManagerView() }
                 }
                 .alert("쿠키 삭제", isPresented: $showClearCookiesAlert) {
                     Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) {
-                        SiteMenuSystem.Settings.clearAllCookies()
-                    }
-                } message: {
-                    Text("모든 웹사이트의 쿠키를 삭제하시겠습니까? 모든 사이트에서 로그아웃됩니다.")
-                }
+                    Button("삭제", role: .destructive) { SiteMenuSystem.Settings.clearAllCookies() }
+                } message: { Text("모든 웹사이트의 쿠키를 삭제하시겠습니까? 모든 사이트에서 로그아웃됩니다.") }
                 .alert("캐시 삭제", isPresented: $showClearCacheAlert) {
                     Button("취소", role: .cancel) { }
-                    Button("삭제", role: .destructive) {
-                        SiteMenuSystem.Settings.clearCache()
-                    }
-                } message: {
-                    Text("모든 캐시를 삭제하시겠습니까? 페이지 로딩이 일시적으로 느려질 수 있습니다.")
-                }
+                    Button("삭제", role: .destructive) { SiteMenuSystem.Settings.clearCache() }
+                } message: { Text("모든 캐시를 삭제하시겠습니까? 페이지 로딩이 일시적으로 느려질 수 있습니다.") }
                 .alert("모든 웹사이트 데이터 삭제", isPresented: $showClearAllDataAlert) {
                     Button("취소", role: .cancel) { }
-                    Button("모두 삭제", role: .destructive) {
-                        SiteMenuSystem.Settings.clearWebsiteData()
+                    Button("모두 삭제", role: .destructive) { SiteMenuSystem.Settings.clearWebsiteData() }
+                } message: { Text("쿠키, 캐시, 로컬 저장소 등 모든 웹사이트 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.") }
+            }
+            
+            @ViewBuilder
+            private func privacyRow(_ title: String, _ subtitle: String, _ buttonColor: Color, bold: Bool = false, action: @escaping () -> Void) -> some View {
+                HLayout {
+                    VLayout(alignment: .leading) {
+                        CompactText(title, .headline, .primary)
+                        CompactText(subtitle, .caption, .secondary)
                     }
-                } message: {
-                    Text("쿠키, 캐시, 로컬 저장소 등 모든 웹사이트 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")
+                    Spacer()
+                    Button(bold ? "모두 삭제" : "삭제") { action() }
+                        .foregroundColor(buttonColor)
+                        .fontWeight(bold ? .semibold : .regular)
                 }
             }
         }
         
-        // MARK: - 🚫 새로운 팝업 도메인 관리 뷰
+        // MARK: - 🚫 Popup Domain Manager View (압축)
         struct PopupDomainManagerView: View {
             @Environment(\.dismiss) private var dismiss
             @State private var allowedDomains: [String] = []
@@ -1469,211 +917,96 @@ extension SiteMenuSystem {
             
             var body: some View {
                 List {
-                    // 허용된 도메인 섹션
                     Section {
                         if allowedDomains.isEmpty {
-                            VStack(spacing: 12) {
-                                Image(systemName: "shield.checkered")
-                                    .font(.title2)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("허용된 사이트가 없습니다")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'이 사이트 허용' 버튼을 누르세요")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 20)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            VLayout(spacing: 12) {
+                                Icon("shield.checkered", 28, .secondary)
+                                CompactText("허용된 사이트가 없습니다", .subheadline, .secondary)
+                                CompactText("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'이 사이트 허용' 버튼을 누르세요", .caption, .secondary).multilineTextAlignment(.center)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 20).listRowBackground(Color.clear).listRowSeparator(.hidden)
                         } else {
                             ForEach(allowedDomains, id: \.self) { domain in
-                                HStack {
-                                    Image(systemName: "checkmark.shield.fill")
-                                        .foregroundColor(.green)
-                                        .frame(width: 24)
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(domain)
-                                            .font(.headline)
-                                        
-                                        Text("팝업 허용됨")
-                                            .font(.caption)
-                                            .foregroundColor(.green)
+                                HLayout {
+                                    Icon("checkmark.shield.fill", 24, .green)
+                                    VLayout(alignment: .leading, spacing: 2) {
+                                        CompactText(domain, .headline, .primary)
+                                        CompactText("팝업 허용됨", .caption, .green)
                                     }
-                                    
                                     Spacer()
-                                    
-                                    Button("차단") {
-                                        PopupBlockManager.shared.removeAllowedDomain(domain)
-                                        refreshData()
-                                    }
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.red.opacity(0.1))
-                                    .cornerRadius(8)
+                                    Button("차단") { PopupBlockManager.shared.removeAllowedDomain(domain); refreshData() }
+                                        .font(.caption).foregroundColor(.red).padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color.red.opacity(0.1)).cornerRadius(8)
                                 }
                             }
                         }
                     } header: {
-                        HStack {
+                        HLayout {
                             Text("팝업 허용 사이트 (\(allowedDomains.count)개)")
-                            
                             Spacer()
-                            
                             if !allowedDomains.isEmpty {
-                                Button("수동 추가") {
-                                    showAddDomainAlert = true
-                                }
-                                .font(.caption)
-                                .foregroundColor(.blue)
+                                Button("수동 추가") { showAddDomainAlert = true }.font(.caption).foregroundColor(.blue)
                             }
                         }
                     }
                     
-                    // 최근 차단된 팝업 섹션
                     Section {
                         if recentBlockedPopups.isEmpty {
-                            VStack(spacing: 12) {
-                                Image(systemName: "shield.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.secondary)
-                                
-                                Text("차단된 팝업이 없습니다")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 20)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            VLayout(spacing: 12) {
+                                Icon("shield.fill", 28, .secondary)
+                                CompactText("차단된 팝업이 없습니다", .subheadline, .secondary)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 20).listRowBackground(Color.clear).listRowSeparator(.hidden)
                         } else {
                             ForEach(recentBlockedPopups.indices, id: \.self) { index in
                                 let popup = recentBlockedPopups[index]
-                                
-                                HStack {
-                                    Image(systemName: "shield.slash.fill")
-                                        .foregroundColor(.red)
-                                        .frame(width: 24)
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(popup.domain)
-                                            .font(.headline)
-                                        
-                                        if !popup.url.isEmpty {
-                                            Text(popup.url)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        
-                                        Text(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                HLayout {
+                                    Icon("shield.slash.fill", 24, .red)
+                                    VLayout(alignment: .leading, spacing: 2) {
+                                        CompactText(popup.domain, .headline, .primary)
+                                        if !popup.url.isEmpty { CompactText(popup.url, .caption, .secondary, lines: 1) }
+                                        CompactText(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()), .caption2, .secondary)
                                     }
-                                    
                                     Spacer()
-                                    
-                                    Button("허용") {
-                                        PopupBlockManager.shared.allowPopupsForDomain(popup.domain)
-                                        refreshData()
-                                    }
-                                    .font(.caption)
-                                    .foregroundColor(.green)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.green.opacity(0.1))
-                                    .cornerRadius(8)
+                                    Button("허용") { PopupBlockManager.shared.allowPopupsForDomain(popup.domain); refreshData() }
+                                        .font(.caption).foregroundColor(.green).padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color.green.opacity(0.1)).cornerRadius(8)
                                 }
                             }
                         }
-                    } header: {
-                        Text("최근 차단된 팝업 (\(recentBlockedPopups.count)개)")
-                    } footer: {
-                        if !recentBlockedPopups.isEmpty {
-                            Text("차단된 팝업의 사이트를 허용 목록에 추가할 수 있습니다")
-                        }
+                    } header: { Text("최근 차단된 팝업 (\(recentBlockedPopups.count)개)") } footer: {
+                        if !recentBlockedPopups.isEmpty { Text("차단된 팝업의 사이트를 허용 목록에 추가할 수 있습니다") }
                     }
                 }
-                .navigationTitle("팝업 차단 관리")
-                .navigationBarTitleDisplayMode(.large)
+                .navigationTitle("팝업 차단 관리").navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
-                    
+                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Menu {
-                            Button {
-                                showAddDomainAlert = true
-                            } label: {
-                                Label("도메인 수동 추가", systemImage: "plus")
-                            }
-                            
+                            Button { showAddDomainAlert = true } label: { Label("도메인 수동 추가", systemImage: "plus") }
                             if !allowedDomains.isEmpty {
                                 Divider()
-                                
-                                Button(role: .destructive) {
-                                    showClearAllAllowedAlert = true
-                                } label: {
-                                    Label("모든 허용 사이트 제거", systemImage: "trash")
-                                }
+                                Button(role: .destructive) { showClearAllAllowedAlert = true } label: { Label("모든 허용 사이트 제거", systemImage: "trash") }
                             }
-                            
-                            Button {
-                                SiteMenuSystem.Settings.resetPopupBlockedCount()
-                                refreshData()
-                            } label: {
-                                Label("차단 기록 초기화", systemImage: "arrow.counterclockwise")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
+                            Button { SiteMenuSystem.Settings.resetPopupBlockedCount(); refreshData() } label: { Label("차단 기록 초기화", systemImage: "arrow.counterclockwise") }
+                        } label: { Image(systemName: "ellipsis.circle") }
                     }
                 }
-                .onAppear {
-                    refreshData()
-                }
+                .onAppear { refreshData() }
                 .alert("도메인 추가", isPresented: $showAddDomainAlert) {
-                    TextField("도메인명 (예: example.com)", text: $newDomainText)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                    
-                    Button("취소", role: .cancel) {
-                        newDomainText = ""
-                    }
-                    
+                    TextField("도메인명 (예: example.com)", text: $newDomainText).autocapitalization(.none).disableAutocorrection(true)
+                    Button("취소", role: .cancel) { newDomainText = "" }
                     Button("추가") {
                         let trimmedDomain = newDomainText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmedDomain.isEmpty {
-                            PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain)
-                            refreshData()
-                        }
+                        if !trimmedDomain.isEmpty { PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain); refreshData() }
                         newDomainText = ""
-                    }
-                    .disabled(newDomainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                } message: {
-                    Text("팝업을 허용할 도메인을 입력하세요")
-                }
+                    }.disabled(newDomainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } message: { Text("팝업을 허용할 도메인을 입력하세요") }
                 .alert("모든 허용 사이트 제거", isPresented: $showClearAllAllowedAlert) {
                     Button("취소", role: .cancel) { }
                     Button("제거", role: .destructive) {
-                        for domain in allowedDomains {
-                            PopupBlockManager.shared.removeAllowedDomain(domain)
-                        }
+                        for domain in allowedDomains { PopupBlockManager.shared.removeAllowedDomain(domain) }
                         refreshData()
                     }
-                } message: {
-                    Text("모든 허용 사이트를 제거하시겠습니까?")
-                }
+                } message: { Text("모든 허용 사이트를 제거하시겠습니까?") }
             }
             
             private func refreshData() {
@@ -1682,7 +1015,7 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - Performance Settings View
+        // MARK: - Performance Settings View (압축)
         struct PerformanceSettingsView: View {
             @ObservedObject var manager: SiteMenuManager
             @Environment(\.dismiss) private var dismiss
@@ -1691,102 +1024,67 @@ extension SiteMenuSystem {
                 List {
                     Section("메모리 관리") {
                         let memoryUsage = SiteMenuSystem.Performance.getMemoryUsage()
-                        
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("메모리 사용량")
-                                    .font(.headline)
-                                
+                        VLayout(alignment: .leading, spacing: 8) {
+                            HLayout {
+                                CompactText("메모리 사용량", .headline, .primary)
                                 Spacer()
-                                
-                                Text("\(String(format: "%.0f", memoryUsage.used)) MB")
-                                    .foregroundColor(.secondary)
+                                CompactText("\(String(format: "%.0f", memoryUsage.used)) MB", .body, .secondary)
                             }
-                            
                             ProgressView(value: memoryUsage.used / memoryUsage.total)
                                 .progressViewStyle(LinearProgressViewStyle(tint: memoryUsage.used / memoryUsage.total > 0.8 ? .red : .blue))
                                 .scaleEffect(x: 1, y: 0.5)
                         }
                         
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("웹뷰 풀 정리")
-                                    .font(.headline)
-                                Text("사용하지 않는 웹뷰를 정리합니다")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                        HLayout {
+                            VLayout(alignment: .leading) {
+                                CompactText("웹뷰 풀 정리", .headline, .primary)
+                                CompactText("사용하지 않는 웹뷰를 정리합니다", .caption, .secondary)
                             }
-                            
                             Spacer()
-                            
-                            Button("정리") {
-                                manager.clearWebViewPool()
-                            }
-                            .foregroundColor(.blue)
+                            Button("정리") { manager.clearWebViewPool() }.foregroundColor(.blue)
                         }
                     }
                     
                     Section("캐시 설정") {
-                        Toggle("이미지 압축", isOn: $manager.imageCompressionEnabled)
-                            .font(.headline)
-                        
+                        Toggle("이미지 압축", isOn: $manager.imageCompressionEnabled).font(.headline)
                         if manager.imageCompressionEnabled {
-                            Text("이미지를 자동으로 압축하여 메모리 사용량을 줄입니다")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            Text("이미지를 자동으로 압축하여 메모리 사용량을 줄입니다").font(.caption).foregroundColor(.secondary)
                         }
                     }
                     
                     Section("고급 설정") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("메모리 정리 임계값")
-                                    .font(.headline)
-                                
+                        VLayout(alignment: .leading, spacing: 8) {
+                            HLayout {
+                                CompactText("메모리 정리 임계값", .headline, .primary)
                                 Spacer()
-                                
-                                Text("\(Int(manager.memoryThreshold * 100))%")
-                                    .foregroundColor(.secondary)
+                                CompactText("\(Int(manager.memoryThreshold * 100))%", .body, .secondary)
                             }
-                            
-                            Slider(value: $manager.memoryThreshold, in: 0.5...0.95, step: 0.05)
-                                .accentColor(.blue)
+                            Slider(value: $manager.memoryThreshold, in: 0.5...0.95, step: 0.05).accentColor(.blue)
                         }
                         
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("웹뷰 풀 크기")
-                                    .font(.headline)
-                                
+                        VLayout(alignment: .leading, spacing: 8) {
+                            HLayout {
+                                CompactText("웹뷰 풀 크기", .headline, .primary)
                                 Spacer()
-                                
-                                Text("\(manager.webViewPoolSize)개")
-                                    .foregroundColor(.secondary)
+                                CompactText("\(manager.webViewPoolSize)개", .body, .secondary)
                             }
-                            
                             Slider(value: Binding(
                                 get: { Double(manager.webViewPoolSize) },
                                 set: { manager.webViewPoolSize = Int($0) }
-                            ), in: 5...20, step: 1)
-                            .accentColor(.blue)
+                            ), in: 5...20, step: 1).accentColor(.blue)
                         }
                     }
                 }
-                .navigationTitle("성능")
-                .navigationBarTitleDisplayMode(.large)
+                .navigationTitle("성능").navigationBarTitleDisplayMode(.large)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("닫기") {
-                            dismiss()
-                        }
-                    }
+                    ToolbarItem(placement: .navigationBarLeading) { Button("닫기") { dismiss() } }
                 }
             }
         }
     }
 }
 
-// MARK: - 🔧 ContentView Extension (Complete Integration with Popup Alert)
+// MARK: - 🔧 ContentView Extension (동일)
 extension View {
     func siteMenuOverlay(
         manager: SiteMenuManager,
@@ -1813,11 +1111,9 @@ extension View {
                     )
                 }
             }
-            // 🚫 팝업 차단 알림 오버레이
             .overlay {
                 if manager.showPopupBlockedAlert {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
+                    Color.black.opacity(0.4).ignoresSafeArea()
                         .overlay {
                             SiteMenuSystem.UI.PopupBlockedAlert(
                                 domain: manager.popupAlertDomain,
@@ -1832,45 +1128,17 @@ extension View {
                         .animation(.easeInOut(duration: 0.3), value: manager.showPopupBlockedAlert)
                 }
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { manager.showDownloadsList },
-                    set: { manager.showDownloadsList = $0 }
-                )
-            ) {
-                NavigationView {
-                    SiteMenuSystem.UI.DownloadsListView(manager: manager)
-                }
+            .sheet(isPresented: Binding(get: { manager.showDownloadsList }, set: { manager.showDownloadsList = $0 })) {
+                NavigationView { SiteMenuSystem.UI.DownloadsListView(manager: manager) }
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { manager.showHistoryFilterManager },
-                    set: { manager.showHistoryFilterManager = $0 }
-                )
-            ) {
-                NavigationView {
-                    SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager)
-                }
+            .sheet(isPresented: Binding(get: { manager.showHistoryFilterManager }, set: { manager.showHistoryFilterManager = $0 })) {
+                NavigationView { SiteMenuSystem.UI.HistoryFilterManagerView(manager: manager) }
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { manager.showPrivacySettings },
-                    set: { manager.showPrivacySettings = $0 }
-                )
-            ) {
-                NavigationView {
-                    SiteMenuSystem.UI.PrivacySettingsView(manager: manager)
-                }
+            .sheet(isPresented: Binding(get: { manager.showPrivacySettings }, set: { manager.showPrivacySettings = $0 })) {
+                NavigationView { SiteMenuSystem.UI.PrivacySettingsView(manager: manager) }
             }
-            .sheet(
-                isPresented: Binding(
-                    get: { manager.showPerformanceSettings },
-                    set: { manager.showPerformanceSettings = $0 }
-                )
-            ) {
-                NavigationView {
-                    SiteMenuSystem.UI.PerformanceSettingsView(manager: manager)
-                }
+            .sheet(isPresented: Binding(get: { manager.showPerformanceSettings }, set: { manager.showPerformanceSettings = $0 })) {
+                NavigationView { SiteMenuSystem.UI.PerformanceSettingsView(manager: manager) }
             }
     }
 }
