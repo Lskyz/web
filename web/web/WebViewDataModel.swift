@@ -129,6 +129,11 @@ struct PageRecord: Codable, Identifiable, Hashable {
 
     // ✅ 단일 정규화 함수 - 모든 URL 동일하게 처리
     static func normalizeURL(_ url: URL) -> String {
+        // 검색 URL은 특별 처리 (검색어 변경 감지를 위해)
+        if isSearchURL(url) {
+            return normalizeSearchURL(url)
+        }
+        
         guard var comps = normalizedComponents(for: url) else { return url.absoluteString }
 
         // 쿼리: 트래킹 키 제외하고 모든 키/값 보존
@@ -148,6 +153,45 @@ struct PageRecord: Codable, Identifiable, Hashable {
         // 프래그먼트 제거
         comps.fragment = nil
 
+        return comps.url?.absoluteString ?? url.absoluteString
+    }
+    
+    // 🔍 검색 URL 판별 (최소한의 로직만)
+    static func isSearchURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        
+        let searchHosts = ["google.com", "bing.com", "yahoo.com", "duckduckgo.com", "baidu.com", "naver.com"]
+        let isSearchHost = searchHosts.contains { host.contains($0) }
+        
+        if !isSearchHost { return false }
+        
+        // 검색 파라미터 확인
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems else { return false }
+        
+        let searchParams = ["q", "query", "search", "p", "query"]  // Naver는 'query' 사용
+        return queryItems.contains { searchParams.contains($0.name) }
+    }
+    
+    // 🔍 검색 URL 정규화 - 검색어만 남기고 나머지 제거
+    static func normalizeSearchURL(_ url: URL) -> String {
+        guard var comps = normalizedComponents(for: url) else { return url.absoluteString }
+        
+        // 검색 쿼리 파라미터만 유지
+        if let queryItems = comps.queryItems {
+            let searchParams = ["q", "query", "search", "p"]
+            let searchItems = queryItems.filter { searchParams.contains($0.name) }
+            
+            if !searchItems.isEmpty {
+                comps.queryItems = searchItems.sorted { $0.name < $1.name }
+            } else {
+                comps.queryItems = nil
+            }
+        }
+        
+        // 프래그먼트 제거
+        comps.fragment = nil
+        
         return comps.url?.absoluteString ?? url.absoluteString
     }
 
@@ -463,7 +507,24 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
 
             // 일반 URL pop 처리
-            if let existingIndex = findPageIndex(for: url) {
+            // 🔍 검색 URL 특수 처리 (검색어 변경 감지)
+            if PageRecord.isSearchURL(url) {
+                dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
+                
+                // 검색 URL의 경우 검색어가 바뀌었는지 확인
+                if let existingIndex = findSearchPageIndex(for: url) {
+                    dbg("🔄 SPA pop - 동일한 검색어, 기존 페이지로 복원: \(existingIndex)")
+                    _ = enqueueRestore(to: existingIndex)
+                } else {
+                    // 검색어가 바뀌었으면 새 페이지로 추가
+                    if !isHistoryNavigationActive() {
+                        addNewPage(url: url, title: title)
+                        dbg("🔍 SPA pop - 새로운 검색어, 새 페이지 추가")
+                    } else {
+                        dbg("🤫 복원 중 새 검색어 무시: \(url.absoluteString)")
+                    }
+                }
+            } else if let existingIndex = findPageIndex(for: url) {
                 dbg("🔄 SPA pop - 기존 히스토리 항목 복원: \(existingIndex)")
                 _ = enqueueRestore(to: existingIndex)
             } else {
@@ -832,6 +893,29 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
         return matchingIndices.last
     }
+    
+    // 🔍 검색 페이지 전용 인덱스 찾기 (검색어 변경 감지용)
+    private func findSearchPageIndex(for url: URL) -> Int? {
+        guard PageRecord.isSearchURL(url) else { return nil }
+        
+        let searchURL = PageRecord.normalizeSearchURL(url)
+        
+        for (index, record) in pageHistory.enumerated().reversed() {
+            // 현재 페이지는 제외 (자기 자신으로 돌아가는 것 방지)
+            if index == currentPageIndex {
+                continue
+            }
+            
+            if PageRecord.isSearchURL(record.url) {
+                let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
+                if recordSearchURL == searchURL {
+                    return index
+                }
+            }
+        }
+        
+        return nil
+    }
 
     // MARK: - 세션 저장/복원
 
@@ -928,7 +1012,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         }
 
         // 🎯 단순화된 리다이렉트 준비
-        if let url = webView.url {
+        if webView.url != nil {
             isProcessingRedirect = true
         }
     }
