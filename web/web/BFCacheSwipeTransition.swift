@@ -1,13 +1,11 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **BFCache 전환 시스템 - 직접 전환 방식**
-//  ✅ 오버레이 제거 - 웹뷰 자체가 밀려나가는 자연스러운 전환
-//  🔄 복원큐와 단일 경로 통합 (영향 없이 협력)
-//  🏄‍♂️ 제스처/버튼 네비게이션 통합 처리
-//  📸 DOM/JS/스크롤 상태 완벽 복원
-//  🔧 제스처 시작 문제 수정 - .began에서 임계값 검사 제거
-//  🎯 **스냅샷 문제 해결** - 비동기 캡처 타이밍 수정
-//  ✅ **스냅샷 미스 방지 개선** - 신뢰성 향상
+//  🎯 **BFCache 전환 시스템 - 영구 디스크 캐싱**
+//  ✅ FileManager 기반 영구 저장 (앱 재시작 후에도 유지)
+//  🔄 직렬화 큐로 순서 보장 및 충돌 방지
+//  📸 하이브리드 우선순위 시스템 (현재=높음, 과거=일반)
+//  ♾️ 캐시 크기 무제한 (탭 닫을 때만 정리)
+//  💾 메모리 + 디스크 2단계 캐싱 시스템
 //
 
 import UIKit
@@ -35,264 +33,102 @@ private class WeakGestureContext {
 }
 
 // MARK: - 📸 BFCache 페이지 스냅샷
-struct BFCacheSnapshot {
+struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
     let scrollPosition: CGPoint
     var jsState: [String: Any]?
     var formData: [String: Any]?
     let timestamp: Date
-    let webViewSnapshot: UIImage?
-    let captureStatus: CaptureStatus // ✅ 캡처 상태 추가
+    var webViewSnapshotPath: String?  // 이미지는 경로만 저장
+    let captureStatus: CaptureStatus
+    let version: Int
     
-    // ✅ 캡처 상태 enum 추가
-    enum CaptureStatus {
+    enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed        // 캡처 실패
     }
     
-    // ✅ 개선된 정적 팩토리 메서드 - 더 안정적인 캡처
-    static func create(pageRecord: PageRecord, webView: WKWebView?, completion: @escaping (BFCacheSnapshot) -> Void) {
-        guard let webView = webView else {
-            completion(BFCacheSnapshot(
-                pageRecord: pageRecord,
-                scrollPosition: .zero,
-                timestamp: Date(),
-                webViewSnapshot: nil,
-                captureStatus: .failed
-            ))
-            return
-        }
-        
-        // ✅ 웹뷰가 화면에 보이는지 확인
-        guard webView.window != nil, !webView.bounds.isEmpty else {
-            TabPersistenceManager.debugMessages.append("⚠️ 웹뷰가 화면에 없거나 크기가 0 - 스냅샷 스킵")
-            completion(BFCacheSnapshot(
-                pageRecord: pageRecord,
-                scrollPosition: webView.scrollView.contentOffset,
-                timestamp: Date(),
-                webViewSnapshot: nil,
-                captureStatus: .failed
-            ))
-            return
-        }
-        
-        let scrollPosition = webView.scrollView.contentOffset
-        let timestamp = Date()
-        
-        // 시각적 스냅샷, DOM, JS 상태를 모두 비동기로 캡처
-        var visualSnapshot: UIImage? = nil
-        var tempDom: String? = nil
-        var tempJs: [String: Any]? = nil
-        var tempForm: [String: Any]? = nil
-        var captureResults: [Bool] = []
-        
-        let group = DispatchGroup()
-        
-        // 🎯 핵심 수정: WKWebView.takeSnapshot 사용 + 타임아웃
-        group.enter()
-        var snapshotCompleted = false
-        
-        // ✅ 타임아웃 설정 (2초)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if !snapshotCompleted {
-                TabPersistenceManager.debugMessages.append("⏱️ 스냅샷 타임아웃 - fallback 사용")
-                // Fallback to layer rendering
-                visualSnapshot = captureWebViewAsImage(webView)
-                captureResults.append(visualSnapshot != nil)
-                group.leave()
-            }
-        }
-        
-        webView.takeSnapshot(with: nil) { image, error in
-            snapshotCompleted = true
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 실패: \(error.localizedDescription)")
-                // ✅ Fallback 시도
-                visualSnapshot = captureWebViewAsImage(webView)
-                captureResults.append(visualSnapshot != nil)
-            } else {
-                visualSnapshot = image
-                captureResults.append(true)
-                TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 성공: \(image?.size ?? CGSize.zero)")
-            }
-            group.leave()
-        }
-        
-        // ✅ DOM 캡처 개선 - 안전한 캡처
-        group.enter()
-        let domScript = """
-        (function() {
-            try {
-                // 페이지가 충분히 로드되었는지 확인
-                if (document.readyState !== 'complete') {
-                    return null;
-                }
-                // DOM이 너무 크면 일부만 캡처
-                const html = document.documentElement.outerHTML;
-                if (html.length > 500000) { // 500KB 제한
-                    return html.substring(0, 500000) + '<!-- truncated -->';
-                }
-                return html;
-            } catch(e) {
-                return null;
-            }
-        })()
-        """
-        
-        webView.evaluateJavaScript(domScript) { result, error in
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📄 DOM 캡처 실패: \(error.localizedDescription)")
-                captureResults.append(false)
-            } else {
-                tempDom = result as? String
-                captureResults.append(tempDom != nil)
-                if let dom = tempDom {
-                    TabPersistenceManager.debugMessages.append("📄 DOM 캡처 성공: \(dom.prefix(100))...")
-                }
-            }
-            group.leave()
-        }
-        
-        // ✅ JS 상태 및 폼 데이터 캡처 개선
-        group.enter()
-        let jsScript = """
-        (function() {
-            try {
-                // 페이지 준비 상태 확인
-                if (typeof document === 'undefined') return null;
-                
-                const formData = {};
-                // ✅ 더 안전한 폼 데이터 수집
-                const inputs = document.querySelectorAll('input:not([type="password"]), textarea, select');
-                for (let i = 0; i < Math.min(inputs.length, 100); i++) { // 최대 100개 제한
-                    const el = inputs[i];
-                    if (el.name || el.id) {
-                        const key = el.name || el.id;
-                        if (el.type === 'checkbox' || el.type === 'radio') {
-                            formData[key] = el.checked;
-                        } else if (el.value && el.value.length < 1000) { // 긴 값 제외
-                            formData[key] = el.value;
-                        }
-                    }
-                }
-                
-                const scrollData = {
-                    x: window.scrollX || 0,
-                    y: window.scrollY || 0,
-                    elements: []
-                };
-                
-                // ✅ 스크롤 요소 제한 (최대 20개)
-                const scrollableElements = document.querySelectorAll('*');
-                let scrollCount = 0;
-                for (let i = 0; i < scrollableElements.length && scrollCount < 20; i++) {
-                    const el = scrollableElements[i];
-                    if (el.scrollTop > 0 || el.scrollLeft > 0) {
-                        scrollData.elements.push({
-                            index: i,
-                            top: el.scrollTop,
-                            left: el.scrollLeft,
-                            selector: el.tagName + (el.id ? '#' + el.id : '')
-                        });
-                        scrollCount++;
-                    }
-                }
-                
-                return {
-                    forms: formData,
-                    scroll: scrollData,
-                    href: window.location.href,
-                    title: document.title || '',
-                    timestamp: Date.now(),
-                    ready: document.readyState
-                };
-            } catch(e) { 
-                console.error('BFCache JS 상태 캡처 실패:', e);
-                return {
-                    forms: {},
-                    scroll: { x: 0, y: 0, elements: [] },
-                    error: e.message
-                };
-            }
-        })()
-        """
-        
-        webView.evaluateJavaScript(jsScript) { result, error in
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🔧 JS 상태 캡처 실패: \(error.localizedDescription)")
-                captureResults.append(false)
-            } else if let data = result as? [String: Any] {
-                tempForm = data["forms"] as? [String: Any]
-                tempJs = data
-                captureResults.append(true)
-                TabPersistenceManager.debugMessages.append("🔧 JS 상태 캡처 성공: \(data.keys.sorted())")
-            } else {
-                captureResults.append(false)
-            }
-            group.leave()
-        }
-        
-        // ✅ 모든 캡처 완료 후 스냅샷 생성
-        group.notify(queue: .main) {
-            // 캡처 상태 결정
-            let successCount = captureResults.filter { $0 }.count
-            let captureStatus: CaptureStatus
-            
-            if successCount == captureResults.count {
-                captureStatus = .complete
-            } else if visualSnapshot != nil {
-                captureStatus = successCount > 1 ? .partial : .visualOnly
-            } else {
-                captureStatus = .failed
-            }
-            
-            let snapshot = BFCacheSnapshot(
-                pageRecord: pageRecord,
-                domSnapshot: tempDom,
-                scrollPosition: scrollPosition,
-                jsState: tempJs,
-                formData: tempForm,
-                timestamp: timestamp,
-                webViewSnapshot: visualSnapshot,
-                captureStatus: captureStatus
-            )
-            
-            TabPersistenceManager.debugMessages.append(
-                "📸 BFCache 스냅샷 완성: \(pageRecord.title) " +
-                "[상태: \(captureStatus)] " +
-                "(이미지: \(visualSnapshot != nil ? "✅" : "❌"), " +
-                "DOM: \(tempDom != nil ? "✅" : "❌"), " +
-                "JS: \(tempJs != nil ? "✅" : "❌"))"
-            )
-            
-            completion(snapshot)
-        }
+    // Codable을 위한 CodingKeys
+    enum CodingKeys: String, CodingKey {
+        case pageRecord
+        case domSnapshot
+        case scrollPosition
+        case jsState
+        case formData
+        case timestamp
+        case webViewSnapshotPath
+        case captureStatus
+        case version
     }
     
-    // ✅ Layer 렌더링을 사용한 fallback 캡처
-    private static func captureWebViewAsImage(_ webView: WKWebView) -> UIImage? {
-        let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
-        return renderer.image { context in
-            webView.layer.render(in: context.cgContext)
+    // Custom encoding/decoding for [String: Any]
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pageRecord = try container.decode(PageRecord.self, forKey: .pageRecord)
+        domSnapshot = try container.decodeIfPresent(String.self, forKey: .domSnapshot)
+        scrollPosition = try container.decode(CGPoint.self, forKey: .scrollPosition)
+        
+        // JSON decode for [String: Any]
+        if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
+            jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
         }
+        if let formDataRaw = try container.decodeIfPresent(Data.self, forKey: .formData) {
+            formData = try JSONSerialization.jsonObject(with: formDataRaw) as? [String: Any]
+        }
+        
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
+        captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
+        version = try container.decode(Int.self, forKey: .version)
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(pageRecord, forKey: .pageRecord)
+        try container.encodeIfPresent(domSnapshot, forKey: .domSnapshot)
+        try container.encode(scrollPosition, forKey: .scrollPosition)
+        
+        // JSON encode for [String: Any]
+        if let js = jsState {
+            let jsData = try JSONSerialization.data(withJSONObject: js)
+            try container.encode(jsData, forKey: .jsState)
+        }
+        if let form = formData {
+            let formDataRaw = try JSONSerialization.data(withJSONObject: form)
+            try container.encode(formDataRaw, forKey: .formData)
+        }
+        
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
+        try container.encode(captureStatus, forKey: .captureStatus)
+        try container.encode(version, forKey: .version)
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, formData: [String: Any]? = nil, timestamp: Date, webViewSnapshot: UIImage? = nil, captureStatus: CaptureStatus = .partial) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, formData: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
         self.jsState = jsState
         self.formData = formData
         self.timestamp = timestamp
-        self.webViewSnapshot = webViewSnapshot
+        self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
+        self.version = version
     }
     
-    // ✅ 개선된 복원 메서드
+    // 이미지 로드 메서드
+    func loadImage() -> UIImage? {
+        guard let path = webViewSnapshotPath else { return nil }
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return UIImage(contentsOfFile: url.path)
+    }
+    
+    // 개선된 복원 메서드
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -438,24 +274,41 @@ struct BFCacheSnapshot {
     }
 }
 
-// MARK: - 🎯 BFCache 전환 시스템 (직접 전환 방식)
+// MARK: - 🎯 BFCache 전환 시스템 (영구 디스크 캐싱)
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
     static let shared = BFCacheTransitionSystem()
     private override init() {
         super.init()
+        // 앱 시작시 디스크 캐시 로드
+        loadDiskCacheIndex()
     }
     
-    // MARK: - 캐시 저장소
-    private var cache: [UUID: BFCacheSnapshot] = [:]
-    private let maxCacheSize = 30 // ✅ 캐시 크기 증가 (20 -> 30)
-    private let cacheQueue = DispatchQueue(label: "bfcache", attributes: .concurrent)
+    // MARK: - 📸 직렬화 큐 시스템 (하이브리드 우선순위)
+    private let highPriorityCaptureQueue = DispatchQueue(label: "bfcache.capture.high", qos: .userInteractive)
+    private let normalCaptureQueue = DispatchQueue(label: "bfcache.capture.normal", qos: .utility)
+    private let storageQueue = DispatchQueue(label: "bfcache.storage", attributes: .concurrent)
+    private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
-    // ✅ 개선: 디바운스 시간 증가 및 펜딩 캡처 관리
-    private var lastArrivalStoreAt: [UUID: Date] = [:]
-    private var lastLeavingStoreAt: [UUID: Date] = [:]
-    private var pendingCaptures: Set<UUID> = [] // ✅ 진행 중인 캡처 추적
+    // MARK: - 💾 2단계 캐싱 시스템
+    private var memoryCache: [UUID: BFCacheSnapshot] = [:]  // 메모리 캐시 (빠른 접근)
+    private var diskCacheIndex: [UUID: String] = [:]        // 디스크 캐시 인덱스 (경로 매핑)
+    private var cacheVersion: [UUID: Int] = [:]             // 스냅샷 버전 관리
+    
+    // MARK: - 파일 시스템 경로
+    private var bfCacheDirectory: URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documentsPath.appendingPathComponent("BFCache", isDirectory: true)
+    }
+    
+    private func tabDirectory(for tabID: UUID) -> URL {
+        return bfCacheDirectory.appendingPathComponent("Tab_\(tabID.uuidString)", isDirectory: true)
+    }
+    
+    private func pageDirectory(for pageID: UUID, tabID: UUID, version: Int) -> URL {
+        return tabDirectory(for: tabID).appendingPathComponent("Page_\(pageID.uuidString)_v\(version)", isDirectory: true)
+    }
     
     // MARK: - 전환 상태
     private var activeTransitions: [UUID: TransitionContext] = [:]
@@ -469,44 +322,386 @@ final class BFCacheTransitionSystem: NSObject {
         var direction: NavigationDirection
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
-        var currentSnapshot: UIImage? // 🎯 현재 페이지 스냅샷 저장
+        var currentSnapshot: UIImage?
     }
     
     enum NavigationDirection {
         case back, forward
     }
     
-    // MARK: - 캐시 관리
+    enum CaptureType {
+        case immediate  // 현재 페이지 (높은 우선순위)
+        case background // 과거 페이지 (일반 우선순위)
+    }
     
-    // ✅ 개선된 스냅샷 저장 메서드
-    private func storeSnapshot(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
-        cacheQueue.async(flags: .barrier) {
-            self.cache[pageID] = snapshot
-            self.pendingCaptures.remove(pageID) // ✅ 캡처 완료 표시
+    // MARK: - 💾 디스크 캐시 관리
+    
+    private func createDirectoryIfNeeded(at url: URL) {
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+        }
+    }
+    
+    private func loadDiskCacheIndex() {
+        diskIOQueue.async { [weak self] in
+            guard let self = self else { return }
             
-            // ✅ LRU 방식으로 캐시 관리
-            if self.cache.count > self.maxCacheSize {
-                // 접근 시간 기준으로 정렬하여 가장 오래된 것 제거
-                let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
-                if let oldest = sorted.first {
-                    self.cache.removeValue(forKey: oldest.key)
-                    self.dbg("🗑️ BFCache 오래된 항목 제거: \(String(oldest.key.uuidString.prefix(8)))")
+            // BFCache 디렉토리 생성
+            self.createDirectoryIfNeeded(at: self.bfCacheDirectory)
+            
+            // 모든 탭 디렉토리 스캔
+            do {
+                let tabDirs = try FileManager.default.contentsOfDirectory(at: self.bfCacheDirectory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+                
+                for tabDir in tabDirs {
+                    if tabDir.lastPathComponent.hasPrefix("Tab_") {
+                        // 각 페이지 디렉토리 스캔
+                        let pageDirs = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+                        
+                        for pageDir in pageDirs {
+                            if pageDir.lastPathComponent.hasPrefix("Page_") {
+                                // metadata.json 로드
+                                let metadataPath = pageDir.appendingPathComponent("metadata.json")
+                                if let data = try? Data(contentsOf: metadataPath),
+                                   let metadata = try? JSONDecoder().decode(CacheMetadata.self, from: data) {
+                                    
+                                    self.storageQueue.async(flags: .barrier) {
+                                        self.diskCacheIndex[metadata.pageID] = pageDir.path
+                                        self.cacheVersion[metadata.pageID] = metadata.version
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+                
+                self.dbg("💾 디스크 캐시 인덱스 로드 완료: \(self.diskCacheIndex.count)개 항목")
+            } catch {
+                self.dbg("❌ 디스크 캐시 로드 실패: \(error)")
             }
         }
-        dbg("📸 BFCache 저장: \(String(pageID.uuidString.prefix(8))) - \(snapshot.pageRecord.title) [상태: \(snapshot.captureStatus)]")
+    }
+    
+    private struct CacheMetadata: Codable {
+        let pageID: UUID
+        let tabID: UUID
+        let version: Int
+        let timestamp: Date
+        let url: String
+        let title: String
+    }
+    
+    // MARK: - 📸 직렬화된 캡처 시스템
+    
+    func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
+        guard let webView = webView else {
+            dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
+            return
+        }
+        
+        // 우선순위에 따른 큐 선택
+        let queue = (type == .immediate) ? highPriorityCaptureQueue : normalCaptureQueue
+        
+        queue.async { [weak self] in
+            self?.performSerialCapture(pageRecord: pageRecord, webView: webView, tabID: tabID)
+        }
+    }
+    
+    private func performSerialCapture(pageRecord: PageRecord, webView: WKWebView, tabID: UUID? = nil) {
+        // 메인 스레드에서 웹뷰 상태 확인
+        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+            // 웹뷰가 준비되었는지 확인
+            guard webView.window != nil, !webView.bounds.isEmpty else {
+                dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(pageRecord.title)")
+                return nil
+            }
+            
+            return CaptureData(
+                scrollPosition: webView.scrollView.contentOffset,
+                bounds: webView.bounds,
+                isLoading: webView.isLoading
+            )
+        }
+        
+        guard let data = captureData else { return }
+        
+        // 로딩 중이면 잠시 대기
+        if data.isLoading {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        
+        // 동기식 캡처 수행
+        let snapshot = self.syncCapture(pageRecord: pageRecord, webView: webView, captureData: data)
+        
+        // 이미지를 디스크에 저장하고 경로만 스냅샷에 저장
+        if let tabID = tabID {
+            self.saveToDisk(snapshot: snapshot, tabID: tabID)
+        } else {
+            // tabID가 없으면 메모리에만 저장
+            self.storeInMemory(snapshot, for: pageRecord.id)
+        }
+    }
+    
+    private struct CaptureData {
+        let scrollPosition: CGPoint
+        let bounds: CGRect
+        let isLoading: Bool
+    }
+    
+    private func syncCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+        var visualSnapshot: UIImage? = nil
+        var domSnapshot: String? = nil
+        var jsState: [String: Any]? = nil
+        var formData: [String: Any]? = nil
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        // 1. 비주얼 스냅샷 (메인 스레드)
+        DispatchQueue.main.sync {
+            let config = WKSnapshotConfiguration()
+            config.rect = captureData.bounds
+            config.afterScreenUpdates = false
+            
+            webView.takeSnapshot(with: config) { image, error in
+                if let error = error {
+                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    // Fallback: layer 렌더링
+                    visualSnapshot = self.renderWebViewToImage(webView)
+                } else {
+                    visualSnapshot = image
+                    self.dbg("📸 스냅샷 성공: \(pageRecord.title)")
+                }
+                semaphore.signal()
+            }
+        }
+        semaphore.wait()
+        
+        // 2. DOM 캡처 (간소화)
+        DispatchQueue.main.sync {
+            let domScript = """
+            (function() {
+                try {
+                    if (document.readyState !== 'complete') return null;
+                    const html = document.documentElement.outerHTML;
+                    return html.length > 100000 ? html.substring(0, 100000) : html;
+                } catch(e) { return null; }
+            })()
+            """
+            
+            webView.evaluateJavaScript(domScript) { result, error in
+                domSnapshot = result as? String
+                semaphore.signal()
+            }
+        }
+        semaphore.wait()
+        
+        // 3. JS 상태 캡처 (간소화)
+        DispatchQueue.main.sync {
+            let jsScript = """
+            (function() {
+                try {
+                    const formData = {};
+                    document.querySelectorAll('input:not([type="password"]), textarea, select').forEach((el, i) => {
+                        if (i >= 50) return; // 최대 50개
+                        if (el.name || el.id) {
+                            formData[el.name || el.id] = el.value || el.checked;
+                        }
+                    });
+                    
+                    return {
+                        forms: formData,
+                        scroll: { x: window.scrollX, y: window.scrollY },
+                        href: window.location.href,
+                        title: document.title
+                    };
+                } catch(e) { return null; }
+            })()
+            """
+            
+            webView.evaluateJavaScript(jsScript) { result, error in
+                if let data = result as? [String: Any] {
+                    jsState = data
+                    formData = data["forms"] as? [String: Any]
+                }
+                semaphore.signal()
+            }
+        }
+        semaphore.wait()
+        
+        // 캡처 상태 결정
+        let captureStatus: BFCacheSnapshot.CaptureStatus
+        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
+            captureStatus = .complete
+        } else if visualSnapshot != nil {
+            captureStatus = jsState != nil ? .partial : .visualOnly
+        } else {
+            captureStatus = .failed
+        }
+        
+        // 버전 증가
+        let version = (self.cacheVersion[pageRecord.id] ?? 0) + 1
+        self.cacheVersion[pageRecord.id] = version
+        
+        let snapshot = BFCacheSnapshot(
+            pageRecord: pageRecord,
+            domSnapshot: domSnapshot,
+            scrollPosition: captureData.scrollPosition,
+            jsState: jsState,
+            formData: formData,
+            timestamp: Date(),
+            webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
+            captureStatus: captureStatus,
+            version: version
+        )
+        
+        dbg("✅ 캡처 완료: \(pageRecord.title) [v\(version)] [상태: \(captureStatus)]")
+        return (snapshot, visualSnapshot)
+    }
+    
+    private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+        return renderer.image { context in
+            webView.layer.render(in: context.cgContext)
+        }
+    }
+    
+    // MARK: - 💾 디스크 저장
+    
+    private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
+        diskIOQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let pageID = snapshot.snapshot.pageRecord.id
+            let version = snapshot.snapshot.version
+            let pageDir = self.pageDirectory(for: pageID, tabID: tabID, version: version)
+            
+            // 디렉토리 생성
+            self.createDirectoryIfNeeded(at: pageDir)
+            
+            var finalSnapshot = snapshot.snapshot
+            
+            // 1. 이미지 저장 (JPEG 압축)
+            if let image = snapshot.image {
+                let imagePath = pageDir.appendingPathComponent("snapshot.jpg")
+                if let jpegData = image.jpegData(compressionQuality: 0.7) {
+                    try? jpegData.write(to: imagePath)
+                    finalSnapshot.webViewSnapshotPath = imagePath.path
+                    self.dbg("💾 이미지 저장: \(imagePath.lastPathComponent)")
+                }
+            }
+            
+            // 2. 상태 데이터 저장 (JSON)
+            let statePath = pageDir.appendingPathComponent("state.json")
+            if let stateData = try? JSONEncoder().encode(finalSnapshot) {
+                try? stateData.write(to: statePath)
+                self.dbg("💾 상태 저장: \(statePath.lastPathComponent)")
+            }
+            
+            // 3. 메타데이터 저장
+            let metadata = CacheMetadata(
+                pageID: pageID,
+                tabID: tabID,
+                version: version,
+                timestamp: Date(),
+                url: snapshot.snapshot.pageRecord.url.absoluteString,
+                title: snapshot.snapshot.pageRecord.title
+            )
+            
+            let metadataPath = pageDir.appendingPathComponent("metadata.json")
+            if let metadataData = try? JSONEncoder().encode(metadata) {
+                try? metadataData.write(to: metadataPath)
+            }
+            
+            // 4. 인덱스 업데이트
+            self.storageQueue.async(flags: .barrier) {
+                self.diskCacheIndex[pageID] = pageDir.path
+                self.memoryCache[pageID] = finalSnapshot  // 메모리 캐시도 업데이트
+                self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
+            }
+            
+            // 5. 이전 버전 정리 (최신 3개만 유지)
+            self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
+        }
+    }
+    
+    private func cleanupOldVersions(pageID: UUID, tabID: UUID, currentVersion: Int) {
+        let tabDir = tabDirectory(for: tabID)
+        let pagePrefix = "Page_\(pageID.uuidString)_v"
+        
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil)
+            let pageDirs = contents.filter { $0.lastPathComponent.hasPrefix(pagePrefix) }
+                .sorted { url1, url2 in
+                    // 버전 번호 추출하여 정렬
+                    let v1 = Int(url1.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
+                    let v2 = Int(url2.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
+                    return v1 > v2  // 최신 버전부터
+                }
+            
+            // 최신 3개 제외하고 삭제
+            if pageDirs.count > 3 {
+                for i in 3..<pageDirs.count {
+                    try FileManager.default.removeItem(at: pageDirs[i])
+                    dbg("🗑️ 이전 버전 삭제: \(pageDirs[i].lastPathComponent)")
+                }
+            }
+        } catch {
+            dbg("⚠️ 이전 버전 정리 실패: \(error)")
+        }
+    }
+    
+    // MARK: - 메모리 캐시 관리
+    
+    private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
+        storageQueue.async(flags: .barrier) {
+            self.memoryCache[pageID] = snapshot
+            self.dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
+        }
     }
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
-        cacheQueue.sync {
-            cache[pageID]
+        // 1. 먼저 메모리 캐시 확인
+        if let snapshot = storageQueue.sync(execute: { memoryCache[pageID] }) {
+            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title)")
+            return snapshot
         }
+        
+        // 2. 디스크 캐시 확인
+        if let diskPath = storageQueue.sync(execute: { diskCacheIndex[pageID] }) {
+            let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
+            
+            if let data = try? Data(contentsOf: statePath),
+               let snapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
+                
+                // 메모리 캐시에도 저장
+                storageQueue.async(flags: .barrier) {
+                    self.memoryCache[pageID] = snapshot
+                }
+                
+                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title)")
+                return snapshot
+            }
+        }
+        
+        dbg("❌ 캐시 미스: \(pageID)")
+        return nil
     }
     
-    // ✅ 캡처 진행 중인지 확인
-    private func isCaptureInProgress(for pageID: UUID) -> Bool {
-        cacheQueue.sync {
-            pendingCaptures.contains(pageID)
+    // 탭 닫을 때만 호출
+    func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
+        // 메모리에서 제거
+        storageQueue.async(flags: .barrier) {
+            for pageID in pageIDs {
+                self.memoryCache.removeValue(forKey: pageID)
+                self.diskCacheIndex.removeValue(forKey: pageID)
+                self.cacheVersion.removeValue(forKey: pageID)
+            }
+        }
+        
+        // 디스크에서 제거
+        diskIOQueue.async {
+            let tabDir = self.tabDirectory(for: tabID)
+            try? FileManager.default.removeItem(at: tabDir)
+            self.dbg("🗑️ 탭 캐시 완전 삭제: \(tabID.uuidString)")
         }
     }
     
@@ -560,12 +755,16 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 🔧 수정: .began에서는 임계값 검사 제거, 방향과 가능 여부만 확인
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 🎯 핵심 수정: 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
+                // 현재 페이지 즉시 캡처 (높은 우선순위)
+                if let currentRecord = stateModel.dataModel.currentPageRecord {
+                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
+                }
+                
+                // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
                 captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
                     self?.beginGestureTransitionWithSnapshot(
                         tabID: tabID,
@@ -580,7 +779,6 @@ final class BFCacheTransitionSystem: NSObject {
             }
             
         case .changed:
-            // ✅ 임계값 검사는 실제 이동이 발생한 후에만 적용
             guard horizontalEnough && signOK else { return }
             updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
             
@@ -601,10 +799,9 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 현재 페이지 스냅샷 캡처 (새로운 메서드)
+    // MARK: - 현재 페이지 스냅샷 캡처
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
-        // ✅ 개선: 더 안정적인 스냅샷 캡처
         let captureConfig = WKSnapshotConfiguration()
         captureConfig.rect = webView.bounds
         captureConfig.afterScreenUpdates = false
@@ -632,26 +829,13 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 직접 전환 처리 (스냅샷과 함께)
+    // MARK: - 직접 전환 처리 (스냅샷과 함께)
     
     private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
-        // 현재 페이지 BFCache 저장
-        if let currentRecord = stateModel.dataModel.currentPageRecord {
-            // ✅ 이미 캡처 중이 아닌 경우에만 저장
-            if !isCaptureInProgress(for: currentRecord.id) {
-                cacheQueue.async(flags: .barrier) {
-                    self.pendingCaptures.insert(currentRecord.id)
-                }
-                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
-                    self?.storeSnapshot(snapshot, for: currentRecord.id)
-                }
-            }
-        }
-        
         // 웹뷰의 초기 transform 저장
         let initialTransform = webView.transform
         
-        // 🎯 이전/다음 페이지 미리보기를 위한 컨테이너 생성 (스냅샷 포함)
+        // 이전/다음 페이지 미리보기를 위한 컨테이너 생성 (스냅샷 포함)
         let previewContainer = createPreviewContainer(
             webView: webView,
             direction: direction,
@@ -717,7 +901,7 @@ final class BFCacheTransitionSystem: NSObject {
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
         
-        // 🎯 핵심 수정: 현재 웹뷰의 실제 스냅샷 사용
+        // 현재 웹뷰의 실제 스냅샷 사용
         let currentView: UIView
         if let snapshot = currentSnapshot {
             let imageView = UIImageView(image: snapshot)
@@ -762,7 +946,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // BFCache에서 스냅샷 가져오기
             if let snapshot = retrieveSnapshot(for: targetRecord.id),
-               let targetImage = snapshot.webViewSnapshot {
+               let targetImage = snapshot.loadImage() {  // 디스크에서 이미지 로드
                 let imageView = UIImageView(image: targetImage)
                 imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
@@ -958,20 +1142,12 @@ final class BFCacheTransitionSystem: NSObject {
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
-              let _ = stateModel.tabID,
+              let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 BFCache 저장
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            // ✅ 이미 캡처 중이 아닌 경우에만 저장
-            if !isCaptureInProgress(for: currentRecord.id) {
-                cacheQueue.async(flags: .barrier) {
-                    self.pendingCaptures.insert(currentRecord.id)
-                }
-                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
-                    self?.storeSnapshot(snapshot, for: currentRecord.id)
-                }
-            }
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         // 즉시 네비게이션 (복원큐 사용)
@@ -981,20 +1157,12 @@ final class BFCacheTransitionSystem: NSObject {
     
     func navigateForward(stateModel: WebViewStateModel) {
         guard stateModel.canGoForward,
-              let _ = stateModel.tabID,
+              let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 BFCache 저장
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            // ✅ 이미 캡처 중이 아닌 경우에만 저장
-            if !isCaptureInProgress(for: currentRecord.id) {
-                cacheQueue.async(flags: .barrier) {
-                    self.pendingCaptures.insert(currentRecord.id)
-                }
-                BFCacheSnapshot.create(pageRecord: currentRecord, webView: webView) { [weak self] snapshot in
-                    self?.storeSnapshot(snapshot, for: currentRecord.id)
-                }
-            }
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         // 즉시 네비게이션 (복원큐 사용)
@@ -1010,12 +1178,10 @@ final class BFCacheTransitionSystem: NSObject {
         // 복원큐 시스템 사용 (safariStyle 메서드 대체)
         switch context.direction {
         case .back:
-            // 기존 safariStyleGoBack 로직 흡수
             UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goBack()
             dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
-            // 기존 safariStyleGoForward 로직 흡수
             UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goForward()
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
@@ -1036,13 +1202,12 @@ final class BFCacheTransitionSystem: NSObject {
                 webView.reload()
                 dbg("🔄 동적 페이지 리로드: \(currentRecord.title)")
             } else {
-                // 🎯 핵심 수정: 실패시에도 리로드 안하기
+                // 복원 시도
                 snapshot.restore(to: webView) { [weak self] success in
                     if success {
                         self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
                     } else {
-                        // ❌ 기존: webView.reload() → 제거!
-                        // ✅ 새로운 전략: 그냥 현재 상태 유지
+                        // 실패해도 현재 상태 유지
                         self?.dbg("⚠️ BFCache 복원 실패했지만 현재 상태 유지: \(currentRecord.title)")
                     }
                 }
@@ -1056,7 +1221,6 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
     
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
-        // 기존 DataModel.handleSwipeGestureDetected 로직 흡수
         // 복원 중이면 무시
         if stateModel.dataModel.isHistoryNavigationActive() {
             TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
@@ -1154,156 +1318,21 @@ extension BFCacheTransitionSystem {
 
     /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
-        guard let rec = stateModel.dataModel.currentPageRecord else { return }
-        let now = Date()
+        guard let rec = stateModel.dataModel.currentPageRecord,
+              let tabID = stateModel.tabID else { return }
         
-        // ✅ 개선: 디바운스 시간 증가 (250ms -> 500ms)
-        if let t = lastLeavingStoreAt[rec.id], now.timeIntervalSince(t) < 0.5 { return }
-        lastLeavingStoreAt[rec.id] = now
-        
-        // ✅ 이미 캡처 중이면 스킵
-        if isCaptureInProgress(for: rec.id) {
-            dbg("⏳ 이미 캡처 진행 중 - 스킵: \(rec.title)")
-            return
-        }
-        
-        cacheQueue.async(flags: .barrier) {
-            self.pendingCaptures.insert(rec.id)
-        }
-
-        BFCacheSnapshot.create(pageRecord: rec, webView: webView) { [weak self] snap in
-            self?.storeSnapshot(snap, for: rec.id)
-        }
+        // 즉시 캡처 (디바운싱 제거)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
+        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
     /// 문서 로드 완료 후 **도착 페이지**를 저장
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
-        guard let rec = stateModel.dataModel.currentPageRecord else { return }
-        let now = Date()
+        guard let rec = stateModel.dataModel.currentPageRecord,
+              let tabID = stateModel.tabID else { return }
         
-        // ✅ 개선: 디바운스 시간 증가 (500ms -> 1초)
-        if let t = lastArrivalStoreAt[rec.id], now.timeIntervalSince(t) < 1.0 { return }
-        lastArrivalStoreAt[rec.id] = now
-        
-        // ✅ 이미 캡처 중이면 스킵
-        if isCaptureInProgress(for: rec.id) {
-            dbg("⏳ 이미 캡처 진행 중 - 스킵: \(rec.title)")
-            return
-        }
-        
-        // ✅ 이미 캐시에 있으면 스킵 (중복 방지)
-        if let existing = retrieveSnapshot(for: rec.id), existing.captureStatus != .failed {
-            dbg("✅ 이미 캐시에 존재 - 스킵: \(rec.title) [상태: \(existing.captureStatus)]")
-            return
-        }
-        
-        cacheQueue.async(flags: .barrier) {
-            self.pendingCaptures.insert(rec.id)
-        }
-
-        // ✅ 개선: 더 긴 안정화 대기
-        captureWhenFullyStable(webView) { [weak self] in
-            BFCacheSnapshot.create(pageRecord: rec, webView: webView) { snap in
-                self?.storeSnapshot(snap, for: rec.id)
-            }
-        }
-    }
-
-    /// ✅ 개선된 안정화 대기 - 이미지 로드까지 고려
-    private func captureWhenFullyStable(_ webView: WKWebView, _ work: @escaping () -> Void) {
-        if webView.isLoading {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.captureWhenFullyStable(webView, work)
-            }
-            return
-        }
-        
-        // ✅ 더 정교한 준비 상태 확인
-        let readyScript = """
-        (function() {
-            // 문서 준비 상태
-            const docReady = document.readyState === 'complete';
-            
-            // 이미지 로드 상태 (최대 10개만 체크)
-            const images = Array.from(document.images).slice(0, 10);
-            const imagesLoaded = images.length === 0 || images.every(img => img.complete);
-            
-            // 비디오 준비 상태
-            const videos = Array.from(document.querySelectorAll('video')).slice(0, 5);
-            const videosReady = videos.length === 0 || videos.every(v => v.readyState >= 2);
-            
-            // Ajax/Fetch 활동 감지 (대략적)
-            const hasPendingFetch = window.performance && window.performance
-                .getEntriesByType('resource')
-                .filter(e => e.name.includes('api') || e.name.includes('ajax'))
-                .some(e => e.responseEnd === 0);
-            
-            return {
-                ready: docReady && imagesLoaded && videosReady && !hasPendingFetch,
-                details: {
-                    doc: docReady,
-                    img: imagesLoaded,
-                    vid: videosReady,
-                    ajax: !hasPendingFetch
-                }
-            };
-        })()
-        """
-        
-        webView.evaluateJavaScript(readyScript) { [weak self] result, error in
-            if let data = result as? [String: Any],
-               let isReady = data["ready"] as? Bool {
-                
-                if isReady {
-                    // ✅ 추가 프레임 대기 (렌더링 완료)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        work()
-                    }
-                } else {
-                    // 디테일 로깅
-                    if let details = data["details"] as? [String: Bool] {
-                        self?.dbg("⏳ 페이지 안정화 대기 중: doc=\(details["doc"] ?? false), img=\(details["img"] ?? false), vid=\(details["vid"] ?? false), ajax=\(details["ajax"] ?? false)")
-                    }
-                    
-                    // 재시도 (최대 5초까지)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                        self?.captureWhenFullyStable(webView, work)
-                    }
-                }
-            } else {
-                // 스크립트 실행 실패 시 바로 실행
-                work()
-            }
-        }
-    }
-    
-    // ✅ 캐시 정리 메서드 추가
-    func clearCacheForTab(_ tabID: UUID) {
-        cacheQueue.async(flags: .barrier) {
-            // 탭의 모든 스냅샷 제거
-            let keysToRemove = self.cache.keys.filter { key in
-                // tabID와 연관된 캐시 찾기 (구현에 따라 조정 필요)
-                true // 실제로는 PageRecord의 tabID를 확인해야 함
-            }
-            
-            keysToRemove.forEach { self.cache.removeValue(forKey: $0) }
-            self.pendingCaptures.removeAll()
-            self.dbg("🗑️ 탭 캐시 정리: \(keysToRemove.count)개 항목 제거")
-        }
-    }
-    
-    // ✅ 메모리 경고 처리
-    func handleMemoryWarning() {
-        cacheQueue.async(flags: .barrier) {
-            // 가장 오래된 50% 제거
-            let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
-            let removeCount = sorted.count / 2
-            
-            sorted.prefix(removeCount).forEach { item in
-                self.cache.removeValue(forKey: item.key)
-            }
-            
-            self.dbg("⚠️ 메모리 경고 - 캐시 \(removeCount)개 제거")
-        }
+        // 백그라운드 캡처 (낮은 우선순위)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
+        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
     }
 }
