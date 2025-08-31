@@ -305,7 +305,8 @@ struct BFCacheSnapshot {
         case .visualOnly:
             // 이미지만 있으면 URL 로드 후 스크롤 위치만 복원
             webView.load(URLRequest(url: pageRecord.url))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // ✅ 스크롤 즉시 복원 (대기 시간 단축)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
                 completion(true)
             }
@@ -320,92 +321,77 @@ struct BFCacheSnapshot {
         let request = URLRequest(url: pageRecord.url, cachePolicy: .returnCacheDataElseLoad)
         webView.load(request)
         
-        // 2단계: 페이지 로드 후 상태 복원 (더 긴 대기 시간)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // ✅ 2단계: 즉시 스크롤 위치 복원 시도 (사파리처럼)
+        // 스크롤 위치를 먼저 설정하고, 페이지 로드 중에도 유지
+        webView.scrollView.setContentOffset(scrollPosition, animated: false)
+        
+        // 3단계: 페이지 로드 후 상태 복원 (대기 시간 단축)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.restorePageState(to: webView, completion: completion)
         }
     }
     
     private func restorePageState(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        var restoreSteps: [() -> Void] = []
-        var stepResults: [Bool] = []
-        var currentStep = 0
+        // ✅ 스크롤 위치 즉시 적용 (애니메이션 없이)
+        webView.scrollView.setContentOffset(scrollPosition, animated: false)
         
-        var nextStep: (() -> Void)!
-        nextStep = {
-            if currentStep < restoreSteps.count {
-                let step = restoreSteps[currentStep]; currentStep += 1; step()
+        // ✅ JavaScript로도 동시에 적용 (더 빠른 복원)
+        let scrollJS = """
+        (function() {
+            // 즉시 스크롤 설정
+            window.scrollTo(\(scrollPosition.x), \(scrollPosition.y));
+            document.documentElement.scrollTop = \(scrollPosition.y);
+            document.documentElement.scrollLeft = \(scrollPosition.x);
+            document.body.scrollTop = \(scrollPosition.y);
+            document.body.scrollLeft = \(scrollPosition.x);
+            
+            // 스크롤 이벤트 트리거 (일부 사이트 호환성)
+            window.dispatchEvent(new Event('scroll'));
+            
+            return true;
+        })()
+        """
+        
+        webView.evaluateJavaScript(scrollJS) { _, _ in
+            // 폼 데이터가 있으면 복원
+            if let formData = self.formData, !formData.isEmpty {
+                self.restoreFormData(to: webView, formData: formData) { _ in
+                    completion(true)
+                }
             } else {
-                let successCount = stepResults.filter { $0 }.count
-                let totalSteps = stepResults.count
-                let overallSuccess = successCount > totalSteps / 2
-                TabPersistenceManager.debugMessages.append("BFCache 복원 완료: \(successCount)/\(totalSteps) 성공 -> \(overallSuccess ? "성공" : "실패")")
-                completion(overallSuccess)
+                completion(true)
             }
         }
-        
-        // 스크롤 복원
-        restoreSteps.append {
-            let pos = self.scrollPosition
-            webView.scrollView.setContentOffset(pos, animated: false)
-            let js = "try{window.scrollTo(\(pos.x),\(pos.y));true}catch(e){false}"
-            webView.evaluateJavaScript(js) { result, _ in
-                stepResults.append((result as? Bool) ?? false)
-                nextStep()
-            }
-        }
-        
-        // 폼 복원
-        if let form = self.formData, !form.isEmpty {
-            restoreSteps.append {
-                let js = """
-                (function(){
-                    try{
-                        const d=\(self.convertFormDataToJSObject(form)); let ok=0;
-                        for (const [k,v] of Object.entries(d)) {
-                            const el=document.querySelector(`[name="${k}"], #${k}`); if(!el) continue;
-                            if(el.type==='checkbox'||el.type==='radio'){ el.checked=Boolean(v); } else { el.value=String(v??''); }
-                            ok++;
-                        }
-                        return ok>=0;
-                    }catch(e){return false;}
-                })()
-                """
-                webView.evaluateJavaScript(js) { result, _ in
-                    stepResults.append((result as? Bool) ?? false)
-                    nextStep()
+    }
+    
+    // ✅ 단순화된 폼 복원 메서드
+    private func restoreFormData(to webView: WKWebView, formData: [String: Any], completion: @escaping (Bool) -> Void) {
+        let js = """
+        (function(){
+            try {
+                const data = \(convertFormDataToJSObject(formData));
+                let restored = 0;
+                for (const [key, value] of Object.entries(data)) {
+                    const el = document.querySelector(`[name="${key}"], #${key}`);
+                    if (!el) continue;
+                    
+                    if (el.type === 'checkbox' || el.type === 'radio') {
+                        el.checked = Boolean(value);
+                    } else {
+                        el.value = String(value ?? '');
+                    }
+                    restored++;
                 }
+                return restored > 0;
+            } catch(e) {
+                return false;
             }
-        }
+        })()
+        """
         
-        // 고급 스크롤 복원
-        if let jsState = self.jsState,
-           let s = jsState["scroll"] as? [String:Any],
-           let els = s["elements"] as? [[String:Any]], !els.isEmpty {
-            restoreSteps.append {
-                let js = """
-                (function(){
-                    try{
-                        const arr=\(self.convertScrollElementsToJSArray(els)); let ok=0;
-                        for(const it of arr){
-                            if(!it.selector) continue;
-                            const el=document.querySelector(it.selector);
-                            if(el && el.scrollTop !== undefined){
-                                el.scrollTop=it.top||0; el.scrollLeft=it.left||0; ok++;
-                            }
-                        }
-                        return ok>=0;
-                    }catch(e){return false;}
-                })()
-                """
-                webView.evaluateJavaScript(js) { result, _ in
-                    stepResults.append((result as? Bool) ?? false)
-                    nextStep()
-                }
-            }
+        webView.evaluateJavaScript(js) { result, _ in
+            completion((result as? Bool) ?? false)
         }
-        
-        nextStep()
     }
     
     // 안전한 JSON 변환 함수들
@@ -494,7 +480,25 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
         }
-        dbg("📸 BFCache 저장: \(String(pageID.uuidString.prefix(8))) - \(snapshot.pageRecord.title) [상태: \(snapshot.captureStatus)]")
+        
+        // 캡처 상태별 상세 로깅
+        let statusDetail: String
+        switch snapshot.captureStatus {
+        case .complete:
+            statusDetail = "이미지✅ DOM✅ JS✅"
+        case .partial:
+            let hasImage = snapshot.webViewSnapshot != nil
+            let hasDOM = snapshot.domSnapshot != nil
+            let hasJS = snapshot.jsState != nil
+            statusDetail = "이미지\(hasImage ? "✅" : "❌") DOM\(hasDOM ? "✅" : "❌") JS\(hasJS ? "✅" : "❌")"
+        case .visualOnly:
+            statusDetail = "이미지만 캡처"
+        case .failed:
+            statusDetail = "캡처 실패"
+        }
+        
+        dbg("📸 BFCache 저장: \(String(pageID.uuidString.prefix(8))) - \(snapshot.pageRecord.title) | \(statusDetail)")
+    }
     }
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
@@ -1048,9 +1052,41 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
         } else {
-            // BFCache 미스 - 일반적으로는 네비게이션 시스템이 알아서 로드함
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            // BFCache 미스 - 상세 원인 분석
+            let missReason = analyzeCacheMissReason(for: currentRecord)
+            dbg("❌ BFCache 미스: \(currentRecord.title) | 원인: \(missReason)")
         }
+    }
+    
+    // 캐시 미스 원인 분석 메서드
+    private func analyzeCacheMissReason(for record: PageRecord) -> String {
+        // 1. 캐시에 전혀 없는 경우
+        let cacheExists = cacheQueue.sync { cache.keys.contains(record.id) }
+        if !cacheExists {
+            // 캡처 진행 중인지 확인
+            if isCaptureInProgress(for: record.id) {
+                return "캡처 진행 중"
+            }
+            
+            // 캐시 크기 확인
+            let cacheCount = cacheQueue.sync { cache.count }
+            if cacheCount >= maxCacheSize {
+                return "캐시 가득참 (현재: \(cacheCount)/\(maxCacheSize))"
+            }
+            
+            // 최근 캡처 시도 확인
+            if let lastAttempt = lastArrivalStoreAt[record.id] {
+                let elapsed = Date().timeIntervalSince(lastAttempt)
+                if elapsed < 2.0 {
+                    return "최근 캡처 시도 후 \(String(format: "%.1f", elapsed))초 경과"
+                }
+            }
+            
+            return "캡처되지 않음"
+        }
+        
+        // 2. 캐시에는 있지만 가져오지 못한 경우
+        return "캐시 조회 실패"
     }
     
     // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
