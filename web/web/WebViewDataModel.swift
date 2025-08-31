@@ -1275,40 +1275,48 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용 + 리다이렉트 감지)
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        stateModel?.handleLoadingStart()
+    stateModel?.handleLoadingStart()
 
-        dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
+    dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
 
-        // 🎯 **비루트 네비 감지용 스탬프**
-        if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
-            lastProvisionalNavAt = Date()
-            lastProvisionalURL = u
-        }
-
-        // 🔄 **리다이렉트 추적 시작**
-        if let url = webView.url {
-            if let tracker = currentRedirectTracker {
-                if tracker.isExpired() {
-                    // 기존 추적 만료 - 새로운 추적 시작
-                    currentRedirectTracker = RedirectTracker(originalURL: url)
-                    dbg("🔄 리다이렉트 추적 만료 후 새 시작: \(url.absoluteString)")
-                } else if tracker.isSameDomainFamily(url) {
-                    // 같은 도메인 패밀리 - 체인에 추가
-                    currentRedirectTracker = tracker.addRedirect(url)
-                    dbg("🔄 리다이렉트 체인 추가: \(url.absoluteString) (체인 길이: \(currentRedirectTracker?.redirectChain.count ?? 0))")
-                } else {
-                    // 다른 도메인 - 새로운 추적 시작
-                    currentRedirectTracker = RedirectTracker(originalURL: url)
-                    dbg("🔄 도메인 변경으로 새 리다이렉트 추적 시작: \(url.absoluteString)")
-                }
-            } else {
-                // 첫 번째 추적 시작
-                currentRedirectTracker = RedirectTracker(originalURL: url)
-                dbg("🔄 첫 번째 리다이렉트 추적 시작: \(url.absoluteString)")
-            }
-        }
+    // 🎯 **BFCache 캡처 추가 - 현재 페이지를 떠나기 전 저장**
+    if let stateModel = stateModel {
+        BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
+            webView: webView,
+            stateModel: stateModel
+        )
+        dbg("📸 떠나기 전 BFCache 캡처 트리거")
     }
 
+    // 🎯 **비루트 네비 감지용 스탬프**
+    if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
+        lastProvisionalNavAt = Date()
+        lastProvisionalURL = u
+    }
+
+    // 🔄 **리다이렉트 추적 시작**
+    if let url = webView.url {
+        if let tracker = currentRedirectTracker {
+            if tracker.isExpired() {
+                // 기존 추적 만료 - 새로운 추적 시작
+                currentRedirectTracker = RedirectTracker(originalURL: url)
+                dbg("🔄 리다이렉트 추적 만료 후 새 시작: \(url.absoluteString)")
+            } else if tracker.isSameDomainFamily(url) {
+                // 같은 도메인 패밀리 - 체인에 추가
+                currentRedirectTracker = tracker.addRedirect(url)
+                dbg("🔄 리다이렉트 체인 추가: \(url.absoluteString) (체인 길이: \(currentRedirectTracker?.redirectChain.count ?? 0))")
+            } else {
+                // 다른 도메인 - 새로운 추적 시작
+                currentRedirectTracker = RedirectTracker(originalURL: url)
+                dbg("🔄 도메인 변경으로 새 리다이렉트 추적 시작: \(url.absoluteString)")
+            }
+        } else {
+            // 첫 번째 추적 시작
+            currentRedirectTracker = RedirectTracker(originalURL: url)
+            dbg("🔄 첫 번째 리다이렉트 추적 시작: \(url.absoluteString)")
+        }
+    }
+}
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         stateModel?.handleLoadingFinish()
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
