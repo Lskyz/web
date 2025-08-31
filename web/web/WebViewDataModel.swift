@@ -481,29 +481,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         let oldHost = oldURL.host?.lowercased() ?? ""
         let newHost = newURL.host?.lowercased() ?? ""
         
-        // 네이버: www.naver.com → m.naver.com
-        if oldHost.contains("naver.com") && newHost.contains("naver.com") {
-            if (oldHost.hasPrefix("www.") && newHost.hasPrefix("m.")) ||
-               (oldHost == "naver.com" && newHost == "m.naver.com") {
-                return true
-            }
-        }
-        
-        // 다음: www.daum.net → m.daum.net
-        if oldHost.contains("daum.net") && newHost.contains("daum.net") {
-            if (oldHost.hasPrefix("www.") && newHost.hasPrefix("m.")) ||
-               (oldHost == "daum.net" && newHost == "m.daum.net") {
-                return true
-            }
-        }
-        
-        // 구글: www.google.com → m.google.com (모바일 검색)
-        if oldHost.contains("google.com") && newHost.contains("google.com") {
-            if oldHost.hasPrefix("www.") && newHost.hasPrefix("m.") {
-                return true
-            }
-        }
-        
         // 일반적인 www → mobile 패턴
         if oldHost.contains("www.") && (newHost.contains("m.") || newHost.contains("mobile.")) {
             let baseDomain1 = oldHost.replacingOccurrences(of: "www.", with: "")
