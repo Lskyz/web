@@ -324,7 +324,9 @@ final class BFCacheTransitionSystem: NSObject {
     private var cache: [UUID: BFCacheSnapshot] = [:]
     private let maxCacheSize = 20
     private let cacheQueue = DispatchQueue(label: "bfcache", attributes: .concurrent)
-    
+      // ✅ 추가: 저장 디바운스 (불필요한 중복 캡처 방지)
+    private var lastArrivalStoreAt: [UUID: Date] = [:]
+    private var lastLeavingStoreAt: [UUID: Date] = [:]
     // MARK: - 전환 상태
     private var activeTransitions: [UUID: TransitionContext] = [:]
     
@@ -983,5 +985,58 @@ extension BFCacheTransitionSystem {
     
     static func goForward(stateModel: WebViewStateModel) {
         shared.navigateForward(stateModel: stateModel)
+    }
+}
+// MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
+extension BFCacheTransitionSystem {
+
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
+    func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let rec = stateModel.dataModel.currentPageRecord else { return }
+        let now = Date()
+        if let t = lastLeavingStoreAt[rec.id], now.timeIntervalSince(t) < 0.25 { return } // 250ms 디바운스
+        lastLeavingStoreAt[rec.id] = now
+
+        BFCacheSnapshot.create(pageRecord: rec, webView: webView) { [weak self] snap in
+            self?.storeSnapshot(snap, for: rec.id)
+        }
+    }
+
+    /// 문서 로드 완료 후 **도착 페이지**를 저장
+    func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let rec = stateModel.dataModel.currentPageRecord else { return }
+        let now = Date()
+        if let t = lastArrivalStoreAt[rec.id], now.timeIntervalSince(t) < 0.5 { return } // 500ms 디바운스
+        lastArrivalStoreAt[rec.id] = now
+
+        captureWhenStable(webView) { [weak self] in
+            BFCacheSnapshot.create(pageRecord: rec, webView: webView) { snap in
+                self?.storeSnapshot(snap, for: rec.id)
+            }
+        }
+    }
+
+    /// DOM/페인트 안정화 후 작업 실행
+    private func captureWhenStable(_ webView: WKWebView, _ work: @escaping () -> Void) {
+        if webView.isLoading {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.captureWhenStable(webView, work)
+            }
+            return
+        }
+        webView.evaluateJavaScript("document.readyState") { val, _ in
+            if (val as? String) == "complete" {
+                // 두 프레임 정도 대기(페인트 안정화)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.034) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.034) {
+                        work()
+                    }
+                }
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    self?.captureWhenStable(webView, work)
+                }
+            }
+        }
     }
 }
