@@ -8,6 +8,10 @@
 //  🔧 제스처 시작 문제 수정 - .began에서 임계값 검사 제거
 //  🎯 **스냅샷 문제 해결** - 비동기 캡처 타이밍 수정
 //  ✅ **스냅샷 미스 방지 개선** - 신뢰성 향상
+//  🧩 2025-08-31 확장:
+//     - ✨ 모든 이벤트 저장 트리거: 클릭/폼/SPA(push/replace/pop)/가시성/페이지쇼·하이드/KVO(isLoading)
+//     - 📨 WKScriptMessageHandler("bfcache")로 JS→네이티브 브리지
+//     - 👀 KVO로 로딩 시작/종료 감지해 떠나기/도착 스냅샷 자동 저장
 //
 
 import UIKit
@@ -26,6 +30,9 @@ private class WeakGestureContext {
     let tabID: UUID
     weak var webView: WKWebView?
     weak var stateModel: WebViewStateModel?
+    
+    // ✅ 추가: KVO 옵저버 토큰 보관 (웹뷰별)
+    var observations: [NSKeyValueObservation] = []
     
     init(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
         self.tabID = tabID
@@ -50,7 +57,7 @@ struct BFCacheSnapshot {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
-        case failed        // 캡처 실패
+        case failed         // 캡처 실패
     }
     
     // ✅ 개선된 정적 팩토리 메서드 - 더 안정적인 캡처
@@ -126,19 +133,13 @@ struct BFCacheSnapshot {
         let domScript = """
         (function() {
             try {
-                // 페이지가 충분히 로드되었는지 확인
-                if (document.readyState !== 'complete') {
-                    return null;
-                }
-                // DOM이 너무 크면 일부만 캡처
+                if (document.readyState !== 'complete') return null;
                 const html = document.documentElement.outerHTML;
                 if (html.length > 500000) { // 500KB 제한
                     return html.substring(0, 500000) + '<!-- truncated -->';
                 }
                 return html;
-            } catch(e) {
-                return null;
-            }
+            } catch(e) { return null; }
         })()
         """
         
@@ -161,31 +162,21 @@ struct BFCacheSnapshot {
         let jsScript = """
         (function() {
             try {
-                // 페이지 준비 상태 확인
                 if (typeof document === 'undefined') return null;
-                
                 const formData = {};
-                // ✅ 더 안전한 폼 데이터 수집
                 const inputs = document.querySelectorAll('input:not([type="password"]), textarea, select');
-                for (let i = 0; i < Math.min(inputs.length, 100); i++) { // 최대 100개 제한
+                for (let i = 0; i < Math.min(inputs.length, 100); i++) {
                     const el = inputs[i];
                     if (el.name || el.id) {
                         const key = el.name || el.id;
                         if (el.type === 'checkbox' || el.type === 'radio') {
                             formData[key] = el.checked;
-                        } else if (el.value && el.value.length < 1000) { // 긴 값 제외
+                        } else if (el.value && el.value.length < 1000) {
                             formData[key] = el.value;
                         }
                     }
                 }
-                
-                const scrollData = {
-                    x: window.scrollX || 0,
-                    y: window.scrollY || 0,
-                    elements: []
-                };
-                
-                // ✅ 스크롤 요소 제한 (최대 20개)
+                const scrollData = { x: window.scrollX||0, y: window.scrollY||0, elements: [] };
                 const scrollableElements = document.querySelectorAll('*');
                 let scrollCount = 0;
                 for (let i = 0; i < scrollableElements.length && scrollCount < 20; i++) {
@@ -200,7 +191,6 @@ struct BFCacheSnapshot {
                         scrollCount++;
                     }
                 }
-                
                 return {
                     forms: formData,
                     scroll: scrollData,
@@ -209,13 +199,8 @@ struct BFCacheSnapshot {
                     timestamp: Date.now(),
                     ready: document.readyState
                 };
-            } catch(e) { 
-                console.error('BFCache JS 상태 캡처 실패:', e);
-                return {
-                    forms: {},
-                    scroll: { x: 0, y: 0, elements: [] },
-                    error: e.message
-                };
+            } catch(e) {
+                return { forms: {}, scroll: { x:0, y:0, elements:[] }, error: e.message };
             }
         })()
         """
@@ -297,13 +282,11 @@ struct BFCacheSnapshot {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
         case .failed:
-            // 캡처 실패 시 단순 URL 로드만
             webView.load(URLRequest(url: pageRecord.url))
             completion(false)
             return
             
         case .visualOnly:
-            // 이미지만 있으면 URL 로드 후 스크롤 위치만 복원
             webView.load(URLRequest(url: pageRecord.url))
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
@@ -312,15 +295,12 @@ struct BFCacheSnapshot {
             return
             
         case .partial, .complete:
-            // 정상적인 복원 진행
             break
         }
         
-        // 1단계: 기본 URL 로드 (캐시된 DOM 사용 안함)
         let request = URLRequest(url: pageRecord.url, cachePolicy: .returnCacheDataElseLoad)
         webView.load(request)
         
-        // 2단계: 페이지 로드 후 상태 복원 (더 긴 대기 시간)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.restorePageState(to: webView, completion: completion)
         }
@@ -486,7 +466,6 @@ final class BFCacheTransitionSystem: NSObject {
             
             // ✅ LRU 방식으로 캐시 관리
             if self.cache.count > self.maxCacheSize {
-                // 접근 시간 기준으로 정렬하여 가장 오래된 것 제거
                 let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
                 if let oldest = sorted.first {
                     self.cache.removeValue(forKey: oldest.key)
@@ -533,6 +512,9 @@ final class BFCacheTransitionSystem: NSObject {
             let ctx = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
             objc_setAssociatedObject(leftEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            
+            // ✅ 추가: 웹뷰에도 컨텍스트 연결(스크립트 메시지·KVO 접근용)
+            objc_setAssociatedObject(webView, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
         dbg("BFCache 제스처 설정 완료")
@@ -1010,12 +992,10 @@ final class BFCacheTransitionSystem: NSObject {
         // 복원큐 시스템 사용 (safariStyle 메서드 대체)
         switch context.direction {
         case .back:
-            // 기존 safariStyleGoBack 로직 흡수
             UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goBack()
             dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
-            // 기존 safariStyleGoForward 로직 흡수
             UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
             stateModel.goForward()
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
@@ -1032,23 +1012,18 @@ final class BFCacheTransitionSystem: NSObject {
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
             if snapshot.needsRefresh() {
-                // 동적 페이지는 리로드
                 webView.reload()
                 dbg("🔄 동적 페이지 리로드: \(currentRecord.title)")
             } else {
-                // 🎯 핵심 수정: 실패시에도 리로드 안하기
                 snapshot.restore(to: webView) { [weak self] success in
                     if success {
                         self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
                     } else {
-                        // ❌ 기존: webView.reload() → 제거!
-                        // ✅ 새로운 전략: 그냥 현재 상태 유지
                         self?.dbg("⚠️ BFCache 복원 실패했지만 현재 상태 유지: \(currentRecord.title)")
                     }
                 }
             }
         } else {
-            // BFCache 미스 - 일반적으로는 네비게이션 시스템이 알아서 로드함
             dbg("❌ BFCache 미스: \(currentRecord.title)")
         }
     }
@@ -1056,45 +1031,73 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
     
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
-        // 기존 DataModel.handleSwipeGestureDetected 로직 흡수
         // 복원 중이면 무시
         if stateModel.dataModel.isHistoryNavigationActive() {
             TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
             return
         }
-        
         // 절대 원칙: 히스토리에서 찾더라도 무조건 새 페이지로 추가
-        // 세션 점프 완전 방지
         stateModel.dataModel.addNewPage(url: url, title: "")
         stateModel.syncCurrentURL(url)
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
-    // MARK: - pageshow/pagehide 스크립트
+    // MARK: - pageshow/pagehide + 클릭/폼/SPA 훅 스크립트 (확장)
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted) {
-                console.log('🔄 BFCache 페이지 복원');
-                
-                // 동적 콘텐츠 새로고침
+        (function(){
+            // 📮 안전한 브리지
+            const post = (type, detail) => {
+                try { window.webkit.messageHandlers.bfcache.postMessage(Object.assign({type, t: Date.now()}, detail||{})); } catch(e) {}
+            };
+            // 🔕 디바운스(짧게) - 과도한 포스트 방지
+            const debounce = (fn, ms) => { let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a), ms); }; };
+            const postDeb = debounce(post, 50);
+
+            // 🖱️ 링크 클릭 캡처 (캡처링 단계)
+            document.addEventListener('click', function(e){
+                const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+                if (a && !a.target && a.href && !a.href.startsWith('javascript:')) {
+                    postDeb('link', { href: a.href });
+                }
+            }, true);
+
+            // 📨 폼 제출 캡처
+            document.addEventListener('submit', function(e){
+                try { postDeb('form', { action: e.target && e.target.action }); } catch(_){}
+            }, true);
+
+            // 🔗 SPA History API 래핑
+            const wrap = (obj, key, type) => {
+                const orig = obj[key];
+                if (typeof orig === 'function') {
+                    obj[key] = function(){
+                        try { postDeb(type); } catch(_){}
+                        return orig.apply(this, arguments);
+                    };
+                }
+            };
+            wrap(history, 'pushState', 'historyPush');
+            wrap(history, 'replaceState', 'historyReplace');
+            window.addEventListener('popstate', ()=> postDeb('historyPop'));
+
+            // 👁️ 가시성/페이지 라이프사이클
+            document.addEventListener('visibilitychange', ()=> {
+                postDeb(document.visibilityState === 'visible' ? 'visibilityShow' : 'visibilityHide');
+            });
+            window.addEventListener('pageshow', function(event){
+                postDeb('pageshow', { persisted: !!event.persisted });
+                // 동적 콘텐츠 새로고침 힌트(기존 로직 유지)
                 if (window.location.pathname.includes('/feed') ||
                     window.location.pathname.includes('/timeline') ||
                     window.location.hostname.includes('twitter') ||
                     window.location.hostname.includes('facebook')) {
-                    if (window.refreshDynamicContent) {
-                        window.refreshDynamicContent();
-                    }
+                    if (window.refreshDynamicContent) { try{ window.refreshDynamicContent(); }catch(_){ } }
                 }
-            }
-        });
-        
-        window.addEventListener('pagehide', function(event) {
-            if (event.persisted) {
-                console.log('📸 BFCache 페이지 저장');
-            }
-        });
+            });
+            window.addEventListener('pagehide', ()=> postDeb('pagehide'));
+        })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
@@ -1113,18 +1116,50 @@ extension BFCacheTransitionSystem: UIGestureRecognizerDelegate {
     }
 }
 
+// MARK: - WKScriptMessageHandler (JS 이벤트 → 네이티브 저장 트리거)
+extension BFCacheTransitionSystem: WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "bfcache" else { return }
+        // WKScriptMessage.webView는 iOS 14+에서 제공
+        guard let webView = message.webView as? WKWebView else { return }
+        guard let ctx = objc_getAssociatedObject(webView, "bfcache_ctx") as? WeakGestureContext,
+              let stateModel = ctx.stateModel else { return }
+        
+        let payload = message.body as? [String: Any]
+        let type = (payload?["type"] as? String) ?? "unknown"
+        
+        switch type {
+        // 떠나기 직전 계열(클릭/폼/SPA 시작/숨김/하이드)
+        case "link", "form", "historyPush", "historyReplace", "pagehide", "visibilityHide":
+            self.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
+        // 도착/표시 계열
+        case "pageshow", "visibilityShow", "historyPop":
+            self.storeArrivalSnapshotIfPossible(webView: webView, stateModel: stateModel)
+        default:
+            break
+        }
+        
+        dbg("🔔 JS 이벤트 수신: \(type)")
+    }
+}
+
 // MARK: - CustomWebView 통합 인터페이스
 extension BFCacheTransitionSystem {
     
     // CustomWebView의 makeUIView에서 호출
     static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
-        // BFCache 스크립트 설치
+        // BFCache 스크립트 설치 (확장본)
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
+        // ✅ 메시지 핸들러 등록
+        webView.configuration.userContentController.add(BFCacheTransitionSystem.shared, name: "bfcache")
         
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ BFCache 시스템 설치 완료")
+        // ✅ 추가: KVO 기반 네비게이션 훅 설치 (로딩 시작/끝 자동 저장)
+        shared.installLoadingObservers(on: webView, stateModel: stateModel)
+        
+        TabPersistenceManager.debugMessages.append("✅ BFCache 시스템 설치 완료 (스크립트+핸들러+KVO)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -1134,6 +1169,14 @@ extension BFCacheTransitionSystem {
             if gesture is UIScreenEdgePanGestureRecognizer {
                 webView.removeGestureRecognizer(gesture)
             }
+        }
+        // ✅ 메시지 핸들러 제거
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcache")
+        
+        // ✅ KVO 옵저버 제거
+        if let ctx = objc_getAssociatedObject(webView, "bfcache_ctx") as? WeakGestureContext {
+            ctx.observations.forEach { $0.invalidate() }
+            ctx.observations.removeAll()
         }
         
         TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
@@ -1146,6 +1189,43 @@ extension BFCacheTransitionSystem {
     
     static func goForward(stateModel: WebViewStateModel) {
         shared.navigateForward(stateModel: stateModel)
+    }
+    
+    // ✅ KVO 옵저버 설치: 로딩 시작(떠나기)/종료(도착) 자동 저장
+    private func installLoadingObservers(on webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let tabID = stateModel.tabID else { return }
+        
+        // 컨텍스트 확보
+        let ctx = (objc_getAssociatedObject(webView, "bfcache_ctx") as? WeakGestureContext)
+            ?? {
+                let c = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
+                objc_setAssociatedObject(webView, "bfcache_ctx", c, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                return c
+            }()
+        
+        // isLoading → true: 떠나기 스냅샷 / false: 도착 스냅샷
+        let obs1 = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, change in
+            guard let self, let isLoading = change.newValue else { return }
+            guard let state = ctx.stateModel else { return }
+            if isLoading {
+                self.storeLeavingSnapshotIfPossible(webView: wv, stateModel: state)
+            } else {
+                self.storeArrivalSnapshotIfPossible(webView: wv, stateModel: state)
+            }
+        }
+        ctx.observations.append(obs1)
+        
+        // (옵션) estimatedProgress로 종료 근접 시점 추가 트리거
+        let obs2 = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] wv, change in
+            guard let self, let prog = change.newValue else { return }
+            guard let state = ctx.stateModel else { return }
+            if prog >= 1.0 {
+                self.storeArrivalSnapshotIfPossible(webView: wv, stateModel: state)
+            }
+        }
+        ctx.observations.append(obs2)
+        
+        dbg("🧷 KVO 옵저버 설치 완료")
     }
 }
 
@@ -1221,57 +1301,36 @@ extension BFCacheTransitionSystem {
         // ✅ 더 정교한 준비 상태 확인
         let readyScript = """
         (function() {
-            // 문서 준비 상태
             const docReady = document.readyState === 'complete';
-            
-            // 이미지 로드 상태 (최대 10개만 체크)
             const images = Array.from(document.images).slice(0, 10);
             const imagesLoaded = images.length === 0 || images.every(img => img.complete);
-            
-            // 비디오 준비 상태
             const videos = Array.from(document.querySelectorAll('video')).slice(0, 5);
             const videosReady = videos.length === 0 || videos.every(v => v.readyState >= 2);
-            
-            // Ajax/Fetch 활동 감지 (대략적)
-            const hasPendingFetch = window.performance && window.performance
+            const hasPendingFetch = (window.performance && window.performance
                 .getEntriesByType('resource')
                 .filter(e => e.name.includes('api') || e.name.includes('ajax'))
-                .some(e => e.responseEnd === 0);
-            
-            return {
-                ready: docReady && imagesLoaded && videosReady && !hasPendingFetch,
-                details: {
-                    doc: docReady,
-                    img: imagesLoaded,
-                    vid: videosReady,
-                    ajax: !hasPendingFetch
-                }
-            };
+                .some(e => e.responseEnd === 0));
+            return { ready: docReady && imagesLoaded && videosReady && !hasPendingFetch,
+                     details: { doc: docReady, img: imagesLoaded, vid: videosReady, ajax: !hasPendingFetch } };
         })()
         """
         
-        webView.evaluateJavaScript(readyScript) { [weak self] result, error in
+        webView.evaluateJavaScript(readyScript) { [weak self] result, _ in
             if let data = result as? [String: Any],
                let isReady = data["ready"] as? Bool {
-                
                 if isReady {
-                    // ✅ 추가 프레임 대기 (렌더링 완료)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         work()
                     }
                 } else {
-                    // 디테일 로깅
                     if let details = data["details"] as? [String: Bool] {
                         self?.dbg("⏳ 페이지 안정화 대기 중: doc=\(details["doc"] ?? false), img=\(details["img"] ?? false), vid=\(details["vid"] ?? false), ajax=\(details["ajax"] ?? false)")
                     }
-                    
-                    // 재시도 (최대 5초까지)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                         self?.captureWhenFullyStable(webView, work)
                     }
                 }
             } else {
-                // 스크립트 실행 실패 시 바로 실행
                 work()
             }
         }
@@ -1281,11 +1340,10 @@ extension BFCacheTransitionSystem {
     func clearCacheForTab(_ tabID: UUID) {
         cacheQueue.async(flags: .barrier) {
             // 탭의 모든 스냅샷 제거
-            let keysToRemove = self.cache.keys.filter { key in
-                // tabID와 연관된 캐시 찾기 (구현에 따라 조정 필요)
-                true // 실제로는 PageRecord의 tabID를 확인해야 함
+            let keysToRemove = self.cache.keys.filter { _ in
+                // TODO: PageRecord.tabID 매핑 시 필터링 구현
+                true
             }
-            
             keysToRemove.forEach { self.cache.removeValue(forKey: $0) }
             self.pendingCaptures.removeAll()
             self.dbg("🗑️ 탭 캐시 정리: \(keysToRemove.count)개 항목 제거")
@@ -1298,11 +1356,9 @@ extension BFCacheTransitionSystem {
             // 가장 오래된 50% 제거
             let sorted = self.cache.sorted { $0.value.timestamp < $1.value.timestamp }
             let removeCount = sorted.count / 2
-            
             sorted.prefix(removeCount).forEach { item in
                 self.cache.removeValue(forKey: item.key)
             }
-            
             self.dbg("⚠️ 메모리 경고 - 캐시 \(removeCount)개 제거")
         }
     }
