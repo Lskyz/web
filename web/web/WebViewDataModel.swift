@@ -600,7 +600,29 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return enqueueRestore(to: index)
     }
 
- 
+    // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기**
+
+    private func findSearchPageIndex(for url: URL) -> Int? {
+        guard PageRecord.isSearchURL(url) else { return nil }
+
+        let searchURL = PageRecord.normalizeSearchURL(url)
+
+        for (index, record) in pageHistory.enumerated().reversed() {
+            // 🚫 **현재 페이지는 제외** (SPA pop에서 현재 페이지로 돌아가는 경우 방지)
+            if index == currentPageIndex {
+                continue
+            }
+
+            if PageRecord.isSearchURL(record.url) {
+                let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
+                if recordSearchURL == searchURL {
+                    return index
+                }
+            }
+        }
+
+        return nil
+    }
 
     // MARK: - 🌐 **SPA 네비게이션 처리** (🏠 루트 Replace 오염 방지 적용)
 
@@ -674,18 +696,58 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return
             }
 
-           // (간소화) 검색 URL 특수처리 제거 → 모든 pop을 일반 처리로 통일
-if let existingIndex = findPageIndex(for: url) {
-    dbg("🔄 SPA pop - 기존 히스토리 항목 복원: \(existingIndex)")
-    _ = enqueueRestore(to: existingIndex)
-} else {
-    if !isHistoryNavigationActive() {
-        addNewPage(url: url, title: title)
-        dbg("🆕 SPA pop - 새 페이지 추가")
-    } else {
-        dbg("🤫 복원 중 SPA pop 무시: \(url.absoluteString)")
-    }
-}
+            // 🔍 **검색 URL 특수 처리** (구글 검색어 복귀 방지)
+            if PageRecord.isSearchURL(url) {
+                dbg("🔍 SPA pop - 검색 URL 감지: \(url.absoluteString)")
+
+                // 검색 URL의 경우 쿼리 파라미터 변경을 확인
+                if let existingIndex = findSearchPageIndex(for: url) {
+                    let existingRecord = pageHistory[existingIndex]
+                    let existingSearchURL = PageRecord.normalizeSearchURL(existingRecord.url)
+                    let newSearchURL = PageRecord.normalizeSearchURL(url)
+
+                    if existingSearchURL == newSearchURL {
+                        // 검색 쿼리가 동일하면 복원
+                        dbg("🔄 SPA pop - 동일한 검색 쿼리, 복원: \(existingIndex)")
+                        dbg("   기존: \(existingSearchURL)")
+                        dbg("   신규: \(newSearchURL)")
+                        _ = enqueueRestore(to: existingIndex)
+                    } else {
+                        // 검색 쿼리가 다르면 새 페이지 추가
+                        dbg("🔍 SPA pop - 검색 쿼리 변경 감지, 새 페이지 추가")
+                        dbg("   기존: \(existingSearchURL)")
+                        dbg("   신규: \(newSearchURL)")
+                        if !isHistoryNavigationActive() {
+                            addNewPage(url: url, title: title)
+                        } else {
+                            dbg("🤫 복원 중 검색 쿼리 변경 무시: \(url.absoluteString)")
+                        }
+                    }
+                } else {
+                    // 기존 검색 페이지가 없으면 새 페이지 추가
+                    dbg("🔍 SPA pop - 새 검색 페이지 추가: \(url.absoluteString)")
+                    if !isHistoryNavigationActive() {
+                        addNewPage(url: url, title: title)
+                    } else {
+                        dbg("🤫 복원 중 새 검색 페이지 무시: \(url.absoluteString)")
+                    }
+                }
+            } else {
+                // **일반 URL의 경우**
+                if let existingIndex = findPageIndex(for: url) {
+                    dbg("🔄 SPA pop - 기존 히스토리 항목 복원: \(existingIndex)")
+                    _ = enqueueRestore(to: existingIndex)
+                } else {
+                    // 기존 항목이 없으면 새 페이지 추가 (복원 중이 아닐 때만)
+                    if !isHistoryNavigationActive() {
+                        addNewPage(url: url, title: title)
+                        dbg("🆕 SPA pop - 새 페이지 추가")
+                    } else {
+                        dbg("🤫 복원 중 SPA pop 무시: \(url.absoluteString)")
+                    }
+                }
+            }
+
         case "hash", "dom":
             // 홈페이지면 새 페이지, 아니면 현재 페이지 교체
             if isHomepageURL(url) && !isHistoryNavigationActive() {
