@@ -431,14 +431,14 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         // 동기식 캡처 수행
-        let snapshot = self.syncCapture(pageRecord: pageRecord, webView: webView, captureData: data)
+        let captureResult = self.syncCapture(pageRecord: pageRecord, webView: webView, captureData: data)
         
         // 이미지를 디스크에 저장하고 경로만 스냅샷에 저장
         if let tabID = tabID {
-            self.saveToDisk(snapshot: snapshot, tabID: tabID)
+            self.saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
             // tabID가 없으면 메모리에만 저장
-            self.storeInMemory(snapshot, for: pageRecord.id)
+            self.storeInMemory(captureResult.snapshot, for: pageRecord.id)
         }
     }
     
