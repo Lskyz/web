@@ -4,9 +4,6 @@
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
 //  🔧 연타 레이스 방지 - enum 기반 직렬화 큐 시스템
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
-//  📁 다운로드 델리게이트 코드 헬퍼로 이관 완료
-//  🔍 구글 검색 SPA 문제 완전 해결 - 검색 쿼리 변경 감지 + 강화된 정규화
-//  🆕 Google 검색 플로우 개선 - 메인페이지 검색 진행 중 pop 처리
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
@@ -189,25 +186,6 @@ struct PageRecord: Codable, Identifiable, Hashable {
             comps?.path = path
         }
         return comps
-    }
-
-    // 🔧 쿼리 차이 로깅 (디버깅용)
-    static func logDiffIfSamePathButDifferentQuery(prev: URL, curr: URL) {
-        guard let a = normalizedComponents(for: prev), let b = normalizedComponents(for: curr) else { return }
-        let pa = a.path, pb = b.path
-        if pa == pb {
-            let qa = normalizedQueryMapPreservingEmpty(a)
-            let qb = normalizedQueryMapPreservingEmpty(b)
-            if qa != qb {
-                let removed = Set(qa.keys).subtracting(qb.keys).sorted()
-                let added   = Set(qb.keys).subtracting(qa.keys).sorted()
-                let common  = Set(qa.keys).intersection(qb.keys).sorted()
-                TabPersistenceManager.debugMessages.append("✏️ 쿼리 차이: -\(removed) +\(added)")
-                for k in common where qa[k]! != qb[k]! {
-                    TabPersistenceManager.debugMessages.append("✏️ 값 변경 [\(k)]: \(String(describing: qa[k]!)) -> \(String(describing: qb[k]!))")
-                }
-            }
-        }
     }
 
     // ✅ 범용 정규화: **트래킹만 제거**, 그 외 파라미터는 전부 보존
