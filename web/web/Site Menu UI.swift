@@ -171,7 +171,7 @@ extension SiteMenuSystem {
             @ViewBuilder
             private var siteInfoSection: some View {
                 HLayout {
-                    VLayout(alignment: .leading, spacing: 4) {
+                    VLayout(spacing: 4, alignment: .leading) {
                         HLayout {
                             let info = SiteMenuSystem.Settings.getSiteSecurityInfo(for: currentState.currentURL)
                             Icon(info.icon, 20, info.color)
@@ -318,7 +318,7 @@ extension SiteMenuSystem {
 
             @ViewBuilder
             private var downloadsSection: some View {
-                VLayout(alignment: .leading, spacing: 8) {
+                VLayout(spacing: 8, alignment: .leading) {
                     HLayout {
                         Button(action: { manager.showDownloadsList = true }) {
                             HLayout(spacing: 8) {
@@ -410,7 +410,7 @@ extension SiteMenuSystem {
                 Button(action: { onURLSelected(entry.url); }) {
                     HLayout(spacing: 12) {
                         Icon("clock", 16, .blue)
-                        VLayout(alignment: .leading, spacing: 2) {
+                        VLayout(spacing: 2, alignment: .leading) {
                             CompactText(entry.title, .system(size: 16, weight: .medium), .primary, lines: 1)
                             CompactText(entry.url.absoluteString, .system(size: 14), .secondary, lines: 1)
                         }
@@ -455,7 +455,7 @@ extension SiteMenuSystem {
                 Button(action: { onURLSelected(entry.url) }) {
                     HLayout(spacing: 12) {
                         Icon("magnifyingglass", 20, .gray)
-                        VLayout(alignment: .leading, spacing: 2) {
+                        VLayout(spacing: 2, alignment: .leading) {
                             highlightedText(entry.title, searchText: searchText).font(.system(size: 16, weight: .medium)).lineLimit(1)
                             highlightedText(entry.url.absoluteString, searchText: searchText).font(.system(size: 14)).foregroundColor(.secondary).lineLimit(1)
                         }
@@ -598,7 +598,7 @@ extension SiteMenuSystem {
                         .frame(width: 40, height: 40)
                         .background(fileIconColor.opacity(0.1)).cornerRadius(8)
 
-                    VLayout(alignment: .leading, spacing: 4) {
+                    VLayout(spacing: 4, alignment: .leading) {
                         CompactText(download.filename, .headline, .primary, lines: 2)
                         HLayout {
                             CompactText(download.size, .caption, .secondary)
@@ -753,7 +753,7 @@ extension SiteMenuSystem {
             private func filterRow(_ filter: HistoryFilter) -> some View {
                 HLayout {
                     Icon(filter.type.icon, 24, filter.isEnabled ? .blue : .gray)
-                    VLayout(alignment: .leading, spacing: 2) {
+                    VLayout(spacing: 2, alignment: .leading) {
                         CompactText(filter.value, .headline, filter.isEnabled ? .primary : .secondary)
                         HLayout {
                             CompactText(filter.type.displayName, .caption, .secondary)
@@ -928,7 +928,7 @@ extension SiteMenuSystem {
                             ForEach(allowedDomains, id: \.self) { domain in
                                 HLayout {
                                     Icon("checkmark.shield.fill", 24, .green)
-                                    VLayout(alignment: .leading, spacing: 2) {
+                                    VLayout(spacing: 2, alignment: .leading) {
                                         CompactText(domain, .headline, .primary)
                                         CompactText("팝업 허용됨", .caption, .green)
                                     }
@@ -960,7 +960,7 @@ extension SiteMenuSystem {
                                 let popup = recentBlockedPopups[index]
                                 HLayout {
                                     Icon("shield.slash.fill", 24, .red)
-                                    VLayout(alignment: .leading, spacing: 2) {
+                                    VLayout(spacing: 2, alignment: .leading) {
                                         CompactText(popup.domain, .headline, .primary)
                                         if !popup.url.isEmpty { CompactText(popup.url, .caption, .secondary, lines: 1) }
                                         CompactText(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()), .caption2, .secondary)
@@ -1024,7 +1024,7 @@ extension SiteMenuSystem {
                 List {
                     Section("메모리 관리") {
                         let memoryUsage = SiteMenuSystem.Performance.getMemoryUsage()
-                        VLayout(alignment: .leading, spacing: 8) {
+                        VLayout(spacing: 8, alignment: .leading) {
                             HLayout {
                                 CompactText("메모리 사용량", .headline, .primary)
                                 Spacer()
