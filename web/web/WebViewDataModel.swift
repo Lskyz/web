@@ -267,15 +267,6 @@ struct PageRecord: Codable, Identifiable, Hashable {
                 essentialParams = ["q", "query", "search"]
             }
 
-            // 🚫 **구글의 임시/추적 파라미터들 제거**
-            let ignoredParams = Set([
-                "sbfbu", "pi", "sei", "sca_esv", "ei", "oq", "gs_lp", "sclient",
-                "source", "sourceid", "ie", "oe", "hl", "lr", "cr", "num", "start",
-                "safe", "filter", "nfpr", "spell", "sa", "gbv", "tbs", "tbm",
-                "udm", "uule", "near", "cad", "rct", "cd", "ved", "usg",
-                "biw", "bih", "dpr", "pf", "pws", "nobiw", "uact", "ijn"
-            ])
-
             let filteredItems = queryItems.filter { item in
                 // 필수 파라미터이고 무시 목록에 없는 것만 유지
                 essentialParams.contains(item.name) && !ignoredParams.contains(item.name)
