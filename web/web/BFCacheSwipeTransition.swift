@@ -1089,8 +1089,15 @@ final class BFCacheTransitionSystem: NSObject {
         return "캐시 조회 실패"
     }
     
-    // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
+    // MARK: - 디버그
     
+    private func dbg(_ msg: String) {
+        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
+    }
+}
+
+// MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
+extension BFCacheTransitionSystem {
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
         // 기존 DataModel.handleSwipeGestureDetected 로직 흡수
         // 복원 중이면 무시
@@ -1106,8 +1113,7 @@ final class BFCacheTransitionSystem: NSObject {
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
-    // MARK: - pageshow/pagehide 스크립트
-    
+    // pageshow/pagehide 스크립트
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
@@ -1133,12 +1139,6 @@ final class BFCacheTransitionSystem: NSObject {
         });
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-    }
-    
-    // MARK: - 디버그
-    
-    private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
     }
 }
 
