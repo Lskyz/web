@@ -4,8 +4,12 @@
 //  🚫 네이티브 시스템 완전 차단 - 순수 커스텀만
 //  🔧 연타 레이스 방지 - enum 기반 직렬화 큐 시스템
 //  🔧 제목 덮어쓰기 문제 해결 - URL 검증 추가
+//  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
+//  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
 //  🔄 **리다이렉트 중복 방지** - 동일 도메인 리다이렉트 감지 및 필터링
+
+//
 
 import Foundation
 import SwiftUI
@@ -1248,74 +1252,67 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-    // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
-    switch navigationAction.navigationType {
-    case .linkActivated, .formSubmitted, .formResubmitted:
-        dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
-        
-        // 🎯 **BFCache 캡처 추가 - 페이지 이동 전 현재 페이지 저장**
-        if let stateModel = stateModel {
-            BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
-                webView: webView,
-                stateModel: stateModel
-            )
-            dbg("📸 사용자 클릭 - 현재 페이지 BFCache 캡처")
-        }
-        
-    case .backForward:
-        dbg("🚫 네이티브 뒤로/앞으로 차단")
-        // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
-        if let url = navigationAction.request.url {
-            if let existingIndex = findPageIndex(for: url) {
-                dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                _ = enqueueRestore(to: existingIndex)
-            } else {
-                dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+        // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
+        switch navigationAction.navigationType {
+        case .linkActivated, .formSubmitted, .formResubmitted:
+            dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+        case .backForward:
+            dbg("🚫 네이티브 뒤로/앞으로 차단")
+            // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
+            if let url = navigationAction.request.url {
+                if let existingIndex = findPageIndex(for: url) {
+                    dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
+                    _ = enqueueRestore(to: existingIndex)
+                } else {
+                    dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+                }
             }
+            decisionHandler(.cancel)
+            return
+        default:
+            break
         }
-        decisionHandler(.cancel)
-        return
-    default:
-        break
+
+        decisionHandler(.allow)
     }
 
-    decisionHandler(.allow)
-}
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용 + 리다이렉트 감지)
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-    stateModel?.handleLoadingStart()
+        stateModel?.handleLoadingStart()
 
-    dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
+        dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
 
-    // 🎯 **비루트 네비 감지용 스탬프**
-    if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
-        lastProvisionalNavAt = Date()
-        lastProvisionalURL = u
-    }
-    // 🔄 **리다이렉트 추적 시작**
-    if let url = webView.url {
-        if let tracker = currentRedirectTracker {
-            if tracker.isExpired() {
-                // 기존 추적 만료 - 새로운 추적 시작
-                currentRedirectTracker = RedirectTracker(originalURL: url)
-                dbg("🔄 리다이렉트 추적 만료 후 새 시작: \(url.absoluteString)")
-            } else if tracker.isSameDomainFamily(url) {
-                // 같은 도메인 패밀리 - 체인에 추가
-                currentRedirectTracker = tracker.addRedirect(url)
-                dbg("🔄 리다이렉트 체인 추가: \(url.absoluteString) (체인 길이: \(currentRedirectTracker?.redirectChain.count ?? 0))")
+        // 🎯 **비루트 네비 감지용 스탬프**
+        if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
+            lastProvisionalNavAt = Date()
+            lastProvisionalURL = u
+        }
+
+        // 🔄 **리다이렉트 추적 시작**
+        if let url = webView.url {
+            if let tracker = currentRedirectTracker {
+                if tracker.isExpired() {
+                    // 기존 추적 만료 - 새로운 추적 시작
+                    currentRedirectTracker = RedirectTracker(originalURL: url)
+                    dbg("🔄 리다이렉트 추적 만료 후 새 시작: \(url.absoluteString)")
+                } else if tracker.isSameDomainFamily(url) {
+                    // 같은 도메인 패밀리 - 체인에 추가
+                    currentRedirectTracker = tracker.addRedirect(url)
+                    dbg("🔄 리다이렉트 체인 추가: \(url.absoluteString) (체인 길이: \(currentRedirectTracker?.redirectChain.count ?? 0))")
+                } else {
+                    // 다른 도메인 - 새로운 추적 시작
+                    currentRedirectTracker = RedirectTracker(originalURL: url)
+                    dbg("🔄 도메인 변경으로 새 리다이렉트 추적 시작: \(url.absoluteString)")
+                }
             } else {
-                // 다른 도메인 - 새로운 추적 시작
+                // 첫 번째 추적 시작
                 currentRedirectTracker = RedirectTracker(originalURL: url)
-                dbg("🔄 도메인 변경으로 새 리다이렉트 추적 시작: \(url.absoluteString)")
+                dbg("🔄 첫 번째 리다이렉트 추적 시작: \(url.absoluteString)")
             }
-        } else {
-            // 첫 번째 추적 시작
-            currentRedirectTracker = RedirectTracker(originalURL: url)
-            dbg("🔄 첫 번째 리다이렉트 추적 시작: \(url.absoluteString)")
         }
     }
-}
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         stateModel?.handleLoadingFinish()
         let title = webView.title ?? webView.url?.host ?? "제목 없음"
