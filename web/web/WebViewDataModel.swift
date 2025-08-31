@@ -1251,30 +1251,37 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
-        switch navigationAction.navigationType {
-        case .linkActivated, .formSubmitted, .formResubmitted:
-            dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
-        case .backForward:
-            dbg("🚫 네이티브 뒤로/앞으로 차단")
-            // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
-            if let url = navigationAction.request.url {
-                if let existingIndex = findPageIndex(for: url) {
-                    dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                    _ = enqueueRestore(to: existingIndex)
-                } else {
-                    dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
-                }
-            }
-            decisionHandler(.cancel)
-            return
-        default:
-            break
+    func webView(_ webView: WKWebView,
+             decidePolicyFor navigationAction: WKNavigationAction,
+             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    switch navigationAction.navigationType {
+    case .linkActivated, .formSubmitted, .formResubmitted:
+        dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+        // ✅ 떠나는 페이지 스냅샷 저장 (BFCache)
+        if let sm = stateModel {
+            BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: sm)
         }
 
-        decisionHandler(.allow)
+    case .backForward:
+        dbg("🚫 네이티브 뒤로/앞으로 차단")
+        if let url = navigationAction.request.url {
+            if let existingIndex = findPageIndex(for: url) {
+                dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
+                _ = enqueueRestore(to: existingIndex)
+            } else {
+                dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+            }
+        }
+        decisionHandler(.cancel)
+        return
+
+    default:
+        break
     }
+
+    decisionHandler(.allow)
+}
+
 
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용 + 리다이렉트 감지)
 
@@ -1314,87 +1321,81 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        stateModel?.handleLoadingFinish()
-        let title = webView.title ?? webView.url?.host ?? "제목 없음"
+    stateModel?.handleLoadingFinish()
+    let title = webView.title ?? webView.url?.host ?? "제목 없음"
 
-        if let finalURL = webView.url {
-            // 🔄 **리다이렉트 처리 확인**
-            var shouldHandleAsRedirect = false
-            var redirectChain: [URL]? = nil
-            
-            if let tracker = currentRedirectTracker {
-                if tracker.isRedirect && tracker.isSameDomainFamily(finalURL) {
-                    // 리다이렉트가 완료됨
-                    shouldHandleAsRedirect = true
-                    redirectChain = tracker.redirectChain + [finalURL]
-                    dbg("🔄 리다이렉트 완료 감지: \(tracker.originalURL.absoluteString) → \(finalURL.absoluteString)")
-                }
-                // 추적 완료
-                currentRedirectTracker = nil
+    if let finalURL = webView.url {
+        // 🔄 **리다이렉트 처리 확인**
+        var shouldHandleAsRedirect = false
+        var redirectChain: [URL]? = nil
+        
+        if let tracker = currentRedirectTracker {
+            if tracker.isRedirect && tracker.isSameDomainFamily(finalURL) {
+                // 리다이렉트가 완료됨
+                shouldHandleAsRedirect = true
+                redirectChain = tracker.redirectChain + [finalURL]
+                dbg("🔄 리다이렉트 완료 감지: \(tracker.originalURL.absoluteString) → \(finalURL.absoluteString)")
             }
-
-            // 🎯 **핵심: didFinish enum 기반 분기 처리**
-            switch restoreState {
-            case .sessionRestoring:
-                // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
-                updatePageTitle(for: finalURL, title: title)
-                finishSessionRestore()
-                dbg("🔄 세션 복원 완료: '\(title)'")
-
-            case .queueRestoring(_):
-                // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
-                if let expectedNormalized = expectedNormalizedURL {
-                    let actualNormalized = PageRecord.normalizeURL(finalURL)
-
-                    if expectedNormalized == actualNormalized {
-                        // URL이 예상과 일치 - 제목만 업데이트
-                        updatePageTitle(for: finalURL, title: title)
-                        dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
-                    } else {
-                        // URL이 예상과 다름 - 현재 항목 치환
-                        replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
-                        dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
-                    }
-                } else {
-                    // 예상 URL이 없으면 제목만 업데이트
-                    updatePageTitle(for: finalURL, title: title)
-                    dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
-                }
-
-                // 📸 현재 레코드 업데이트
-                if let currentRecord = currentPageRecord {
-                    var mutableRecord = currentRecord
-                    mutableRecord.updateAccess()
-                    pageHistory[currentPageIndex] = mutableRecord
-                }
-
-                // 큐 기반 복원 완료
-                finishCurrentRestore()
-
-            case .idle, .completed, .failed, .preparing:
-                // ✅ **일반적인 새 탐색**: 리다이렉트 처리 포함
-                if shouldHandleAsRedirect {
-                    // 🔄 리다이렉트로 처리
-                    if let chain = redirectChain {
-                        handleRedirect(from: chain.first!, to: finalURL)
-                    }
-                } else {
-                    // 일반 새 페이지 추가
-                    addNewPageInternal(
-                        url: finalURL, 
-                        title: title, 
-                        navigationType: .normal,
-                        redirectChain: redirectChain
-                    )
-                    stateModel?.syncCurrentURL(finalURL)
-                    dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-                }
-            }
+            // 추적 완료
+            currentRedirectTracker = nil
         }
 
-        stateModel?.triggerNavigationFinished()
-        dbg("✅ 네비게이션 완료")
+        // 🎯 **핵심: didFinish enum 기반 분기 처리**
+        switch restoreState {
+        case .sessionRestoring:
+            updatePageTitle(for: finalURL, title: title)
+            finishSessionRestore()
+            dbg("🔄 세션 복원 완료: '\(title)'")
+
+        case .queueRestoring(_):
+            if let expectedNormalized = expectedNormalizedURL {
+                let actualNormalized = PageRecord.normalizeURL(finalURL)
+                if expectedNormalized == actualNormalized {
+                    updatePageTitle(for: finalURL, title: title)
+                    dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
+                } else {
+                    replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
+                    dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
+                }
+            } else {
+                updatePageTitle(for: finalURL, title: title)
+                dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
+            }
+
+            if let currentRecord = currentPageRecord {
+                var mutableRecord = currentRecord
+                mutableRecord.updateAccess()
+                pageHistory[currentPageIndex] = mutableRecord
+            }
+
+            finishCurrentRestore()
+
+        case .idle, .completed, .failed, .preparing:
+            if shouldHandleAsRedirect {
+                if let chain = redirectChain {
+                    handleRedirect(from: chain.first!, to: finalURL)
+                }
+            } else {
+                addNewPageInternal(
+                    url: finalURL, 
+                    title: title, 
+                    navigationType: .normal,
+                    redirectChain: redirectChain
+                )
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+            }
+        }
     }
+
+    // ✅ 도착 페이지 스냅샷 저장 (BFCache) — 로드 완료 직후
+    if let sm = stateModel {
+        BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(webView: webView, stateModel: sm)
+    }
+
+    stateModel?.triggerNavigationFinished()
+    dbg("✅ 네비게이션 완료")
+}
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
