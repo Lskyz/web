@@ -600,29 +600,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return enqueueRestore(to: index)
     }
 
-    // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기**
-
-    private func findSearchPageIndex(for url: URL) -> Int? {
-        guard PageRecord.isSearchURL(url) else { return nil }
-
-        let searchURL = PageRecord.normalizeSearchURL(url)
-
-        for (index, record) in pageHistory.enumerated().reversed() {
-            // 🚫 **현재 페이지는 제외** (SPA pop에서 현재 페이지로 돌아가는 경우 방지)
-            if index == currentPageIndex {
-                continue
-            }
-
-            if PageRecord.isSearchURL(record.url) {
-                let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
-                if recordSearchURL == searchURL {
-                    return index
-                }
-            }
-        }
-
-        return nil
-    }
+ 
 
     // MARK: - 🌐 **SPA 네비게이션 처리** (🏠 루트 Replace 오염 방지 적용)
 
