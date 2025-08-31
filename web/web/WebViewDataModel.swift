@@ -1248,30 +1248,39 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
-        switch navigationAction.navigationType {
-        case .linkActivated, .formSubmitted, .formResubmitted:
-            dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
-        case .backForward:
-            dbg("🚫 네이티브 뒤로/앞으로 차단")
-            // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
-            if let url = navigationAction.request.url {
-                if let existingIndex = findPageIndex(for: url) {
-                    dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                    _ = enqueueRestore(to: existingIndex)
-                } else {
-                    dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
-                }
-            }
-            decisionHandler(.cancel)
-            return
-        default:
-            break
+    // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
+    switch navigationAction.navigationType {
+    case .linkActivated, .formSubmitted, .formResubmitted:
+        dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+        
+        // 🎯 **BFCache 캡처 추가 - 페이지 이동 전 현재 페이지 저장**
+        if let stateModel = stateModel {
+            BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
+                webView: webView,
+                stateModel: stateModel
+            )
+            dbg("📸 사용자 클릭 - 현재 페이지 BFCache 캡처")
         }
-
-        decisionHandler(.allow)
+        
+    case .backForward:
+        dbg("🚫 네이티브 뒤로/앞으로 차단")
+        // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
+        if let url = navigationAction.request.url {
+            if let existingIndex = findPageIndex(for: url) {
+                dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
+                _ = enqueueRestore(to: existingIndex)
+            } else {
+                dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+            }
+        }
+        decisionHandler(.cancel)
+        return
+    default:
+        break
     }
 
+    decisionHandler(.allow)
+}
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용 + 리다이렉트 감지)
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -1279,21 +1288,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     dbg("🚀 네비게이션 시작: \(webView.url?.absoluteString ?? "nil")")
 
-    // 🎯 **BFCache 캡처 추가 - 현재 페이지를 떠나기 전 저장**
-    if let stateModel = stateModel {
-        BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
-            webView: webView,
-            stateModel: stateModel
-        )
-        dbg("📸 떠나기 전 BFCache 캡처 트리거")
-    }
-
     // 🎯 **비루트 네비 감지용 스탬프**
     if let u = webView.url, !(u.path == "/" || u.path.isEmpty) {
         lastProvisionalNavAt = Date()
         lastProvisionalURL = u
     }
-
     // 🔄 **리다이렉트 추적 시작**
     if let url = webView.url {
         if let tracker = currentRedirectTracker {
