@@ -325,6 +325,10 @@ final class BFCacheTransitionSystem: NSObject {
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
         var currentSnapshot: UIImage?
+        
+        // 🆕 [추가] 로딩 커버 유지 및 KVO를 위한 토큰 보관
+        var loadingCover: UIView?
+        var kvoTokens: [NSKeyValueObservation] = []
     }
     
     enum NavigationDirection {
@@ -846,7 +850,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
         
         // 컨텍스트 저장 (스냅샷 포함)
-        let context = TransitionContext(
+        var context = TransitionContext(
             tabID: tabID,
             webView: webView,
             stateModel: stateModel,
@@ -854,7 +858,9 @@ final class BFCacheTransitionSystem: NSObject {
             direction: direction,
             initialTransform: initialTransform,
             previewContainer: previewContainer,
-            currentSnapshot: currentSnapshot
+            currentSnapshot: currentSnapshot,
+            loadingCover: nil,
+            kvoTokens: []
         )
         activeTransitions[tabID] = context
         
@@ -1101,12 +1107,10 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 네비게이션 실행
-                self?.performNavigation(context: context)
-                
-                // 컨테이너 제거
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: tabID)
+                guard let self = self else { return }
+                // ⚠️ 기존: 여기서 바로 previewContainer.removeFromSuperview()
+                // ✅ 변경: 네비게이션을 먼저 실행하고, 로딩이 안정화될 때까지 previewContainer를 '로딩 커버'로 유지
+                self.performNavigationAndGuardPaint(tabID: tabID, carryOverCover: previewContainer)
             }
         )
     }
@@ -1193,6 +1197,65 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache 복원 시도
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction)
+    }
+    
+    // 🆕 [추가] 전환 완료 후 ‘로딩 커버’ 유지 + 페인트 안정화 감시
+    private func performNavigationAndGuardPaint(tabID: UUID, carryOverCover cover: UIView) {
+        guard var context = activeTransitions[tabID],
+              let webView = context.webView,
+              let stateModel = context.stateModel else {
+            cover.removeFromSuperview()
+            activeTransitions.removeValue(forKey: tabID)
+            return
+        }
+        
+        // 1) 네비게이션 실행
+        performNavigation(context: context)
+        
+        // 2) 커버를 유지한 채 로딩 관찰 시작 (isLoading / estimatedProgress)
+        cover.frame = webView.bounds
+        cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        cover.isUserInteractionEnabled = false
+        context.loadingCover = cover
+        
+        let obs1 = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, change in
+            guard let self = self else { return }
+            if change.newValue == false {
+                self.fadeOutAndRemoveCover(tabID: tabID)
+            }
+        }
+        let obs2 = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] wv, change in
+            guard let self = self else { return }
+            if wv.estimatedProgress >= 0.2 {
+                self.fadeOutAndRemoveCover(tabID: tabID)
+            }
+        }
+        
+        context.kvoTokens = [obs1, obs2]
+        activeTransitions[tabID] = context
+    }
+    
+    // 🆕 [추가] 커버 페이드아웃 & 정리
+    private func fadeOutAndRemoveCover(tabID: UUID) {
+        guard var context = activeTransitions[tabID] else { return }
+        guard let cover = context.loadingCover else { return }
+        
+        // 중복 호출 방지
+        context.loadingCover = nil
+        let tokens = context.kvoTokens
+        context.kvoTokens.removeAll()
+        activeTransitions[tabID] = context
+        
+        // KVO 해제
+        tokens.forEach { $0.invalidate() }
+        
+        // 부드러운 페이드아웃
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: {
+            cover.alpha = 0
+        }, completion: { _ in
+            cover.removeFromSuperview()
+            self.activeTransitions.removeValue(forKey: tabID)
+        })
     }
     
     // 🔧 **개선된 BFCache 복원 - URL 로드는 StateModel에 위임**
