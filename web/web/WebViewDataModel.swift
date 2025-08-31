@@ -268,9 +268,9 @@ struct PageRecord: Codable, Identifiable, Hashable {
             }
 
             let filteredItems = queryItems.filter { item in
-                // 필수 파라미터이고 무시 목록에 없는 것만 유지
-                essentialParams.contains(item.name) && !ignoredParams.contains(item.name)
-            }
+            // 필수 파라미터만 유지
+           essentialParams.contains(item.name)
+           }
 
             if !filteredItems.isEmpty {
                 components?.queryItems = filteredItems.sorted { $0.name < $1.name }
