@@ -181,17 +181,68 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // 🚀 빠른 스크롤 복원 (타임아웃 감소: 0.3초)
+        // 🔧 **강력한 스크롤 복원 - WebKit 자동 스크롤 대응**
         restoreSteps.append {
-            let pos = self.scrollPosition
-            webView.scrollView.setContentOffset(pos, animated: false)
-            let js = "try{window.scrollTo(\(pos.x),\(pos.y));true}catch(e){false}"
-            webView.evaluateJavaScript(js) { result, _ in
-                stepResults.append((result as? Bool) ?? false)
+            let targetPos = self.scrollPosition
+            TabPersistenceManager.debugMessages.append("🔄 스크롤 복원 시도: x=\(targetPos.x), y=\(targetPos.y)")
+            
+            // 1차: 네이티브 스크롤뷰 즉시 설정
+            webView.scrollView.setContentOffset(targetPos, animated: false)
+            
+            // 2차: JavaScript로 강제 스크롤 (DOM 준비 대기 포함)
+            let robustScrollJS = """
+            (function() {
+                function attemptScroll() {
+                    try {
+                        if (document.readyState !== 'complete') {
+                            setTimeout(attemptScroll, 50);
+                            return false;
+                        }
+                        
+                        // 여러 방법으로 스크롤 시도
+                        window.scrollTo(\(targetPos.x), \(targetPos.y));
+                        document.documentElement.scrollTop = \(targetPos.y);
+                        document.body.scrollTop = \(targetPos.y);
+                        document.documentElement.scrollLeft = \(targetPos.x);
+                        document.body.scrollLeft = \(targetPos.x);
+                        
+                        console.log('🔄 스크롤 복원 완료:', window.scrollY, window.scrollX);
+                        return true;
+                    } catch(e) {
+                        console.error('🔄 스크롤 복원 실패:', e);
+                        return false;
+                    }
+                }
+                return attemptScroll();
+            })()
+            """
+            
+            webView.evaluateJavaScript(robustScrollJS) { result, error in
+                let success = (result as? Bool) ?? false
+                stepResults.append(success)
                 
-                // 🚀 즉시 다음 스텝 진행 (대기 없음)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    nextStep()
+                if !success || targetPos.y > 0 {
+                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        webView.scrollView.setContentOffset(targetPos, animated: false)
+                        
+                        // 4차: 최종 JavaScript 재시도
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            let finalScrollJS = "window.scrollTo(\(targetPos.x), \(targetPos.y)); window.scrollY >= \(targetPos.y - 50)"
+                            webView.evaluateJavaScript(finalScrollJS) { finalResult, _ in
+                                let finalSuccess = (finalResult as? Bool) ?? false
+                                TabPersistenceManager.debugMessages.append("🔄 최종 스크롤 상태: \(finalSuccess ? "성공" : "실패")")
+                                
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    nextStep()
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        nextStep()
+                    }
                 }
             }
         }
