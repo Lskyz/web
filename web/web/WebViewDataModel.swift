@@ -123,20 +123,25 @@ struct PageRecord: Codable, Identifiable, Hashable {
         return dict
     }
 
-    // 📱 **모바일 리디렉트 정규화 - www -> m 리디렉트 처리**
+    // 📱 **모바일/데스크탑 도메인 통합 - 중복 기록 방지**
     private static func normalizeMobileRedirect(_ url: URL, isDesktopMode: Bool = false) -> URL {
-        // 데스크탑 모드에서는 모바일 정규화 안함
-        guard !isDesktopMode else { return url }
-        
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let host = components.host?.lowercased() else { return url }
         
-        // m.domain.com을 www.domain.com으로 정규화 (통합 처리)
-        if host.hasPrefix("m.") {
-            let mainDomain = String(host.dropFirst(2)) // "m." 제거
-            components.host = "www.\(mainDomain)"
-            TabPersistenceManager.debugMessages.append("📱 모바일 도메인 정규화: \(host) -> www.\(mainDomain)")
-            return components.url ?? url
+        if isDesktopMode {
+            // 데스크탑 모드: m.* → www.* (데스크탑 기준 통합)
+            if host.hasPrefix("m.") {
+                let mainDomain = String(host.dropFirst(2)) // "m." 제거
+                components.host = "www.\(mainDomain)"
+                return components.url ?? url
+            }
+        } else {
+            // 모바일 모드: www.* → m.* (모바일 기준 통합)
+            if host.hasPrefix("www.") {
+                let mainDomain = String(host.dropFirst(4)) // "www." 제거  
+                components.host = "m.\(mainDomain)"
+                return components.url ?? url
+            }
         }
         
         return url
@@ -907,6 +912,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
             window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
 
+            // ===== URL 폴링 감지 (History API 우회 네비게이션 대응) =====
+            let pollingUrl = window.location.href;
+            let pollingBlocked = false;
+            
+            setInterval(() => {
+                if (pollingBlocked) return;
+                
+                const currentPollingUrl = window.location.href;
+                if (currentPollingUrl !== pollingUrl && currentPollingUrl !== currentSPAState.url) {
+                    console.log('🔍 폴링으로 URL 변경 감지:', pollingUrl, '->', currentPollingUrl);
+                    
+                    // 중복 감지 방지를 위해 잠시 폴링 차단
+                    pollingBlocked = true;
+                    setTimeout(() => { pollingBlocked = false; }, 1000);
+                    
+                    pollingUrl = currentPollingUrl;
+                    handleUrlChange('polling', currentPollingUrl, document.title, history.state);
+                }
+                pollingUrl = currentPollingUrl;
+            }, 500); // 500ms 간격으로 체크
+
             // ===== DOM 변경 감지 =====
             const observer = new MutationObserver(() => {
                 const currentURL = window.location.href;
@@ -979,7 +1005,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
-                dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)' (📱 모바일 리디렉트 정규화 적용)")
+                dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
                 return
             } else {
                 dbg("🆕 URL 차이 감지 - 새 페이지 추가")
@@ -1053,7 +1079,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 var updatedRecord = record
                 updatedRecord.updateTitle(safeTitle)
                 pageHistory[i] = updatedRecord
-                dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString) (📱 모바일 리디렉트 고려)")
+                dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString)")
                 return
             }
         }
