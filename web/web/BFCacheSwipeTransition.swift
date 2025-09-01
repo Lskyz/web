@@ -493,65 +493,13 @@ final class BFCacheTransitionSystem: NSObject {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
+        let semaphore = DispatchSemaphore(value: 0)
         
-        // 🚫 **0단계: 캡처 전 눌린 상태 완전 제거** (가장 중요!)
-        let cleanupSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let cleanupScript = """
-            (function() {
-                try {
-                    // 🚫 **모든 활성 상태 강제 제거**
-                    document.querySelectorAll('*').forEach(el => {
-                        // CSS 클래스에서 활성 상태 제거
-                        if (el.classList) {
-                            const classesToRemove = Array.from(el.classList).filter(c => 
-                                c.includes('active') || c.includes('pressed') || c.includes('hover') || 
-                                c.includes('focus') || c.includes('touched') || c.includes('selected') ||
-                                c.includes('highlight') || c.includes('down')
-                            );
-                            classesToRemove.forEach(cls => el.classList.remove(cls));
-                        }
-                        
-                        // 인라인 스타일에서 활성 상태 제거
-                        if (el.style) {
-                            el.style.removeProperty('background-color');
-                            el.style.removeProperty('background');
-                            el.style.removeProperty('opacity');
-                            el.style.removeProperty('transform');
-                            el.style.removeProperty('filter');
-                        }
-                        
-                        // 포커스 제거
-                        if (el === document.activeElement) {
-                            el.blur();
-                        }
-                    });
-                    
-                    // 터치/마우스 이벤트 강제 종료
-                    ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(event => {
-                        document.dispatchEvent(new Event(event, { bubbles: true }));
-                    });
-                    
-                    return true;
-                } catch(e) { return false; }
-            })()
-            """
-            
-            webView.evaluateJavaScript(cleanupScript) { result, error in
-                cleanupSemaphore.signal()
-            }
-        }
-        _ = cleanupSemaphore.wait(timeout: .now() + 0.3)
-        
-        // 🕰️ **상태 제거 후 약간의 대기 (렌더링 업데이트)**
-        Thread.sleep(forTimeInterval: 0.05)
-        
-        // 1. 비주얼 스냅샷 (메인 스레드) - 이제 깨끗한 상태로 캡처
-        let visualSemaphore = DispatchSemaphore(value: 0)
+        // 1. 비주얼 스냅샷 (메인 스레드)
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
-            config.afterScreenUpdates = true  // 🔧 업데이트 완료 후 캡처
+            config.afterScreenUpdates = false
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
@@ -561,24 +509,36 @@ final class BFCacheTransitionSystem: NSObject {
                 } else {
                     visualSnapshot = image
                 }
-                visualSemaphore.signal()
+                semaphore.signal()
             }
         }
         
         // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
-        let result = visualSemaphore.wait(timeout: .now() + 2.5)
+        let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚫 **이미 상태가 제거된 상태에서 캡처**
+        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
+                    
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
+                        el.classList.remove(...Array.from(el.classList).filter(c => 
+                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
+                        ));
+                    });
+                    
+                    // input focus 제거
+                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
+                        el.blur();
+                    });
                     
                     const html = document.documentElement.outerHTML;
                     return html.length > 100000 ? html.substring(0, 100000) : html;
@@ -591,7 +551,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8)
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 3. JS 상태 캡처 - 🚫 **폼 데이터 캡처 완전 제거**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -632,7 +592,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 0.8)
+        _ = jsSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
