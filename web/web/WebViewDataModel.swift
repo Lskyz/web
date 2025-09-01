@@ -525,6 +525,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
 
             if PageRecord.isSearchURL(record.url) {
+                // 🔧 **수정: isDesktopMode를 실제로 활용하여 일관된 정규화 적용**
                 let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
                 if recordSearchURL == searchURL {
                     return index
@@ -708,7 +709,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 url: window.location.href,
                 title: document.title,
                 timestamp: Date.now(),
-                state: history.state
+                state: history.state,
+                lastContentHash: '',  // 콘텐츠 변화 감지용
+                lastHash: window.location.hash  // 해시 변화 감지용
             };
 
             const EXCLUDE_PATTERNS = [
@@ -912,36 +915,201 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
             window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
 
-            // ===== URL 폴링 감지 (History API 우회 네비게이션 대응) =====
-            let pollingUrl = window.location.href;
-            let pollingBlocked = false;
+            // ===== 🎯 **범용 SPA 네비게이션 감지 시스템** =====
             
-            setInterval(() => {
-                if (pollingBlocked) return;
+            // **1. 범용 사용자 인터랙션 감지**
+            document.addEventListener('click', function(e) {
+                const target = e.target;
+                const clickableElement = target.closest('a, button, [role="button"], [role="link"], [onclick], [href], input[type="button"], input[type="submit"]');
                 
-                const currentPollingUrl = window.location.href;
-                if (currentPollingUrl !== pollingUrl && currentPollingUrl !== currentSPAState.url) {
-                    console.log('🔍 폴링으로 URL 변경 감지:', pollingUrl, '->', currentPollingUrl);
-                    
-                    // 중복 감지 방지를 위해 잠시 폴링 차단
-                    pollingBlocked = true;
-                    setTimeout(() => { pollingBlocked = false; }, 1000);
-                    
-                    pollingUrl = currentPollingUrl;
-                    handleUrlChange('polling', currentPollingUrl, document.title, history.state);
+                if (!clickableElement) return;
+                
+                // 외부 링크나 다운로드 링크는 제외
+                if (clickableElement.target === '_blank' || 
+                    clickableElement.download || 
+                    (clickableElement.href && clickableElement.href.startsWith('mailto:')) ||
+                    (clickableElement.href && clickableElement.href.startsWith('tel:'))) {
+                    return;
                 }
-                pollingUrl = currentPollingUrl;
-            }, 500); // 500ms 간격으로 체크
-
-            // ===== DOM 변경 감지 =====
-            const observer = new MutationObserver(() => {
+                
+                console.log('👆 클릭 가능한 요소 감지:', clickableElement.tagName, clickableElement.className);
+                
+                // 클릭 후 변화 감지를 위한 지연된 체크
+                setTimeout(() => {
+                    checkNavigationChange('user_interaction');
+                }, 150);
+                
+                // 좀 더 긴 지연으로 한 번 더 체크 (Ajax 완료 대기)
+                setTimeout(() => {
+                    checkNavigationChange('user_interaction_delayed');
+                }, 500);
+            }, true);
+            
+            // **2. 범용 Ajax 요청 후킹**
+            const originalXHROpen = XMLHttpRequest.prototype.open;
+            const originalFetch = window.fetch;
+            
+            // XMLHttpRequest 후킹
+            XMLHttpRequest.prototype.open = function(method, url, ...args) {
+                const result = originalXHROpen.apply(this, [method, url, ...args]);
+                
+                this.addEventListener('load', function() {
+                    if (this.status >= 200 && this.status < 400) {
+                        setTimeout(() => {
+                            checkNavigationChange('xhr_load');
+                        }, 100);
+                    }
+                });
+                
+                return result;
+            };
+            
+            // Fetch API 후킹
+            if (originalFetch) {
+                window.fetch = function(...args) {
+                    return originalFetch.apply(this, args).then(response => {
+                        if (response.ok) {
+                            setTimeout(() => {
+                                checkNavigationChange('fetch_load');
+                            }, 100);
+                        }
+                        return response;
+                    });
+                };
+            }
+            
+            // **3. 범용 네비게이션 변화 체크 함수**
+            function checkNavigationChange(source) {
                 const currentURL = window.location.href;
-                if (currentURL !== currentSPAState.url) {
-                    handleUrlChange('dom', currentURL, document.title, history.state);
+                const currentTitle = document.title;
+                const currentHash = window.location.hash;
+                
+                // URL이나 제목이 변했는지 확인
+                if (currentURL !== currentSPAState.url || currentTitle !== currentSPAState.title) {
+                    handleUrlChange(source, currentURL, currentTitle, history.state);
+                    return true;
                 }
-            });
-
-            observer.observe(document.body, { childList: true, subtree: true });
+                
+                // 해시만 변한 경우
+                if (currentHash !== currentSPAState.lastHash) {
+                    currentSPAState.lastHash = currentHash;
+                    handleUrlChange('hash_change', currentURL, currentTitle, history.state);
+                    return true;
+                }
+                
+                // 콘텐츠 변화 감지 (더 정교하게)
+                return checkContentChange();
+            }
+            
+            // **4. 범용 콘텐츠 변화 감지**
+            function checkContentChange() {
+                // 시맨틱 요소들의 텍스트 내용 해시 생성
+                const contentElements = [
+                    document.querySelector('main'),
+                    document.querySelector('[role="main"]'),
+                    document.querySelector('article'),
+                    document.querySelector('.content'),
+                    document.querySelector('#content'),
+                    document.querySelector('.main-content'),
+                    document.body
+                ].filter(el => el !== null);
+                
+                const primaryContent = contentElements[0];
+                if (!primaryContent) return false;
+                
+                // 텍스트 내용의 간단한 해시 생성 (처음 200자)
+                const contentHash = (primaryContent.textContent || '').trim().slice(0, 200);
+                const titleHash = document.title;
+                
+                const combinedHash = `${titleHash}|${contentHash}`;
+                
+                if (combinedHash !== currentSPAState.lastContentHash && currentSPAState.lastContentHash !== '') {
+                    currentSPAState.lastContentHash = combinedHash;
+                    
+                    // 콘텐츠가 의미있게 변했으면 네비게이션으로 간주
+                    handleUrlChange('content_change', window.location.href, document.title, history.state);
+                    return true;
+                }
+                
+                if (currentSPAState.lastContentHash === '') {
+                    currentSPAState.lastContentHash = combinedHash;
+                }
+                
+                return false;
+            }
+            
+            // **5. 스마트 DOM 관찰자** (전체가 아닌 주요 영역만)
+            function setupSmartDOMObserver() {
+                const targetElements = [
+                    document.querySelector('main'),
+                    document.querySelector('[role="main"]'),
+                    document.querySelector('article'),
+                    document.querySelector('#content'),
+                    document.querySelector('.content'),
+                    document.querySelector('.main-content')
+                ].filter(el => el !== null);
+                
+                // 주요 콘텐츠 영역이 있으면 그것만 관찰, 없으면 body 관찰
+                const observeTarget = targetElements[0] || document.body;
+                
+                const observer = new MutationObserver(debounce(() => {
+                    checkNavigationChange('dom_mutation');
+                }, 200));
+                
+                observer.observe(observeTarget, { 
+                    childList: true, 
+                    subtree: true,
+                    attributes: false,  // 속성 변화는 무시 (성능)
+                    characterData: false // 텍스트 변화는 무시 (성능)
+                });
+                
+                console.log('👀 DOM 관찰 설정:', observeTarget.tagName, observeTarget.className || observeTarget.id);
+            }
+            
+            // **6. 디바운스 유틸리티**
+            function debounce(func, wait) {
+                let timeout;
+                return function executedFunction(...args) {
+                    const later = () => {
+                        clearTimeout(timeout);
+                        func(...args);
+                    };
+                    clearTimeout(timeout);
+                    timeout = setTimeout(later, wait);
+                };
+            }
+            
+            // **7. Intersection Observer로 뷰포트 내 주요 변화 감지**
+            function setupViewportChangeDetection() {
+                const observer = new IntersectionObserver(debounce((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting && entry.target.tagName.match(/^(ARTICLE|SECTION|MAIN)$/)) {
+                            // 주요 시맨틱 요소가 뷰포트에 나타났을 때
+                            setTimeout(() => {
+                                checkNavigationChange('viewport_change');
+                            }, 100);
+                        }
+                    });
+                }, 300), {
+                    threshold: 0.5
+                });
+                
+                // 시맨틱 요소들 관찰
+                document.querySelectorAll('article, section, main, [role="main"]').forEach(el => {
+                    observer.observe(el);
+                });
+            }
+            
+            // 초기화
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    setupSmartDOMObserver();
+                    setupViewportChangeDetection();
+                });
+            } else {
+                setupSmartDOMObserver();
+                setupViewportChangeDetection();
+            }
 
             console.log('✅ SPA 네비게이션 훅 설정 완료 (루트 Replace 디바운싱 적용)');
         })();
