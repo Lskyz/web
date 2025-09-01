@@ -494,27 +494,43 @@ final class BFCacheTransitionSystem: NSObject {
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
         
-        // 🚫 **0단계: 안전한 상태 정리** (사용자 터치 방해 안함!)
+        // 🚫 **0단계: 캡처 전 눌린 상태 완전 제거** (가장 중요!)
         let cleanupSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let cleanupScript = """
             (function() {
                 try {
-                    // 🎯 **현재 사용자가 실제 터치 중인지 확인**
-                    const hasActiveTouch = document.body && (
-                        document.body.style.webkitUserSelect === 'none' || 
-                        document.querySelector(':active') !== null
-                    );
+                    // 🚫 **모든 활성 상태 강제 제거**
+                    document.querySelectorAll('*').forEach(el => {
+                        // CSS 클래스에서 활성 상태 제거
+                        if (el.classList) {
+                            const classesToRemove = Array.from(el.classList).filter(c => 
+                                c.includes('active') || c.includes('pressed') || c.includes('hover') || 
+                                c.includes('focus') || c.includes('touched') || c.includes('selected') ||
+                                c.includes('highlight') || c.includes('down')
+                            );
+                            classesToRemove.forEach(cls => el.classList.remove(cls));
+                        }
+                        
+                        // 인라인 스타일에서 활성 상태 제거
+                        if (el.style) {
+                            el.style.removeProperty('background-color');
+                            el.style.removeProperty('background');
+                            el.style.removeProperty('opacity');
+                            el.style.removeProperty('transform');
+                            el.style.removeProperty('filter');
+                        }
+                        
+                        // 포커스 제거
+                        if (el === document.activeElement) {
+                            el.blur();
+                        }
+                    });
                     
-                    // 🚫 **사용자 터치 중이면 아무것도 안함** (방해 금지!)
-                    if (hasActiveTouch) {
-                        return false; // 캡처 포기 - 사용자 우선
-                    }
-                    
-                    // ✅ **안전할 때만 정리**: 포커스만 해제 (이벤트 발생 안함)
-                    if (document.activeElement && document.activeElement !== document.body) {
-                        document.activeElement.blur();
-                    }
+                    // 터치/마우스 이벤트 강제 종료
+                    ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(event => {
+                        document.dispatchEvent(new Event(event, { bubbles: true }));
+                    });
                     
                     return true;
                 } catch(e) { return false; }
@@ -525,10 +541,10 @@ final class BFCacheTransitionSystem: NSObject {
                 cleanupSemaphore.signal()
             }
         }
-        _ = cleanupSemaphore.wait(timeout: .now() + 0.1)
+        _ = cleanupSemaphore.wait(timeout: .now() + 0.3)
         
-        // 🕰️ **매우 짧은 대기** (사용자 방해 최소화)
-        Thread.sleep(forTimeInterval: 0.02)
+        // 🕰️ **상태 제거 후 약간의 대기 (렌더링 업데이트)**
+        Thread.sleep(forTimeInterval: 0.05)
         
         // 1. 비주얼 스냅샷 (메인 스레드) - 이제 깨끗한 상태로 캡처
         let visualSemaphore = DispatchSemaphore(value: 0)
