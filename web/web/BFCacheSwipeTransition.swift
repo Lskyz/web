@@ -8,6 +8,7 @@
 //  💾 스마트 메모리 관리 
 //  🔧 **StateModel과 완벽 동기화**
 //  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
+//  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
 //
 
 import UIKit
@@ -1173,6 +1174,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1199,9 +1201,15 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                self?.performNavigation(context: context)
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: tabID)
+                // 🎬 **핵심 수정: 네비게이션 먼저 수행**
+                self?.performNavigation(context: context) { success in
+                    // 🎬 **네비게이션과 복원이 완료된 후 미리보기 제거**
+                    DispatchQueue.main.async {
+                        previewContainer.removeFromSuperview()
+                        self?.activeTransitions.removeValue(forKey: tabID)
+                        self?.dbg("🎬 미리보기 컨테이너 정리 완료")
+                    }
+                }
             }
         )
     }
@@ -1235,8 +1243,12 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    private func performNavigation(context: TransitionContext) {
-        guard let stateModel = context.stateModel else { return }
+    // 🎬 **핵심 개선: 완료 콜백이 있는 네비게이션**
+    private func performNavigation(context: TransitionContext, completion: @escaping (Bool) -> Void) {
+        guard let stateModel = context.stateModel else { 
+            completion(false)
+            return 
+        }
         
         switch context.direction {
         case .back:
@@ -1247,14 +1259,17 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // BFCache 복원 시도
-        tryBFCacheRestore(stateModel: stateModel, direction: context.direction)
+        // BFCache 복원 시도 (완료 콜백 포함)
+        tryBFCacheRestore(stateModel: stateModel, direction: context.direction, completion: completion)
     }
     
-    // 🔧 **개선된 BFCache 복원 - URL 로드는 StateModel에 위임**
-    private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection) {
+    // 🔧 **개선된 BFCache 복원 - 완료 콜백 추가**
+    private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
-              let currentRecord = stateModel.dataModel.currentPageRecord else { return }
+              let currentRecord = stateModel.dataModel.currentPageRecord else { 
+            completion(false)
+            return
+        }
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
@@ -1264,9 +1279,18 @@ final class BFCacheTransitionSystem: NSObject {
                 } else {
                     self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title) - StateModel이 처리")
                 }
+                
+                // 🎬 **복원 완료 후 일정 시간 대기 (안정화)**
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    completion(success)
+                }
             }
         } else {
             dbg("❌ BFCache 미스: \(currentRecord.title) - StateModel이 처리")
+            // 🎬 **BFCache 미스 시에도 StateModel 처리 시간 대기**
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                completion(false)
+            }
         }
     }
     
@@ -1283,7 +1307,9 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryBFCacheRestore(stateModel: stateModel, direction: .back)
+        tryBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+            // 버튼 네비게이션은 콜백 무시
+        }
     }
     
     func navigateForward(stateModel: WebViewStateModel) {
@@ -1297,7 +1323,9 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryBFCacheRestore(stateModel: stateModel, direction: .forward)
+        tryBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+            // 버튼 네비게이션은 콜백 무시
+        }
     }
     
     // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
