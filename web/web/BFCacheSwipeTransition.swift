@@ -1257,9 +1257,10 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🎬 **균형잡힌 미리보기 제거 - 깜빡임 방지 + 확실한 정리**
+    // 🎬 **진짜 깜빡임 방지: 웹뷰 로딩 완료 후 제거**
     private func performNavigationWithSmartTiming(context: TransitionContext, previewContainer: UIView) {
-        guard let stateModel = context.stateModel else {
+        guard let stateModel = context.stateModel,
+              let webView = context.webView else {
             // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
             activeTransitions.removeValue(forKey: context.tabID)
@@ -1276,55 +1277,58 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🎯 **깜빡임 방지: BFCache 복원 완료 감지 후 제거**
-        tryBFCacheRestoreWithCallback(stateModel: stateModel, direction: context.direction) { [weak self] success in
-            // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
-            DispatchQueue.main.async {
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
+        // BFCache 복원 (비동기, 미리보기 제거와 무관)
+        tryBFCacheRestoreAsync(stateModel: stateModel, direction: context.direction)
+        
+        // 🎯 **핵심: 웹뷰 로딩 완료 감지**
+        var loadingObserver: NSKeyValueObservation?
+        var hasRemoved = false
+        
+        let removePreview = {
+            guard !hasRemoved else { return }
+            hasRemoved = true
+            loadingObserver?.invalidate()
+            previewContainer.removeFromSuperview()
+            self.activeTransitions.removeValue(forKey: context.tabID)
+            self.dbg("🎬 미리보기 제거 - 웹뷰 로딩 완료")
+        }
+        
+        // 로딩 상태 감지
+        loadingObserver = webView.observe(\.isLoading, options: [.new]) { _, change in
+            let isLoading = change.newValue ?? true
+            if !isLoading {
+                // 로딩 완료 시 약간의 여유 후 제거 (렌더링 완료 대기)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    removePreview()
+                }
             }
         }
         
-        // 🛡️ **안전장치: 최대 0.5초 후 강제 정리** (복원이 너무 오래 걸리는 경우)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            // activeTransitions에서 아직 제거 안되었으면 강제 제거
-            if self?.activeTransitions[context.tabID] != nil {
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (0.5초 타임아웃)")
+        // 🛡️ **안전장치: 0.8초 후 강제 제거**
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            if !hasRemoved {
+                self.dbg("🛡️ 미리보기 강제 제거 (0.8초 타임아웃)")
+                removePreview()
             }
         }
     }
     
-    // 🎯 **BFCache 복원 + 완료 콜백** 
-    private func tryBFCacheRestoreWithCallback(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🔧 **BFCache 복원 (미리보기와 독립적)**
+    private func tryBFCacheRestoreAsync(stateModel: WebViewStateModel, direction: NavigationDirection) {
         guard let webView = stateModel.webView,
-              let currentRecord = stateModel.dataModel.currentPageRecord else {
-            // BFCache 복원 불가 - 0.1초 후 완료 콜백 (자연스러운 대기)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                completion(false)
-            }
-            return
-        }
+              let currentRecord = stateModel.dataModel.currentPageRecord else { return }
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 복원 후 즉시 콜백
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
                     self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title)")
                 } else {
                     self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
                 }
-                completion(success)
             }
         } else {
-            // BFCache 미스 - 0.15초 대기 후 완료 콜백 (자연스러운 대기)
             dbg("❌ BFCache 미스: \(currentRecord.title)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                completion(false)
-            }
         }
     }
     
