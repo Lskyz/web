@@ -566,11 +566,12 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         // 버전 증가 (스레드 안전)
-        let version: Int
-        cacheAccessQueue.sync(flags: .barrier) {
+        let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
+            guard let self = self else { return 1 }
             let currentVersion = self._cacheVersion[pageRecord.id] ?? 0
-            version = currentVersion + 1
-            self._cacheVersion[pageRecord.id] = version
+            let newVersion = currentVersion + 1
+            self._cacheVersion[pageRecord.id] = newVersion
+            return newVersion
         }
         
         let snapshot = BFCacheSnapshot(
