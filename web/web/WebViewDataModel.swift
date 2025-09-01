@@ -1152,60 +1152,97 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        stateModel?.handleLoadingFinish()
-        let title = webView.title ?? webView.url?.host ?? "제목 없음"
+    stateModel?.handleLoadingFinish()
+    let title = webView.title ?? webView.url?.host ?? "제목 없음"
 
-        if let finalURL = webView.url {
-            // 🎯 **핵심: didFinish enum 기반 분기 처리**
-            switch restoreState {
-            case .sessionRestoring:
-                // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
-                updatePageTitle(for: finalURL, title: title)
-                finishSessionRestore()
-                dbg("🔄 세션 복원 완료: '\(title)'")
+    if let finalURL = webView.url {
+        // 🎯 **핵심: didFinish enum 기반 분기 처리**
+        switch restoreState {
+        case .sessionRestoring:
+            // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
+            updatePageTitle(for: finalURL, title: title)
+            finishSessionRestore()
+            dbg("🔄 세션 복원 완료: '\(title)'")
 
-            case .queueRestoring(_):
-                // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
+        case .queueRestoring(_):
+            // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
 
-                if let expectedNormalized = expectedNormalizedURL {
-                    let actualNormalized = PageRecord.normalizeURL(finalURL)
+            if let expectedNormalized = expectedNormalizedURL {
+                let actualNormalized = PageRecord.normalizeURL(finalURL)
 
-                    if expectedNormalized == actualNormalized {
-                        // URL이 예상과 일치 - 제목만 업데이트
-                        updatePageTitle(for: finalURL, title: title)
-                        dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
-                    } else {
-                        // URL이 예상과 다름 - 현재 항목 치환
-                        replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
-                        dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
-                    }
-                } else {
-                    // 예상 URL이 없으면 제목만 업데이트
+                if expectedNormalized == actualNormalized {
+                    // URL이 예상과 일치 - 제목만 업데이트
                     updatePageTitle(for: finalURL, title: title)
-                    dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
+                    dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
+                } else {
+                    // URL이 예상과 다름 - 현재 항목 치환
+                    replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
+                    dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
                 }
+            } else {
+                // 예상 URL이 없으면 제목만 업데이트
+                updatePageTitle(for: finalURL, title: title)
+                dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
+            }
 
-                // 📸 현재 레코드 업데이트
-                if let currentRecord = currentPageRecord {
-                    var mutableRecord = currentRecord
-                    mutableRecord.updateAccess()
-                    pageHistory[currentPageIndex] = mutableRecord
+            // 📸 현재 레코드 업데이트
+            if let currentRecord = currentPageRecord {
+                var mutableRecord = currentRecord
+                mutableRecord.updateAccess()
+                pageHistory[currentPageIndex] = mutableRecord
+            }
+
+            // 큐 기반 복원 완료
+            finishCurrentRestore()
+
+        case .idle, .completed, .failed, .preparing:
+            // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
+            addNewPage(url: finalURL, title: title)
+            stateModel?.syncCurrentURL(finalURL)
+            dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+            
+            // 🎯 **추가: 페이지 로드 완료 시 자동 캐시 캡처**
+            // 이전 페이지가 캐시되지 않았을 가능성이 있으므로
+            // 현재 페이지와 이전 페이지 모두 캡처 시도
+            if let stateModel = stateModel,
+               let tabID = stateModel.tabID,
+               let currentRecord = currentPageRecord {
+                
+                // 현재 페이지 캡처 (백그라운드 우선순위)
+                BFCacheTransitionSystem.shared.captureSnapshot(
+                    pageRecord: currentRecord,
+                    webView: webView,
+                    type: .background,
+                    tabID: tabID
+                )
+                dbg("📸 페이지 로드 완료 - 현재 페이지 자동 캐시")
+                
+                // 이전 페이지도 캐시 확인 후 필요시 캡처
+                if currentPageIndex > 0 {
+                    let previousIndex = currentPageIndex - 1
+                    let previousRecord = pageHistory[previousIndex]
+                    
+                    // 캐시 미스 체크 (직접 접근 없이 시스템 통해 확인)
+                    if !BFCacheTransitionSystem.shared.hasCache(for: previousRecord.id) {
+                        // 이전 페이지도 백그라운드로 캡처 시도
+                        // (웹뷰는 현재 페이지를 보고 있으므로 스냅샷은 제한적)
+                        BFCacheTransitionSystem.shared.captureSnapshot(
+                            pageRecord: previousRecord,
+                            webView: nil, // 웹뷰 없이 메타데이터만 저장
+                            type: .background,
+                            tabID: tabID
+                        )
+                        dbg("📸 이전 페이지 캐시 미스 - 메타데이터 캡처: '\(previousRecord.title)'")
+                    }
                 }
-
-                // 큐 기반 복원 완료
-                finishCurrentRestore()
-
-            case .idle, .completed, .failed, .preparing:
-                // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
-                addNewPage(url: finalURL, title: title)
-                stateModel?.syncCurrentURL(finalURL)
-                dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             }
         }
-
-        stateModel?.triggerNavigationFinished()
-        dbg("✅ 네비게이션 완료")
     }
+
+    stateModel?.triggerNavigationFinished()
+    dbg("✅ 네비게이션 완료")
+}
+
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
