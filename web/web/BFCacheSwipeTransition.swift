@@ -11,7 +11,8 @@
 //  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
 //  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
-//  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
+//  🖼️ **iframe 내부 스크롤 처리 추가** - 동적 사이트 개선
+//  🧹 **클릭 상태 저장 제거** - 효과 없는 기능 정리
 //
 
 import UIKit
@@ -242,7 +243,7 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // ⚡ 안정적인 고급 스크롤 복원 (스크롤 가능한 요소들)
+        // ⚡ 안정적인 고급 스크롤 복원 (🖼️ iframe 포함)
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -253,9 +254,39 @@ struct BFCacheSnapshot: Codable {
                         const arr=\(self.convertScrollElementsToJSArray(els)); let ok=0;
                         for(const it of arr){
                             if(!it.selector) continue;
-                            const el=document.querySelector(it.selector);
-                            if(el && el.scrollTop !== undefined){
-                                el.scrollTop=it.top||0; el.scrollLeft=it.left||0; ok++;
+                            
+                            // 🖼️ iframe 내부 요소 처리
+                            if (it.isIframe && it.selector.startsWith('iframe[')) {
+                                const match = it.selector.match(/^iframe\\[(\\d+)\\]_(.+)/);
+                                if (match) {
+                                    const iframeIndex = parseInt(match[1]);
+                                    const innerSelector = match[2];
+                                    const iframe = document.querySelectorAll('iframe')[iframeIndex];
+                                    
+                                    if (iframe) {
+                                        try {
+                                            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                                            if (iframeDoc) {
+                                                const el = iframeDoc.querySelector(innerSelector);
+                                                if (el && el.scrollTop !== undefined) {
+                                                    el.scrollTop = it.top || 0;
+                                                    el.scrollLeft = it.left || 0;
+                                                    ok++;
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn('🖼️ iframe 복원 실패:', e);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // 일반 요소 처리
+                                const el = document.querySelector(it.selector);
+                                if (el && el.scrollTop !== undefined) {
+                                    el.scrollTop = it.top || 0;
+                                    el.scrollLeft = it.left || 0;
+                                    ok++;
+                                }
                             }
                         }
                         return ok>=0;
@@ -520,25 +551,13 @@ final class BFCacheTransitionSystem: NSObject {
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
+        // 2. DOM 캡처 - 🧹 **클릭 상태 저장 제거**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
-                    
-                    // 🚫 **눌린 상태/활성 상태 모두 제거**
-                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
-                        el.classList.remove(...Array.from(el.classList).filter(c => 
-                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
-                        ));
-                    });
-                    
-                    // input focus 제거
-                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
-                        el.blur();
-                    });
                     
                     const html = document.documentElement.outerHTML;
                     return html.length > 100000 ? html.substring(0, 100000) : html;
@@ -553,22 +572,45 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
-        // 3. JS 상태 캡처 - 🚫 **폼 데이터 캡처 완전 제거**
+        // 3. JS 상태 캡처 - 🖼️ **iframe 내부 스크롤 처리 추가**
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = """
             (function() {
                 try {
-                    // 🚫 **폼 데이터 캡처 제거 - 스크롤 정보만 수집**
+                    // 🖼️ **iframe 포함 스크롤 정보 수집**
                     const scrollableElements = [];
-                    document.querySelectorAll('[scrollTop], [scrollLeft]').forEach((el, i) => {
-                        if (i >= 20) return; // 최대 20개
-                        if (el.scrollTop > 0 || el.scrollLeft > 0) {
-                            scrollableElements.push({
-                                selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className ? '.' + el.className.split(' ')[0] : ''),
-                                top: el.scrollTop,
-                                left: el.scrollLeft
-                            });
+                    
+                    // 메인 문서의 스크롤 가능한 요소들 수집
+                    function collectScrollableElements(doc, prefix = '') {
+                        const elements = doc.querySelectorAll('*');
+                        elements.forEach((el, i) => {
+                            if (scrollableElements.length >= 50) return; // 최대 50개로 증가
+                            
+                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                                scrollableElements.push({
+                                    selector: prefix + el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className ? '.' + el.className.split(' ')[0] : ''),
+                                    top: el.scrollTop,
+                                    left: el.scrollLeft,
+                                    isIframe: prefix !== ''
+                                });
+                            }
+                        });
+                    }
+                    
+                    // 메인 문서 스크롤 수집
+                    collectScrollableElements(document);
+                    
+                    // 🖼️ iframe 내부 스크롤 수집
+                    document.querySelectorAll('iframe').forEach((iframe, iframeIndex) => {
+                        try {
+                            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                            if (iframeDoc) {
+                                collectScrollableElements(iframeDoc, `iframe[${iframeIndex}]_`);
+                            }
+                        } catch (e) {
+                            // CORS 등으로 접근 불가한 iframe은 무시
+                            console.warn('🖼️ iframe 접근 불가:', e);
                         }
                     });
                     
