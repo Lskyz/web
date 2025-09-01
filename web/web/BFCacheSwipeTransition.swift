@@ -9,6 +9,7 @@
 //  🔧 **StateModel과 완벽 동기화**
 //  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
 //  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
+//  ⚡ **전환 속도 최적화 - 대기 시간 최소화**
 //
 
 import UIKit
@@ -131,7 +132,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🔧 **빠른 복원 메서드 - 대기 시간 최소화**
+    // ⚡ **핵심 개선: 초고속 복원 메서드 - 대기 시간 대폭 단축**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -155,9 +156,9 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (빠른 모드)")
+        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (초고속 모드)")
         
-        // 🚀 즉시 상태 복원 시작 (대기 시간 제거)
+        // ⚡ 즉시 상태 복원 시작 (대기 시간 완전 제거)
         DispatchQueue.main.async {
             self.restorePageState(to: webView, completion: completion)
         }
@@ -181,7 +182,7 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // 🔧 **강력한 스크롤 복원 - WebKit 자동 스크롤 대응**
+        // ⚡ **강력한 스크롤 복원 - 대기 시간 대폭 단축**
         restoreSteps.append {
             let targetPos = self.scrollPosition
             TabPersistenceManager.debugMessages.append("🔄 스크롤 복원 시도: x=\(targetPos.x), y=\(targetPos.y)")
@@ -195,7 +196,7 @@ struct BFCacheSnapshot: Codable {
                 function attemptScroll() {
                     try {
                         if (document.readyState !== 'complete') {
-                            setTimeout(attemptScroll, 50);
+                            setTimeout(attemptScroll, 25); // ⚡ 50ms → 25ms
                             return false;
                         }
                         
@@ -222,32 +223,34 @@ struct BFCacheSnapshot: Codable {
                 stepResults.append(success)
                 
                 if !success || targetPos.y > 0 {
-                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응) - ⚡ 0.3초 → 0.1초
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         webView.scrollView.setContentOffset(targetPos, animated: false)
                         
-                        // 4차: 최종 JavaScript 재시도
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        // 4차: 최종 JavaScript 재시도 - ⚡ 0.2초 → 0.05초
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                             let finalScrollJS = "window.scrollTo(\(targetPos.x), \(targetPos.y)); window.scrollY >= \(targetPos.y - 50)"
                             webView.evaluateJavaScript(finalScrollJS) { finalResult, _ in
                                 let finalSuccess = (finalResult as? Bool) ?? false
                                 TabPersistenceManager.debugMessages.append("🔄 최종 스크롤 상태: \(finalSuccess ? "성공" : "실패")")
                                 
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                // ⚡ 0.1초 → 0.02초
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                                     nextStep()
                                 }
                             }
                         }
                     }
                 } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // ⚡ 0.1초 → 0.02초
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                         nextStep()
                     }
                 }
             }
         }
         
-        // 🚀 빠른 폼 복원
+        // ⚡ 빠른 폼 복원
         if let form = self.formData, !form.isEmpty {
             restoreSteps.append {
                 let js = """
@@ -266,15 +269,15 @@ struct BFCacheSnapshot: Codable {
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
                     
-                    // 🚀 즉시 다음 스텝 진행
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // ⚡ 즉시 다음 스텝 진행 - 0.1초 → 0.02초
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                         nextStep()
                     }
                 }
             }
         }
         
-        // 🚀 빠른 고급 스크롤 복원
+        // ⚡ 빠른 고급 스크롤 복원
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -297,8 +300,8 @@ struct BFCacheSnapshot: Codable {
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
                     
-                    // 🚀 즉시 다음 스텝 진행
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // ⚡ 즉시 다음 스텝 진행 - 0.1초 → 0.02초
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                         nextStep()
                     }
                 }
@@ -482,7 +485,7 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 🔧 **개선된 캐처 로직 - 실패 시 재시도**
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
             webView: webView,
@@ -490,7 +493,7 @@ final class BFCacheTransitionSystem: NSObject {
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 캐처 완료 후 저장
+        // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
@@ -499,7 +502,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ 직렬 캐처 완료: \(task.pageRecord.title)")
+        dbg("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -508,7 +511,7 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🔧 **실패 복구 기능 추가된 캐처**
+    // 🔧 **실패 복구 기능 추가된 캡처**
     private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
@@ -517,14 +520,14 @@ final class BFCacheTransitionSystem: NSObject {
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    dbg("🔄 재시도 후 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    dbg("🔄 재시도 후 캡처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
                 }
                 return result
             }
             
             // 재시도 전 잠시 대기
-            dbg("⏳ 캐처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.1)
+            dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            Thread.sleep(forTimeInterval: 0.05) // ⚡ 0.1초 → 0.05초
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -556,10 +559,10 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 타임아웃 설정 (3초)
-        let result = semaphore.wait(timeout: .now() + 3.0)
+        // ⚡ 타임아웃 단축 (3초 → 2초)
+        let result = semaphore.wait(timeout: .now() + 2.0)
         if result == .timedOut {
-            dbg("⏰ 스냅샷 캐처 타임아웃: \(pageRecord.title)")
+            dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
@@ -581,7 +584,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0)
+        _ = domSemaphore.wait(timeout: .now() + 0.5) // ⚡ 1초 → 0.5초
         
         // 3. JS 상태 캡처 (간소화)
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -615,7 +618,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.0)
+        _ = jsSemaphore.wait(timeout: .now() + 0.5) // ⚡ 1초 → 0.5초
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1234,7 +1237,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정**
+    // ⚡ **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 대기 시간 최소화**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1261,9 +1264,9 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 🎬 **핵심 수정: 네비게이션 먼저 수행**
+                // ⚡ **핵심 수정: 네비게이션 먼저 수행 - 빠른 완료 콜백**
                 self?.performNavigation(context: context) { success in
-                    // 🎬 **네비게이션과 복원이 완료된 후 미리보기 제거**
+                    // ⚡ **네비게이션과 복원이 완료된 후 미리보기 즉시 제거**
                     DispatchQueue.main.async {
                         previewContainer.removeFromSuperview()
                         self?.activeTransitions.removeValue(forKey: tabID)
@@ -1303,7 +1306,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🎬 **핵심 개선: 완료 콜백이 있는 네비게이션**
+    // ⚡ **핵심 개선: 완료 콜백이 있는 네비게이션 - 대기 시간 최소화**
     private func performNavigation(context: TransitionContext, completion: @escaping (Bool) -> Void) {
         guard let stateModel = context.stateModel else { 
             completion(false)
@@ -1323,7 +1326,7 @@ final class BFCacheTransitionSystem: NSObject {
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction, completion: completion)
     }
     
-    // 🔧 **빠른 BFCache 복원 - 대기 시간 최소화**
+    // ⚡ **초고속 BFCache 복원 - 대기 시간 대폭 단축**
     private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { 
@@ -1340,15 +1343,15 @@ final class BFCacheTransitionSystem: NSObject {
                     self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
                 }
                 
-                // 🚀 빠른 완료 (대기 시간 최소화: 0.2초)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                // ⚡ 초고속 완료 (대기 시간 대폭 단축: 0.2초 → 0.05초)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     completion(success)
                 }
             }
         } else {
             dbg("❌ BFCache 미스: \(currentRecord.title)")
-            // 🚀 미스 시에도 빠른 완료 (0.3초)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            // ⚡ 미스 시에도 초고속 완료 (0.3초 → 0.1초)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 completion(false)
             }
         }
@@ -1496,7 +1499,7 @@ extension BFCacheTransitionSystem {
         dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 🔧 **수정: 페이지 로드 완료 후 자동 캐시 강화**
+    /// ⚡ **수정: 페이지 로드 완료 후 자동 캐시 강화 - 대기 시간 최소화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
@@ -1505,7 +1508,7 @@ extension BFCacheTransitionSystem {
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
         dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
-        // 🔧 **추가: 이전 페이지들도 순차적으로 캐시 확인 및 캡처**
+        // ⚡ **추가: 이전 페이지들도 순차적으로 캐시 확인 및 캡처**
         if stateModel.dataModel.currentPageIndex > 0 {
             // 최근 3개 페이지만 체크 (성능 고려)
             let checkCount = min(3, stateModel.dataModel.currentPageIndex)
