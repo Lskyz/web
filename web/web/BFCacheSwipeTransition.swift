@@ -7,6 +7,7 @@
 //  ♾️ 무제한 영구 캐싱 (탭별 관리)
 //  💾 스마트 메모리 관리 
 //  🔧 **StateModel과 완벽 동기화**
+//  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
 //
 
 import UIKit
@@ -782,6 +783,21 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
+    // MARK: - 🔧 **수정: hasCache 메서드 추가**
+    func hasCache(for pageID: UUID) -> Bool {
+        // 메모리 캐시 체크
+        if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
+            return true
+        }
+        
+        // 디스크 캐시 인덱스 체크
+        if cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) != nil {
+            return true
+        }
+        
+        return false
+    }
+    
     // MARK: - 메모리 캐시 관리
     
     private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
@@ -1392,13 +1408,40 @@ extension BFCacheTransitionSystem {
         dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 문서 로드 완료 후 **도착 페이지**를 저장
+    /// 🔧 **수정: 페이지 로드 완료 후 자동 캐시 강화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 백그라운드 캡처 (일반 우선순위)
+        // 현재 페이지 캡처 (백그라운드 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
         dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
+        
+        // 🔧 **추가: 이전 페이지들도 순차적으로 캐시 확인 및 캡처**
+        if stateModel.dataModel.currentPageIndex > 0 {
+            // 최근 3개 페이지만 체크 (성능 고려)
+            let checkCount = min(3, stateModel.dataModel.currentPageIndex)
+            let startIndex = max(0, stateModel.dataModel.currentPageIndex - checkCount)
+            
+            for i in startIndex..<stateModel.dataModel.currentPageIndex {
+                let previousRecord = stateModel.dataModel.pageHistory[i]
+                
+                // 캐시가 없는 경우만 메타데이터 저장
+                if !hasCache(for: previousRecord.id) {
+                    // 메타데이터만 저장 (이미지는 없음)
+                    let metadataSnapshot = BFCacheSnapshot(
+                        pageRecord: previousRecord,
+                        scrollPosition: .zero,
+                        timestamp: Date(),
+                        captureStatus: .failed,
+                        version: 1
+                    )
+                    
+                    // 디스크에 메타데이터만 저장
+                    saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
+                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                }
+            }
+        }
     }
 }
