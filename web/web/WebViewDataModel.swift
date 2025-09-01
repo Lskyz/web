@@ -10,6 +10,7 @@
 //  🏠 루트 Replace 오염 방지 - JS 디바운싱 + Swift 홈클릭 구분
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
+//  📱 **모바일 리디렉트 중복 방지 - www->m 리디렉트 처리**
 
 //
 
@@ -122,9 +123,31 @@ struct PageRecord: Codable, Identifiable, Hashable {
         return dict
     }
 
+    // 📱 **모바일 리디렉트 정규화 - www -> m 리디렉트 처리**
+    private static func normalizeMobileRedirect(_ url: URL, isDesktopMode: Bool = false) -> URL {
+        // 데스크탑 모드에서는 모바일 정규화 안함
+        guard !isDesktopMode else { return url }
+        
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = components.host?.lowercased() else { return url }
+        
+        // m.domain.com을 www.domain.com으로 정규화 (통합 처리)
+        if host.hasPrefix("m.") {
+            let mainDomain = String(host.dropFirst(2)) // "m." 제거
+            components.host = "www.\(mainDomain)"
+            TabPersistenceManager.debugMessages.append("📱 모바일 도메인 정규화: \(host) -> www.\(mainDomain)")
+            return components.url ?? url
+        }
+        
+        return url
+    }
+
     // 경로 정규화: 중복/트레일링 슬래시 정리, http→https 승격
-    private static func normalizedComponents(for url: URL) -> URLComponents? {
-        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    private static func normalizedComponents(for url: URL, isDesktopMode: Bool = false) -> URLComponents? {
+        // 📱 먼저 모바일 리디렉트 정규화 적용
+        let normalizedURL = normalizeMobileRedirect(url, isDesktopMode: isDesktopMode)
+        
+        var comps = URLComponents(url: normalizedURL, resolvingAgainstBaseURL: false)
         if comps?.scheme == "http" { comps?.scheme = "https" }
         if var path = comps?.path {
             while path.contains("//") { path = path.replacingOccurrences(of: "//", with: "/") }
@@ -153,14 +176,14 @@ struct PageRecord: Codable, Identifiable, Hashable {
         }
     }
 
-    // ✅ 범용 정규화: **트래킹만 제거**, 그 외 파라미터는 전부 보존
-    static func normalizeURL(_ url: URL) -> String {
+    // ✅ 범용 정규화: **트래킹만 제거**, 그 외 파라미터는 전부 보존 + 📱 모바일 리디렉트 처리
+    static func normalizeURL(_ url: URL, isDesktopMode: Bool = false) -> String {
         // 검색엔진은 기존 특화 정규화 유지
         if isSearchURL(url) {
             return normalizeSearchURL(url)
         }
 
-        guard var comps = normalizedComponents(for: url) else { return url.absoluteString }
+        guard var comps = normalizedComponents(for: url, isDesktopMode: isDesktopMode) else { return url.absoluteString }
 
         // 쿼리: 트래킹 키 제외하고 **모든 키/값 보존**
         let kept = normalizedQueryMapPreservingEmpty(comps)
@@ -183,8 +206,8 @@ struct PageRecord: Codable, Identifiable, Hashable {
         return comps.url?.absoluteString ?? url.absoluteString
     }
 
-    func normalizedURL() -> String {
-        return Self.normalizeURL(self.url)
+    func normalizedURL(isDesktopMode: Bool = false) -> String {
+        return Self.normalizeURL(self.url, isDesktopMode: isDesktopMode)
     }
 
     // 🔍 검색 URL인지 확인
@@ -408,7 +431,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         updateNavigationState()
 
         let targetRecord = pageHistory[targetIndex]
-        expectedNormalizedURL = targetRecord.normalizedURL()
+        expectedNormalizedURL = targetRecord.normalizedURL(isDesktopMode: stateModel?.isDesktopMode ?? false)
 
         dbg("🔄 복원 시작: 인덱스 \(targetIndex) → '\(targetRecord.title)' (큐 남은 건수: \(restoreQueue.count))")
 
@@ -482,12 +505,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         return enqueueRestore(to: index)
     }
 
-    // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기**
+    // MARK: - 🔍 **핵심 해결책 3: 검색 페이지 전용 인덱스 찾기 + 📱 모바일 리디렉트 고려**
 
     private func findSearchPageIndex(for url: URL) -> Int? {
         guard PageRecord.isSearchURL(url) else { return nil }
 
         let searchURL = PageRecord.normalizeSearchURL(url)
+        let isDesktopMode = stateModel?.isDesktopMode ?? false
 
         for (index, record) in pageHistory.enumerated().reversed() {
             // 🚫 **현재 페이지는 제외** (SPA pop에서 현재 페이지로 돌아가는 경우 방지)
@@ -930,7 +954,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         stateModel?.syncCurrentURL(url)
     }
 
-    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (범용 정규화 적용)**
+    // MARK: - 🎯 **핵심: 단순한 새 페이지 추가 로직 (📱 모바일 리디렉트 정규화 적용)**
 
     func addNewPage(url: URL, title: String = "") {
         if PageRecord.isLoginRelatedURL(url) {
@@ -944,17 +968,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return
         }
 
-        // ✅ **핵심 로직 (범용 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
+        // ✅ **핵심 로직 (📱 모바일 리디렉트 정규화 적용)**: 현재 페이지와 같으면 제목만 업데이트
         if let currentRecord = currentPageRecord {
-            let currentNormalized = currentRecord.normalizedURL()
-            let newNormalized = PageRecord.normalizeURL(url)
+            let isDesktopMode = stateModel?.isDesktopMode ?? false
+            let currentNormalized = currentRecord.normalizedURL(isDesktopMode: isDesktopMode)
+            let newNormalized = PageRecord.normalizeURL(url, isDesktopMode: isDesktopMode)
 
             // 🔧 쿼리 차이 로깅 (디버깅용)
             PageRecord.logDiffIfSamePathButDifferentQuery(prev: currentRecord.url, curr: url)
 
             if currentNormalized == newNormalized {
                 updatePageTitle(for: url, title: title)
-                dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)'")
+                dbg("🔄 같은 페이지 - 제목만 업데이트: '\(title)' (📱 모바일 리디렉트 정규화 적용)")
                 return
             } else {
                 dbg("🆕 URL 차이 감지 - 새 페이지 추가")
@@ -992,11 +1017,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return 
         }
 
-        // 🔧 **핵심 수정**: StateModel의 현재 URL과 매칭되는 레코드만 업데이트
+        // 🔧 **핵심 수정**: StateModel의 현재 URL과 매칭되는 레코드만 업데이트 (📱 모바일 리디렉트 고려)
         if let stateModelURL = stateModel?.currentURL {
             let currentRecord = pageHistory[currentPageIndex]
-            let currentNormalizedURL = currentRecord.normalizedURL()
-            let stateNormalizedURL = PageRecord.normalizeURL(stateModelURL)
+            let isDesktopMode = stateModel?.isDesktopMode ?? false
+            let currentNormalizedURL = currentRecord.normalizedURL(isDesktopMode: isDesktopMode)
+            let stateNormalizedURL = PageRecord.normalizeURL(stateModelURL, isDesktopMode: isDesktopMode)
 
             // URL이 일치하지 않으면 제목 업데이트 거부
             if currentNormalizedURL != stateNormalizedURL {
@@ -1013,20 +1039,21 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         dbg("📝 제목 업데이트: '\(title)' [인덱스: \(currentPageIndex)]")
     }
 
-    // 🔧 **개선된 제목 업데이트**: 공백 제목 보정 추가
+    // 🔧 **개선된 제목 업데이트**: 공백 제목 보정 추가 + 📱 모바일 리디렉트 고려
     func updatePageTitle(for url: URL, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let safeTitle = trimmed.isEmpty ? (url.host ?? "제목 없음") : trimmed
-        let normalizedURL = PageRecord.normalizeURL(url)
+        let isDesktopMode = stateModel?.isDesktopMode ?? false
+        let normalizedURL = PageRecord.normalizeURL(url, isDesktopMode: isDesktopMode)
 
         // 해당 URL을 가진 가장 최근 레코드 찾기
         for i in stride(from: pageHistory.count - 1, through: 0, by: -1) {
             let record = pageHistory[i]
-            if record.normalizedURL() == normalizedURL {
+            if record.normalizedURL(isDesktopMode: isDesktopMode) == normalizedURL {
                 var updatedRecord = record
                 updatedRecord.updateTitle(safeTitle)
                 pageHistory[i] = updatedRecord
-                dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString)")
+                dbg("📝 URL 기반 제목 업데이트(보정): '\(safeTitle)' [인덱스: \(i)] URL: \(url.absoluteString) (📱 모바일 리디렉트 고려)")
                 return
             }
         }
@@ -1045,9 +1072,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     func findPageIndex(for url: URL) -> Int? {
         // ⚠️ **주의**: 이 함수는 미리보기용만 사용
         // 절대로 이 결과로 navigateToIndex 하지 말 것!
-        let normalizedURL = PageRecord.normalizeURL(url)
+        let isDesktopMode = stateModel?.isDesktopMode ?? false
+        let normalizedURL = PageRecord.normalizeURL(url, isDesktopMode: isDesktopMode)
         let matchingIndices = pageHistory.enumerated().compactMap { index, record in
-            record.normalizedURL() == normalizedURL ? index : nil
+            record.normalizedURL(isDesktopMode: isDesktopMode) == normalizedURL ? index : nil
         }
         return matchingIndices.last // 참고용만 - 점프 금지!
     }
@@ -1168,7 +1196,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
 
             if let expectedNormalized = expectedNormalizedURL {
-                let actualNormalized = PageRecord.normalizeURL(finalURL)
+                let isDesktopMode = stateModel?.isDesktopMode ?? false
+                let actualNormalized = PageRecord.normalizeURL(finalURL, isDesktopMode: isDesktopMode)
 
                 if expectedNormalized == actualNormalized {
                     // URL이 예상과 일치 - 제목만 업데이트
