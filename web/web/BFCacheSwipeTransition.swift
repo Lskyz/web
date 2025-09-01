@@ -9,7 +9,7 @@
 //  🔧 **StateModel과 완벽 동기화**
 //  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
 //  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
-//  ⚡ **전환 속도 최적화 - 대기 시간 최소화**
+//  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
 //
 
 import UIKit
@@ -132,7 +132,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **핵심 개선: 초고속 복원 메서드 - 대기 시간 대폭 단축**
+    // ⚡ **균형 잡힌 빠른 복원 메서드 - 깜빡임 방지**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -156,9 +156,9 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (초고속 모드)")
+        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (빠른 모드)")
         
-        // ⚡ 즉시 상태 복원 시작 (대기 시간 완전 제거)
+        // ⚡ 즉시 상태 복원 시작 (깜빡임 방지를 위한 최소 대기)
         DispatchQueue.main.async {
             self.restorePageState(to: webView, completion: completion)
         }
@@ -182,7 +182,7 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // ⚡ **강력한 스크롤 복원 - 대기 시간 대폭 단축**
+        // ⚡ **적절한 스크롤 복원 - 깜빡임 방지**
         restoreSteps.append {
             let targetPos = self.scrollPosition
             TabPersistenceManager.debugMessages.append("🔄 스크롤 복원 시도: x=\(targetPos.x), y=\(targetPos.y)")
@@ -196,7 +196,7 @@ struct BFCacheSnapshot: Codable {
                 function attemptScroll() {
                     try {
                         if (document.readyState !== 'complete') {
-                            setTimeout(attemptScroll, 25); // ⚡ 50ms → 25ms
+                            setTimeout(attemptScroll, 30); // ⚡ 25ms → 30ms (안정성)
                             return false;
                         }
                         
@@ -223,34 +223,34 @@ struct BFCacheSnapshot: Codable {
                 stepResults.append(success)
                 
                 if !success || targetPos.y > 0 {
-                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응) - ⚡ 0.3초 → 0.1초
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응) - ⚡ 균형점 찾기
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         webView.scrollView.setContentOffset(targetPos, animated: false)
                         
-                        // 4차: 최종 JavaScript 재시도 - ⚡ 0.2초 → 0.05초
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        // 4차: 최종 JavaScript 재시도 - ⚡ 안정성을 위한 적절한 대기
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                             let finalScrollJS = "window.scrollTo(\(targetPos.x), \(targetPos.y)); window.scrollY >= \(targetPos.y - 50)"
                             webView.evaluateJavaScript(finalScrollJS) { finalResult, _ in
                                 let finalSuccess = (finalResult as? Bool) ?? false
                                 TabPersistenceManager.debugMessages.append("🔄 최종 스크롤 상태: \(finalSuccess ? "성공" : "실패")")
                                 
-                                // ⚡ 0.1초 → 0.02초
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                                // ⚡ 깜빡임 방지를 위한 최소 대기
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                     nextStep()
                                 }
                             }
                         }
                     }
                 } else {
-                    // ⚡ 0.1초 → 0.02초
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                    // ⚡ 성공 시에도 최소 대기로 안정성 확보
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         nextStep()
                     }
                 }
             }
         }
         
-        // ⚡ 빠른 폼 복원
+        // ⚡ 안정적인 폼 복원
         if let form = self.formData, !form.isEmpty {
             restoreSteps.append {
                 let js = """
@@ -269,15 +269,15 @@ struct BFCacheSnapshot: Codable {
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
                     
-                    // ⚡ 즉시 다음 스텝 진행 - 0.1초 → 0.02초
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                    // ⚡ 안정성을 위한 적절한 대기 (0.02초 → 0.05초)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         nextStep()
                     }
                 }
             }
         }
         
-        // ⚡ 빠른 고급 스크롤 복원
+        // ⚡ 안정적인 고급 스크롤 복원
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -300,8 +300,8 @@ struct BFCacheSnapshot: Codable {
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
                     
-                    // ⚡ 즉시 다음 스텝 진행 - 0.1초 → 0.02초
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                    // ⚡ 안정성을 위한 적절한 대기 (0.02초 → 0.05초)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         nextStep()
                     }
                 }
@@ -527,7 +527,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.05) // ⚡ 0.1초 → 0.05초
+            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -559,8 +559,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 타임아웃 단축 (3초 → 2초)
-        let result = semaphore.wait(timeout: .now() + 2.0)
+        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
+        let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
@@ -584,7 +584,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.5) // ⚡ 1초 → 0.5초
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 3. JS 상태 캡처 (간소화)
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -618,7 +618,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 0.5) // ⚡ 1초 → 0.5초
+        _ = jsSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1237,7 +1237,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // ⚡ **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 대기 시간 최소화**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 빠른 로딩 감지 + 최대 대기 시간 제한**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1264,17 +1264,95 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // ⚡ **핵심 수정: 네비게이션 먼저 수행 - 빠른 완료 콜백**
-                self?.performNavigation(context: context) { success in
-                    // ⚡ **네비게이션과 복원이 완료된 후 미리보기 즉시 제거**
-                    DispatchQueue.main.async {
-                        previewContainer.removeFromSuperview()
-                        self?.activeTransitions.removeValue(forKey: tabID)
-                        self?.dbg("🎬 미리보기 컨테이너 정리 완료")
-                    }
-                }
+                // 🎬 **핵심 수정: 네비게이션 수행 후 스마트 대기 (터치 차단 최소화)**
+                self?.performNavigationWithSmartTiming(context: context, previewContainer: previewContainer)
             }
         )
+    }
+    
+    // 🎬 **새로운 메서드: 스마트 타이밍으로 미리보기 제거 (터치 차단 최소화)**
+    private func performNavigationWithSmartTiming(context: TransitionContext, previewContainer: UIView) {
+        guard let stateModel = context.stateModel,
+              let webView = context.webView else {
+            // 실패 시 즉시 정리
+            previewContainer.removeFromSuperview()
+            activeTransitions.removeValue(forKey: context.tabID)
+            return
+        }
+        
+        // 네비게이션 먼저 수행
+        switch context.direction {
+        case .back:
+            stateModel.goBack()
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+        case .forward:
+            stateModel.goForward()
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+        }
+        
+        // BFCache 복원 시도 (별도로 수행)
+        tryBFCacheRestoreAsync(stateModel: stateModel, direction: context.direction)
+        
+        // 🎯 **스마트 타이밍: 빠른 로딩 감지 + 최대 1초 제한**
+        var hasCompleted = false
+        var loadingObserver: NSKeyValueObservation?
+        
+        let cleanup = { [weak self] in
+            guard !hasCompleted else { return }
+            hasCompleted = true
+            
+            loadingObserver?.invalidate()
+            previewContainer.removeFromSuperview()
+            self?.activeTransitions.removeValue(forKey: context.tabID)
+            self?.dbg("🎬 미리보기 컨테이너 정리 완료 (스마트 타이밍)")
+        }
+        
+        // 1. 로딩 상태 감지 (빠른 로딩용)
+        loadingObserver = webView.observe(\.isLoading, options: [.new]) { webView, change in
+            let isLoading = change.newValue ?? true
+            
+            if !isLoading && !hasCompleted {
+                // 로딩이 빨리 완료되면 0.08초 추가 대기 후 정리
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    cleanup()
+                }
+            }
+        }
+        
+        // 2. 최대 대기 시간 제한 (터치 차단 최소화) - 1초 후 무조건 정리
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if !hasCompleted {
+                self.dbg("⏰ 미리보기 정리 시간 제한 (1초) - 터치 차단 방지")
+                cleanup()
+            }
+        }
+        
+        // 3. 즉시 대기 시작 - BFCache 히트 시 빠른 제거 (0.3초)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if !hasCompleted && !webView.isLoading {
+                self.dbg("🚀 BFCache 빠른 히트 - 0.3초 정리")
+                cleanup()
+            }
+        }
+    }
+    
+    // 🔧 **비동기 BFCache 복원 (미리보기 정리와 독립적)**
+    private func tryBFCacheRestoreAsync(stateModel: WebViewStateModel, direction: NavigationDirection) {
+        guard let webView = stateModel.webView,
+              let currentRecord = stateModel.dataModel.currentPageRecord else { return }
+        
+        // BFCache에서 스냅샷 가져오기
+        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
+            snapshot.restore(to: webView) { [weak self] success in
+                if success {
+                    self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
+                } else {
+                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
+                }
+            }
+        } else {
+            dbg("❌ BFCache 미스: \(currentRecord.title)")
+        }
     }
     
     private func cancelGestureTransition(tabID: UUID) {
@@ -1326,7 +1404,7 @@ final class BFCacheTransitionSystem: NSObject {
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction, completion: completion)
     }
     
-    // ⚡ **초고속 BFCache 복원 - 대기 시간 대폭 단축**
+    // ⚡ **균형 잡힌 BFCache 복원 - 깜빡임 방지**
     private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { 
@@ -1343,15 +1421,15 @@ final class BFCacheTransitionSystem: NSObject {
                     self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
                 }
                 
-                // ⚡ 초고속 완료 (대기 시간 대폭 단축: 0.2초 → 0.05초)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                // ⚡ 균형 잡힌 완료 (깜빡임 방지: 0.05초 → 0.12초)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     completion(success)
                 }
             }
         } else {
             dbg("❌ BFCache 미스: \(currentRecord.title)")
-            // ⚡ 미스 시에도 초고속 완료 (0.3초 → 0.1초)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // ⚡ 미스 시 적절한 대기 (0.1초 → 0.15초)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 completion(false)
             }
         }
