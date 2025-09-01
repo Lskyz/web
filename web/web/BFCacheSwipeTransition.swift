@@ -10,6 +10,8 @@
 //  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
 //  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
 //  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
+//  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
+//  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //
 
 import UIKit
@@ -42,7 +44,6 @@ struct BFCacheSnapshot: Codable {
     var domSnapshot: String?
     let scrollPosition: CGPoint
     var jsState: [String: Any]?
-    var formData: [String: Any]?
     let timestamp: Date
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
@@ -61,7 +62,6 @@ struct BFCacheSnapshot: Codable {
         case domSnapshot
         case scrollPosition
         case jsState
-        case formData
         case timestamp
         case webViewSnapshotPath
         case captureStatus
@@ -78,9 +78,6 @@ struct BFCacheSnapshot: Codable {
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
             jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
-        }
-        if let formDataRaw = try container.decodeIfPresent(Data.self, forKey: .formData) {
-            formData = try JSONSerialization.jsonObject(with: formDataRaw) as? [String: Any]
         }
         
         timestamp = try container.decode(Date.self, forKey: .timestamp)
@@ -100,10 +97,6 @@ struct BFCacheSnapshot: Codable {
             let jsData = try JSONSerialization.data(withJSONObject: js)
             try container.encode(jsData, forKey: .jsState)
         }
-        if let form = formData {
-            let formDataRaw = try JSONSerialization.data(withJSONObject: form)
-            try container.encode(formDataRaw, forKey: .formData)
-        }
         
         try container.encode(timestamp, forKey: .timestamp)
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
@@ -112,12 +105,11 @@ struct BFCacheSnapshot: Codable {
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, formData: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
         self.jsState = jsState
-        self.formData = formData
         self.timestamp = timestamp
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
@@ -250,34 +242,7 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // ⚡ 안정적인 폼 복원
-        if let form = self.formData, !form.isEmpty {
-            restoreSteps.append {
-                let js = """
-                (function(){
-                    try{
-                        const d=\(self.convertFormDataToJSObject(form)); let ok=0;
-                        for (const [k,v] of Object.entries(d)) {
-                            const el=document.querySelector(`[name="${k}"], #${k}`); if(!el) continue;
-                            if(el.type==='checkbox'||el.type==='radio'){ el.checked=Boolean(v); } else { el.value=String(v??''); }
-                            ok++;
-                        }
-                        return ok>=0;
-                    }catch(e){return false;}
-                })()
-                """
-                webView.evaluateJavaScript(js) { result, _ in
-                    stepResults.append((result as? Bool) ?? false)
-                    
-                    // ⚡ 안정성을 위한 적절한 대기 (0.02초 → 0.05초)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        nextStep()
-                    }
-                }
-            }
-        }
-        
-        // ⚡ 안정적인 고급 스크롤 복원
+        // ⚡ 안정적인 고급 스크롤 복원 (스크롤 가능한 요소들)
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -311,17 +276,7 @@ struct BFCacheSnapshot: Codable {
         nextStep()
     }
     
-    // 안전한 JSON 변환 함수들
-    private func convertFormDataToJSObject(_ formData: [String: Any]) -> String {
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: formData, options: [])
-            return String(data: jsonData, encoding: .utf8) ?? "{}"
-        } catch {
-            TabPersistenceManager.debugMessages.append("폼 데이터 JSON 변환 실패: \(error.localizedDescription)")
-            return "{}"
-        }
-    }
-    
+    // 안전한 JSON 변환 함수
     private func convertScrollElementsToJSArray(_ elements: [[String: Any]]) -> String {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: elements, options: [])
@@ -538,7 +493,6 @@ final class BFCacheTransitionSystem: NSObject {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
-        var formData: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
         // 1. 비주얼 스냅샷 (메인 스레드)
@@ -566,13 +520,26 @@ final class BFCacheTransitionSystem: NSObject {
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 (간소화)
+        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
+                    
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
+                        el.classList.remove(...Array.from(el.classList).filter(c => 
+                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
+                        ));
+                    });
+                    
+                    // input focus 제거
+                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
+                        el.blur();
+                    });
+                    
                     const html = document.documentElement.outerHTML;
                     return html.length > 100000 ? html.substring(0, 100000) : html;
                 } catch(e) { return null; }
@@ -586,23 +553,31 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
-        // 3. JS 상태 캡처 (간소화)
+        // 3. JS 상태 캡처 - 🚫 **폼 데이터 캡처 완전 제거**
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = """
             (function() {
                 try {
-                    const formData = {};
-                    document.querySelectorAll('input:not([type="password"]), textarea, select').forEach((el, i) => {
-                        if (i >= 50) return; // 최대 50개
-                        if (el.name || el.id) {
-                            formData[el.name || el.id] = el.value || el.checked;
+                    // 🚫 **폼 데이터 캡처 제거 - 스크롤 정보만 수집**
+                    const scrollableElements = [];
+                    document.querySelectorAll('[scrollTop], [scrollLeft]').forEach((el, i) => {
+                        if (i >= 20) return; // 최대 20개
+                        if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                            scrollableElements.push({
+                                selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className ? '.' + el.className.split(' ')[0] : ''),
+                                top: el.scrollTop,
+                                left: el.scrollLeft
+                            });
                         }
                     });
                     
                     return {
-                        forms: formData,
-                        scroll: { x: window.scrollX, y: window.scrollY },
+                        scroll: { 
+                            x: window.scrollX, 
+                            y: window.scrollY,
+                            elements: scrollableElements
+                        },
                         href: window.location.href,
                         title: document.title
                     };
@@ -613,7 +588,6 @@ final class BFCacheTransitionSystem: NSObject {
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
                     jsState = data
-                    formData = data["forms"] as? [String: Any]
                 }
                 jsSemaphore.signal()
             }
@@ -644,7 +618,6 @@ final class BFCacheTransitionSystem: NSObject {
             domSnapshot: domSnapshot,
             scrollPosition: captureData.scrollPosition,
             jsState: jsState,
-            formData: formData,
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
@@ -924,7 +897,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템 (기존 유지)**
+    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -972,10 +945,24 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
+            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
+            guard activeTransitions[tabID] == nil else { 
+                dbg("🛡️ 전환 중 - 새 제스처 무시")
+                gesture.state = .cancelled
+                return 
+            }
+            
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
+                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
+                if let existing = activeTransitions[tabID] {
+                    existing.previewContainer?.removeFromSuperview()
+                    activeTransitions.removeValue(forKey: tabID)
+                    dbg("🛡️ 기존 전환 강제 정리")
+                }
+                
                 // 현재 페이지 즉시 캡처 (높은 우선순위)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
                     captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
@@ -1293,7 +1280,7 @@ final class BFCacheTransitionSystem: NSObject {
         // BFCache 복원 시도 (별도로 수행)
         tryBFCacheRestoreAsync(stateModel: stateModel, direction: context.direction)
         
-        // 🎯 **스마트 타이밍: 빠른 로딩 감지 + 최대 1초 제한**
+        // 🎯 **스마트 타이밍: 빠른 로딩 감지 + 최대 0.5초 제한** (🛡️ 먹통 시간 단축)
         var hasCompleted = false
         var loadingObserver: NSKeyValueObservation?
         
@@ -1319,10 +1306,10 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 2. 최대 대기 시간 제한 (터치 차단 최소화) - 1초 후 무조건 정리
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        // 2. 🛡️ **최대 대기 시간 제한 (1초 → 0.5초로 단축) - 먹통 방지**
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if !hasCompleted {
-                self.dbg("⏰ 미리보기 정리 시간 제한 (1초) - 터치 차단 방지")
+                self.dbg("⏰ 미리보기 정리 시간 제한 (0.5초) - 터치 차단 방지")
                 cleanup()
             }
         }
