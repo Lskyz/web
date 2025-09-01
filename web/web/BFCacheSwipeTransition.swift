@@ -131,37 +131,34 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🔧 **개선된 복원 메서드 - URL 로드 제거**
+    // 🔧 **빠른 복원 메서드 - 대기 시간 최소화**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
         case .failed:
-            // ✅ URL 로드 제거! StateModel이 이미 처리
-            // 캐처 실패시 그냥 실패 리턴
-            TabPersistenceManager.debugMessages.append("BFCache 캡처 실패 - StateModel이 URL 로드 처리")
+            // 즉시 실패 반환
+            TabPersistenceManager.debugMessages.append("BFCache 캡처 실패 - 즉시 완료")
             completion(false)
             return
             
         case .visualOnly:
-            // ✅ URL 로드 제거! 스크롤 위치만 복원
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            // 스크롤만 즉시 복원
+            DispatchQueue.main.async {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("BFCache 스크롤 위치만 복원")
+                TabPersistenceManager.debugMessages.append("BFCache 스크롤만 즉시 복원")
                 completion(true)
             }
             return
             
         case .partial, .complete:
-            // 정상적인 복원 진행 (URL 로드 없이)
+            // 정상적인 복원 진행
             break
         }
         
-        // ✅ URL 로드 제거! StateModel이 이미 처리
-        // 바로 상태 복원으로 진행
-        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (URL 로드 스킵)")
+        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (빠른 모드)")
         
-        // 페이지가 이미 로드되었다고 가정하고 상태만 복원
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        // 🚀 즉시 상태 복원 시작 (대기 시간 제거)
+        DispatchQueue.main.async {
             self.restorePageState(to: webView, completion: completion)
         }
     }
@@ -184,18 +181,22 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
-        // 스크롤 복원
+        // 🚀 빠른 스크롤 복원 (타임아웃 감소: 0.3초)
         restoreSteps.append {
             let pos = self.scrollPosition
             webView.scrollView.setContentOffset(pos, animated: false)
             let js = "try{window.scrollTo(\(pos.x),\(pos.y));true}catch(e){false}"
             webView.evaluateJavaScript(js) { result, _ in
                 stepResults.append((result as? Bool) ?? false)
-                nextStep()
+                
+                // 🚀 즉시 다음 스텝 진행 (대기 없음)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    nextStep()
+                }
             }
         }
         
-        // 폼 복원
+        // 🚀 빠른 폼 복원
         if let form = self.formData, !form.isEmpty {
             restoreSteps.append {
                 let js = """
@@ -213,12 +214,16 @@ struct BFCacheSnapshot: Codable {
                 """
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
-                    nextStep()
+                    
+                    // 🚀 즉시 다음 스텝 진행
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        nextStep()
+                    }
                 }
             }
         }
         
-        // 고급 스크롤 복원
+        // 🚀 빠른 고급 스크롤 복원
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -240,7 +245,11 @@ struct BFCacheSnapshot: Codable {
                 """
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
-                    nextStep()
+                    
+                    // 🚀 즉시 다음 스텝 진행
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        nextStep()
+                    }
                 }
             }
         }
@@ -1263,7 +1272,7 @@ final class BFCacheTransitionSystem: NSObject {
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction, completion: completion)
     }
     
-    // 🔧 **개선된 BFCache 복원 - 완료 콜백 추가**
+    // 🔧 **빠른 BFCache 복원 - 대기 시간 최소화**
     private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { 
@@ -1277,18 +1286,18 @@ final class BFCacheTransitionSystem: NSObject {
                 if success {
                     self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
                 } else {
-                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title) - StateModel이 처리")
+                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
                 }
                 
-                // 🎬 **복원 완료 후 일정 시간 대기 (안정화)**
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // 🚀 빠른 완료 (대기 시간 최소화: 0.2초)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     completion(success)
                 }
             }
         } else {
-            dbg("❌ BFCache 미스: \(currentRecord.title) - StateModel이 처리")
-            // 🎬 **BFCache 미스 시에도 StateModel 처리 시간 대기**
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            // 🚀 미스 시에도 빠른 완료 (0.3초)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 completion(false)
             }
         }
