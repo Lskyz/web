@@ -76,7 +76,7 @@ struct BFCacheSnapshot: Codable {
     var jsState: [String: Any]?
     let timestamp: Date
     var webViewSnapshotPath: String?
-    let captureStatus: CaptureStatus
+    var captureStatus: CaptureStatus  // 🔧 수정: let → var
     let version: Int
     
     // 📍 **핵심 개선: 스크롤 검증 정보**
@@ -213,6 +213,7 @@ struct BFCacheSnapshot: Codable {
         var currentStep = 0
         let startTime = Date()
         
+        // 🔧 수정: 타입 명시적 선언
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
         // **1단계: 즉시 스크롤 + 초기 검증 (0ms)**
@@ -368,8 +369,14 @@ struct BFCacheSnapshot: Codable {
                             TabPersistenceManager.debugMessages.append("🔄 4단계 완료: 앵커 검증 성공")
                             stepCompletion(true)
                         } else {
-                            // 앵커 검증 실패시 폴백 복원
-                            let fallbackY = data?["fallbackY"] as? Double ?? self.scrollPosition.y
+                            // 🔧 수정: 데이터 접근 수정
+                            let fallbackY: Double
+                            if let data = result as? [String: Any] {
+                                fallbackY = data["fallbackY"] as? Double ?? self.scrollPosition.y
+                            } else {
+                                fallbackY = self.scrollPosition.y
+                            }
+                            
                             TabPersistenceManager.debugMessages.append("🔄 4단계: 앵커 실패, 폴백 복원 (Y=\(Int(fallbackY)))")
                             
                             let fallbackJS = "window.scrollTo(\(self.scrollPosition.x), \(fallbackY)); true;"
@@ -1541,7 +1548,7 @@ final class BFCacheTransitionSystem: NSObject {
                     try stateData.write(to: statePath)
                     self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
-                    self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
+                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
