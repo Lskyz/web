@@ -1,6 +1,6 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **다단계 BFCache 전환 시스템 (4단계 재보정 제거)**
+//  🎯 **강화된 BFCache 전환 시스템**
 //  ✅ 직렬화 큐로 레이스 컨디션 완전 제거
 //  🔄 원자적 연산으로 데이터 일관성 보장
 //  📸 실패 복구 메커니즘 추가
@@ -13,7 +13,7 @@
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
-//  🚫 **4단계 메인 스크롤 재보정 제거** - 깜빡임 완전 해결
+//  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //
 
 import UIKit
@@ -37,6 +37,47 @@ private class WeakGestureContext {
         self.tabID = tabID
         self.webView = webView
         self.stateModel = stateModel
+    }
+}
+
+// MARK: - 🔄 적응형 타이밍 학습 시스템
+struct SiteTimingProfile: Codable {
+    let hostname: String
+    var loadingSamples: [TimeInterval] = []
+    var averageLoadingTime: TimeInterval = 0.5
+    var successfulRestores: Int = 0
+    var totalRestores: Int = 0
+    var lastUpdated: Date = Date()
+    
+    var successRate: Double {
+        guard totalRestores > 0 else { return 0.0 }
+        return Double(successfulRestores) / Double(totalRestores)
+    }
+    
+    mutating func recordLoadingTime(_ duration: TimeInterval) {
+        loadingSamples.append(duration)
+        // 최근 10개 샘플만 유지
+        if loadingSamples.count > 10 {
+            loadingSamples.removeFirst()
+        }
+        averageLoadingTime = loadingSamples.reduce(0, +) / Double(loadingSamples.count)
+        lastUpdated = Date()
+    }
+    
+    mutating func recordRestoreAttempt(success: Bool) {
+        totalRestores += 1
+        if success {
+            successfulRestores += 1
+        }
+        lastUpdated = Date()
+    }
+    
+    // 적응형 대기 시간 계산
+    func getAdaptiveWaitTime(step: Int) -> TimeInterval {
+        let baseTime = averageLoadingTime
+        let stepMultiplier = Double(step) * 0.1
+        let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
+        return (baseTime + stepMultiplier) * successFactor
     }
 }
 
@@ -126,8 +167,8 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🔄 **다단계 복원 메서드 - 4단계 재보정 제거로 깜빡임 해결**
-    func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
+    func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
         case .failed:
@@ -147,19 +188,22 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (재보정 없음)")
+        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
         
-        // 다단계 복원 실행 - 4단계 재보정 제거
+        // 적응형 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
-            self.performMultiStepRestoreWithoutFinalCorrection(to: webView, completion: completion)
+            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템 - 4단계 재보정 제거로 깜빡임 완전 해결**
-    private func performMultiStepRestoreWithoutFinalCorrection(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🔄 **핵심: 다단계 복원 시스템**
+    private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
+        
+        // 사이트별 적응형 타이밍 계산
+        let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
@@ -190,15 +234,16 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (0.1초 후)**
+        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
             restoreSteps.append((2, { stepCompletion in
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (0.1초 후)")
+                let waitTime = profile.getAdaptiveWaitTime(step: 1)
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let containerScrollJS = self.generateContainerScrollScript(elements)
                     webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
@@ -209,14 +254,15 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **3단계: iframe 스크롤 복원 (0.2초 후)**
+        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
             restoreSteps.append((3, { stepCompletion in
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (0.2초 후)")
+                let waitTime = profile.getAdaptiveWaitTime(step: 2)
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let iframeScrollJS = self.generateIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
@@ -227,8 +273,31 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // 🚫 **4단계 제거**: 메인 스크롤 재보정 금지! (깜빡임 원인이었음)
-        // 1단계에서 성공한 메인 스크롤은 절대 다시 건드리지 않음
+        // **4단계: 최종 확인 및 보정**
+        restoreSteps.append((4, { stepCompletion in
+            let waitTime = profile.getAdaptiveWaitTime(step: 3)
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                let finalVerifyJS = """
+                (function() {
+                    try {
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                        }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                    } catch(e) { return false; }
+                })()
+                """
+                
+                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
+                    let success = (result as? Bool) ?? false
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
+                    stepCompletion(success)
+                }
+            }
+        }))
         
         // 단계별 실행
         func executeNextStep() {
@@ -245,9 +314,9 @@ struct BFCacheSnapshot: Codable {
                 let duration = Date().timeIntervalSince(startTime)
                 let successCount = stepResults.filter { $0 }.count
                 let totalSteps = stepResults.count
-                let overallSuccess = successCount > 0 // 하나라도 성공하면 OK
+                let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료 (재보정 없음): \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
                 completion(overallSuccess)
             }
         }
@@ -348,7 +417,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - 🎯 **올인원 BFCache 전환 시스템**
+// MARK: - 🎯 **강화된 BFCache 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -357,10 +426,11 @@ final class BFCacheTransitionSystem: NSObject {
         super.init()
         // 앱 시작시 디스크 캐시 로드
         loadDiskCacheIndex()
+        loadSiteTimingProfiles()
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **핵심: 단일 직렬화 큐 시스템**
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
     private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
@@ -369,6 +439,9 @@ final class BFCacheTransitionSystem: NSObject {
     private var _memoryCache: [UUID: BFCacheSnapshot] = [:]
     private var _diskCacheIndex: [UUID: String] = [:]
     private var _cacheVersion: [UUID: Int] = [:]
+    
+    // 🔄 **사이트별 타이밍 프로파일**
+    private var _siteTimingProfiles: [String: SiteTimingProfile] = [:]
     
     // 스레드 안전 액세서
     private var memoryCache: [UUID: BFCacheSnapshot] {
@@ -395,6 +468,19 @@ final class BFCacheTransitionSystem: NSObject {
         cacheAccessQueue.async(flags: .barrier) {
             self._diskCacheIndex[pageID] = path
         }
+    }
+    
+    // 🔄 **사이트별 타이밍 프로파일 관리**
+    private func getSiteProfile(for url: URL) -> SiteTimingProfile? {
+        guard let hostname = url.host else { return nil }
+        return cacheAccessQueue.sync { _siteTimingProfiles[hostname] }
+    }
+    
+    private func updateSiteProfile(_ profile: SiteTimingProfile) {
+        cacheAccessQueue.async(flags: .barrier) {
+            self._siteTimingProfiles[profile.hostname] = profile
+        }
+        saveSiteTimingProfiles()
     }
     
     // MARK: - 📁 파일 시스템 경로
@@ -435,7 +521,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심: 원자적 캡처 작업 (강화된 스크롤 감지)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -542,7 +628,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08)
+            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -563,24 +649,24 @@ final class BFCacheTransitionSystem: NSObject {
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    self.dbg("📸 스냅샷 실패: \(error.localizedDescription)")
-                    visualSnapshot = nil
+                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    // Fallback: layer 렌더링
+                    visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
-                    self.dbg("📸 스냅샷 캡처 성공: \(image?.size ?? CGSize.zero)")
                 }
                 semaphore.signal()
             }
         }
         
-        // 타임아웃 대기
+        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
         let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
-            visualSnapshot = nil
+            visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 눌린 상태 제거하는 스크립트
+        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -588,7 +674,7 @@ final class BFCacheTransitionSystem: NSObject {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
-                    // 눌린 상태/활성 상태 모두 제거
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
                         el.classList.remove(...Array.from(el.classList).filter(c => 
                             c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
@@ -611,7 +697,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8)
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -625,7 +711,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.2)
+        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -652,7 +738,7 @@ final class BFCacheTransitionSystem: NSObject {
             scrollPosition: captureData.scrollPosition,
             jsState: jsState,
             timestamp: Date(),
-            webViewSnapshotPath: nil,
+            webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
             version: version
         )
@@ -660,7 +746,7 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심: 범용 스크롤 감지 JavaScript 생성**
+    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
@@ -899,7 +985,14 @@ final class BFCacheTransitionSystem: NSObject {
         """
     }
     
-    // MARK: - 💾 **디스크 저장 시스템**
+    private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+        return renderer.image { context in
+            webView.layer.render(in: context.cgContext)
+        }
+    }
+    
+    // MARK: - 💾 **개선된 디스크 저장 시스템**
     
     private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
@@ -924,6 +1017,7 @@ final class BFCacheTransitionSystem: NSObject {
                         self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
                     } catch {
                         self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
+                        // 저장 실패해도 계속 진행
                     }
                 }
             }
@@ -992,6 +1086,7 @@ final class BFCacheTransitionSystem: NSObject {
             let contents = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil)
             let pageDirs = contents.filter { $0.lastPathComponent.hasPrefix(pagePrefix) }
                 .sorted { url1, url2 in
+                    // 버전 번호 추출하여 정렬
                     let v1 = Int(url1.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     let v2 = Int(url2.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     return v1 > v2  // 최신 버전부터
@@ -1009,7 +1104,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **디스크 캐시 로딩**
+    // MARK: - 💾 **개선된 디스크 캐시 로딩**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
@@ -1055,7 +1150,26 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **스냅샷 조회 시스템**
+    // MARK: - 🔄 **사이트별 타이밍 프로파일 관리**
+    
+    private func loadSiteTimingProfiles() {
+        if let data = UserDefaults.standard.data(forKey: "BFCache.SiteTimingProfiles"),
+           let profiles = try? JSONDecoder().decode([String: SiteTimingProfile].self, from: data) {
+            cacheAccessQueue.async(flags: .barrier) {
+                self._siteTimingProfiles = profiles
+            }
+            dbg("🔄 사이트 타이밍 프로파일 로드: \(profiles.count)개")
+        }
+    }
+    
+    private func saveSiteTimingProfiles() {
+        let profiles = cacheAccessQueue.sync { _siteTimingProfiles }
+        if let data = try? JSONEncoder().encode(profiles) {
+            UserDefaults.standard.set(data, forKey: "BFCache.SiteTimingProfiles")
+        }
+    }
+    
+    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
@@ -1083,6 +1197,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
+    // MARK: - 🔧 **수정: hasCache 메서드 추가**
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1104,9 +1219,9 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
-    // MARK: - 🧹 **캐시 정리**
+    // MARK: - 🧹 **개선된 캐시 정리**
     
-    // 탭 닫을 때만 호출
+    // 탭 닫을 때만 호출 (무제한 캐시 정책)
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
         // 메모리에서 제거 (스레드 안전)
         cacheAccessQueue.async(flags: .barrier) { [weak self] in
@@ -1159,7 +1274,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템**
+    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1207,7 +1322,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 전환 중이면 새 제스처 무시
+            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
             guard activeTransitions[tabID] == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
@@ -1218,7 +1333,7 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 혹시 남아있는 기존 전환 강제 정리
+                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
                 if let existing = activeTransitions[tabID] {
                     existing.previewContainer?.removeFromSuperview()
                     activeTransitions.removeValue(forKey: tabID)
@@ -1265,7 +1380,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 제스처/전환 로직
+    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -1275,7 +1390,10 @@ final class BFCacheTransitionSystem: NSObject {
         webView.takeSnapshot(with: captureConfig) { image, error in
             if let error = error {
                 self.dbg("📸 현재 페이지 스냅샷 실패: \(error.localizedDescription)")
-                completion(nil)
+                DispatchQueue.main.async {
+                    let fallbackImage = self.renderWebViewToImage(webView)
+                    completion(fallbackImage)
+                }
             } else {
                 completion(image)
             }
@@ -1346,8 +1464,15 @@ final class BFCacheTransitionSystem: NSObject {
             imageView.clipsToBounds = true
             currentView = imageView
         } else {
-            currentView = UIView(frame: webView.bounds)
-            currentView.backgroundColor = .systemBackground
+            if let fallbackImage = renderWebViewToImage(webView) {
+                let imageView = UIImageView(image: fallbackImage)
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                currentView = imageView
+            } else {
+                currentView = UIView(frame: webView.bounds)
+                currentView.backgroundColor = .systemBackground
+            }
         }
         
         currentView.frame = webView.bounds
@@ -1476,7 +1601,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **0.8초 고정 타이밍으로 미리보기 제거**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1503,20 +1628,23 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 네비게이션 수행 + 0.8초 고정 타이밍 (4단계 재보정 없음)
-                self?.performNavigationWithoutFinalCorrection(context: context, previewContainer: previewContainer)
+                // 🎬 **적응형 타이밍으로 네비게이션 수행**
+                self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // 🎬 **다단계 복원 + 0.8초 고정 타이밍 (4단계 재보정 없음)**
-    private func performNavigationWithoutFinalCorrection(context: TransitionContext, previewContainer: UIView) {
+    // 🔄 **적응형 타이밍을 적용한 네비게이션 수행**
+    private func performNavigationWithAdaptiveTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
             activeTransitions.removeValue(forKey: context.tabID)
             return
         }
+        
+        // 로딩 시간 측정 시작
+        let navigationStartTime = Date()
         
         // 네비게이션 먼저 수행
         switch context.direction {
@@ -1528,19 +1656,71 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🔄 **다단계 BFCache 복원 시도 (4단계 재보정 없음)**
-        tryMultiStepBFCacheRestore(stateModel: stateModel, direction: context.direction) { success in
-            self.dbg("🔄 다단계 BFCache 복원 (재보정 없음): \(success ? "성공" : "실패")")
+        // 🔄 **적응형 BFCache 복원 + 타이밍 학습**
+        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
+            // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
+            DispatchQueue.main.async {
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
+            }
         }
         
-        // 🎬 **0.8초 고정 타이밍으로 미리보기 제거**
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            previewContainer.removeFromSuperview()
-            self?.activeTransitions.removeValue(forKey: context.tabID)
-            self?.dbg("🎬 미리보기 정리 완료 (0.8초 고정, 재보정 없음)")
+        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            if self?.activeTransitions[context.tabID] != nil {
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
+            }
         }
     }
     
+    // 🔄 **적응형 BFCache 복원 + 타이밍 학습** 
+    private func tryAdaptiveBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, navigationStartTime: Date, completion: @escaping (Bool) -> Void) {
+        guard let webView = stateModel.webView,
+              let currentRecord = stateModel.dataModel.currentPageRecord else {
+            completion(false)
+            return
+        }
+        
+        // 사이트별 프로파일 조회/생성
+        var siteProfile = getSiteProfile(for: currentRecord.url) ?? SiteTimingProfile(hostname: currentRecord.url.host ?? "unknown")
+        
+        // BFCache에서 스냅샷 가져오기
+        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
+            // BFCache 히트 - 적응형 복원
+            snapshot.restore(to: webView, siteProfile: siteProfile) { [weak self] success in
+                // 로딩 시간 기록
+                let loadingDuration = Date().timeIntervalSince(navigationStartTime)
+                siteProfile.recordLoadingTime(loadingDuration)
+                siteProfile.recordRestoreAttempt(success: success)
+                self?.updateSiteProfile(siteProfile)
+                
+                if success {
+                    self?.dbg("✅ 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
+                } else {
+                    self?.dbg("⚠️ 적응형 BFCache 복원 실패: \(currentRecord.title)")
+                }
+                completion(success)
+            }
+        } else {
+            // BFCache 미스 - 기본 대기
+            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            let loadingDuration = Date().timeIntervalSince(navigationStartTime)
+            siteProfile.recordLoadingTime(loadingDuration)
+            siteProfile.recordRestoreAttempt(success: false)
+            updateSiteProfile(siteProfile)
+            
+            // 기본 대기 시간 적용
+            let waitTime = siteProfile.getAdaptiveWaitTime(step: 1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                completion(false)
+            }
+        }
+    }
+    
+
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1570,32 +1750,6 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🔄 **다단계 BFCache 복원 (4단계 재보정 없음)** 
-    private func tryMultiStepBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
-        guard let webView = stateModel.webView,
-              let currentRecord = stateModel.dataModel.currentPageRecord else {
-            completion(false)
-            return
-        }
-        
-        // BFCache에서 스냅샷 가져오기
-        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 다단계 복원 (재보정 없음)
-            snapshot.restore(to: webView) { [weak self] success in
-                if success {
-                    self?.dbg("✅ 다단계 BFCache 복원 성공 (재보정 없음): \(currentRecord.title)")
-                } else {
-                    self?.dbg("⚠️ 다단계 BFCache 복원 실패: \(currentRecord.title)")
-                }
-                completion(success)
-            }
-        } else {
-            // BFCache 미스
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
-            completion(false)
-        }
-    }
-    
     // MARK: - 버튼 네비게이션 (즉시 전환)
     
     func navigateBack(stateModel: WebViewStateModel) {
@@ -1609,7 +1763,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryMultiStepBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: .back, navigationStartTime: Date()) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -1625,7 +1779,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryMultiStepBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: .forward, navigationStartTime: Date()) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -1700,7 +1854,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 다단계 BFCache 시스템 설치 완료 (재보정 없음)")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
