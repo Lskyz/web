@@ -12,8 +12,8 @@
 //  ⚡ **균형 잡힌 전환 속도 최적화**
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
-//  🔍 **범용 동적 콘텐츠 감지** - 기술적 특성 기반 (사이트 무관)
-//  🔄 **다단계 복원 시스템** - 동적사이트 안정성 검증
+//  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
+//  🔄 **다단계 복원 시스템** - 0.8초 고정 대기
 //
 
 import UIKit
@@ -126,7 +126,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **동적사이트 대응 복원 메서드 - 0.8초 고정 대기 + 안정성 검증**
+    // ⚡ **0.8초 고정 타이밍 복원 메서드**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -147,23 +147,19 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-                        TabPersistenceManager.debugMessages.append("BFCache 범용 동적 콘텐츠 대응 복원 시작 (0.8초 고정)")
+        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (0.8초 고정)")
         
-        // 🎯 **동적사이트 감지 후 적응형 복원**
+        // 0.8초 고정 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
-            self.performAdaptiveRestoreWithStabilityCheck(to: webView, completion: completion)
+            self.performMultiStepRestoreWithFixedTiming(to: webView, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 동적사이트 안정성 체크 + 다단계 복원 시스템**
-    private func performAdaptiveRestoreWithStabilityCheck(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🔄 **핵심: 다단계 복원 시스템 - 0.8초 고정 타이밍**
+    private func performMultiStepRestoreWithFixedTiming(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
-        
-        // 🎯 **동적 콘텐츠 감지**
-        let isDynamic = detectDynamicSite(webView: webView)
-        TabPersistenceManager.debugMessages.append("🔍 복원 대상: \(isDynamic ? "동적 콘텐츠" : "정적 콘텐츠")")
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
@@ -175,30 +171,15 @@ struct BFCacheSnapshot: Codable {
             // 네이티브 스크롤뷰 즉시 설정
             webView.scrollView.setContentOffset(targetPos, animated: false)
             
-            // JavaScript 메인 스크롤 복원 + 안정성 검증
+            // JavaScript 메인 스크롤 복원
             let mainScrollJS = """
             (function() {
                 try {
-                    const targetY = \(targetPos.y);
-                    const targetX = \(targetPos.x);
-                    
-                    // 즉시 스크롤 설정
-                    window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.body.scrollTop = targetY;
-                    
-                    // 🎯 **안정성 검증**: 실제 스크롤 위치 확인
-                    setTimeout(() => {
-                        const actualY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                        const diff = Math.abs(actualY - targetY);
-                        console.log(`스크롤 복원 검증: 목표=${targetY}, 실제=${actualY}, 차이=${diff}`);
-                    }, 100);
-                    
+                    window.scrollTo(\(targetPos.x), \(targetPos.y));
+                    document.documentElement.scrollTop = \(targetPos.y);
+                    document.body.scrollTop = \(targetPos.y);
                     return true;
-                } catch(e) { 
-                    console.error('메인 스크롤 복원 실패:', e);
-                    return false; 
-                }
+                } catch(e) { return false; }
             })()
             """
             
@@ -209,18 +190,16 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (동적 콘텐츠는 더 긴 대기)**
+        // **2단계: 주요 컨테이너 스크롤 복원 (0.2초 후)**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            let containerDelay: TimeInterval = isDynamic ? 0.4 : 0.2 // 동적 콘텐츠는 더 대기
-            
             restoreSteps.append((2, { stepCompletion in
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (\(containerDelay)초 후)")
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (0.2초 후)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + containerDelay) {
-                    let containerScrollJS = self.generateStabilityAwareContainerScrollScript(elements)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    let containerScrollJS = self.generateContainerScrollScript(elements)
                     webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
                         TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
@@ -230,16 +209,14 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **3단계: iframe 스크롤 복원 (동적 콘텐츠는 더 긴 대기)**
+        // **3단계: iframe 스크롤 복원 (0.4초 후)**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            let iframeDelay: TimeInterval = isDynamic ? 0.6 : 0.4 // 동적 콘텐츠는 더 대기
-            
             restoreSteps.append((3, { stepCompletion in
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (\(iframeDelay)초 후)")
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (0.4초 후)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + iframeDelay) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     let iframeScrollJS = self.generateIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
@@ -250,47 +227,20 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **4단계: 최종 확인 및 보정 (동적 콘텐츠는 더 긴 대기)**
-        let finalDelay: TimeInterval = isDynamic ? 0.8 : 0.6 // 동적 콘텐츠는 더 대기
-        
+        // **4단계: 최종 확인 및 보정 (0.6초 후)**
         restoreSteps.append((4, { stepCompletion in
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (\(finalDelay)초 후)")
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (0.6초 후)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        const targetY = \(self.scrollPosition.y);
-                        const targetX = \(self.scrollPosition.x);
-                        
-                        // 🎯 **동적 콘텐츠 대응**: 콘텐츠 안정성 재확인
-                        const loadingElements = document.querySelectorAll('[loading], .loading, .spinner');
-                        if (loadingElements.length > 0) {
-                            console.log('⚠️ 로딩 요소 여전히 존재, 복원 결과 불확실');
-                        }
-                        
                         // 최종 메인 스크롤 확인 및 보정
-                        const currentY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                        const diff = Math.abs(currentY - targetY);
-                        
-                        if (diff > 10) {
-                            console.log(`최종 스크롤 보정 필요: 현재=${currentY}, 목표=${targetY}, 차이=${diff}`);
-                            window.scrollTo(targetX, targetY);
-                            
-                            // 보정 후 재확인
-                            setTimeout(() => {
-                                const finalY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                                const finalDiff = Math.abs(finalY - targetY);
-                                console.log(`보정 후 위치: ${finalY}, 최종 차이: ${finalDiff}`);
-                            }, 100);
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
                         }
-                        
-                        // 성공 기준: 20px 이내 오차
-                        return diff <= 20;
-                    } catch(e) { 
-                        console.error('최종 검증 실패:', e);
-                        return false; 
-                    }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                    } catch(e) { return false; }
                 })()
                 """
                 
@@ -319,7 +269,7 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🔄 동적 콘텐츠 대응 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
                 completion(overallSuccess)
             }
         }
@@ -327,96 +277,7 @@ struct BFCacheSnapshot: Codable {
         executeNextStep()
     }
     
-    // 🎯 **안정성 체크가 포함된 컨테이너 스크롤 복원 스크립트**
-    private func generateStabilityAwareContainerScrollScript(_ elements: [[String: Any]]) -> String {
-        let elementsJSON = convertToJSONString(elements) ?? "[]"
-        return """
-        (function() {
-            try {
-                const elements = \(elementsJSON);
-                let restored = 0;
-                let skipped = 0;
-                
-                for (const item of elements) {
-                    if (!item.selector) continue;
-                    
-                    // 🎯 **안정성 체크**: 요소가 동적 로딩 중인지 확인
-                    const skipIfUnstable = (el) => {
-                        if (el.classList.contains('loading') || 
-                            el.classList.contains('skeleton') ||
-                            el.hasAttribute('data-loading') ||
-                            el.hasAttribute('loading')) {
-                            console.log('⚠️ 불안정한 요소 스킵:', item.selector);
-                            skipped++;
-                            return true;
-                        }
-                        return false;
-                    };
-                    
-                    // 다양한 selector 시도
-                    const selectors = [
-                        item.selector,
-                        item.selector.replace(/\\[\\d+\\]/g, ''), // 인덱스 제거
-                        item.className ? '.' + item.className : null,
-                        item.id ? '#' + item.id : null
-                    ].filter(s => s);
-                    
-                    let elementRestored = false;
-                    
-                    for (const sel of selectors) {
-                        if (elementRestored) break;
-                        
-                        try {
-                            const foundElements = document.querySelectorAll(sel);
-                            if (foundElements.length > 0) {
-                                for (const el of foundElements) {
-                                    if (skipIfUnstable(el)) continue;
-                                    
-                                    if (el && typeof el.scrollTop === 'number') {
-                                        // 🎯 **검증 후 복원**: 기존 스크롤 위치와 비교
-                                        const currentTop = el.scrollTop;
-                                        const targetTop = item.top || 0;
-                                        const targetLeft = item.left || 0;
-                                        
-                                        // 의미있는 변화가 있을 때만 복원
-                                        if (Math.abs(currentTop - targetTop) > 5) {
-                                            el.scrollTop = targetTop;
-                                            el.scrollLeft = targetLeft;
-                                            
-                                            // 복원 후 검증
-                                            setTimeout(() => {
-                                                const actualTop = el.scrollTop;
-                                                const diff = Math.abs(actualTop - targetTop);
-                                                if (diff > 10) {
-                                                    console.log(`⚠️ 컨테이너 복원 오차: 목표=${targetTop}, 실제=${actualTop}, 차이=${diff}`, sel);
-                                                }
-                                            }, 50);
-                                            
-                                            restored++;
-                                            console.log(`✅ 컨테이너 복원: ${sel} → ${targetTop}`);
-                                        }
-                                        elementRestored = true;
-                                    }
-                                }
-                                if (elementRestored) break; // 성공하면 다음 selector 시도 안함
-                            }
-                        } catch(e) {
-                            console.warn('컨테이너 selector 실패:', sel, e);
-                        }
-                    }
-                }
-                
-                console.log(`컨테이너 스크롤 복원 완료: ${restored}개 성공, ${skipped}개 스킵`);
-                return restored > 0;
-            } catch(e) {
-                console.error('컨테이너 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // 컨테이너 스크롤 복원 스크립트 생성 (기존 버전 - 정적사이트용)
+    // 컨테이너 스크롤 복원 스크립트 생성
     private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
@@ -591,208 +452,22 @@ final class BFCacheTransitionSystem: NSObject {
         case back, forward
     }
     
-    // 전환 컨텍스트
-    private struct TransitionContext {
-        let tabID: UUID
-        weak var webView: WKWebView?
-        weak var stateModel: WebViewStateModel?
-        var isGesture: Bool
-        var direction: NavigationDirection
-        var initialTransform: CGAffineTransform
-        var previewContainer: UIView?
-        var currentSnapshot: UIImage?
-    }
-    
-    enum NavigationDirection {
-        case back, forward
-    }
-    
     enum CaptureType {
         case immediate  // 현재 페이지 (높은 우선순위)
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 동적사이트 대응 원자적 캡처 작업**
-    
-    private struct CaptureTask {
-        let pageRecord: PageRecord
-        let tabID: UUID?
-        let type: CaptureType
-        weak var webView: WKWebView?
-        let requestedAt: Date = Date()
+    // MARK: - 🎯 **간단한 불안정 콘텐츠 감지**
+    private func isContentUnstable(webView: WKWebView) -> Bool {
+        // 간단한 조건들로만 판단
+        let isLoading = webView.isLoading
+        let scrollY = webView.scrollView.contentOffset.y
+        let hasLargeScroll = scrollY > 1000  // 많이 스크롤된 페이지는 불안정할 수 있음
+        
+        return isLoading || hasLargeScroll
     }
     
-    // 중복 방지를 위한 진행 중인 캡처 추적
-    private var pendingCaptures: Set<UUID> = []
-    
-    // 🎯 **1. 범용 동적 콘텐츠 감지 로직 (사이트 무관)**
-    private func detectDynamicSite(webView: WKWebView) -> Bool {
-        var isDynamic = false
-        let semaphore = DispatchSemaphore(value: 0)
-        
-        // JavaScript로 기술적 특성 분석
-        let detectionScript = """
-        (function() {
-            try {
-                // 1. 로딩/스켈레톤 UI 감지
-                const loadingElements = document.querySelectorAll('[loading], .loading, .skeleton, .spinner, .placeholder, [data-loading]');
-                const loadingCount = loadingElements.length;
-                
-                // 2. Lazy loading 이미지 감지
-                const lazyImages = document.querySelectorAll('img[loading="lazy"]:not([src]), img[data-src], img[data-lazy]');
-                const lazyCount = lazyImages.length;
-                
-                // 3. 무한스크롤/동적 로딩 패턴 감지
-                const infiniteScrollElements = document.querySelectorAll('[data-infinite], [data-scroll-end], .infinite-scroll, [data-lazy-load]');
-                const infiniteCount = infiniteScrollElements.length;
-                
-                // 4. SPA 프레임워크 감지
-                const hasReact = !!(window.React || document.querySelector('[data-reactroot], [data-react], #root[data-react]'));
-                const hasVue = !!(window.Vue || document.querySelector('[data-v-], [data-vue]'));
-                const hasAngular = !!(window.angular || document.querySelector('[ng-app], [data-ng-app]'));
-                const hasSPA = hasReact || hasVue || hasAngular;
-                
-                // 5. 동적 콘텐츠 컨테이너 감지
-                const dynamicContainers = document.querySelectorAll('.feed, .timeline, .stream, .posts, .content-list, .dynamic-content');
-                const dynamicCount = dynamicContainers.length;
-                
-                // 6. JavaScript 라우팅 감지 (pushState/replaceState 사용)
-                const hasHistoryAPI = !!(history.pushState && window.location.hash.length > 2);
-                
-                // 7. Ajax/Fetch 활성 요청 감지 (간접적)
-                const hasActiveRequests = document.readyState !== 'complete';
-                
-                // 8. 콘텐츠 높이 변동성 체크
-                const body = document.body || document.documentElement;
-                const hasVariableHeight = body.scrollHeight > window.innerHeight * 2; // 긴 페이지
-                
-                // 9. 실시간 업데이트 요소 감지
-                const realTimeElements = document.querySelectorAll('[data-live], [data-real-time], [data-auto-update]');
-                const realTimeCount = realTimeElements.length;
-                
-                // 점수 기반 판단
-                let dynamicScore = 0;
-                
-                if (loadingCount > 0) dynamicScore += 2;
-                if (lazyCount > 5) dynamicScore += 2;
-                if (infiniteCount > 0) dynamicScore += 3;
-                if (hasSPA) dynamicScore += 3;
-                if (dynamicCount > 0) dynamicScore += 2;
-                if (hasHistoryAPI) dynamicScore += 1;
-                if (hasActiveRequests) dynamicScore += 1;
-                if (hasVariableHeight) dynamicScore += 1;
-                if (realTimeCount > 0) dynamicScore += 2;
-                
-                return {
-                    isDynamic: dynamicScore >= 4, // 임계점: 4점 이상이면 동적사이트
-                    score: dynamicScore,
-                    details: {
-                        loadingElements: loadingCount,
-                        lazyImages: lazyCount,
-                        infiniteScroll: infiniteCount,
-                        spa: hasSPA,
-                        dynamicContainers: dynamicCount,
-                        historyAPI: hasHistoryAPI,
-                        activeRequests: hasActiveRequests,
-                        variableHeight: hasVariableHeight,
-                        realTimeElements: realTimeCount
-                    }
-                };
-            } catch(e) {
-                return { isDynamic: false, score: 0, error: e.message };
-            }
-        })()
-        """
-        
-        DispatchQueue.main.async {
-            webView.evaluateJavaScript(detectionScript) { result, error in
-                if let data = result as? [String: Any],
-                   let detected = data["isDynamic"] as? Bool {
-                    isDynamic = detected
-                    
-                    if let score = data["score"] as? Int {
-                        self.dbg("🔍 동적사이트 감지 점수: \(score)점 → \(detected ? "동적" : "정적")")
-                    }
-                }
-                semaphore.signal()
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 0.5)
-        return isDynamic
-    } hasAngular;
-                
-                // 5. 동적 콘텐츠 컨테이너 감지
-                const dynamicContainers = document.querySelectorAll('.feed, .timeline, .stream, .posts, .content-list, .dynamic-content');
-                const dynamicCount = dynamicContainers.length;
-                
-                // 6. JavaScript 라우팅 감지 (pushState/replaceState 사용)
-                const hasHistoryAPI = !!(history.pushState && window.location.hash.length > 2);
-                
-                // 7. Ajax/Fetch 활성 요청 감지 (간접적)
-                const hasActiveRequests = document.readyState !== 'complete';
-                
-                // 8. 콘텐츠 높이 변동성 체크
-                const body = document.body || document.documentElement;
-                const hasVariableHeight = body.scrollHeight > window.innerHeight * 2; // 긴 페이지
-                
-                // 9. 실시간 업데이트 요소 감지
-                const realTimeElements = document.querySelectorAll('[data-live], [data-real-time], [data-auto-update]');
-                const realTimeCount = realTimeElements.length;
-                
-                // 점수 기반 판단
-                let dynamicScore = 0;
-                
-                if (loadingCount > 0) dynamicScore += 2;
-                if (lazyCount > 5) dynamicScore += 2;
-                if (infiniteCount > 0) dynamicScore += 3;
-                if (hasSPA) dynamicScore += 3;
-                if (dynamicCount > 0) dynamicScore += 2;
-                if (hasHistoryAPI) dynamicScore += 1;
-                if (hasActiveRequests) dynamicScore += 1;
-                if (hasVariableHeight) dynamicScore += 1;
-                if (realTimeCount > 0) dynamicScore += 2;
-                
-                return {
-                    isDynamic: dynamicScore >= 4, // 임계점: 4점 이상이면 동적사이트
-                    score: dynamicScore,
-                    details: {
-                        loadingElements: loadingCount,
-                        lazyImages: lazyCount,
-                        infiniteScroll: infiniteCount,
-                        spa: hasSPA,
-                        dynamicContainers: dynamicCount,
-                        historyAPI: hasHistoryAPI,
-                        activeRequests: hasActiveRequests,
-                        variableHeight: hasVariableHeight,
-                        realTimeElements: realTimeCount
-                    }
-                };
-            } catch(e) {
-                return { isDynamic: false, score: 0, error: e.message };
-            }
-        })()
-        """
-        
-        DispatchQueue.main.async {
-            webView.evaluateJavaScript(detectionScript) { result, error in
-                if let data = result as? [String: Any],
-                   let detected = data["isDynamic"] as? Bool {
-                    isDynamic = detected
-                    
-                    if let score = data["score"] as? Int {
-                        self.dbg("🔍 동적사이트 감지 점수: \(score)점 → \(detected ? "동적" : "정적")")
-                    }
-                }
-                semaphore.signal()
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 0.5)
-        return isDynamic
-    }
-    
-    // MARK: - 🔧 **핵심 개선: 동적사이트 대응 원자적 캡처 작업**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -817,79 +492,6 @@ final class BFCacheTransitionSystem: NSObject {
         serialQueue.async { [weak self] in
             self?.performAtomicCapture(task)
         }
-        
-        // 🎯 **2. 스크롤 위치 검증 시스템**
-    private func validateScrollPosition(webView: WKWebView, expectedPosition: CGPoint, tolerance: CGFloat = 50) -> Bool {
-        let currentPosition = webView.scrollView.contentOffset
-        let yDiff = abs(currentPosition.y - expectedPosition.y)
-        let xDiff = abs(currentPosition.x - expectedPosition.x)
-        
-        return yDiff <= tolerance && xDiff <= tolerance
-    }
-    
-    // 🎯 **3. 동적사이트 안정화 대기 + 검증 캡처**
-    private func performStabilizedCapture(task: CaptureTask, completion: @escaping () -> Void) {
-        guard let webView = task.webView else {
-            completion()
-            return
-        }
-        
-        let isDynamic = detectDynamicSite(webView: webView)
-        let initialPosition = webView.scrollView.contentOffset
-        
-                        dbg("🔍 범용 콘텐츠 감지: \(task.pageRecord.title) - \(isDynamic ? "동적" : "정적")")
-        
-        if isDynamic {
-            // 동적 콘텐츠: 안정화 대기 후 검증 캡처
-            dbg("⏳ 동적 콘텐츠 안정화 대기 시작: \(task.pageRecord.title)")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.performValidatedCapture(
-                    task: task, 
-                    expectedPosition: initialPosition,
-                    retryCount: 3,
-                    completion: completion
-                )
-            }
-        } else {
-            // 정적 콘텐츠: 즉시 캡처
-            performDirectCapture(task: task)
-            completion()
-        }
-    }
-    
-    // 🔄 **검증 및 재시도 캡처**
-    private func performValidatedCapture(
-        task: CaptureTask, 
-        expectedPosition: CGPoint, 
-        retryCount: Int,
-        completion: @escaping () -> Void
-    ) {
-        guard let webView = task.webView, retryCount > 0 else {
-            dbg("❌ 검증 캡처 재시도 소진: \(task.pageRecord.title)")
-            performDirectCapture(task: task) // 최후 수단으로 직접 캡처
-            completion()
-            return
-        }
-        
-        // 현재 스크롤 위치 검증
-        if validateScrollPosition(webView: webView, expectedPosition: expectedPosition) {
-            dbg("✅ 스크롤 위치 안정됨, 캡처 실행: \(task.pageRecord.title)")
-            performDirectCapture(task: task)
-            completion()
-        } else {
-            dbg("⚠️ 스크롤 위치 불안정, 재시도 (\(retryCount-1)회 남음): \(task.pageRecord.title)")
-            
-            // 0.2초 더 대기 후 재검증
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.performValidatedCapture(
-                    task: task,
-                    expectedPosition: expectedPosition,
-                    retryCount: retryCount - 1,
-                    completion: completion
-                )
-            }
-        }
     }
     
     private func performAtomicCapture(_ task: CaptureTask) {
@@ -908,33 +510,29 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 범용 동적 콘텐츠 대응 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
-        // 메인 스레드에서 웹뷰 상태 확인
-        let captureReady = DispatchQueue.main.sync { () -> Bool in
-            return webView.window != nil && !webView.bounds.isEmpty
-        }
+        // 🎯 **불안정 콘텐츠 감지 후 안정화 대기**
+        let isUnstable = isContentUnstable(webView: webView)
+        let stabilizationDelay: TimeInterval = isUnstable ? 0.3 : 0.0
         
-        guard captureReady else {
-            dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
-            pendingCaptures.remove(pageID)
-            return
-        }
+        dbg("🎯 캡처 시작: \(task.pageRecord.title) (\(task.type)) - \(isUnstable ? "불안정" : "안정") 콘텐츠")
         
-        // 🎯 **핵심: 동적사이트 안정화 캡처 적용**
-        performStabilizedCapture(task: task) { [weak self] in
-            // 캡처 완료 후 정리
-            self?.pendingCaptures.remove(pageID)
-            self?.dbg("✅ 범용 동적 콘텐츠 대응 캡처 완료: \(task.pageRecord.title)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + stabilizationDelay) { [weak self] in
+            self?.performActualCapture(task)
         }
     }
     
-    // 🎯 **직접 캡처 (기존 로직)**
-    private func performDirectCapture(task: CaptureTask) {
-        guard let webView = task.webView else { return }
+    private func performActualCapture(_ task: CaptureTask) {
+        guard let webView = task.webView else {
+            pendingCaptures.remove(task.pageRecord.id)
+            return
+        }
         
+        // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+            // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
+                self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
                 return nil
             }
             
@@ -945,22 +543,29 @@ final class BFCacheTransitionSystem: NSObject {
             )
         }
         
-        guard let data = captureData else { return }
+        guard let data = captureData else {
+            pendingCaptures.remove(task.pageRecord.id)
+            return
+        }
         
-        // 캡처 실행
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
-            retryCount: task.type == .immediate ? 2 : 0
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 저장
+        // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
             storeInMemory(captureResult.snapshot, for: task.pageRecord.id)
         }
+        
+        // 진행 중 해제
+        pendingCaptures.remove(task.pageRecord.id)
+        dbg("✅ 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -985,7 +590,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
+            Thread.sleep(forTimeInterval: 0.1)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -1016,8 +621,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
-        let result = semaphore.wait(timeout: .now() + 2.5)
+        // 타임아웃 (2초)
+        let result = semaphore.wait(timeout: .now() + 2.0)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
@@ -1054,9 +659,9 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
+        _ = domSemaphore.wait(timeout: .now() + 0.5)
         
-        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
+        // 3. JS 상태 캡처 - 범용 스크롤 감지
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -1068,7 +673,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
+        _ = jsSemaphore.wait(timeout: .now() + 1.0)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1103,41 +708,15 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심 개선: 동적사이트 대응 스크롤 감지 JavaScript 생성**
+    // 🔍 **범용 스크롤 감지 JavaScript 생성**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             try {
-                // 🎯 **동적사이트 안정성 체크**
-                function checkContentStability() {
-                    // 로딩 중인 요소들 확인
-                    const loadingElements = document.querySelectorAll('[loading], .loading, .spinner, .skeleton');
-                    const lazyImages = document.querySelectorAll('img[loading="lazy"]:not([src])');
-                    const isLoading = document.readyState !== 'complete';
-                    
-                    if (loadingElements.length > 0 || lazyImages.length > 0 || isLoading) {
-                        console.log('⚠️ 콘텐츠 로딩 중:', {
-                            loading: loadingElements.length,
-                            lazyImages: lazyImages.length,
-                            readyState: document.readyState
-                        });
-                        return false;
-                    }
-                    
-                    return true;
-                }
-                
-                // 🔍 **1단계: 범용 스크롤 요소 스캔 (안정성 확인 포함)**
+                // 🔍 **1단계: 범용 스크롤 요소 스캔**
                 function findAllScrollableElements() {
                     const scrollables = [];
-                    const maxElements = 50; // 성능 고려 제한
-                    
-                    // 동적사이트에서는 더 신중하게 스캔
-                    const contentStable = checkContentStability();
-                    if (!contentStable) {
-                        console.log('⚠️ 콘텐츠 불안정 - 기본 스크롤만 캡처');
-                        return []; // 불안정하면 상세 스크롤 스킵
-                    }
+                    const maxElements = 30; // 성능 고려 제한
                     
                     // 1) 명시적 overflow 스타일을 가진 요소들
                     const explicitScrollables = document.querySelectorAll('*');
@@ -1155,27 +734,19 @@ final class BFCacheTransitionSystem: NSObject {
                             if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                                 (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                                 
-                                // 🎯 **동적사이트 추가 검증**: 스크롤 위치 안정성 확인
-                                const currentScrollTop = el.scrollTop;
-                                const currentScrollLeft = el.scrollLeft;
-                                
-                                // 스크롤이 있고, DOM이 안정적인 경우만 저장
-                                if ((currentScrollTop > 0 || currentScrollLeft > 0) && 
-                                    !el.classList.contains('unstable') &&
-                                    !el.hasAttribute('data-loading')) {
-                                    
+                                // 현재 스크롤 위치가 0이 아닌 경우만 저장
+                                if (el.scrollTop > 0 || el.scrollLeft > 0) {
                                     const selector = generateBestSelector(el);
                                     if (selector) {
                                         scrollables.push({
                                             selector: selector,
-                                            top: currentScrollTop,
-                                            left: currentScrollLeft,
+                                            top: el.scrollTop,
+                                            left: el.scrollLeft,
                                             maxTop: el.scrollHeight - el.clientHeight,
                                             maxLeft: el.scrollWidth - el.clientWidth,
                                             id: el.id || '',
                                             className: el.className || '',
-                                            tagName: el.tagName.toLowerCase(),
-                                            stability: 'verified' // 안정성 검증 완료 표시
+                                            tagName: el.tagName.toLowerCase()
                                         });
                                         count++;
                                     }
@@ -1187,17 +758,15 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
-                    // 2) 범용 동적 콘텐츠 컨테이너들 (사이트 무관)
-                    const dynamicScrollContainers = [
+                    // 2) 일반적인 스크롤 컨테이너들
+                    const commonScrollContainers = [
                         '.scroll-container', '.scrollable', '.content', '.main', '.body',
                         '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
-                        // 범용 동적 패턴 (기술적 특성)
                         '.feed-container', '.timeline', '.infinite-scroll', '.virtualized-list',
-                        '.chat-messages', '.comments-list', '.posts-container', '.content-list',
-                        '[data-infinite]', '[data-lazy]', '.dynamic-content', '[data-scroll-container]'
+                        '.chat-messages', '.comments-list', '.posts-container'
                     ];
                     
-                    for (const selector of dynamicScrollContainers) {
+                    for (const selector of commonScrollContainers) {
                         if (count >= maxElements) break;
                         
                         try {
@@ -1216,21 +785,20 @@ final class BFCacheTransitionSystem: NSObject {
                                         maxLeft: el.scrollWidth - el.clientWidth,
                                         id: el.id || '',
                                         className: el.className || '',
-                                        tagName: el.tagName.toLowerCase(),
-                                        stability: 'container-based'
+                                        tagName: el.tagName.toLowerCase()
                                     });
                                     count++;
                                 }
                             }
                         } catch(e) {
-                            console.warn('동적 컨테이너 스캔 실패:', selector, e);
+                            console.warn('컨테이너 스캔 실패:', selector, e);
                         }
                     }
                     
                     return scrollables;
                 }
                 
-                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만) - 안정성 체크 추가**
+                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만)**
                 function detectIframeScrolls() {
                     const iframes = [];
                     const iframeElements = document.querySelectorAll('iframe');
@@ -1240,12 +808,6 @@ final class BFCacheTransitionSystem: NSObject {
                             // Same-origin 체크
                             const contentWindow = iframe.contentWindow;
                             if (contentWindow && contentWindow.location) {
-                                // 🎯 **iframe 로딩 상태 확인**
-                                if (iframe.contentDocument && iframe.contentDocument.readyState !== 'complete') {
-                                    console.log('⚠️ iframe 로딩 중 스킵:', iframe.src);
-                                    continue;
-                                }
-                                
                                 const scrollX = contentWindow.scrollX || 0;
                                 const scrollY = contentWindow.scrollY || 0;
                                 
@@ -1256,8 +818,7 @@ final class BFCacheTransitionSystem: NSObject {
                                         scrollY: scrollY,
                                         src: iframe.src || '',
                                         id: iframe.id || '',
-                                        className: iframe.className || '',
-                                        stability: 'iframe-verified'
+                                        className: iframe.className || ''
                                     });
                                 }
                             }
@@ -1270,86 +831,18 @@ final class BFCacheTransitionSystem: NSObject {
                     return iframes;
                 }
                 
-                // 📏 **3단계: 동적 높이 요소 감지 (안정성 체크 강화)**
-                function detectDynamicElements() {
-                    const dynamics = [];
-                    
-                    // 동적 콘텐츠 안정성 먼저 확인
-                    if (!checkContentStability()) {
-                        console.log('⚠️ 동적 콘텐츠 불안정 - 동적 요소 스캔 스킵');
-                        return dynamics;
-                    }
-                    
-                    // 범용 동적 콘텐츠 컨테이너들 (기술적 특성 기반)
-                    const dynamicSelectors = [
-                        '[data-infinite]', '[data-lazy]', '.infinite-scroll',
-                        '.lazy-load', '.dynamic-content', '.feed', '.timeline',
-                        '[data-scroll-container]', '.virtualized',
-                        // 추가 범용 동적 패턴
-                        '.posts-container', '.content-list', '.comment-thread',
-                        '.search-results', '.product-list', '.news-feed',
-                        '[data-auto-load]', '[data-dynamic]', '.stream',
-                        '.updates', '.notifications', '.activity-feed'
-                    ];
-                    
-                    for (const selector of dynamicSelectors) {
-                        try {
-                            const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {
-                                if ((el.scrollTop > 0 || el.scrollLeft > 0) &&
-                                    !el.hasAttribute('data-loading') &&
-                                    !el.classList.contains('loading')) {
-                                    dynamics.push({
-                                        selector: generateBestSelector(el) || selector,
-                                        top: el.scrollTop,
-                                        left: el.scrollLeft,
-                                        type: 'dynamic-verified',
-                                        stability: checkElementStability(el)
-                                    });
-                                }
-                            }
-                        } catch(e) {
-                            console.warn('동적 요소 감지 실패:', selector, e);
-                        }
-                    }
-                    
-                    return dynamics;
-                }
-                
-                // 🎯 **개별 요소 안정성 체크**
-                function checkElementStability(element) {
-                    try {
-                        // 로딩 관련 클래스/속성 체크
-                        const loadingIndicators = ['loading', 'spinner', 'skeleton', 'placeholder'];
-                        const hasLoading = loadingIndicators.some(indicator => 
-                            element.classList.contains(indicator) || 
-                            element.hasAttribute(`data-${indicator}`)
-                        );
-                        
-                        if (hasLoading) return 'unstable';
-                        
-                        // 높이 변화 감지 (간접적)
-                        const hasFixedHeight = window.getComputedStyle(element).height !== 'auto';
-                        return hasFixedHeight ? 'stable' : 'variable';
-                    } catch(e) {
-                        return 'unknown';
-                    }
-                }
-                
-                // 최적의 selector 생성 (개선된 버전)
+                // 최적의 selector 생성
                 function generateBestSelector(element) {
                     if (!element || element.nodeType !== 1) return null;
                     
-                    // 1순위: ID가 있으면 ID 사용 (안정성 체크 추가)
-                    if (element.id && !/^(\\d|temp|auto|generated)/.test(element.id)) {
+                    // 1순위: ID가 있으면 ID 사용
+                    if (element.id) {
                         return `#${element.id}`;
                     }
                     
                     // 2순위: 고유한 클래스 조합
                     if (element.className) {
-                        const classes = element.className.trim().split(/\\s+/)
-                            .filter(cls => !/^(active|hover|focus|loading|temp)/.test(cls)); // 임시 클래스 제외
-                        
+                        const classes = element.className.trim().split(/\\s+/);
                         const uniqueClasses = classes.filter(cls => {
                             try {
                                 const elements = document.querySelectorAll(`.${cls}`);
@@ -1376,14 +869,13 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
-                    // 3순위: 태그명 + 안정한 속성
+                    // 3순위: 태그명 + 속성
                     const tag = element.tagName.toLowerCase();
                     const attributes = [];
                     
-                    // 안정한 data 속성 우선 (임시성 속성 제외)
+                    // data 속성 우선
                     for (const attr of element.attributes) {
-                        if (attr.name.startsWith('data-') && 
-                            !/^data-(loading|temp|auto|generated)/.test(attr.name)) {
+                        if (attr.name.startsWith('data-')) {
                             attributes.push(`[${attr.name}="${attr.value}"]`);
                         }
                     }
@@ -1399,13 +891,12 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
-                    // 4순위: nth-child 사용 (안정한 구조에서만)
+                    // 4순위: nth-child 사용
                     let parent = element.parentElement;
-                    if (parent && !parent.classList.contains('dynamic') && 
-                        !parent.hasAttribute('data-dynamic')) {
+                    if (parent) {
                         const siblings = Array.from(parent.children);
                         const index = siblings.indexOf(element);
-                        if (index !== -1 && siblings.length < 20) { // 너무 많은 자식이 있으면 불안정
+                        if (index !== -1) {
                             return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
                         }
                     }
@@ -1414,41 +905,17 @@ final class BFCacheTransitionSystem: NSObject {
                     return tag;
                 }
                 
-                // 🔍 **메인 실행 (안정성 우선 접근)**
-                console.log('🔍 범용 동적 콘텐츠 감지 시작');
+                // 🔍 **메인 실행**
+                const scrollableElements = findAllScrollableElements();
+                const iframeScrolls = detectIframeScrolls();
                 
-                // 기본 안정성 체크
-                const contentStable = checkContentStability();
-                console.log('📊 콘텐츠 안정성:', contentStable ? '안정' : '불안정');
-                
-                // 메인 스크롤은 항상 캡처 (가장 안정적)
-                const mainScroll = {
-                    x: window.scrollX || 0, 
-                    y: window.scrollY || 0
-                };
-                
-                // 상세 스크롤 요소들은 안정성에 따라 선택적 캡처
-                let scrollableElements = [];
-                let iframeScrolls = [];
-                let dynamicElements = [];
-                
-                if (contentStable) {
-                    // 안정한 상태에서만 상세 스크롤 감지
-                    scrollableElements = findAllScrollableElements();
-                    iframeScrolls = detectIframeScrolls();
-                    dynamicElements = detectDynamicElements();
-                } else {
-                    console.log('⚠️ 콘텐츠 불안정으로 인한 상세 스크롤 감지 생략');
-                }
-                
-                console.log(`🔍 스크롤 요소 감지 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개, 동적 ${dynamicElements.length}개`);
+                console.log(`🔍 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
                 
                 return {
                     scroll: { 
-                        x: mainScroll.x,
-                        y: mainScroll.y,
-                        elements: scrollableElements,
-                        dynamics: dynamicElements
+                        x: window.scrollX, 
+                        y: window.scrollY,
+                        elements: scrollableElements
                     },
                     iframes: iframeScrolls,
                     href: window.location.href,
@@ -1458,22 +925,15 @@ final class BFCacheTransitionSystem: NSObject {
                     viewport: {
                         width: window.innerWidth,
                         height: window.innerHeight
-                    },
-                    stability: {
-                        contentStable: contentStable,
-                        readyState: document.readyState,
-                        loadingElements: document.querySelectorAll('[loading], .loading, .spinner').length
                     }
                 };
             } catch(e) { 
                 console.error('스크롤 감지 실패:', e);
-                // 실패해도 최소한의 정보는 반환
                 return {
-                    scroll: { x: window.scrollX || 0, y: window.scrollY || 0, elements: [] },
+                    scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
                     iframes: [],
                     href: window.location.href,
-                    title: document.title,
-                    stability: { contentStable: false, error: e.message }
+                    title: document.title
                 };
             }
         })()
@@ -1487,7 +947,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **개선된 디스크 저장 시스템**
+    // MARK: - 💾 **디스크 저장 시스템**
     
     private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
@@ -1512,7 +972,6 @@ final class BFCacheTransitionSystem: NSObject {
                         self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
                     } catch {
                         self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
-                        // 저장 실패해도 계속 진행
                     }
                 }
             }
@@ -1581,10 +1040,9 @@ final class BFCacheTransitionSystem: NSObject {
             let contents = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil)
             let pageDirs = contents.filter { $0.lastPathComponent.hasPrefix(pagePrefix) }
                 .sorted { url1, url2 in
-                    // 버전 번호 추출하여 정렬
                     let v1 = Int(url1.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     let v2 = Int(url2.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
-                    return v1 > v2  // 최신 버전부터
+                    return v1 > v2
                 }
             
             // 최신 3개 제외하고 삭제
@@ -1599,34 +1057,29 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **개선된 디스크 캐시 로딩**
+    // MARK: - 💾 **디스크 캐시 로딩**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
             guard let self = self else { return }
             
-            // BFCache 디렉토리 생성
             self.createDirectoryIfNeeded(at: self.bfCacheDirectory)
             
             var loadedCount = 0
             
-            // 모든 탭 디렉토리 스캔
             do {
                 let tabDirs = try FileManager.default.contentsOfDirectory(at: self.bfCacheDirectory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
                 
                 for tabDir in tabDirs {
                     if tabDir.lastPathComponent.hasPrefix("Tab_") {
-                        // 각 페이지 디렉토리 스캔
                         let pageDirs = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
                         
                         for pageDir in pageDirs {
                             if pageDir.lastPathComponent.hasPrefix("Page_") {
-                                // metadata.json 로드
                                 let metadataPath = pageDir.appendingPathComponent("metadata.json")
                                 if let data = try? Data(contentsOf: metadataPath),
                                    let metadata = try? JSONDecoder().decode(CacheMetadata.self, from: data) {
                                     
-                                    // 스레드 안전하게 인덱스 업데이트
                                     self.setDiskIndex(pageDir.path, for: metadata.pageID)
                                     self.cacheAccessQueue.async(flags: .barrier) {
                                         self._cacheVersion[metadata.pageID] = metadata.version
@@ -1645,16 +1098,16 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
+    // MARK: - 🔍 **스냅샷 조회 시스템**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
-        // 1. 먼저 메모리 캐시 확인 (스레드 안전)
+        // 1. 먼저 메모리 캐시 확인
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
             dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title)")
             return snapshot
         }
         
-        // 2. 디스크 캐시 확인 (스레드 안전)
+        // 2. 디스크 캐시 확인
         if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
             let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
             
@@ -1673,7 +1126,6 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // MARK: - 🔧 **수정: hasCache 메서드 추가**
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1695,11 +1147,10 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
-    // MARK: - 🧹 **개선된 캐시 정리**
+    // MARK: - 🧹 **캐시 정리**
     
-    // 탭 닫을 때만 호출 (무제한 캐시 정책)
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
-        // 메모리에서 제거 (스레드 안전)
+        // 메모리에서 제거
         cacheAccessQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             for pageID in pageIDs {
@@ -1722,7 +1173,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 메모리 경고 처리 (메모리 캐시만 일부 정리)
+    // 메모리 경고 처리
     private func setupMemoryWarningObserver() {
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -1750,7 +1201,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
+    // MARK: - 🎯 **제스처 시스템**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1768,7 +1219,7 @@ final class BFCacheTransitionSystem: NSObject {
         rightEdge.delegate = self
         webView.addGestureRecognizer(rightEdge)
         
-        // 약한 참조 컨텍스트 생성 및 연결 (순환 참조 방지)
+        // 약한 참조 컨텍스트 생성 및 연결
         if let tabID = stateModel.tabID {
             let ctx = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
             objc_setAssociatedObject(leftEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
@@ -1779,7 +1230,6 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        // 약한 참조 컨텍스트 조회 (순환 참조 방지)
         guard let ctx = objc_getAssociatedObject(gesture, "bfcache_ctx") as? WeakGestureContext,
               let stateModel = ctx.stateModel else { return }
         let webView = ctx.webView ?? (gesture.view as? WKWebView)
@@ -1798,7 +1248,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
+            // 전환 중이면 새 제스처 무시
             guard activeTransitions[tabID] == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
@@ -1809,47 +1259,28 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
+                // 기존 전환 강제 정리
                 if let existing = activeTransitions[tabID] {
                     existing.previewContainer?.removeFromSuperview()
                     activeTransitions.removeValue(forKey: tabID)
                     dbg("🛡️ 기존 전환 강제 정리")
                 }
                 
-                // 🎯 **동적 콘텐츠 대응 캡처**: 제스처 시작 전 안정화 캡처
+                // 현재 페이지 캡처 (불안정 콘텐츠 감지 적용)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
-                    // 동적 콘텐츠 감지
-                    let isDynamic = detectDynamicSite(webView: webView)
-                    
-                    if isDynamic {
-                        dbg("🔍 동적 콘텐츠 감지 - 안정화 캡처 적용: \(currentRecord.title)")
-                        // 동적 콘텐츠는 0.3초 후 제스처 시작 (안정화 대기)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            self.captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-                            // 캡처 후 제스처 시작
-                            self.startGestureAfterCapture(
-                                gesture: gesture,
-                                webView: webView,
-                                stateModel: stateModel,
-                                direction: direction,
-                                tabID: tabID
-                            )
-                        }
-                        return // 동적 콘텐츠는 여기서 대기
-                    } else {
-                        // 정적사이트는 즉시 캡처 후 진행
-                        captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-                    }
+                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
                 }
                 
-                // 정적 콘텐츠 또는 캡처 불가능한 경우 즉시 제스처 시작
-                startGestureAfterCapture(
-                    gesture: gesture,
-                    webView: webView,
-                    stateModel: stateModel,
-                    direction: direction,
-                    tabID: tabID
-                )
+                // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
+                captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
+                    self?.beginGestureTransitionWithSnapshot(
+                        tabID: tabID,
+                        webView: webView,
+                        stateModel: stateModel,
+                        direction: direction,
+                        currentSnapshot: snapshot
+                    )
+                }
             } else {
                 gesture.state = .cancelled
             }
@@ -1874,30 +1305,6 @@ final class BFCacheTransitionSystem: NSObject {
             break
         }
     }
-    
-    // 🎯 **캡처 완료 후 제스처 시작** 
-    private func startGestureAfterCapture(
-        gesture: UIScreenEdgePanGestureRecognizer,
-        webView: WKWebView,
-        stateModel: WebViewStateModel, 
-        direction: NavigationDirection,
-        tabID: UUID
-    ) {
-        // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
-        captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
-            DispatchQueue.main.async {
-                self?.beginGestureTransitionWithSnapshot(
-                    tabID: tabID,
-                    webView: webView,
-                    stateModel: stateModel,
-                    direction: direction,
-                    currentSnapshot: snapshot
-                )
-            }
-        }
-    }
-    
-    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -2118,7 +1525,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **핵심 개선: 미리보기 컨테이너 0.8초 고정 타이밍**
+    // 🎬 **미리보기 컨테이너 0.8초 고정 타이밍**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -2145,7 +1552,6 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 🎬 **0.8초 고정 타이밍으로 네비게이션 수행**
                 self?.performNavigationWithFixedTiming(context: context, previewContainer: previewContainer)
             }
         )
@@ -2154,7 +1560,6 @@ final class BFCacheTransitionSystem: NSObject {
     // 🔄 **0.8초 고정 타이밍을 적용한 네비게이션 수행**
     private func performNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
-            // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
             activeTransitions.removeValue(forKey: context.tabID)
             return
@@ -2170,8 +1575,8 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🔄 **0.8초 고정 BFCache 복원 + 미리보기 제거**
-        tryFixedBFCacheRestore(stateModel: stateModel, direction: context.direction)
+        // BFCache 복원
+        tryBFCacheRestore(stateModel: stateModel, direction: context.direction)
         
         // 🎬 **핵심: 0.8초 후 미리보기 제거 (깜빡임 방지)**
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -2181,8 +1586,8 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 🔄 **단순화된 BFCache 복원 (0.8초 고정 타이밍)** 
-    private func tryFixedBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection) {
+    // 🔄 **BFCache 복원 (0.8초 고정 타이밍)** 
+    private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             return
@@ -2234,36 +1639,20 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 버튼 네비게이션 (동적사이트 대응 캡처 적용)
+    // MARK: - 버튼 네비게이션
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 🎯 **동적 콘텐츠 대응 캡처**
+        // 현재 페이지 캡처 (불안정 콘텐츠 감지 적용)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            let isDynamic = detectDynamicSite(webView: webView)
-            
-            if isDynamic {
-                dbg("🔍 버튼 네비게이션 - 동적 콘텐츠 안정화 캡처: \(currentRecord.title)")
-                // 동적 콘텐츠는 0.2초 안정화 후 네비게이션
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        stateModel.goBack()
-                        self.tryFixedBFCacheRestore(stateModel: stateModel, direction: .back)
-                    }
-                }
-                return
-            } else {
-                // 정적 콘텐츠는 즉시 캡처
-                captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-            }
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goBack()
-        tryFixedBFCacheRestore(stateModel: stateModel, direction: .back)
+        tryBFCacheRestore(stateModel: stateModel, direction: .back)
     }
     
     func navigateForward(stateModel: WebViewStateModel) {
@@ -2271,32 +1660,16 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 🎯 **동적 콘텐츠 대응 캡처**
+        // 현재 페이지 캡처 (불안정 콘텐츠 감지 적용)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            let isDynamic = detectDynamicSite(webView: webView)
-            
-            if isDynamic {
-                dbg("🔍 버튼 네비게이션 - 동적 콘텐츠 안정화 캡처: \(currentRecord.title)")
-                // 동적 콘텐츠는 0.2초 안정화 후 네비게이션
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    self.captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        stateModel.goForward()
-                        self.tryFixedBFCacheRestore(stateModel: stateModel, direction: .forward)
-                    }
-                }
-                return
-            } else {
-                // 정적 콘텐츠는 즉시 캡처
-                captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
-            }
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goForward()
-        tryFixedBFCacheRestore(stateModel: stateModel, direction: .forward)
+        tryBFCacheRestore(stateModel: stateModel, direction: .forward)
     }
     
-    // MARK: - 스와이프 제스처 감지 처리 (DataModel에서 이관)
+    // MARK: - 스와이프 제스처 감지 처리
     
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
         // 복원 중이면 무시
@@ -2306,29 +1679,18 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         // 절대 원칙: 히스토리에서 찾더라도 무조건 새 페이지로 추가
-        // 세션 점프 완전 방지
         stateModel.dataModel.addNewPage(url: url, title: "")
         stateModel.syncCurrentURL(url)
-        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가: \(url.absoluteString)")
     }
     
-    // MARK: - 🌐 JavaScript 스크립트
+    // MARK: - JavaScript 스크립트
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
                 console.log('🔄 BFCache 페이지 복원');
-                
-                // 동적 콘텐츠 새로고침 (필요시)
-                if (window.location.pathname.includes('/feed') ||
-                    window.location.pathname.includes('/timeline') ||
-                    window.location.hostname.includes('twitter') ||
-                    window.location.hostname.includes('facebook')) {
-                    if (window.refreshDynamicContent) {
-                        window.refreshDynamicContent();
-                    }
-                }
             }
         });
         
