@@ -14,7 +14,6 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
-//  ✅ **4단계 확인만, 보정 제거** - 스크롤 위치 확인만 수행
 //
 
 import UIKit
@@ -274,28 +273,27 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **4단계: 최종 확인만 (보정 제거)**
+        // **4단계: 최종 확인 및 보정**
         restoreSteps.append((4, { stepCompletion in
             let waitTime = profile.getAdaptiveWaitTime(step: 3)
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 확인 (대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        // ✅ 최종 메인 스크롤 확인만 (보정 제거)
-                        const currentY = window.scrollY;
-                        const targetY = \(self.scrollPosition.y);
-                        const isCorrect = Math.abs(currentY - targetY) <= 20;
-                        console.log('스크롤 확인:', currentY, '/', targetY, isCorrect ? '성공' : '실패');
-                        return isCorrect;
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                        }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
                     } catch(e) { return false; }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패") (확인만)")
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
@@ -1031,7 +1029,7 @@ final class BFCacheTransitionSystem: NSObject {
                     try stateData.write(to: statePath)
                     self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
-                    self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
+                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
