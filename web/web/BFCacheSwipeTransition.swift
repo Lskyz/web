@@ -180,7 +180,7 @@ struct BFCacheSnapshot: Codable {
         
         let restoreScript = generateDynamicRestoreScript(dynamicData)
         
-        webView.evaluateJavaScript(restoreScript) { [weak self] result, error in
+        webView.evaluateJavaScript(restoreScript) { result, error in
             let success = (result as? Bool) ?? false
             
             if success {
@@ -189,7 +189,7 @@ struct BFCacheSnapshot: Codable {
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ 동적 콘텐츠 복원 실패, 기본 모드로 대체")
                 // 기존 복원으로 fallback
-                self?.restorePageState(to: webView, completion: completion)
+                self.restorePageState(to: webView, completion: completion)
             }
         }
     }
@@ -343,7 +343,7 @@ struct BFCacheSnapshot: Codable {
                 let insertedCount = 0;
                 contentItems.forEach(item => {
                     try {
-                        if (!document.querySelector(`[data-bfcache-id="\${item.id}"]`)) {
+                        if (!document.querySelector(`[data-bfcache-id="\\${item.id}"]`)) {
                             const div = document.createElement('div');
                             div.innerHTML = item.html;
                             const newItem = div.firstElementChild;
@@ -360,16 +360,16 @@ struct BFCacheSnapshot: Codable {
                     }
                 });
                 
-                console.log(`동적 콘텐츠 삽입: \${insertedCount}개`);
+                console.log(`동적 콘텐츠 삽입: \\${insertedCount}개`);
                 
                 // 3️⃣ 스크롤 복원 (아이템 기준)
                 if (virtualPos.centerItemId) {
-                    const targetItem = document.querySelector(`[data-bfcache-id="\${virtualPos.centerItemId}"]`);
+                    const targetItem = document.querySelector(`[data-bfcache-id="\\${virtualPos.centerItemId}"]`);
                     if (targetItem) {
                         const rect = targetItem.getBoundingClientRect();
                         const targetY = rect.top + window.scrollY - virtualPos.itemOffset;
                         window.scrollTo({ top: targetY, left: 0, behavior: 'instant' });
-                        console.log(`아이템 기준 스크롤: \${targetY}px`);
+                        console.log(`아이템 기준 스크롤: \\${targetY}px`);
                         return true;
                     }
                 }
@@ -378,7 +378,7 @@ struct BFCacheSnapshot: Codable {
                 const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
                 const targetY = Math.max(0, maxScroll * virtualPos.scrollRatio);
                 window.scrollTo({ top: targetY, left: 0, behavior: 'instant' });
-                console.log(`비율 기준 스크롤: \${targetY}px`);
+                console.log(`비율 기준 스크롤: \\${targetY}px`);
                 
                 return insertedCount > 0;
             } catch(e) {
@@ -834,7 +834,7 @@ final class BFCacheTransitionSystem: NSObject {
                     // HTML 간소화 (이미지, 스크립트 제거)
                     let html = item.outerHTML
                         .replace(/<img[^>]*>/gi, '')
-                        .replace(/<script[^>]*>.*?<\/script>/gi, '')
+                        .replace(/<script[^>]*>.*?<\\/script>/gi, '')
                         .replace(/style="[^"]*"/gi, '');
                     
                     if (html.length > 2000) {
