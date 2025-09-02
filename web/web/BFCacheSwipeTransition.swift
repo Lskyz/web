@@ -327,12 +327,6 @@ struct BFCacheSnapshot: Codable {
         executeNextStep()
     }
     
-    // 🔍 **복원용 범용 동적사이트 감지**
-    private func detectDynamicSiteForRestore(webView: WKWebView) -> Bool {
-        // 캡처용과 동일한 기술적 감지 사용
-        return detectDynamicSite(webView: webView)
-    }
-    
     // 🎯 **안정성 체크가 포함된 컨테이너 스크롤 복원 스크립트**
     private func generateStabilityAwareContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
@@ -724,6 +718,12 @@ final class BFCacheTransitionSystem: NSObject {
         
         _ = semaphore.wait(timeout: .now() + 0.5)
         return isDynamic
+    }
+    
+    // 🔍 **복원용 범용 동적사이트 감지**
+    private func detectDynamicSiteForRestore(webView: WKWebView) -> Bool {
+        // 캡처용과 동일한 기술적 감지 사용
+        return detectDynamicSite(webView: webView)
     }
     
     // 🎯 **2. 스크롤 위치 검증 시스템**
