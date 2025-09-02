@@ -241,12 +241,7 @@ struct BFCacheSnapshot: Codable {
         // **1단계: 렌더링 완료 감지 스크립트 설치**
         let renderingCompleteScript = generateRenderingCompleteDetector()
         
-        webView.evaluateJavaScript(renderingCompleteScript) { [weak self] result, error in
-            guard let self = self else {
-                completion(false)
-                return
-            }
-            
+        webView.evaluateJavaScript(renderingCompleteScript) { result, error in
             if let renderingInfo = result as? [String: Any],
                let isComplete = renderingInfo["isComplete"] as? Bool,
                isComplete {
