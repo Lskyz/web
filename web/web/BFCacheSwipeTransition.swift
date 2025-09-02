@@ -12,6 +12,8 @@
 //  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
+//  🖼️ **멀티프레임/아이프레임 지원 강화** - 중첩 프레임 캐시
+//  ⭐ **도착시 캐시 우선순위 처리** - 즉시 캐싱
 //
 
 import UIKit
@@ -38,7 +40,26 @@ private class WeakGestureContext {
     }
 }
 
-// MARK: - 📸 BFCache 페이지 스냅샷
+// MARK: - 🖼️ **멀티프레임 지원을 위한 프레임 상태 구조체**
+struct FrameState: Codable {
+    let frameId: String
+    let src: String?
+    let scrollPosition: CGPoint
+    let title: String?
+    let visible: Bool
+    var nestedFrames: [FrameState]?
+    
+    init(frameId: String, src: String?, scrollPosition: CGPoint, title: String? = nil, visible: Bool = true, nestedFrames: [FrameState]? = nil) {
+        self.frameId = frameId
+        self.src = src
+        self.scrollPosition = scrollPosition
+        self.title = title
+        self.visible = visible
+        self.nestedFrames = nestedFrames
+    }
+}
+
+// MARK: - 📸 **강화된 BFCache 페이지 스냅샷 - 멀티프레임 지원**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -49,11 +70,16 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
+    // 🖼️ **새로운 필드: 멀티프레임 상태**
+    var frameStates: [FrameState]?
+    var multiQueryStates: [String: Any]?
+    
     enum CaptureStatus: String, Codable {
-        case complete       // 모든 데이터 캡처 성공
+        case complete       // 모든 데이터 캡처 성공 (프레임 포함)
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
+        case multiFrame     // 멀티프레임 캡처 성공
     }
     
     // Codable을 위한 CodingKeys
@@ -66,6 +92,8 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
+        case frameStates
+        case multiQueryStates
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -84,6 +112,13 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
+        
+        // 🖼️ **멀티프레임 상태 디코딩**
+        frameStates = try container.decodeIfPresent([FrameState].self, forKey: .frameStates)
+        
+        if let multiQueryData = try container.decodeIfPresent(Data.self, forKey: .multiQueryStates) {
+            multiQueryStates = try JSONSerialization.jsonObject(with: multiQueryData) as? [String: Any]
+        }
     }
     
     func encode(to encoder: Encoder) throws {
@@ -102,10 +137,18 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
+        
+        // 🖼️ **멀티프레임 상태 인코딩**
+        try container.encodeIfPresent(frameStates, forKey: .frameStates)
+        
+        if let multiQuery = multiQueryStates {
+            let multiQueryData = try JSONSerialization.data(withJSONObject: multiQuery)
+            try container.encode(multiQueryData, forKey: .multiQueryStates)
+        }
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1, frameStates: [FrameState]? = nil, multiQueryStates: [String: Any]? = nil) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -114,6 +157,8 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
+        self.frameStates = frameStates
+        self.multiQueryStates = multiQueryStates
     }
     
     // 이미지 로드 메서드
@@ -124,7 +169,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **균형 잡힌 빠른 복원 메서드 - 깜빡임 방지**
+    // ⚡ **멀티프레임 지원 강화된 빠른 복원 메서드**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -143,20 +188,21 @@ struct BFCacheSnapshot: Codable {
             }
             return
             
-        case .partial, .complete:
-            // 정상적인 복원 진행
+        case .partial, .complete, .multiFrame:
+            // 정상적인 복원 진행 (멀티프레임 포함)
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (빠른 모드)")
+        TabPersistenceManager.debugMessages.append("BFCache 상태 복원 시작 (멀티프레임 모드)")
         
         // ⚡ 즉시 상태 복원 시작 (깜빡임 방지를 위한 최소 대기)
         DispatchQueue.main.async {
-            self.restorePageState(to: webView, completion: completion)
+            self.restorePageStateWithFrames(to: webView, completion: completion)
         }
     }
     
-    private func restorePageState(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🖼️ **새로운 메서드: 멀티프레임 복원 지원**
+    private func restorePageStateWithFrames(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var restoreSteps: [() -> Void] = []
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -169,80 +215,30 @@ struct BFCacheSnapshot: Codable {
                 let successCount = stepResults.filter { $0 }.count
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
-                TabPersistenceManager.debugMessages.append("BFCache 복원 완료: \(successCount)/\(totalSteps) 성공 -> \(overallSuccess ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("BFCache 복원 완료 (멀티프레임): \(successCount)/\(totalSteps) 성공 -> \(overallSuccess ? "성공" : "실패")")
                 completion(overallSuccess)
             }
         }
         
-        // ⚡ **적절한 스크롤 복원 - 깜빡임 방지**
+        // 1. 메인 프레임 스크롤 복원
         restoreSteps.append {
-            let targetPos = self.scrollPosition
-            TabPersistenceManager.debugMessages.append("🔄 스크롤 복원 시도: x=\(targetPos.x), y=\(targetPos.y)")
-            
-            // 1차: 네이티브 스크롤뷰 즉시 설정
-            webView.scrollView.setContentOffset(targetPos, animated: false)
-            
-            // 2차: JavaScript로 강제 스크롤 (DOM 준비 대기 포함)
-            let robustScrollJS = """
-            (function() {
-                function attemptScroll() {
-                    try {
-                        if (document.readyState !== 'complete') {
-                            setTimeout(attemptScroll, 30); // ⚡ 25ms → 30ms (안정성)
-                            return false;
-                        }
-                        
-                        // 여러 방법으로 스크롤 시도
-                        window.scrollTo(\(targetPos.x), \(targetPos.y));
-                        document.documentElement.scrollTop = \(targetPos.y);
-                        document.body.scrollTop = \(targetPos.y);
-                        document.documentElement.scrollLeft = \(targetPos.x);
-                        document.body.scrollLeft = \(targetPos.x);
-                        
-                        console.log('🔄 스크롤 복원 완료:', window.scrollY, window.scrollX);
-                        return true;
-                    } catch(e) {
-                        console.error('🔄 스크롤 복원 실패:', e);
-                        return false;
-                    }
-                }
-                return attemptScroll();
-            })()
-            """
-            
-            webView.evaluateJavaScript(robustScrollJS) { result, error in
-                let success = (result as? Bool) ?? false
+            self.restoreMainFrameScroll(webView: webView) { success in
                 stepResults.append(success)
-                
-                if !success || targetPos.y > 0 {
-                    // 3차: 추가 재시도 (WebKit 자동 스크롤 대응) - ⚡ 균형점 찾기
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        webView.scrollView.setContentOffset(targetPos, animated: false)
-                        
-                        // 4차: 최종 JavaScript 재시도 - ⚡ 안정성을 위한 적절한 대기
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                            let finalScrollJS = "window.scrollTo(\(targetPos.x), \(targetPos.y)); window.scrollY >= \(targetPos.y - 50)"
-                            webView.evaluateJavaScript(finalScrollJS) { finalResult, _ in
-                                let finalSuccess = (finalResult as? Bool) ?? false
-                                TabPersistenceManager.debugMessages.append("🔄 최종 스크롤 상태: \(finalSuccess ? "성공" : "실패")")
-                                
-                                // ⚡ 깜빡임 방지를 위한 최소 대기
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    nextStep()
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // ⚡ 성공 시에도 최소 대기로 안정성 확보
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        nextStep()
-                    }
+                nextStep()
+            }
+        }
+        
+        // 2. 🖼️ **멀티프레임 복원 추가**
+        if let frameStates = self.frameStates, !frameStates.isEmpty {
+            restoreSteps.append {
+                self.restoreAllFrameStates(webView: webView, frameStates: frameStates) { success in
+                    stepResults.append(success)
+                    nextStep()
                 }
             }
         }
         
-        // ⚡ 안정적인 고급 스크롤 복원 (스크롤 가능한 요소들)
+        // 3. 일반 스크롤 요소 복원
         if let jsState = self.jsState,
            let s = jsState["scroll"] as? [String:Any],
            let els = s["elements"] as? [[String:Any]], !els.isEmpty {
@@ -264,8 +260,6 @@ struct BFCacheSnapshot: Codable {
                 """
                 webView.evaluateJavaScript(js) { result, _ in
                     stepResults.append((result as? Bool) ?? false)
-                    
-                    // ⚡ 안정성을 위한 적절한 대기 (0.02초 → 0.05초)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         nextStep()
                     }
@@ -273,10 +267,285 @@ struct BFCacheSnapshot: Codable {
             }
         }
         
+        // 4. 🖼️ **멀티쿼리 상태 복원**
+        if let multiQueryStates = self.multiQueryStates {
+            restoreSteps.append {
+                self.restoreMultiQueryStates(webView: webView, states: multiQueryStates) { success in
+                    stepResults.append(success)
+                    nextStep()
+                }
+            }
+        }
+        
         nextStep()
     }
     
-    // 안전한 JSON 변환 함수
+    // 🖼️ **메인 프레임 스크롤 복원 (강화)**
+    private func restoreMainFrameScroll(webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let targetPos = self.scrollPosition
+        TabPersistenceManager.debugMessages.append("🔄 메인 프레임 스크롤 복원: x=\(targetPos.x), y=\(targetPos.y)")
+        
+        // 1차: 네이티브 스크롤뷰 즉시 설정
+        webView.scrollView.setContentOffset(targetPos, animated: false)
+        
+        // 2차: JavaScript로 강제 스크롤 (DOM 준비 대기 포함)
+        let robustScrollJS = """
+        (function() {
+            function attemptScroll() {
+                try {
+                    if (document.readyState !== 'complete') {
+                        setTimeout(attemptScroll, 30);
+                        return false;
+                    }
+                    
+                    // 여러 방법으로 스크롤 시도
+                    window.scrollTo(\(targetPos.x), \(targetPos.y));
+                    document.documentElement.scrollTop = \(targetPos.y);
+                    document.body.scrollTop = \(targetPos.y);
+                    document.documentElement.scrollLeft = \(targetPos.x);
+                    document.body.scrollLeft = \(targetPos.x);
+                    
+                    console.log('🔄 메인 프레임 스크롤 복원 완료:', window.scrollY, window.scrollX);
+                    return true;
+                } catch(e) {
+                    console.error('🔄 메인 프레임 스크롤 복원 실패:', e);
+                    return false;
+                }
+            }
+            return attemptScroll();
+        })()
+        """
+        
+        webView.evaluateJavaScript(robustScrollJS) { result, error in
+            let success = (result as? Bool) ?? false
+            
+            if !success || targetPos.y > 0 {
+                // 3차: 추가 재시도
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    webView.scrollView.setContentOffset(targetPos, animated: false)
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        let finalScrollJS = "window.scrollTo(\(targetPos.x), \(targetPos.y)); window.scrollY >= \(targetPos.y - 50)"
+                        webView.evaluateJavaScript(finalScrollJS) { finalResult, _ in
+                            let finalSuccess = (finalResult as? Bool) ?? false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                completion(finalSuccess)
+                            }
+                        }
+                    }
+                }
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    completion(success)
+                }
+            }
+        }
+    }
+    
+    // 🖼️ **새로운 메서드: 모든 프레임 상태 복원**
+    private func restoreAllFrameStates(webView: WKWebView, frameStates: [FrameState], completion: @escaping (Bool) -> Void) {
+        let frameRestoreJS = """
+        (function() {
+            try {
+                const frameStates = \(self.convertFrameStatesToJS(frameStates));
+                let restoredCount = 0;
+                let totalFrames = 0;
+                
+                function restoreFrameRecursive(states, parentDoc) {
+                    states.forEach(frameState => {
+                        totalFrames++;
+                        
+                        // 프레임 찾기 (src 또는 id 기준)
+                        let frame = null;
+                        if (frameState.frameId && frameState.frameId !== 'main') {
+                            frame = parentDoc.getElementById(frameState.frameId);
+                        }
+                        
+                        if (!frame && frameState.src) {
+                            const frames = parentDoc.querySelectorAll('iframe, frame');
+                            frame = Array.from(frames).find(f => 
+                                f.src && f.src.includes(frameState.src.split('/').pop())
+                            );
+                        }
+                        
+                        if (frame && frame.contentDocument) {
+                            try {
+                                const frameDoc = frame.contentDocument;
+                                
+                                // 프레임 스크롤 복원
+                                if (frameState.scrollPosition) {
+                                    frameDoc.documentElement.scrollTop = frameState.scrollPosition.y || 0;
+                                    frameDoc.documentElement.scrollLeft = frameState.scrollPosition.x || 0;
+                                    frameDoc.body.scrollTop = frameState.scrollPosition.y || 0;
+                                    frameDoc.body.scrollLeft = frameState.scrollPosition.x || 0;
+                                }
+                                
+                                // 중첩 프레임 처리
+                                if (frameState.nestedFrames && frameState.nestedFrames.length > 0) {
+                                    restoreFrameRecursive(frameState.nestedFrames, frameDoc);
+                                }
+                                
+                                restoredCount++;
+                                console.log('🖼️ 프레임 복원 성공:', frameState.frameId || frameState.src);
+                            } catch(e) {
+                                console.warn('🖼️ 프레임 복원 실패:', frameState.frameId, e);
+                            }
+                        }
+                    });
+                }
+                
+                // 메인 문서에서 시작
+                restoreFrameRecursive(frameStates, document);
+                
+                console.log('🖼️ 전체 프레임 복원 완료:', restoredCount, '/', totalFrames);
+                return { success: restoredCount > 0, restored: restoredCount, total: totalFrames };
+            } catch(e) {
+                console.error('🖼️ 프레임 복원 전체 실패:', e);
+                return { success: false, restored: 0, total: 0 };
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(frameRestoreJS) { result, error in
+            var success = false
+            if let resultDict = result as? [String: Any],
+               let isSuccess = resultDict["success"] as? Bool,
+               let restoredCount = resultDict["restored"] as? Int {
+                success = isSuccess
+                TabPersistenceManager.debugMessages.append("🖼️ 프레임 복원 결과: \(restoredCount)개 복원")
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                completion(success)
+            }
+        }
+    }
+    
+    // 🖼️ **새로운 메서드: 멀티쿼리 상태 복원**
+    private func restoreMultiQueryStates(webView: WKWebView, states: [String: Any], completion: @escaping (Bool) -> Void) {
+        guard !states.isEmpty else {
+            completion(false)
+            return
+        }
+        
+        let multiQueryJS = """
+        (function() {
+            try {
+                const queryStates = \(self.convertMultiQueryStatesToJS(states));
+                let restoredCount = 0;
+                
+                // URL 파라미터 기반 상태 복원
+                if (queryStates.urlParams) {
+                    Object.entries(queryStates.urlParams).forEach(([key, value]) => {
+                        try {
+                            // 특정 쿼리 파라미터에 따른 페이지 상태 복원
+                            if (window.restoreQueryState) {
+                                window.restoreQueryState(key, value);
+                                restoredCount++;
+                            }
+                        } catch(e) {
+                            console.warn('쿼리 상태 복원 실패:', key, e);
+                        }
+                    });
+                }
+                
+                // 검색 필터 상태 복원
+                if (queryStates.searchFilters) {
+                    Object.entries(queryStates.searchFilters).forEach(([filter, value]) => {
+                        try {
+                            const filterElement = document.querySelector(`[data-filter="${filter}"]`);
+                            if (filterElement) {
+                                if (filterElement.type === 'checkbox') {
+                                    filterElement.checked = value;
+                                } else {
+                                    filterElement.value = value;
+                                }
+                                restoredCount++;
+                            }
+                        } catch(e) {
+                            console.warn('검색 필터 복원 실패:', filter, e);
+                        }
+                    });
+                }
+                
+                console.log('🔍 멀티쿼리 상태 복원:', restoredCount);
+                return restoredCount > 0;
+            } catch(e) {
+                console.error('🔍 멀티쿼리 상태 복원 실패:', e);
+                return false;
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(multiQueryJS) { result, error in
+            let success = (result as? Bool) ?? false
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                completion(success)
+            }
+        }
+    }
+    
+    // 🖼️ **유틸리티: 프레임 상태를 JS 배열로 변환**
+    private func convertFrameStatesToJS(_ frameStates: [FrameState]) -> String {
+        do {
+            // FrameState를 직접 JSON으로 변환하면 CGPoint 문제가 생기므로 딕셔너리로 변환
+            let frameArray = frameStates.map { frame in
+                var dict: [String: Any] = [
+                    "frameId": frame.frameId,
+                    "visible": frame.visible
+                ]
+                
+                if let src = frame.src {
+                    dict["src"] = src
+                }
+                
+                if let title = frame.title {
+                    dict["title"] = title
+                }
+                
+                dict["scrollPosition"] = [
+                    "x": frame.scrollPosition.x,
+                    "y": frame.scrollPosition.y
+                ]
+                
+                if let nested = frame.nestedFrames {
+                    dict["nestedFrames"] = nested.map { nestedFrame in
+                        [
+                            "frameId": nestedFrame.frameId,
+                            "src": nestedFrame.src as Any,
+                            "scrollPosition": [
+                                "x": nestedFrame.scrollPosition.x,
+                                "y": nestedFrame.scrollPosition.y
+                            ],
+                            "visible": nestedFrame.visible
+                        ]
+                    }
+                }
+                
+                return dict
+            }
+            
+            let jsonData = try JSONSerialization.data(withJSONObject: frameArray, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "[]"
+        } catch {
+            TabPersistenceManager.debugMessages.append("프레임 상태 JSON 변환 실패: \(error.localizedDescription)")
+            return "[]"
+        }
+    }
+    
+    // 🖼️ **유틸리티: 멀티쿼리 상태를 JS 객체로 변환**
+    private func convertMultiQueryStatesToJS(_ states: [String: Any]) -> String {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: states, options: [])
+            return String(data: jsonData, encoding: .utf8) ?? "{}"
+        } catch {
+            TabPersistenceManager.debugMessages.append("멀티쿼리 상태 JSON 변환 실패: \(error.localizedDescription)")
+            return "{}"
+        }
+    }
+    
+    // 안전한 JSON 변환 함수 (기존)
     private func convertScrollElementsToJSArray(_ elements: [[String: Any]]) -> String {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: elements, options: [])
@@ -300,8 +569,9 @@ final class BFCacheTransitionSystem: NSObject {
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템 + 우선순위 처리**
     private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
+    private let priorityQueue = DispatchQueue(label: "bfcache.priority", qos: .userInitiated) // ⭐ 우선순위 큐
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
     // MARK: - 💾 스레드 안전 캐시 시스템
@@ -371,11 +641,12 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     enum CaptureType {
-        case immediate  // 현재 페이지 (높은 우선순위)
+        case immediate  // 현재 페이지 (최고 우선순위)
+        case priority   // ⭐ 도착시 우선순위 캐싱
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 + 우선순위 처리**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -383,6 +654,21 @@ final class BFCacheTransitionSystem: NSObject {
         let type: CaptureType
         weak var webView: WKWebView?
         let requestedAt: Date = Date()
+        let priority: Int // ⭐ 우선순위 점수
+        
+        init(pageRecord: PageRecord, tabID: UUID?, type: CaptureType, webView: WKWebView?) {
+            self.pageRecord = pageRecord
+            self.tabID = tabID
+            self.type = type
+            self.webView = webView
+            
+            // ⭐ 타입별 우선순위 설정
+            switch type {
+            case .immediate: self.priority = 100
+            case .priority: self.priority = 80   // 도착시 높은 우선순위
+            case .background: self.priority = 10
+            }
+        }
     }
     
     // 중복 방지를 위한 진행 중인 캡처 추적
@@ -396,8 +682,10 @@ final class BFCacheTransitionSystem: NSObject {
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
-        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
+        // ⭐ **우선순위별 큐 선택**
+        let targetQueue = task.priority >= 80 ? priorityQueue : serialQueue
+        
+        targetQueue.async { [weak self] in
             self?.performAtomicCapture(task)
         }
     }
@@ -418,7 +706,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🎯 우선순위 캡처 시작 (P\(task.priority)): \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -440,12 +728,12 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
-        let captureResult = performRobustCapture(
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도 + 멀티프레임 지원**
+        let captureResult = performRobustCaptureWithFrames(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
-            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
+            retryCount: task.type == .immediate ? 2 : task.type == .priority ? 1 : 0
         )
         
         // 캡처 완료 후 저장
@@ -457,7 +745,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 우선순위 캡처 완료 (P\(task.priority)): \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -466,11 +754,11 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🔧 **실패 복구 기능 추가된 캡처**
-    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🔧 **실패 복구 기능 + 멀티프레임 지원 추가된 캡처**
+    private func performRobustCaptureWithFrames(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
+            let result = attemptCaptureWithFrames(pageRecord: pageRecord, webView: webView, captureData: captureData)
             
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
@@ -489,10 +777,13 @@ final class BFCacheTransitionSystem: NSObject {
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🖼️ **새로운 메서드: 멀티프레임 지원 캡처**
+    private func attemptCaptureWithFrames(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
+        var frameStates: [FrameState]? = nil
+        var multiQueryStates: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
         // 1. 비주얼 스냅샷 (메인 스레드)
@@ -520,13 +811,13 @@ final class BFCacheTransitionSystem: NSObject {
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
+        // 2. 🖼️ **강화된 DOM + 멀티프레임 캡처**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let domScript = """
+            let enhancedDOMScript = """
             (function() {
                 try {
-                    if (document.readyState !== 'complete') return null;
+                    if (document.readyState !== 'complete') return { dom: null, frames: [] };
                     
                     // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
@@ -540,23 +831,76 @@ final class BFCacheTransitionSystem: NSObject {
                         el.blur();
                     });
                     
+                    // 🖼️ **멀티프레임 상태 수집**
+                    const frameStates = [];
+                    
+                    function collectFrameStates(doc, parentId = 'main', level = 0) {
+                        if (level > 3) return; // 최대 3단계 중첩까지
+                        
+                        const frames = doc.querySelectorAll('iframe, frame');
+                        frames.forEach((frame, index) => {
+                            try {
+                                const frameId = frame.id || `${parentId}_frame_${index}`;
+                                const frameDoc = frame.contentDocument;
+                                
+                                const frameState = {
+                                    frameId: frameId,
+                                    src: frame.src || null,
+                                    scrollPosition: {
+                                        x: frameDoc ? (frameDoc.documentElement.scrollLeft || frameDoc.body.scrollLeft || 0) : 0,
+                                        y: frameDoc ? (frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0) : 0
+                                    },
+                                    title: frameDoc ? frameDoc.title : null,
+                                    visible: frame.offsetParent !== null,
+                                    nestedFrames: []
+                                };
+                                
+                                // 중첩 프레임 재귀 수집
+                                if (frameDoc && level < 3) {
+                                    collectFrameStates(frameDoc, frameId, level + 1);
+                                }
+                                
+                                frameStates.push(frameState);
+                            } catch(e) {
+                                console.warn('🖼️ 프레임 상태 수집 실패:', e);
+                            }
+                        });
+                    }
+                    
+                    // 메인 문서부터 프레임 수집 시작
+                    collectFrameStates(document);
+                    
+                    // DOM 스냅샷
                     const html = document.documentElement.outerHTML;
-                    return html.length > 100000 ? html.substring(0, 100000) : html;
-                } catch(e) { return null; }
+                    const domContent = html.length > 100000 ? html.substring(0, 100000) : html;
+                    
+                    return {
+                        dom: domContent,
+                        frames: frameStates
+                    };
+                } catch(e) { 
+                    console.error('🖼️ 강화된 DOM 캡처 실패:', e);
+                    return { dom: null, frames: [] };
+                }
             })()
             """
             
-            webView.evaluateJavaScript(domScript) { result, error in
-                domSnapshot = result as? String
+            webView.evaluateJavaScript(enhancedDOMScript) { result, error in
+                if let resultDict = result as? [String: Any] {
+                    domSnapshot = resultDict["dom"] as? String
+                    if let framesArray = resultDict["frames"] as? [[String: Any]] {
+                        frameStates = self.parseFrameStates(from: framesArray)
+                    }
+                }
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // ⚡ 0.8초 → 1.0초 (프레임 처리 시간)
         
-        // 3. JS 상태 캡처 - 🚫 **폼 데이터 캡처 완전 제거**
+        // 3. 🖼️ **강화된 JS 상태 + 멀티쿼리 캡처**
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = """
+            let enhancedJSScript = """
             (function() {
                 try {
                     // 🚫 **폼 데이터 캡처 제거 - 스크롤 정보만 수집**
@@ -572,6 +916,31 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     });
                     
+                    // 🖼️ **멀티쿼리 상태 수집**
+                    const multiQueryStates = {};
+                    
+                    // URL 파라미터 상태
+                    const urlParams = {};
+                    const searchParams = new URLSearchParams(window.location.search);
+                    searchParams.forEach((value, key) => {
+                        urlParams[key] = value;
+                    });
+                    if (Object.keys(urlParams).length > 0) {
+                        multiQueryStates.urlParams = urlParams;
+                    }
+                    
+                    // 검색 필터 상태 (일반적인 패턴)
+                    const searchFilters = {};
+                    document.querySelectorAll('[data-filter], .filter-item, .search-filter').forEach(el => {
+                        const filter = el.dataset.filter || el.name || el.className;
+                        if (filter && (el.value || el.checked !== undefined)) {
+                            searchFilters[filter] = el.type === 'checkbox' ? el.checked : el.value;
+                        }
+                    });
+                    if (Object.keys(searchFilters).length > 0) {
+                        multiQueryStates.searchFilters = searchFilters;
+                    }
+                    
                     return {
                         scroll: { 
                             x: window.scrollX, 
@@ -579,27 +948,35 @@ final class BFCacheTransitionSystem: NSObject {
                             elements: scrollableElements
                         },
                         href: window.location.href,
-                        title: document.title
+                        title: document.title,
+                        multiQuery: multiQueryStates
                     };
-                } catch(e) { return null; }
+                } catch(e) { 
+                    console.error('🖼️ 강화된 JS 상태 캡처 실패:', e);
+                    return null; 
+                }
             })()
             """
             
-            webView.evaluateJavaScript(jsScript) { result, error in
+            webView.evaluateJavaScript(enhancedJSScript) { result, error in
                 if let data = result as? [String: Any] {
                     jsState = data
+                    multiQueryStates = data["multiQuery"] as? [String: Any]
                 }
                 jsSemaphore.signal()
             }
         }
         _ = jsSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
-        // 캡처 상태 결정
+        // 🖼️ **멀티프레임 고려한 캡처 상태 결정**
         let captureStatus: BFCacheSnapshot.CaptureStatus
+        let hasFrames = frameStates?.isEmpty == false
+        let hasMultiQuery = multiQueryStates?.isEmpty == false
+        
         if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
-            captureStatus = .complete
+            captureStatus = (hasFrames || hasMultiQuery) ? .multiFrame : .complete
         } else if visualSnapshot != nil {
-            captureStatus = jsState != nil ? .partial : .visualOnly
+            captureStatus = (jsState != nil || hasFrames) ? .partial : .visualOnly
         } else {
             captureStatus = .failed
         }
@@ -621,10 +998,44 @@ final class BFCacheTransitionSystem: NSObject {
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version
+            version: version,
+            frameStates: frameStates,
+            multiQueryStates: multiQueryStates
         )
         
         return (snapshot, visualSnapshot)
+    }
+    
+    // 🖼️ **유틸리티: 프레임 상태 파싱**
+    private func parseFrameStates(from frameArray: [[String: Any]]) -> [FrameState] {
+        return frameArray.compactMap { frameDict in
+            guard let frameId = frameDict["frameId"] as? String else { return nil }
+            
+            let src = frameDict["src"] as? String
+            let title = frameDict["title"] as? String
+            let visible = frameDict["visible"] as? Bool ?? true
+            
+            var scrollPosition = CGPoint.zero
+            if let scrollDict = frameDict["scrollPosition"] as? [String: Any] {
+                let x = (scrollDict["x"] as? NSNumber)?.doubleValue ?? 0
+                let y = (scrollDict["y"] as? NSNumber)?.doubleValue ?? 0
+                scrollPosition = CGPoint(x: x, y: y)
+            }
+            
+            var nestedFrames: [FrameState]? = nil
+            if let nestedArray = frameDict["nestedFrames"] as? [[String: Any]] {
+                nestedFrames = parseFrameStates(from: nestedArray)
+            }
+            
+            return FrameState(
+                frameId: frameId,
+                src: src,
+                scrollPosition: scrollPosition,
+                title: title,
+                visible: visible,
+                nestedFrames: nestedFrames
+            )
+        }
     }
     
     private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
@@ -698,7 +1109,7 @@ final class BFCacheTransitionSystem: NSObject {
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
+            self.dbg("💾 디스크 저장 완료 (멀티프레임): \(snapshot.snapshot.pageRecord.title) [v\(version)]")
             
             // 5. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
@@ -785,7 +1196,7 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 }
                 
-                self.dbg("💾 디스크 캐시 인덱스 로드 완료: \(loadedCount)개 항목")
+                self.dbg("💾 디스크 캐시 인덱스 로드 완료 (멀티프레임): \(loadedCount)개 항목")
             } catch {
                 self.dbg("❌ 디스크 캐시 로드 실패: \(error)")
             }
@@ -797,7 +1208,7 @@ final class BFCacheTransitionSystem: NSObject {
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
-            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title)")
+            dbg("💭 메모리 캐시 히트 (멀티프레임): \(snapshot.pageRecord.title)")
             return snapshot
         }
         
@@ -811,7 +1222,7 @@ final class BFCacheTransitionSystem: NSObject {
                 // 메모리 캐시에도 저장 (최적화)
                 setMemoryCache(snapshot, for: pageID)
                 
-                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title)")
+                dbg("💾 디스크 캐시 히트 (멀티프레임): \(snapshot.pageRecord.title)")
                 return snapshot
             }
         }
@@ -839,7 +1250,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
-        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
+        dbg("💭 메모리 캐시 저장 (멀티프레임): \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
     // MARK: - 🧹 **개선된 캐시 정리**
@@ -862,7 +1273,7 @@ final class BFCacheTransitionSystem: NSObject {
             let tabDir = self.tabDirectory(for: tabID)
             do {
                 try FileManager.default.removeItem(at: tabDir)
-                self.dbg("🗑️ 탭 캐시 완전 삭제: \(tabID.uuidString)")
+                self.dbg("🗑️ 탭 캐시 완전 삭제 (멀티프레임): \(tabID.uuidString)")
             } catch {
                 self.dbg("⚠️ 탭 캐시 삭제 실패: \(error)")
             }
@@ -922,7 +1333,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("BFCache 제스처 설정 완료")
+        dbg("BFCache 제스처 설정 완료 (멀티프레임)")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -963,7 +1374,7 @@ final class BFCacheTransitionSystem: NSObject {
                     dbg("🛡️ 기존 전환 강제 정리")
                 }
                 
-                // 현재 페이지 즉시 캡처 (높은 우선순위)
+                // ⭐ 현재 페이지 즉시 캡처 (최고 우선순위 - 멀티프레임 포함)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
                     captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
                 }
@@ -1045,7 +1456,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
         activeTransitions[tabID] = context
         
-        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        dbg("🎬 직접 전환 시작 (멀티프레임): \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
@@ -1125,10 +1536,10 @@ final class BFCacheTransitionSystem: NSObject {
                 imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
                 targetView = imageView
-                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
+                dbg("📸 타겟 페이지 BFCache 스냅샷 사용 (멀티프레임): \(targetRecord.title)")
             } else {
                 targetView = createInfoCard(for: targetRecord, in: webView.bounds)
-                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
+                dbg("ℹ️ 타겟 페이지 정보 카드 생성 (멀티프레임): \(targetRecord.title)")
             }
         } else {
             targetView = UIView()
@@ -1271,13 +1682,13 @@ final class BFCacheTransitionSystem: NSObject {
         switch context.direction {
         case .back:
             stateModel.goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료 (멀티프레임)")
         case .forward:
             stateModel.goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료 (멀티프레임)")
         }
         
-        // BFCache 복원 (비동기, 미리보기 제거와 무관)
+        // ⭐ 도착시 우선순위 BFCache 복원 (비동기, 미리보기 제거와 무관)
         tryBFCacheRestoreAsync(stateModel: stateModel, direction: context.direction)
         
         // 🎯 **핵심: 웹뷰 로딩 완료 감지**
@@ -1290,7 +1701,7 @@ final class BFCacheTransitionSystem: NSObject {
             loadingObserver?.invalidate()
             previewContainer.removeFromSuperview()
             self.activeTransitions.removeValue(forKey: context.tabID)
-            self.dbg("🎬 미리보기 제거 - 웹뷰 로딩 완료")
+            self.dbg("🎬 미리보기 제거 - 웹뷰 로딩 완료 (멀티프레임)")
         }
         
         // 로딩 상태 감지
@@ -1313,22 +1724,28 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 🔧 **BFCache 복원 (미리보기와 독립적)**
+    // 🔧 **BFCache 복원 (미리보기와 독립적) - 멀티프레임 지원**
     private func tryBFCacheRestoreAsync(stateModel: WebViewStateModel, direction: NavigationDirection) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { return }
+        
+        // ⭐ **도착시 우선순위 캐싱 먼저 시작**
+        if let tabID = stateModel.tabID {
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .priority, tabID: tabID)
+            dbg("⭐ 도착시 우선순위 캐싱 시작: \(currentRecord.title)")
+        }
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ BFCache 상태 복원 성공 (멀티프레임): \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ BFCache 상태 복원 실패 (멀티프레임): \(currentRecord.title)")
                 }
             }
         } else {
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            dbg("❌ BFCache 미스 (멀티프레임): \(currentRecord.title)")
         }
     }
     
@@ -1372,17 +1789,17 @@ final class BFCacheTransitionSystem: NSObject {
         switch context.direction {
         case .back:
             stateModel.goBack()
-            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료 (멀티프레임)")
         case .forward:
             stateModel.goForward()
-            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료 (멀티프레임)")
         }
         
-        // BFCache 복원 시도 (완료 콜백 포함)
+        // ⭐ BFCache 복원 시도 (완료 콜백 포함) + 우선순위 캐싱
         tryBFCacheRestore(stateModel: stateModel, direction: context.direction, completion: completion)
     }
     
-    // ⚡ **균형 잡힌 BFCache 복원 - 깜빡임 방지**
+    // ⚡ **균형 잡힌 BFCache 복원 - 깜빡임 방지 + 멀티프레임 지원**
     private func tryBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else { 
@@ -1390,13 +1807,18 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
+        // ⭐ **도착시 우선순위 캐싱 먼저 시작**
+        if let tabID = stateModel.tabID {
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .priority, tabID: tabID)
+        }
+        
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ BFCache 상태 복원 성공: \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
+                    self?.dbg("✅ BFCache 상태 복원 성공 (멀티프레임): \(currentRecord.title) [상태: \(snapshot.captureStatus)]")
                 } else {
-                    self?.dbg("⚠️ BFCache 상태 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ BFCache 상태 복원 실패 (멀티프레임): \(currentRecord.title)")
                 }
                 
                 // ⚡ 균형 잡힌 완료 (깜빡임 방지: 0.05초 → 0.12초)
@@ -1405,7 +1827,7 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
         } else {
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            dbg("❌ BFCache 미스 (멀티프레임): \(currentRecord.title)")
             // ⚡ 미스 시 적절한 대기 (0.1초 → 0.15초)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 completion(false)
@@ -1413,14 +1835,14 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 버튼 네비게이션 (즉시 전환)
+    // MARK: - 버튼 네비게이션 (즉시 전환) - 멀티프레임 지원
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 즉시 캡처 (높은 우선순위)
+        // ⭐ 현재 페이지 즉시 캡처 (최고 우선순위 - 멀티프레임 포함)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
@@ -1436,7 +1858,7 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 즉시 캡처 (높은 우선순위)
+        // ⭐ 현재 페이지 즉시 캡처 (최고 우선순위 - 멀티프레임 포함)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
@@ -1452,7 +1874,7 @@ final class BFCacheTransitionSystem: NSObject {
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
         // 복원 중이면 무시
         if stateModel.dataModel.isHistoryNavigationActive() {
-            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
+            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시 (멀티프레임): \(url.absoluteString)")
             return
         }
         
@@ -1460,34 +1882,164 @@ final class BFCacheTransitionSystem: NSObject {
         // 세션 점프 완전 방지
         stateModel.dataModel.addNewPage(url: url, title: "")
         stateModel.syncCurrentURL(url)
-        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지, 멀티프레임): \(url.absoluteString)")
     }
     
-    // MARK: - 🌐 JavaScript 스크립트
+    // MARK: - 🌐 **강화된 JavaScript 스크립트 - 멀티프레임 지원**
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted) {
-                console.log('🔄 BFCache 페이지 복원');
-                
-                // 동적 콘텐츠 새로고침 (필요시)
-                if (window.location.pathname.includes('/feed') ||
-                    window.location.pathname.includes('/timeline') ||
-                    window.location.hostname.includes('twitter') ||
-                    window.location.hostname.includes('facebook')) {
-                    if (window.refreshDynamicContent) {
-                        window.refreshDynamicContent();
+        // 🖼️ **멀티프레임 BFCache 지원 스크립트**
+        (function() {
+            'use strict';
+            
+            console.log('🖼️ 멀티프레임 BFCache 스크립트 초기화');
+            
+            // 🖼️ **메인 프레임 이벤트 핸들링**
+            window.addEventListener('pageshow', function(event) {
+                if (event.persisted) {
+                    console.log('🔄 BFCache 페이지 복원 (메인 프레임)');
+                    
+                    // 동적 콘텐츠 새로고침 (필요시)
+                    if (window.location.pathname.includes('/feed') ||
+                        window.location.pathname.includes('/timeline') ||
+                        window.location.hostname.includes('twitter') ||
+                        window.location.hostname.includes('facebook')) {
+                        if (window.refreshDynamicContent) {
+                            window.refreshDynamicContent();
+                        }
                     }
+                    
+                    // 🖼️ **모든 프레임에 복원 신호 전파**
+                    broadcastFrameEvent('bfcache-restore', { persisted: true });
+                }
+            });
+            
+            window.addEventListener('pagehide', function(event) {
+                if (event.persisted) {
+                    console.log('📸 BFCache 페이지 저장 (메인 프레임)');
+                    
+                    // 🖼️ **모든 프레임에 저장 신호 전파**
+                    broadcastFrameEvent('bfcache-store', { persisted: true });
+                }
+            });
+            
+            // 🖼️ **프레임 간 이벤트 브로드캐스트**
+            function broadcastFrameEvent(eventType, data) {
+                try {
+                    // 모든 iframe/frame에 이벤트 전파
+                    const frames = document.querySelectorAll('iframe, frame');
+                    frames.forEach(frame => {
+                        try {
+                            if (frame.contentWindow && frame.contentWindow.postMessage) {
+                                frame.contentWindow.postMessage({
+                                    type: 'bfcache-event',
+                                    eventType: eventType,
+                                    data: data
+                                }, '*');
+                            }
+                        } catch(e) {
+                            // Cross-origin 프레임은 무시
+                            console.debug('크로스 오리진 프레임 이벤트 전파 스킵:', e.message);
+                        }
+                    });
+                } catch(e) {
+                    console.warn('프레임 이벤트 브로드캐스트 실패:', e);
                 }
             }
-        });
-        
-        window.addEventListener('pagehide', function(event) {
-            if (event.persisted) {
-                console.log('📸 BFCache 페이지 저장');
-            }
-        });
+            
+            // 🖼️ **프레임 이벤트 수신 처리**
+            window.addEventListener('message', function(event) {
+                if (event.data && event.data.type === 'bfcache-event') {
+                    const { eventType, data } = event.data;
+                    
+                    switch(eventType) {
+                        case 'bfcache-restore':
+                            console.log('🔄 프레임 BFCache 복원 신호 수신');
+                            if (window.onBFCacheRestore) {
+                                window.onBFCacheRestore(data);
+                            }
+                            break;
+                            
+                        case 'bfcache-store':
+                            console.log('📸 프레임 BFCache 저장 신호 수신');
+                            if (window.onBFCacheStore) {
+                                window.onBFCacheStore(data);
+                            }
+                            break;
+                    }
+                }
+            });
+            
+            // 🖼️ **멀티쿼리 상태 복원 도우미 함수**
+            window.restoreQueryState = function(key, value) {
+                try {
+                    // 검색 폼 복원
+                    const searchInputs = document.querySelectorAll(
+                        `input[name="${key}"], input[data-param="${key}"], [data-search-key="${key}"]`
+                    );
+                    searchInputs.forEach(input => {
+                        if (input.type === 'checkbox' || input.type === 'radio') {
+                            input.checked = (value === 'true' || value === true);
+                        } else {
+                            input.value = value;
+                        }
+                        
+                        // change 이벤트 발생
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                    });
+                    
+                    // 필터 버튼 상태 복원
+                    const filterButtons = document.querySelectorAll(`[data-filter-key="${key}"]`);
+                    filterButtons.forEach(button => {
+                        if (button.dataset.filterValue === value) {
+                            button.classList.add('active', 'selected');
+                        } else {
+                            button.classList.remove('active', 'selected');
+                        }
+                    });
+                    
+                    console.log('🔍 쿼리 상태 복원:', key, '=', value);
+                    return true;
+                } catch(e) {
+                    console.warn('쿼리 상태 복원 실패:', key, e);
+                    return false;
+                }
+            };
+            
+            // 🖼️ **프레임 스크롤 동기화 도우미**
+            window.syncFrameScrolls = function() {
+                try {
+                    const frames = document.querySelectorAll('iframe, frame');
+                    frames.forEach((frame, index) => {
+                        try {
+                            if (frame.contentWindow && frame.contentWindow.scrollY !== undefined) {
+                                // 프레임 스크롤 정보를 부모에게 보고
+                                frame.contentWindow.postMessage({
+                                    type: 'scroll-sync',
+                                    frameIndex: index,
+                                    scrollX: frame.contentWindow.scrollX,
+                                    scrollY: frame.contentWindow.scrollY
+                                }, '*');
+                            }
+                        } catch(e) {
+                            // Cross-origin 프레임은 무시
+                        }
+                    });
+                } catch(e) {
+                    console.warn('프레임 스크롤 동기화 실패:', e);
+                }
+            };
+            
+            // 스크롤 이벤트 감지하여 주기적으로 동기화
+            let scrollSyncTimer;
+            window.addEventListener('scroll', function() {
+                clearTimeout(scrollSyncTimer);
+                scrollSyncTimer = setTimeout(window.syncFrameScrolls, 100);
+            }, { passive: true });
+            
+            console.log('✅ 멀티프레임 BFCache 스크립트 설정 완료');
+        })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
@@ -1495,7 +2047,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache|MultiFrame] \(msg)")
     }
 }
 
@@ -1517,7 +2069,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ BFCache 시스템 설치 완료 (멀티프레임)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -1529,7 +2081,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료 (멀티프레임)")
     }
     
     // 버튼 네비게이션 래퍼
@@ -1545,48 +2097,56 @@ extension BFCacheTransitionSystem {
 // MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
 extension BFCacheTransitionSystem {
 
-    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장 (멀티프레임 포함)
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 즉시 캡처 (최고 우선순위)
+        // 즉시 캡처 (최고 우선순위 - 멀티프레임 포함)
         captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
-        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
+        dbg("📸 떠나기 스냅샷 캡처 시작 (멀티프레임): \(rec.title)")
     }
 
-    /// ⚡ **수정: 페이지 로드 완료 후 자동 캐시 강화 - 대기 시간 최소화**
+    /// ⚡ **수정: 페이지 도착시 우선순위 캐시 강화 - 멀티프레임 지원**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 현재 페이지 캡처 (백그라운드 우선순위)
-        captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
-        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
+        // ⭐ **핵심 개선: 도착시 우선순위 캐싱** (기존 .background → .priority)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .priority, tabID: tabID)
+        dbg("⭐ 도착시 우선순위 캐싱 시작 (멀티프레임): \(rec.title)")
         
-        // ⚡ **추가: 이전 페이지들도 순차적으로 캐시 확인 및 캡처**
+        // ⚡ **추가: 이전 페이지들도 순차적으로 캐시 확인 및 캡처 (멀티프레임 지원)**
         if stateModel.dataModel.currentPageIndex > 0 {
             // 최근 3개 페이지만 체크 (성능 고려)
             let checkCount = min(3, stateModel.dataModel.currentPageIndex)
             let startIndex = max(0, stateModel.dataModel.currentPageIndex - checkCount)
             
+            // ⭐ **순차적 우선순위 캐싱 (백그라운드 큐 사용)**
             for i in startIndex..<stateModel.dataModel.currentPageIndex {
                 let previousRecord = stateModel.dataModel.pageHistory[i]
                 
                 // 캐시가 없는 경우만 메타데이터 저장
                 if !hasCache(for: previousRecord.id) {
-                    // 메타데이터만 저장 (이미지는 없음)
-                    let metadataSnapshot = BFCacheSnapshot(
-                        pageRecord: previousRecord,
-                        scrollPosition: .zero,
-                        timestamp: Date(),
-                        captureStatus: .failed,
-                        version: 1
-                    )
-                    
-                    // 디스크에 메타데이터만 저장
-                    saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
-                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                    // 백그라운드 우선순위로 이전 페이지 캐시
+                    serialQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // 메타데이터만 저장 (이미지는 없음)
+                        let metadataSnapshot = BFCacheSnapshot(
+                            pageRecord: previousRecord,
+                            scrollPosition: .zero,
+                            timestamp: Date(),
+                            captureStatus: .failed,
+                            version: 1,
+                            frameStates: [], // 빈 프레임 상태
+                            multiQueryStates: [:] // 빈 멀티쿼리 상태
+                        )
+                        
+                        // 디스크에 메타데이터만 저장
+                        self.saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
+                        self.dbg("📸 이전 페이지 메타데이터 저장 (멀티프레임): '\(previousRecord.title)' [인덱스: \(i)]")
+                    }
                 }
             }
         }
