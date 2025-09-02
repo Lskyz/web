@@ -13,7 +13,7 @@
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
-//  🔄 **3단계 복원 시스템** - 적응형 타이밍 학습 (4단계 제거)
+//  🔄 **4단계 복원 시스템** - 적응형 타이밍 학습 (4단계 확인만, 보정 제거)
 //
 
 import UIKit
@@ -167,7 +167,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **3단계 복원 메서드 - 적응형 타이밍 적용 (4단계 제거)**
+    // ⚡ **4단계 복원 메서드 - 적응형 타이밍 적용 (4단계 복원)**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -188,87 +188,15 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 3단계 복원 시작 (적응형)")
+        TabPersistenceManager.debugMessages.append("BFCache 4단계 복원 시작 (적응형)")
         
-        // 적응형 타이밍으로 3단계 복원 실행
+        // 적응형 타이밍으로 4단계 복원 실행
         DispatchQueue.main.async {
-            self.performThreeStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performFourStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 3단계 복원 시스템 (4단계 제거)**
-    private func performThreeStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
-        var stepResults: [Bool] = []
-        var currentStep = 0
-        let startTime = Date()
-        
-        // 사이트별 적응형 타이밍 계산
-        let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
-        
-        var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
-        
-        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
-        restoreSteps.append((1, { stepCompletion in
-            let targetPos = self.scrollPosition
-            TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
-            
-            // 네이티브 스크롤뷰 즉시 설정
-            webView.scrollView.setContentOffset(targetPos, animated: false)
-            
-            // JavaScript 메인 스크롤 복원
-            let mainScrollJS = """
-            (function() {
-                try {
-                    window.scrollTo(\(targetPos.x), \(targetPos.y));
-                    document.documentElement.scrollTop = \(targetPos.y);
-                    document.body.scrollTop = \(targetPos.y);
-                    return true;
-                } catch(e) { return false; }
-            })()
-            """
-            
-            webView.evaluateJavaScript(mainScrollJS) { result, _ in
-                let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
-                stepCompletion(success)
-            }
-        }))
-        
-        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
-        if let jsState = self.jsState,
-           let scrollData = jsState["scroll"] as? [String: Any],
-           let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
-            
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 1)
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateContainerScrollScript(elements)
-                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        }
-        
-        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
-        if let jsState = self.jsState,
-           let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
-            
-            restoreSteps.append((3, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 2)
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
-                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
+
                 }
             }))
         }
@@ -290,7 +218,7 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🔄 3단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔄 4단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
                 completion(overallSuccess)
             }
         }
