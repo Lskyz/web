@@ -274,47 +274,31 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **4단계: 최종 확인 및 보정** - 1단계 이후 방해 요소들 대응
+        // **4단계: 최종 확인 및 보정 - 🎯 스크롤 복원 거의 비활성화**
         restoreSteps.append((4, { stepCompletion in
             let waitTime = profile.getAdaptiveWaitTime(step: 3)
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 안전장치 (대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 확인만 (보정 거의 안함, 대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
                 (function() {
                     try {
+                        // 🎯 **현실적 대응: 스크롤 보정 거의 안함**
+                        // 옵션 1: 극한 오차 허용 (2000px = 약 2화면 높이까지 허용)
+                        // 옵션 2: 보정 완전 비활성화 (아래 주석 해제하면 보정 안함)
+                        
                         const scrollDiff = Math.abs(window.scrollY - \(self.scrollPosition.y));
                         
-                        // 🎯 **현실적 보정: 1500px 초과시만 보정**
-                        // 1단계 이후 웹페이지/컨텐츠가 망가뜨린 경우만 복구
+                        // 🎯 **현실적 보정: 1500px 초과시만 보정 (약 1.5화면 높이)**
+                        // 1100px 오차도 고려해서 여유있게 설정
                         if (scrollDiff > 1500) {
                             window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                            console.log('🔧 최종 안전장치 보정:', scrollDiff, 'px');
+                            console.log('🔧 현실적 보정:', scrollDiff, 'px');
                         } else {
-                            console.log('📊 안전장치 확인 완료:', scrollDiff, 'px');
+                            console.log('📊 허용 범위 내 오차:', scrollDiff, 'px (보정 안함)');
                         }
                         
-                        // 성공 판정: 2000px 오차까지 허용
-                        return scrollDiff <= 2000;
-                        
-                    } catch(e) { 
-                        console.error('4단계 확인 실패:', e);
-                        return true; // 실패시에도 성공으로 간주
-                    }
-                })()
-                """
-                
-                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true
-                    let currentScrollY = webView.scrollView.contentOffset.y
-                    let targetScrollY = self.scrollPosition.y
-                    let scrollDiff = abs(currentScrollY - targetScrollY)
-                    
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패") (스크롤 오차: \(String(format: "%.0f", scrollDiff))px)")
-                    stepCompletion(success)
-                }
-            }
-        })): 2000px(약 2화면) 오차까지 허용
+                        // 성공 판정: 2000px(약 2화면) 오차까지 허용
                         return scrollDiff <= 2000;
                         
                     } catch(e) { 
