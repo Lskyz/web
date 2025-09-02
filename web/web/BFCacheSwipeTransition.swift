@@ -14,6 +14,7 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
+//  🎯 **4단계 스크롤 오차보정 완화** - 보정 임계값 대폭 증가
 //
 
 import UIKit
@@ -196,7 +197,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템**
+    // 🔄 **핵심: 다단계 복원 시스템** 
     private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -273,7 +274,7 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **4단계: 최종 확인 및 보정**
+        // **4단계: 최종 확인 및 보정 - 🎯 오차보정 완화**
         restoreSteps.append((4, { stepCompletion in
             let waitTime = profile.getAdaptiveWaitTime(step: 3)
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
@@ -282,18 +283,24 @@ struct BFCacheSnapshot: Codable {
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        // 최종 메인 스크롤 확인 및 보정
-                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                        // 🎯 **대폭 완화된 최종 메인 스크롤 확인 및 보정**
+                        // 기존: 10px 차이 → 보정, 20px 오차 → 성공 판정
+                        // 수정: 100px 차이 → 보정, 200px 오차 → 성공 판정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 100) {
                             window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
                         }
-                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                        return window.scrollY >= \(self.scrollPosition.y - 200);
                     } catch(e) { return false; }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
+                    let currentScrollY = webView.scrollView.contentOffset.y
+                    let targetScrollY = self.scrollPosition.y
+                    let scrollDiff = abs(currentScrollY - targetScrollY)
+                    
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패") (스크롤 오차: \(String(format: "%.1f", scrollDiff))px)")
                     stepCompletion(success)
                 }
             }
