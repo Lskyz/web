@@ -162,7 +162,7 @@ struct BFCacheSnapshot: Codable {
         let startTime = Date()
         
         // 🎯 **동적 콘텐츠 감지**
-        let isDynamic = detectDynamicSiteForRestore(webView: webView)
+        let isDynamic = detectDynamicSite(webView: webView)
         TabPersistenceManager.debugMessages.append("🔍 복원 대상: \(isDynamic ? "동적 콘텐츠" : "정적 콘텐츠")")
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
@@ -718,12 +718,6 @@ final class BFCacheTransitionSystem: NSObject {
         
         _ = semaphore.wait(timeout: .now() + 0.5)
         return isDynamic
-    }
-    
-    // 🔍 **복원용 범용 동적사이트 감지**
-    private func detectDynamicSiteForRestore(webView: WKWebView) -> Bool {
-        // 캡처용과 동일한 기술적 감지 사용
-        return detectDynamicSite(webView: webView)
     }
     
     // 🎯 **2. 스크롤 위치 검증 시스템**
