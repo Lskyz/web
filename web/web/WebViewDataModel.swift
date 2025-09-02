@@ -11,6 +11,7 @@
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
 //  📱 **모바일 리디렉트 중복 방지 - www->m 리디렉트 처리**
+//  🔧 **BFCache 도착시 스냅샷 우선순위 수정 + 완전한 메서드 호출**
 
 //
 
@@ -1424,40 +1425,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             stateModel?.syncCurrentURL(finalURL)
             dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
             
-            // 🎯 **추가: 페이지 로드 완료 시 자동 캐시 캡처**
-            // 이전 페이지가 캐시되지 않았을 가능성이 있으므로
-            // 현재 페이지와 이전 페이지 모두 캡처 시도
-            if let stateModel = stateModel,
-               let tabID = stateModel.tabID,
-               let currentRecord = currentPageRecord {
-                
-                // 현재 페이지 캡처 (백그라운드 우선순위)
-                BFCacheTransitionSystem.shared.captureSnapshot(
-                    pageRecord: currentRecord,
+            // 🔧 **수정: 완전한 도착시 스냅샷 메서드 호출**
+            // 기존 단순한 captureSnapshot 대신 더 완전한 메서드 사용
+            if let stateModel = stateModel {
+                BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(
                     webView: webView,
-                    type: .background,
-                    tabID: tabID
+                    stateModel: stateModel
                 )
-                dbg("📸 페이지 로드 완료 - 현재 페이지 자동 캐시")
-                
-                // 이전 페이지도 캐시 확인 후 필요시 캡처
-                if currentPageIndex > 0 {
-                    let previousIndex = currentPageIndex - 1
-                    let previousRecord = pageHistory[previousIndex]
-                    
-                    // 캐시 미스 체크 (직접 접근 없이 시스템 통해 확인)
-                    if !BFCacheTransitionSystem.shared.hasCache(for: previousRecord.id) {
-                        // 이전 페이지도 백그라운드로 캡처 시도
-                        // (웹뷰는 현재 페이지를 보고 있으므로 스냅샷은 제한적)
-                        BFCacheTransitionSystem.shared.captureSnapshot(
-                            pageRecord: previousRecord,
-                            webView: nil, // 웹뷰 없이 메타데이터만 저장
-                            type: .background,
-                            tabID: tabID
-                        )
-                        dbg("📸 이전 페이지 캐시 미스 - 메타데이터 캡처: '\(previousRecord.title)'")
-                    }
-                }
+                dbg("📸 페이지 로드 완료 - 완전한 도착시 스냅샷 호출")
             }
         }
     }
