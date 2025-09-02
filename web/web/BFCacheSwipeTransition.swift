@@ -591,12 +591,41 @@ final class BFCacheTransitionSystem: NSObject {
         case back, forward
     }
     
+    // 전환 컨텍스트
+    private struct TransitionContext {
+        let tabID: UUID
+        weak var webView: WKWebView?
+        weak var stateModel: WebViewStateModel?
+        var isGesture: Bool
+        var direction: NavigationDirection
+        var initialTransform: CGAffineTransform
+        var previewContainer: UIView?
+        var currentSnapshot: UIImage?
+    }
+    
+    enum NavigationDirection {
+        case back, forward
+    }
+    
     enum CaptureType {
         case immediate  // 현재 페이지 (높은 우선순위)
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🎯 **1. 범용 동적 콘텐츠 감지 로직 (사이트 무관)** - 최우선 정의
+    // MARK: - 🔧 **핵심 개선: 동적사이트 대응 원자적 캡처 작업**
+    
+    private struct CaptureTask {
+        let pageRecord: PageRecord
+        let tabID: UUID?
+        let type: CaptureType
+        weak var webView: WKWebView?
+        let requestedAt: Date = Date()
+    }
+    
+    // 중복 방지를 위한 진행 중인 캡처 추적
+    private var pendingCaptures: Set<UUID> = []
+    
+    // 🎯 **1. 범용 동적 콘텐츠 감지 로직 (사이트 무관)**
     private func detectDynamicSite(webView: WKWebView) -> Bool {
         var isDynamic = false
         let semaphore = DispatchSemaphore(value: 0)
@@ -622,6 +651,76 @@ final class BFCacheTransitionSystem: NSObject {
                 const hasVue = !!(window.Vue || document.querySelector('[data-v-], [data-vue]'));
                 const hasAngular = !!(window.angular || document.querySelector('[ng-app], [data-ng-app]'));
                 const hasSPA = hasReact || hasVue || hasAngular;
+                
+                // 5. 동적 콘텐츠 컨테이너 감지
+                const dynamicContainers = document.querySelectorAll('.feed, .timeline, .stream, .posts, .content-list, .dynamic-content');
+                const dynamicCount = dynamicContainers.length;
+                
+                // 6. JavaScript 라우팅 감지 (pushState/replaceState 사용)
+                const hasHistoryAPI = !!(history.pushState && window.location.hash.length > 2);
+                
+                // 7. Ajax/Fetch 활성 요청 감지 (간접적)
+                const hasActiveRequests = document.readyState !== 'complete';
+                
+                // 8. 콘텐츠 높이 변동성 체크
+                const body = document.body || document.documentElement;
+                const hasVariableHeight = body.scrollHeight > window.innerHeight * 2; // 긴 페이지
+                
+                // 9. 실시간 업데이트 요소 감지
+                const realTimeElements = document.querySelectorAll('[data-live], [data-real-time], [data-auto-update]');
+                const realTimeCount = realTimeElements.length;
+                
+                // 점수 기반 판단
+                let dynamicScore = 0;
+                
+                if (loadingCount > 0) dynamicScore += 2;
+                if (lazyCount > 5) dynamicScore += 2;
+                if (infiniteCount > 0) dynamicScore += 3;
+                if (hasSPA) dynamicScore += 3;
+                if (dynamicCount > 0) dynamicScore += 2;
+                if (hasHistoryAPI) dynamicScore += 1;
+                if (hasActiveRequests) dynamicScore += 1;
+                if (hasVariableHeight) dynamicScore += 1;
+                if (realTimeCount > 0) dynamicScore += 2;
+                
+                return {
+                    isDynamic: dynamicScore >= 4, // 임계점: 4점 이상이면 동적사이트
+                    score: dynamicScore,
+                    details: {
+                        loadingElements: loadingCount,
+                        lazyImages: lazyCount,
+                        infiniteScroll: infiniteCount,
+                        spa: hasSPA,
+                        dynamicContainers: dynamicCount,
+                        historyAPI: hasHistoryAPI,
+                        activeRequests: hasActiveRequests,
+                        variableHeight: hasVariableHeight,
+                        realTimeElements: realTimeCount
+                    }
+                };
+            } catch(e) {
+                return { isDynamic: false, score: 0, error: e.message };
+            }
+        })()
+        """
+        
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(detectionScript) { result, error in
+                if let data = result as? [String: Any],
+                   let detected = data["isDynamic"] as? Bool {
+                    isDynamic = detected
+                    
+                    if let score = data["score"] as? Int {
+                        self.dbg("🔍 동적사이트 감지 점수: \(score)점 → \(detected ? "동적" : "정적")")
+                    }
+                }
+                semaphore.signal()
+            }
+        }
+        
+        _ = semaphore.wait(timeout: .now() + 0.5)
+        return isDynamic
+    } hasAngular;
                 
                 // 5. 동적 콘텐츠 컨테이너 감지
                 const dynamicContainers = document.querySelectorAll('.feed, .timeline, .stream, .posts, .content-list, .dynamic-content');
