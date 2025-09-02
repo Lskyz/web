@@ -596,34 +596,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 동적사이트 대응 원자적 캡처 작업**
-    
-    private struct CaptureTask {
-        let pageRecord: PageRecord
-        let tabID: UUID?
-        let type: CaptureType
-        weak var webView: WKWebView?
-        let requestedAt: Date = Date()
-    }
-    
-    // 중복 방지를 위한 진행 중인 캡처 추적
-    private var pendingCaptures: Set<UUID> = []
-    
-    func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
-        guard let webView = webView else {
-            dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
-            return
-        }
-        
-        let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
-        
-        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
-            self?.performAtomicCapture(task)
-        }
-    }
-    
-    // 🎯 **1. 범용 동적 콘텐츠 감지 로직 (사이트 무관)**
+    // MARK: - 🎯 **1. 범용 동적 콘텐츠 감지 로직 (사이트 무관)** - 최우선 정의
     private func detectDynamicSite(webView: WKWebView) -> Bool {
         var isDynamic = false
         let semaphore = DispatchSemaphore(value: 0)
@@ -720,7 +693,33 @@ final class BFCacheTransitionSystem: NSObject {
         return isDynamic
     }
     
-    // 🎯 **2. 스크롤 위치 검증 시스템**
+    // MARK: - 🔧 **핵심 개선: 동적사이트 대응 원자적 캡처 작업**
+    
+    private struct CaptureTask {
+        let pageRecord: PageRecord
+        let tabID: UUID?
+        let type: CaptureType
+        weak var webView: WKWebView?
+        let requestedAt: Date = Date()
+    }
+    
+    // 중복 방지를 위한 진행 중인 캡처 추적
+    private var pendingCaptures: Set<UUID> = []
+    
+    func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
+        guard let webView = webView else {
+            dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
+            return
+        }
+        
+        let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
+        
+        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
+        serialQueue.async { [weak self] in
+            self?.performAtomicCapture(task)
+        }
+        
+        // 🎯 **2. 스크롤 위치 검증 시스템**
     private func validateScrollPosition(webView: WKWebView, expectedPosition: CGPoint, tolerance: CGFloat = 50) -> Bool {
         let currentPosition = webView.scrollView.contentOffset
         let yDiff = abs(currentPosition.y - expectedPosition.y)
