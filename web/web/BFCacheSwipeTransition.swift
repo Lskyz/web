@@ -14,7 +14,6 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
-//  🎯 **4단계 스크롤 오차보정 완화** - 보정 임계값 대폭 증가
 //
 
 import UIKit
@@ -197,7 +196,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템** 
+    // 🔄 **핵심: 다단계 복원 시스템**
     private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -274,47 +273,27 @@ struct BFCacheSnapshot: Codable {
             }))
         }
         
-        // **4단계: 최종 확인 및 보정 - 🎯 스크롤 복원 거의 비활성화**
+        // **4단계: 최종 확인 및 보정**
         restoreSteps.append((4, { stepCompletion in
             let waitTime = profile.getAdaptiveWaitTime(step: 3)
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 확인만 (보정 거의 안함, 대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        // 🎯 **현실적 대응: 스크롤 보정 거의 안함**
-                        // 옵션 1: 극한 오차 허용 (2000px = 약 2화면 높이까지 허용)
-                        // 옵션 2: 보정 완전 비활성화 (아래 주석 해제하면 보정 안함)
-                        
-                        const scrollDiff = Math.abs(window.scrollY - \(self.scrollPosition.y));
-                        
-                        // 🎯 **현실적 보정: 1500px 초과시만 보정 (약 1.5화면 높이)**
-                        // 1100px 오차도 고려해서 여유있게 설정
-                        if (scrollDiff > 1500) {
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
                             window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                            console.log('🔧 현실적 보정:', scrollDiff, 'px');
-                        } else {
-                            console.log('📊 허용 범위 내 오차:', scrollDiff, 'px (보정 안함)');
                         }
-                        
-                        // 성공 판정: 2000px(약 2화면) 오차까지 허용
-                        return scrollDiff <= 2000;
-                        
-                    } catch(e) { 
-                        console.error('4단계 확인 실패:', e);
-                        return true; // 실패시에도 성공으로 간주
-                    }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                    } catch(e) { return false; }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true // 실패시에도 성공으로 간주
-                    let currentScrollY = webView.scrollView.contentOffset.y
-                    let targetScrollY = self.scrollPosition.y
-                    let scrollDiff = abs(currentScrollY - targetScrollY)
-                    
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패") (스크롤 오차: \(String(format: "%.0f", scrollDiff))px)")
+                    let success = (result as? Bool) ?? false
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
