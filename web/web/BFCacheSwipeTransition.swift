@@ -886,6 +886,9 @@ final class BFCacheTransitionSystem: NSObject {
     private func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         guard let tabID = stateModel.tabID else { return }
         
+        // 네이티브 제스처 비활성화
+        webView.allowsBackForwardNavigationGestures = false
+        
         // 기존 제스처 제거
         webView.gestureRecognizers?.forEach { gesture in
             if gesture is UIScreenEdgePanGestureRecognizer {
@@ -1207,8 +1210,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 타임아웃 설정 (최대 2초)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // 타임아웃 설정 (최대 0.8초)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             removePreview()
         }
     }
