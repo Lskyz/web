@@ -235,7 +235,7 @@ struct BFCacheSnapshot: Codable {
         let stateBlock = scrollStateBlock
         
         // **1단계: 스켈레톤으로 전체 레이아웃 즉시 확보**
-        reateFullSkeleton(to: webView) { [weak self] skeletonSuccess in
+        createFullSkeleton(to: webView) { skeletonSuccess in
             guard let self = self else { 
                 completion(false)
                 return 
