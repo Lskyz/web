@@ -13,7 +13,7 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **5가지 스크롤 복원 전략 적용**
 //  📊 **사이트 타입별 최적화된 복원**
-//
+//  🛡️ **안전한 캐시 시스템** - 크래시 방지
 
 import UIKit
 import WebKit
@@ -24,6 +24,26 @@ fileprivate func ts() -> String {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss.SSS"
     return f.string(from: Date())
+}
+
+// MARK: - 🛡️ CGPoint Codable Extension (크래시 방지)
+extension CGPoint: Codable {
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let x = try container.decode(CGFloat.self, forKey: .x)
+        let y = try container.decode(CGFloat.self, forKey: .y)
+        self.init(x: x, y: y)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case x, y
+    }
 }
 
 // MARK: - 사이트 타입 정의
@@ -63,13 +83,63 @@ struct VisibleRange: Codable {
     }
 }
 
-// MARK: - 가상화 정보 (수정된 버전)
+// MARK: - 가상화 정보
 struct VirtualizedInfo: Codable {
     let sequence: Int
     let pageNumber: Int
     let pageSize: Int
     let totalItems: Int?
     let visibleRange: VisibleRange
+}
+
+// MARK: - 🛡️ 안전한 JS 상태 정보
+struct SafeJSState: Codable {
+    let stringValues: [String: String]
+    let numberValues: [String: Double]
+    let boolValues: [String: Bool]
+    let timestamp: Date
+    
+    init(from unsafeState: [String: Any]) {
+        var strings: [String: String] = [:]
+        var numbers: [String: Double] = [:]
+        var bools: [String: Bool] = [:]
+        
+        for (key, value) in unsafeState {
+            switch value {
+            case let stringValue as String:
+                strings[key] = stringValue
+            case let numberValue as NSNumber:
+                if CFGetTypeID(numberValue) == CFBooleanGetTypeID() {
+                    bools[key] = numberValue.boolValue
+                } else {
+                    numbers[key] = numberValue.doubleValue
+                }
+            case let doubleValue as Double:
+                numbers[key] = doubleValue
+            case let intValue as Int:
+                numbers[key] = Double(intValue)
+            case let boolValue as Bool:
+                bools[key] = boolValue
+            default:
+                // 직렬화할 수 없는 타입은 무시 (크래시 방지)
+                continue
+            }
+        }
+        
+        self.stringValues = strings
+        self.numberValues = numbers
+        self.boolValues = bools
+        self.timestamp = Date()
+    }
+    
+    func toDictionary() -> [String: Any] {
+        var result: [String: Any] = [:]
+        result.merge(stringValues) { _, new in new }
+        result.merge(numberValues) { _, new in new }
+        result.merge(boolValues) { _, new in new }
+        result["timestamp"] = timestamp
+        return result
+    }
 }
 
 // MARK: - 향상된 스크롤 상태 정보
@@ -96,12 +166,12 @@ private class WeakGestureContext {
     }
 }
 
-// MARK: - 📸 BFCache 페이지 스냅샷 (5가지 전략 대응)
+// MARK: - 📸 BFCache 페이지 스냅샷 (5가지 전략 대응 + 안전한 직렬화)
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
-    let scrollPosition: CGPoint
-    var jsState: [String: Any]?
+    let scrollPosition: CGPoint  // 이제 Codable 지원
+    var safeJSState: SafeJSState?  // [String: Any] 대신 안전한 타입
     let timestamp: Date
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
@@ -116,53 +186,6 @@ struct BFCacheSnapshot: Codable {
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
-    }
-    
-    // Codable을 위한 CodingKeys
-    enum CodingKeys: String, CodingKey {
-        case pageRecord, domSnapshot, scrollPosition, jsState, timestamp
-        case webViewSnapshotPath, captureStatus, version
-        case siteType, scrollStateInfo
-    }
-    
-    // Custom encoding/decoding for [String: Any]
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        pageRecord = try container.decode(PageRecord.self, forKey: .pageRecord)
-        domSnapshot = try container.decodeIfPresent(String.self, forKey: .domSnapshot)
-        scrollPosition = try container.decode(CGPoint.self, forKey: .scrollPosition)
-        
-        // JSON decode for [String: Any]
-        if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
-            jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
-        }
-        
-        timestamp = try container.decode(Date.self, forKey: .timestamp)
-        webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
-        captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
-        version = try container.decode(Int.self, forKey: .version)
-        siteType = try container.decodeIfPresent(SiteType.self, forKey: .siteType) ?? .staticSite
-        scrollStateInfo = try container.decodeIfPresent(ScrollStateInfo.self, forKey: .scrollStateInfo)
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(pageRecord, forKey: .pageRecord)
-        try container.encodeIfPresent(domSnapshot, forKey: .domSnapshot)
-        try container.encode(scrollPosition, forKey: .scrollPosition)
-        
-        // JSON encode for [String: Any]
-        if let js = jsState {
-            let jsData = try JSONSerialization.data(withJSONObject: js)
-            try container.encode(jsData, forKey: .jsState)
-        }
-        
-        try container.encode(timestamp, forKey: .timestamp)
-        try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
-        try container.encode(captureStatus, forKey: .captureStatus)
-        try container.encode(version, forKey: .version)
-        try container.encode(siteType, forKey: .siteType)
-        try container.encodeIfPresent(scrollStateInfo, forKey: .scrollStateInfo)
     }
     
     // 직접 초기화용 init
@@ -181,13 +204,18 @@ struct BFCacheSnapshot: Codable {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
-        self.jsState = jsState
+        self.safeJSState = jsState != nil ? SafeJSState(from: jsState!) : nil
         self.timestamp = timestamp
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
         self.siteType = siteType
         self.scrollStateInfo = scrollStateInfo
+    }
+    
+    // 🛡️ 안전한 JS 상태 접근
+    var jsState: [String: Any]? {
+        return safeJSState?.toDictionary()
     }
     
     // 이미지 로드 메서드
@@ -555,7 +583,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - 🎯 **5가지 전략 적용 BFCache 전환 시스템**
+// MARK: - 🎯 **5가지 전략 적용 BFCache 전환 시스템 (안전한 버전)**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -647,6 +675,12 @@ final class BFCacheTransitionSystem: NSObject {
         let detectionScript = generateSiteTypeDetectionScript()
         
         webView.evaluateJavaScript(detectionScript) { result, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("⚠️ 사이트 타입 감지 실패: \(error.localizedDescription)")
+                completion(.dynamicSite) // 안전한 기본값
+                return
+            }
+            
             if let resultDict = result as? [String: Any],
                let siteTypeString = resultDict["siteType"] as? String,
                let siteType = SiteType(rawValue: siteTypeString) {
@@ -658,7 +692,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (5가지 전략 적용)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (5가지 전략 적용 + 안전성 강화)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -758,7 +792,7 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // MARK: - 🎯 **5가지 전략별 향상된 캡처**
+    // MARK: - 🎯 **5가지 전략별 향상된 캡처 (안전성 강화)**
     private func performEnhancedCapture(
         pageRecord: PageRecord,
         webView: WKWebView,
@@ -841,7 +875,9 @@ final class BFCacheTransitionSystem: NSObject {
             let scrollScript = generateEnhancedScrollCaptureScript(for: siteType)
             
             webView.evaluateJavaScript(scrollScript) { result, error in
-                if let resultData = result as? [String: Any] {
+                if let error = error {
+                    self.dbg("⚠️ 스크롤 상태 캡처 실패: \(error.localizedDescription)")
+                } else if let resultData = result as? [String: Any] {
                     scrollStateInfo = self.parseScrollStateInfo(from: resultData, siteType: siteType)
                     jsState = resultData
                 }
@@ -856,7 +892,11 @@ final class BFCacheTransitionSystem: NSObject {
             let domScript = generateCleanDOMScript()
             
             webView.evaluateJavaScript(domScript) { result, error in
-                domSnapshot = result as? String
+                if let error = error {
+                    self.dbg("⚠️ DOM 캡처 실패: \(error.localizedDescription)")
+                } else {
+                    domSnapshot = result as? String
+                }
                 domSemaphore.signal()
             }
         }
@@ -944,6 +984,7 @@ final class BFCacheTransitionSystem: NSObject {
                 return { siteType: 'static' };
                 
             } catch(e) {
+                console.error('사이트 타입 감지 오류:', e);
                 return { siteType: 'dynamic' }; // 에러시 안전한 기본값
             }
         })()
@@ -1100,28 +1141,33 @@ final class BFCacheTransitionSystem: NSObject {
         
         let utilScript = """
             function generateSelector(element) {
-                if (element.id) return '#' + element.id;
-                if (element.className) {
-                    const classes = element.className.split(' ').filter(c => c).slice(0, 2);
-                    return '.' + classes.join('.');
+                try {
+                    if (element.id) return '#' + element.id;
+                    if (element.className) {
+                        const classes = element.className.split(' ').filter(c => c).slice(0, 2);
+                        if (classes.length > 0) return '.' + classes.join('.');
+                    }
+                    const tag = element.tagName.toLowerCase();
+                    const parent = element.parentElement;
+                    if (parent) {
+                        const siblings = Array.from(parent.children);
+                        const index = siblings.indexOf(element);
+                        return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
+                    }
+                    return tag;
+                } catch(e) {
+                    return 'body';
                 }
-                const tag = element.tagName.toLowerCase();
-                const parent = element.parentElement;
-                if (parent) {
-                    const siblings = Array.from(parent.children);
-                    const index = siblings.indexOf(element);
-                    return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
-                }
-                return tag;
             }
         """
         
         return baseScript + specificScript + utilScript + """
             return result;
         } catch(e) {
+            console.error('스크롤 캡처 오류:', e);
             return {
-                scrollX: window.scrollX,
-                scrollY: window.scrollY,
+                scrollX: window.scrollX || 0,
+                scrollY: window.scrollY || 0,
                 error: e.message,
                 siteType: '\(siteType.rawValue)'
             };
@@ -1150,19 +1196,23 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 const html = document.documentElement.outerHTML;
                 return html.length > 100000 ? html.substring(0, 100000) : html;
-            } catch(e) { return null; }
+            } catch(e) { 
+                console.error('DOM 캡처 오류:', e);
+                return null; 
+            }
         })()
         """
     }
     
-    // MARK: - 📊 스크롤 상태 정보 파싱 (수정된 버전)
+    // MARK: - 📊 스크롤 상태 정보 파싱 (안전성 강화)
     private func parseScrollStateInfo(from data: [String: Any], siteType: SiteType) -> ScrollStateInfo? {
         guard let scrollX = data["scrollX"] as? Double,
               let scrollY = data["scrollY"] as? Double else {
+            dbg("⚠️ 스크롤 위치 파싱 실패")
             return nil
         }
         
-        // 보이는 아이템 파싱
+        // 보이는 아이템 파싱 (안전한 처리)
         var visibleItems: [VisibleItemInfo] = []
         if let itemsData = data["visibleItems"] as? [[String: Any]] {
             visibleItems = itemsData.compactMap { itemData in
@@ -1183,7 +1233,7 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 스켈레톤 정보 파싱
+        // 스켈레톤 정보 파싱 (안전한 처리)
         var skeletonInfo: SkeletonInfo? = nil
         if let skeletonData = data["skeletonInfo"] as? [String: Any] {
             skeletonInfo = SkeletonInfo(
@@ -1194,7 +1244,7 @@ final class BFCacheTransitionSystem: NSObject {
             )
         }
         
-        // 가상화 정보 파싱 (수정된 버전)
+        // 가상화 정보 파싱 (안전한 처리)
         var virtualizedInfo: VirtualizedInfo? = nil
         if let virtualData = data["virtualizedInfo"] as? [String: Any] {
             let visibleRange: VisibleRange
@@ -1213,7 +1263,7 @@ final class BFCacheTransitionSystem: NSObject {
             )
         }
         
-        // 로딩 상태 파싱
+        // 로딩 상태 파싱 (안전한 처리)
         let loadingStates = data["loadingStates"] as? [String: Bool] ?? [:]
         
         return ScrollStateInfo(
@@ -1234,7 +1284,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **개선된 디스크 저장 시스템**
+    // MARK: - 💾 **개선된 디스크 저장 시스템 (안전성 강화)**
     
     private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
@@ -1249,29 +1299,52 @@ final class BFCacheTransitionSystem: NSObject {
             
             var finalSnapshot = snapshot.snapshot
             
-            // 1. 이미지 저장 (JPEG 압축)
+            // 🛡️ 안전한 파일 쓰기 래퍼
+            func safeWriteData(_ data: Data, to url: URL, description: String) -> Bool {
+                do {
+                    // 임시 파일로 먼저 쓰기
+                    let tempURL = url.appendingPathExtension("tmp")
+                    try data.write(to: tempURL)
+                    
+                    // 원자적 이동
+                    _ = try FileManager.default.replaceItem(at: url, withItemAt: tempURL, 
+                                                         backupItemName: nil, options: [], 
+                                                         resultingItemURL: nil)
+                    
+                    self.dbg("💾 \(description) 저장 성공: \(url.lastPathComponent)")
+                    return true
+                } catch {
+                    self.dbg("❌ \(description) 저장 실패: \(error.localizedDescription)")
+                    // 임시 파일 정리
+                    try? FileManager.default.removeItem(at: url.appendingPathExtension("tmp"))
+                    return false
+                }
+            }
+            
+            // 1. 이미지 저장 (JPEG 압축 + 안전한 쓰기)
             if let image = snapshot.image {
                 let imagePath = pageDir.appendingPathComponent("snapshot.jpg")
                 if let jpegData = image.jpegData(compressionQuality: 0.7) {
-                    do {
-                        try jpegData.write(to: imagePath)
+                    if safeWriteData(jpegData, to: imagePath, description: "이미지") {
                         finalSnapshot.webViewSnapshotPath = imagePath.path
-                        self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
-                    } catch {
-                        self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
                     }
                 }
             }
             
-            // 2. 상태 데이터 저장 (JSON)
+            // 2. 상태 데이터 저장 (JSON + 안전한 쓰기)
             let statePath = pageDir.appendingPathComponent("state.json")
-            if let stateData = try? JSONEncoder().encode(finalSnapshot) {
-                do {
-                    try stateData.write(to: statePath)
-                    self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
-                } catch {
-                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
+            do {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let stateData = try encoder.encode(finalSnapshot)
+                
+                if safeWriteData(stateData, to: statePath, description: "상태") {
+                    // 성공시에만 인덱스 업데이트
+                    self.setDiskIndex(pageDir.path, for: pageID)
+                    self.setMemoryCache(finalSnapshot, for: pageID)
                 }
+            } catch {
+                self.dbg("❌ JSON 인코딩 실패: \(error.localizedDescription)")
             }
             
             // 3. 메타데이터 저장
@@ -1286,21 +1359,18 @@ final class BFCacheTransitionSystem: NSObject {
             )
             
             let metadataPath = pageDir.appendingPathComponent("metadata.json")
-            if let metadataData = try? JSONEncoder().encode(metadata) {
-                do {
-                    try metadataData.write(to: metadataPath)
-                } catch {
-                    self.dbg("❌ 메타데이터 저장 실패: \(error.localizedDescription)")
-                }
+            do {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let metadataData = try encoder.encode(metadata)
+                _ = safeWriteData(metadataData, to: metadataPath, description: "메타데이터")
+            } catch {
+                self.dbg("❌ 메타데이터 인코딩 실패: \(error.localizedDescription)")
             }
-            
-            // 4. 인덱스 업데이트 (원자적)
-            self.setDiskIndex(pageDir.path, for: pageID)
-            self.setMemoryCache(finalSnapshot, for: pageID)
             
             self.dbg("💾 \(snapshot.snapshot.siteType.rawValue) 전략 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
             
-            // 5. 이전 버전 정리 (최신 3개만 유지)
+            // 4. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
     }
@@ -1317,7 +1387,11 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func createDirectoryIfNeeded(at url: URL) {
         if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+            do {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+            } catch {
+                dbg("❌ 디렉토리 생성 실패: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -1346,7 +1420,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **개선된 디스크 캐시 로딩**
+    // MARK: - 💾 **개선된 디스크 캐시 로딩 (안전성 강화)**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
@@ -1370,8 +1444,11 @@ final class BFCacheTransitionSystem: NSObject {
                             if pageDir.lastPathComponent.hasPrefix("Page_") {
                                 // metadata.json 로드
                                 let metadataPath = pageDir.appendingPathComponent("metadata.json")
-                                if let data = try? Data(contentsOf: metadataPath),
-                                   let metadata = try? JSONDecoder().decode(CacheMetadata.self, from: data) {
+                                do {
+                                    let data = try Data(contentsOf: metadataPath)
+                                    let decoder = JSONDecoder()
+                                    decoder.dateDecodingStrategy = .iso8601
+                                    let metadata = try decoder.decode(CacheMetadata.self, from: data)
                                     
                                     // 스레드 안전하게 인덱스 업데이트
                                     self.setDiskIndex(pageDir.path, for: metadata.pageID)
@@ -1379,6 +1456,10 @@ final class BFCacheTransitionSystem: NSObject {
                                         self._cacheVersion[metadata.pageID] = metadata.version
                                     }
                                     loadedCount += 1
+                                } catch {
+                                    self.dbg("⚠️ 메타데이터 로드 실패: \(metadataPath.lastPathComponent) - \(error.localizedDescription)")
+                                    // 손상된 캐시 정리
+                                    try? FileManager.default.removeItem(at: pageDir)
                                 }
                             }
                         }
@@ -1392,7 +1473,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
+    // MARK: - 🔍 **개선된 스냅샷 조회 시스템 (안전성 강화)**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
@@ -1405,14 +1486,25 @@ final class BFCacheTransitionSystem: NSObject {
         if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
             let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
             
-            if let data = try? Data(contentsOf: statePath),
-               let snapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
+            do {
+                let data = try Data(contentsOf: statePath)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let snapshot = try decoder.decode(BFCacheSnapshot.self, from: data)
                 
                 // 메모리 캐시에도 저장 (최적화)
                 setMemoryCache(snapshot, for: pageID)
                 
                 dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) (\(snapshot.siteType.rawValue))")
                 return snapshot
+            } catch {
+                dbg("❌ 디스크 캐시 로드 실패: \(error.localizedDescription)")
+                // 손상된 캐시 제거
+                cacheAccessQueue.async(flags: .barrier) {
+                    self._diskCacheIndex.removeValue(forKey: pageID)
+                }
+                // 디스크 파일도 정리
+                try? FileManager.default.removeItem(at: URL(fileURLWithPath: diskPath))
             }
         }
         
@@ -1420,7 +1512,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // MARK: - 🔧 **수정: hasCache 메서드 추가**
+    // MARK: - 🔧 hasCache 메서드 
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1603,7 +1695,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
+    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지 + 안전성 강화)**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
