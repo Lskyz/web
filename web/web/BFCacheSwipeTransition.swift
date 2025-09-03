@@ -21,7 +21,7 @@ fileprivate func ts() -> String {
 
 // MARK: - 🚀 스크롤 복원 전략 열거형
 enum ScrollRestorationType {
-    case static          // 정적 데이터 - 단순 위치 복원
+    case basic          // 정적 데이터 - 단순 위치 복원
     case dynamic         // 동적 데이터 - 아이템 기준 복원  
     case lazyLoad        // 레이지 로딩 - 스켈레톤 + 점진 로드
     case cached          // 캐시된 데이터 - 즉시 복원
