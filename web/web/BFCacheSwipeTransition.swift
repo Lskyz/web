@@ -237,12 +237,7 @@ struct BFCacheSnapshot: Codable {
         let startTime = Date()
         
         // 1️⃣ **더 강력한 JavaScript 스크롤 함수 무력화 + 웹페이지 스크롤 간섭 차단**
-        setupAdvancedScrollBlocking(webView: webView) { [weak self] in
-            guard let self = self else { 
-                completion(false)
-                return 
-            }
-            
+        setupAdvancedScrollBlocking(webView: webView) {
             // 2️⃣ **지연된 DOM 준비 상태 확인 및 대기** (더 신중한 타이밍)
             self.waitForAdvancedDOMReady(webView: webView, startTime: startTime, retryCount: 0, completion: completion)
         }
