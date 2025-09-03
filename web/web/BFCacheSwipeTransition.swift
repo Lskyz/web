@@ -52,13 +52,24 @@ struct SkeletonInfo: Codable {
     let estimatedTotalItems: Int
 }
 
-// MARK: - 가상화 정보
+// MARK: - 가상화 범위 정보 (Codable 준수)
+struct VisibleRange: Codable {
+    let start: Int
+    let end: Int
+    
+    init(start: Int, end: Int) {
+        self.start = start
+        self.end = end
+    }
+}
+
+// MARK: - 가상화 정보 (수정된 버전)
 struct VirtualizedInfo: Codable {
     let sequence: Int
     let pageNumber: Int
     let pageSize: Int
     let totalItems: Int?
-    let visibleRange: (start: Int, end: Int)
+    let visibleRange: VisibleRange
 }
 
 // MARK: - 향상된 스크롤 상태 정보
@@ -1144,7 +1155,7 @@ final class BFCacheTransitionSystem: NSObject {
         """
     }
     
-    // MARK: - 📊 스크롤 상태 정보 파싱
+    // MARK: - 📊 스크롤 상태 정보 파싱 (수정된 버전)
     private func parseScrollStateInfo(from data: [String: Any], siteType: SiteType) -> ScrollStateInfo? {
         guard let scrollX = data["scrollX"] as? Double,
               let scrollY = data["scrollY"] as? Double else {
@@ -1183,14 +1194,14 @@ final class BFCacheTransitionSystem: NSObject {
             )
         }
         
-        // 가상화 정보 파싱
+        // 가상화 정보 파싱 (수정된 버전)
         var virtualizedInfo: VirtualizedInfo? = nil
         if let virtualData = data["virtualizedInfo"] as? [String: Any] {
-            let visibleRange: (start: Int, end: Int)
+            let visibleRange: VisibleRange
             if let rangeData = virtualData["visibleRange"] as? [String: Int] {
-                visibleRange = (rangeData["start"] ?? 0, rangeData["end"] ?? 0)
+                visibleRange = VisibleRange(start: rangeData["start"] ?? 0, end: rangeData["end"] ?? 0)
             } else {
-                visibleRange = (0, 0)
+                visibleRange = VisibleRange(start: 0, end: 0)
             }
             
             virtualizedInfo = VirtualizedInfo(
