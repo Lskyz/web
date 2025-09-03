@@ -554,13 +554,21 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func handleMemoryWarning() {
         cacheQueue.async(flags: .barrier) {
-            // 오래된 캐시 50% 제거
-            let sorted = self.memoryCache.sorted { $0.value.timestamp < $1.value.timestamp }
-            let removeCount = sorted.count / 2
-            sorted.prefix(removeCount).forEach { item in
-                self.memoryCache.removeValue(forKey: item.key)
+            // LRU 방식: 최근 사용 시간 기준으로 정렬
+            let sorted = self.memoryCache.sorted { 
+                $0.value.scrollState.timestamp < $1.value.scrollState.timestamp 
             }
-            self.dbg("⚠️ 메모리 경고 - 캐시 정리: \(removeCount)개 제거")
+            
+            // 오래된 캐시 30% 제거 (최소 5개는 유지)
+            let keepCount = max(5, self.memoryCache.count * 7 / 10)
+            let removeCount = self.memoryCache.count - keepCount
+            
+            if removeCount > 0 {
+                sorted.prefix(removeCount).forEach { item in
+                    self.memoryCache.removeValue(forKey: item.key)
+                }
+                self.dbg("⚠️ 메모리 경고 - LRU 캐시 정리: \(removeCount)개 제거, \(keepCount)개 유지")
+            }
         }
     }
     
