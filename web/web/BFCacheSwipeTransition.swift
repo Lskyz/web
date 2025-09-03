@@ -251,72 +251,92 @@ struct BFCacheSnapshot: Codable {
 }
     
     // 🎯 **스켈레톤 전체 레이아웃 즉시 확보**
-    private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+   private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
     let template = skeletonTemplate
     let totalHeight = max(scrollStateBlock.totalContentHeight, CGFloat(template.totalSkeletonItems) * template.averageItemHeight)
     
     let fullSkeletonJS = """
     (function() {
         try {
-            // 기존 스켈레톤 정리
-            const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
-            existing.forEach(el => el.remove());
+            // DOM 준비 확인
+            if (document.readyState !== 'complete') {
+                console.warn('DOM 미완료 - 스켈레톤 생성 지연');
+                return new Promise(resolve => {
+                    document.addEventListener('DOMContentLoaded', () => resolve(true));
+                }).then(() => createSkeleton());
+            }
+            return createSkeleton();
             
-            // 전체 스켈레톤 컨테이너 생성
-            const skeletonContainer = document.createElement('div');
-            skeletonContainer.className = 'bfcache-skeleton-container';
-            skeletonContainer.style.cssText = `
-                position: relative;
-                min-height: ${totalHeight}px;
-                background: #f8f9fa;
-            `;
-            
-            // 개별 스켈레톤 아이템들 생성
-            for (let i = 0; i < \(template.totalSkeletonItems); i++) {
-                const skeletonItem = document.createElement('div');
-                skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
-                skeletonItem.style.cssText = `
-                    height: \(template.averageItemHeight)px;
-                    margin: 8px 16px;
-                    background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-                    background-size: 200% 100%;
-                    animation: bfcache-shimmer 1.8s infinite;
-                    border-radius: 8px;
+            function createSkeleton() {
+                // 기존 스켈레톤 정리
+                const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
+                existing.forEach(el => el.remove());
+                
+                // 전체 스켈레톤 컨테이너 생성
+                const skeletonContainer = document.createElement('div');
+                skeletonContainer.className = 'bfcache-skeleton-container';
+                skeletonContainer.style.cssText = `
                     position: relative;
+                    min-height: ${totalHeight}px;
+                    background: #f8f9fa;
+                    width: 100%;
                 `;
                 
-                skeletonItem.innerHTML = `\(template.skeletonPattern)`;
-                skeletonContainer.appendChild(skeletonItem);
+                // 개별 스켈레톤 아이템들 생성
+                for (let i = 0; i < \(template.totalSkeletonItems); i++) {
+                    const skeletonItem = document.createElement('div');
+                    skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
+                    skeletonItem.style.cssText = `
+                        height: \(template.averageItemHeight)px;
+                        margin: 8px 16px;
+                        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+                        background-size: 200% 100%;
+                        animation: bfcache-shimmer 1.8s infinite;
+                        border-radius: 8px;
+                        position: relative;
+                    `;
+                    
+                    skeletonItem.innerHTML = `\(template.skeletonPattern)`;
+                    skeletonContainer.appendChild(skeletonItem);
+                }
+                
+                // 스켈레톤 애니메이션 CSS 주입
+                if (!document.getElementById('bfcache-skeleton-styles')) {
+                    const style = document.createElement('style');
+                    style.id = 'bfcache-skeleton-styles';
+                    style.textContent = `
+                        @keyframes bfcache-shimmer {
+                            0% { background-position: -200% 0; }
+                            100% { background-position: 200% 0; }
+                        }
+                        .bfcache-skeleton-container {
+                            -webkit-transform: translateZ(0);
+                            will-change: auto;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+                
+                // DOM에 스켈레톤 추가
+                const targetContainer = document.body;
+                if (!targetContainer) {
+                    console.error('document.body가 존재하지 않음');
+                    return false;
+                }
+                const firstChild = targetContainer.firstChild;
+                if (firstChild) {
+                    targetContainer.insertBefore(skeletonContainer, firstChild);
+                } else {
+                    targetContainer.appendChild(skeletonContainer);
+                }
+                
+                // 높이 검증
+                const actualHeight = document.documentElement.scrollHeight;
+                console.log('스켈레톤 높이 검증: 기대 높이=${totalHeight}, 실제 높이=' + actualHeight);
+                
+                window.__BFCACHE_SKELETON_ACTIVE__ = true;
+                return true;
             }
-            
-            // 스켈레톤 애니메이션 CSS 주입
-            if (!document.getElementById('bfcache-skeleton-styles')) {
-                const style = document.createElement('style');
-                style.id = 'bfcache-skeleton-styles';
-                style.textContent = `
-                    @keyframes bfcache-shimmer {
-                        0% { background-position: -200% 0; }
-                        100% { background-position: 200% 0; }
-                    }
-                    .bfcache-skeleton-container {
-                        -webkit-transform: translateZ(0);
-                        will-change: auto;
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-            
-            // DOM에 스켈레톤 추가
-            const targetContainer = document.body;
-            const firstChild = targetContainer.firstChild;
-            if (firstChild) {
-                targetContainer.insertBefore(skeletonContainer, firstChild);
-            } else {
-                targetContainer.appendChild(skeletonContainer);
-            }
-            
-            window.__BFCACHE_SKELETON_ACTIVE__ = true;
-            return true;
         } catch (e) {
             console.error('스켈레톤 생성 실패:', e);
             return false;
@@ -330,6 +350,10 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("📐 스켈레톤 생성 성공: \(template.totalSkeletonItems)개, 높이=\(totalHeight)")
         } else {
             TabPersistenceManager.debugMessages.append("❌ 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
+            // 추가 디버깅: DOM 상태 확인
+            webView.evaluateJavaScript("document.readyState") { state, _ in
+                TabPersistenceManager.debugMessages.append("DOM 상태: \(state ?? "unknown")")
+            }
         }
         completion(success)
     }
@@ -355,7 +379,8 @@ struct BFCacheSnapshot: Codable {
             function performRestore() {
                 // 1. 기본 스크롤 위치 설정
                 const targetY = \(finalScrollY);
-                window.scrollTo(0, targetY);
+                document.documentElement.style.scrollBehavior = 'auto';
+                window.scrollTo({ top: targetY, behavior: 'auto' });
                 
                 // 2. 앵커 아이템 기준 정밀 조정
                 const anchorElement = document.querySelector('\(anchorItem.selector)');
@@ -367,7 +392,7 @@ struct BFCacheSnapshot: Codable {
                     const adjustment = expectedTop - currentTop;
                     
                     if (Math.abs(adjustment) > 5) {
-                        window.scrollTo(0, targetY + adjustment);
+                        window.scrollTo({ top: targetY + adjustment, behavior: 'auto' });
                     }
                 }
                 
@@ -404,13 +429,13 @@ struct BFCacheSnapshot: Codable {
                 window.__BFCACHE_FINAL_SCROLL_Y__ = window.scrollY;
                 
                 // 7. 스크롤 이벤트 모니터링
-                const scrollLockHandler = () => {
+                window.__BFCACHE_SCROLL_LISTENER__ = () => {
                     if (window.__BFCACHE_SCROLL_LOCKED__ && Math.abs(window.scrollY - window.__BFCACHE_FINAL_SCROLL_Y__) > 5) {
-                        console.warn('스크롤 변동 감지, 복원: ', window.scrollY);
-                        window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
+                        console.warn('스크롤 변동 감지: 현재 Y=' + window.scrollY + ', 복원 Y=' + window.__BFCACHE_FINAL_SCROLL_Y__);
+                        window.scrollTo({ top: window.__BFCACHE_FINAL_SCROLL_Y__, behavior: 'auto' });
                     }
                 };
-                window.addEventListener('scroll', scrollLockHandler, { passive: false });
+                window.addEventListener('scroll', window.__BFCACHE_SCROLL_LISTENER__, { passive: false });
                 
                 // 8. 복원 완료 이벤트
                 window.dispatchEvent(new CustomEvent('bfcacheRestoreComplete', {
@@ -422,7 +447,7 @@ struct BFCacheSnapshot: Codable {
                 }));
                 
                 // 9. 스크롤 위치 검증
-                console.log('스크롤 복원 검증: 기대 Y=' + targetY + ', 실제 Y=' + window.scrollY);
+                console.log('스크롤 복원 검증: 기대 Y=' + targetY + ', 실제 Y=' + window.scrollY + ', 높이=' + document.documentElement.scrollHeight);
                 return Math.abs(window.scrollY - targetY) < 5;
             }
         } catch (e) {
@@ -443,7 +468,10 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("✅ 올인원 복원 성공: Y=\(finalScrollY)")
             } else {
                 TabPersistenceManager.debugMessages.append("❌ 올인원 복원 실패: \(error?.localizedDescription ?? "unknown")")
-                // 실제 스크롤 위치 확인
+                // 추가 디버깅: DOM 상태 및 실제 스크롤 위치
+                webView.evaluateJavaScript("document.readyState") { state, _ in
+                    TabPersistenceManager.debugMessages.append("DOM 상태: \(state ?? "unknown")")
+                }
                 webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
                     TabPersistenceManager.debugMessages.append("스크롤 검증: 기대 Y=\(finalScrollY), 실제 Y=\(scrollY ?? "unknown")")
                 }
@@ -451,14 +479,17 @@ struct BFCacheSnapshot: Codable {
             completion(success)
         }
         
-        // 추가 검증: 100ms 후 스크롤 위치 재확인
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
-                if let currentY = scrollY as? CGFloat, abs(currentY - finalScrollY) > 5 {
-                    TabPersistenceManager.debugMessages.append("⚠️ 스크롤 위치 변동: 기대 Y=\(finalScrollY), 실제 Y=\(currentY)")
-                    // 보정 시도
-                    webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
-                    webView.evaluateJavaScript("window.scrollTo(0, \(finalScrollY));")
+        // 추가 검증: 100ms 및 500ms 후 스크롤 위치 재확인
+        let delays = [0.1, 0.5]
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
+                    if let currentY = scrollY as? CGFloat, abs(currentY - finalScrollY) > 5 {
+                        TabPersistenceManager.debugMessages.append("⚠️ 스크롤 위치 변동: 기대 Y=\(finalScrollY), 실제 Y=\(currentY) at \(delay)s")
+                        // 보정 시도
+                        webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
+                        webView.evaluateJavaScript("window.scrollTo({ top: \(finalScrollY), behavior: 'auto' });")
+                    }
                 }
             }
         }
