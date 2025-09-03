@@ -330,15 +330,16 @@ struct BFCacheSnapshot: Codable {
         return smartScrollState.absolutePosition
     }
     
-    // 🔥 **타이머 기반 연속 복원 루프**
+    // 🔥 **타이머 기반 연속 복원 루프** - inout 매개변수 제거
     private func startTimerBasedRestore(
         webView: WKWebView,
         targetPosition: CGPoint,
         startTime: Date,
-        attemptCount: inout Int,
         maxAttempts: Int,
         completion: @escaping (Bool) -> Void
     ) {
+        var attemptCount = 0  // 로컬 변수로 선언
+        
         let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
             attemptCount += 1
             let currentPosition = webView.scrollView.contentOffset
