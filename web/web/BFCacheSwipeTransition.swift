@@ -461,12 +461,12 @@ struct BFCacheSnapshot: Codable {
         let step = steps[currentIndex]
         let delay = Double(step.delayMs) / 1000.0
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.executeDataLoadingStep(to: webView, step: step) { success in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            self.executeDataLoadingStep(to: webView, step: step) { success in
                 TabPersistenceManager.debugMessages.append("📊 \(step.stepId) 로딩: \(success ? "성공" : "실패")")
                 
                 // 다음 단계로 진행 (성공 여부와 관계없이)
-                self?.executeDataLoadingSteps(to: webView, steps: steps, currentIndex: currentIndex + 1)
+                self.executeDataLoadingSteps(to: webView, steps: steps, currentIndex: currentIndex + 1)
             }
         }
     }
