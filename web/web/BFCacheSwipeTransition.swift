@@ -892,23 +892,38 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 버튼 네비게이션
+    // MARK: - 버튼 네비게이션 (StateModel과 연동)
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 캡처
+        // 1. 현재 페이지 캡처
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, tabID: tabID)
         }
         
-        stateModel.goBack()
-        
-        // 타겟 페이지 스크롤 복원
-        if let targetRecord = stateModel.dataModel.currentPageRecord {
-            restoreScroll(for: targetRecord.id, webView: webView) { _ in }
+        // 2. 데이터 모델에서 네비게이션 수행 (큐 시스템 사용)
+        if let targetRecord = stateModel.dataModel.navigateBack() {
+            // 3. URL 동기화
+            stateModel.isNavigatingFromWebView = true
+            stateModel.currentURL = targetRecord.url
+            
+            // 4. 강제 UI 업데이트
+            DispatchQueue.main.async {
+                stateModel.objectWillChange.send()
+            }
+            
+            // 5. 스크롤 복원 예약
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.restoreScroll(for: targetRecord.id, webView: webView) { success in
+                    self?.dbg("버튼 뒤로가기 스크롤 복원: \(success ? "성공" : "실패")")
+                }
+                stateModel.isNavigatingFromWebView = false
+            }
+            
+            dbg("⬅️ 버튼 뒤로가기: '\(targetRecord.title)'")
         }
     }
     
@@ -917,16 +932,31 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 캡처
+        // 1. 현재 페이지 캡처
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, tabID: tabID)
         }
         
-        stateModel.goForward()
-        
-        // 타겟 페이지 스크롤 복원
-        if let targetRecord = stateModel.dataModel.currentPageRecord {
-            restoreScroll(for: targetRecord.id, webView: webView) { _ in }
+        // 2. 데이터 모델에서 네비게이션 수행 (큐 시스템 사용)
+        if let targetRecord = stateModel.dataModel.navigateForward() {
+            // 3. URL 동기화
+            stateModel.isNavigatingFromWebView = true
+            stateModel.currentURL = targetRecord.url
+            
+            // 4. 강제 UI 업데이트
+            DispatchQueue.main.async {
+                stateModel.objectWillChange.send()
+            }
+            
+            // 5. 스크롤 복원 예약
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.restoreScroll(for: targetRecord.id, webView: webView) { success in
+                    self?.dbg("버튼 앞으로가기 스크롤 복원: \(success ? "성공" : "실패")")
+                }
+                stateModel.isNavigatingFromWebView = false
+            }
+            
+            dbg("➡️ 버튼 앞으로가기: '\(targetRecord.title)'")
         }
     }
     
@@ -962,25 +992,15 @@ extension BFCacheTransitionSystem {
     }
     
     static func goBack(stateModel: WebViewStateModel) {
-        shared.navigateBack(stateModel: stateModel)
+        // 스크롤 캡처 및 복원 예약만 수행 (네비게이션은 StateModel이 처리)
+        shared.captureAndScheduleRestore(stateModel: stateModel, direction: .back)
     }
     
     static func goForward(stateModel: WebViewStateModel) {
-        shared.navigateForward(stateModel: stateModel)
+        // 스크롤 캡처 및 복원 예약만 수행 (네비게이션은 StateModel이 처리)
+        shared.captureAndScheduleRestore(stateModel: stateModel, direction: .forward)
     }
     
-    static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
-        // 복원 중이면 무시
-        if stateModel.dataModel.isHistoryNavigationActive() {
-            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
-            return
-        }
-        
-        // 새 페이지로 추가
-        stateModel.dataModel.addNewPage(url: url, title: "")
-        stateModel.syncCurrentURL(url)
-        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지 추가: \(url.absoluteString)")
-    }
 }
 
 // MARK: - 퍼블릭 래퍼
