@@ -1158,96 +1158,111 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔥 **스마트 스크롤 캡처 스크립트** (Intersection Observer 기반)
+    // 🔥 **스마트 스크롤 캡처 스크립트** (웹 검색 결과 기반 최적화)
     private func generateSmartScrollCaptureScript() -> String {
         return """
         (function() {
             try {
                 const startTime = performance.now();
                 
-                // 🔥 **기본 스크롤 정보**
+                // 🔍 **웹 검색 결과**: document.documentElement.scrollTop이 더 안정적
                 const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
-                const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                const scrollY = document.documentElement.scrollTop || window.pageYOffset || 0;
+                
                 const contentHeight = Math.max(
                     document.documentElement.scrollHeight,
-                    document.body ? document.body.scrollHeight : 0
+                    document.body ? document.body.scrollHeight : 0,
+                    document.documentElement.clientHeight
                 );
-                const viewportHeight = window.innerHeight;
+                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
                 
-                // 🔥 **비율 계산**
+                // 🔥 **비율 계산** (더 정확한 방법)
                 const maxScrollY = Math.max(0, contentHeight - viewportHeight);
-                const scrollRatio = maxScrollY > 0 ? Math.min(1, scrollY / maxScrollY) : 0;
-                const viewportRatio = viewportHeight > 0 ? Math.min(1, scrollY / viewportHeight) : 0;
+                const scrollRatio = maxScrollY > 0 ? Math.min(1, Math.max(0, scrollY / maxScrollY)) : 0;
+                const viewportRatio = viewportHeight > 0 ? Math.min(1, Math.max(0, scrollY / viewportHeight)) : 0;
                 
-                // 🔥 **앵커 요소 찾기** (고정 ID 또는 헤더)
+                // 🔍 **웹 검색 결과**: iOS WKWebView에서 더 안정적인 앵커 검색
                 let anchorInfo = null;
                 const anchorCandidates = [
-                    // 고정 ID가 있는 요소들
-                    ...Array.from(document.querySelectorAll('[id]')),
-                    // 헤더 요소들
-                    ...Array.from(document.querySelectorAll('h1, h2, h3')),
-                    // article, section
-                    ...Array.from(document.querySelectorAll('article, section')),
+                    // 1순위: 고정 ID가 있는 요소들 (가장 안정적)
+                    ...Array.from(document.querySelectorAll('[id]')).filter(el => el.id && el.offsetHeight > 0),
+                    // 2순위: 헤더 요소들 (구조적으로 안정적)
+                    ...Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(el => el.offsetHeight > 0),
+                    // 3순위: 시맨틱 요소들
+                    ...Array.from(document.querySelectorAll('article, section, main, nav')).filter(el => el.offsetHeight > 0),
+                    // 4순위: 클래스 기반 콘텐츠 요소들
+                    ...Array.from(document.querySelectorAll('.content, .main, .container, .wrapper')).filter(el => el.offsetHeight > 0)
                 ];
                 
+                // 현재 스크롤 위치 근처에서 가장 적합한 앵커 찾기
                 for (const element of anchorCandidates) {
-                    const rect = element.getBoundingClientRect();
-                    const elementTop = rect.top + scrollY;
-                    
-                    // 현재 스크롤 위치 근처의 요소 찾기
-                    if (elementTop <= scrollY + viewportHeight * 0.3 && elementTop >= scrollY - viewportHeight * 0.7) {
-                        const selector = element.id ? `#${element.id}` : 
-                                       element.tagName.toLowerCase() + (element.className ? `.${element.className.split(' ')[0]}` : '');
+                    try {
+                        const rect = element.getBoundingClientRect();
+                        const elementTop = rect.top + scrollY;
                         
-                        anchorInfo = {
-                            selector: selector,
-                            offset: scrollY - elementTop,
-                            text: element.textContent ? element.textContent.substring(0, 50) : ''
-                        };
-                        break;
+                        // 🎯 **개선된 앵커 선택 조건**
+                        const isVisible = rect.height > 0 && rect.width > 0;
+                        const isNearViewport = elementTop <= scrollY + viewportHeight && elementTop >= scrollY - viewportHeight * 0.5;
+                        const hasStableIdentifier = element.id || element.tagName.match(/^H[1-6]$/);
+                        
+                        if (isVisible && isNearViewport && hasStableIdentifier) {
+                            const selector = element.id ? `#${element.id}` : 
+                                           element.tagName.toLowerCase() + 
+                                           (element.className ? `.${element.className.split(' ')[0]}` : '');
+                            
+                            anchorInfo = {
+                                selector: selector,
+                                offset: scrollY - elementTop,
+                                text: element.textContent ? element.textContent.trim().substring(0, 50) : '',
+                                tagName: element.tagName,
+                                hasId: !!element.id
+                            };
+                            break;
+                        }
+                    } catch(e) {
+                        console.warn('앵커 검색 중 오류:', e);
+                        continue;
                     }
                 }
                 
-                // 🔥 **Intersection Observer 기반 가시 요소** (간단화)
+                // 🔍 **간소화된 가시 요소 추적** (성능 최적화)
                 const visibleElements = [];
-                const observer = new IntersectionObserver((entries) => {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting && entry.intersectionRatio > 0.1) {
-                            const element = entry.target;
-                            const selector = element.id ? `#${element.id}` : 
-                                           element.tagName.toLowerCase() + (element.className ? `.${element.className.split(' ')[0]}` : '');
+                try {
+                    const importantElements = [
+                        ...Array.from(document.querySelectorAll('[id]')).slice(0, 10),
+                        ...Array.from(document.querySelectorAll('h1, h2, h3')).slice(0, 5),
+                        ...Array.from(document.querySelectorAll('article, section, main')).slice(0, 5)
+                    ];
+                    
+                    importantElements.forEach(el => {
+                        if (el.offsetHeight > 0) {
+                            const rect = el.getBoundingClientRect();
+                            const isIntersecting = rect.top < viewportHeight && rect.bottom > 0;
                             
-                            visibleElements.push({
-                                selector: selector,
-                                intersectionRatio: entry.intersectionRatio,
-                                boundingRect: {
-                                    x: entry.boundingClientRect.x,
-                                    y: entry.boundingClientRect.y,
-                                    width: entry.boundingClientRect.width,
-                                    height: entry.boundingClientRect.height
-                                },
-                                text: element.textContent ? element.textContent.substring(0, 30) : null
-                            });
+                            if (isIntersecting) {
+                                const selector = el.id ? `#${el.id}` : el.tagName.toLowerCase();
+                                visibleElements.push({
+                                    selector: selector,
+                                    intersectionRatio: Math.min(1, Math.max(0, 
+                                        (Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)) / rect.height
+                                    )),
+                                    boundingRect: {
+                                        x: rect.x,
+                                        y: rect.y,
+                                        width: rect.width,
+                                        height: rect.height
+                                    },
+                                    text: el.textContent ? el.textContent.trim().substring(0, 30) : null
+                                });
+                            }
                         }
                     });
-                }, { threshold: [0.1, 0.5] });
-                
-                // 주요 요소들만 관찰 (성능 최적화)
-                const observeTargets = [
-                    ...Array.from(document.querySelectorAll('[id]')).slice(0, 20),
-                    ...Array.from(document.querySelectorAll('article, section, main')).slice(0, 10),
-                    ...Array.from(document.querySelectorAll('h1, h2, h3')).slice(0, 10)
-                ];
-                
-                observeTargets.forEach(el => observer.observe(el));
-                
-                // 잠시 대기 후 결과 수집
-                setTimeout(() => {
-                    observer.disconnect();
-                }, 50);
+                } catch(e) {
+                    console.warn('가시 요소 추적 중 오류:', e);
+                }
                 
                 const processingTime = performance.now() - startTime;
-                console.log(`🔥 스마트 스크롤 캡처 완료: ${processingTime.toFixed(1)}ms`);
+                console.log(`🔥 최적화된 스크롤 캡처 완료: ${processingTime.toFixed(1)}ms`);
                 
                 return {
                     scrollRatio: scrollRatio,
@@ -1257,20 +1272,26 @@ final class BFCacheTransitionSystem: NSObject {
                     viewportHeight: viewportHeight,
                     absolutePosition: { x: scrollX, y: scrollY },
                     visibleElements: visibleElements,
-                    processingTime: processingTime
+                    processingTime: processingTime,
+                    scrollMethod: 'documentElement' // 사용된 스크롤 방법 추적
                 };
                 
             } catch(e) { 
-                console.error('🔥 스마트 스크롤 캡처 실패:', e);
+                console.error('🔥 스크롤 캡처 실패:', e);
+                // 🛡️ **안전장치**: 기본 방법으로 폴백
+                const fallbackScrollY = window.pageYOffset || 0;
+                const fallbackViewportHeight = window.innerHeight || 800;
+                
                 return {
                     scrollRatio: 0,
                     viewportRatio: 0,
                     anchorInfo: null,
-                    contentHeight: 0,
-                    viewportHeight: window.innerHeight || 0,
-                    absolutePosition: { x: window.pageXOffset || 0, y: window.pageYOffset || 0 },
+                    contentHeight: fallbackViewportHeight,
+                    viewportHeight: fallbackViewportHeight,
+                    absolutePosition: { x: 0, y: fallbackScrollY },
                     visibleElements: [],
-                    error: e.message
+                    error: e.message,
+                    scrollMethod: 'fallback'
                 };
             }
         })()
