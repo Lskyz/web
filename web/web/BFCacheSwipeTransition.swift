@@ -279,11 +279,7 @@ struct BFCacheSnapshot: Codable {
         })()
         """
         
-        webView.evaluateJavaScript(domReadyScript) { [weak self] result, error in
-            guard let self = self else {
-                completion(false)
-                return
-            }
+        webView.evaluateJavaScript(domReadyScript) { result, error in
             
             if let data = result as? [String: Any],
                let ready = data["ready"] as? Bool, ready {
