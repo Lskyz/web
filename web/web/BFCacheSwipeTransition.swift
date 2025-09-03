@@ -231,29 +231,24 @@ struct BFCacheSnapshot: Codable {
     }
     
     // 🎯 **올인원 복원 + 점진적 데이터 채움 시스템**
-    private func performAllInOneRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        let stateBlock = scrollStateBlock
-        
-        // **1단계: 스켈레톤으로 전체 레이아웃 즉시 확보**
-        createFullSkeleton(to: webView) { skeletonSuccess in
-            guard let self = self else { 
-                completion(false)
-                return 
+   private func performAllInOneRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    let stateBlock = scrollStateBlock
+       
+    // **1단계: 스켈레톤으로 전체 레이아웃 즉시 확보**
+    createFullSkeleton(to: webView) { skeletonSuccess in
+        // **2단계: 저장된 상태 블록 기반으로 즉시 최종 위치 이동 (한 번만!)**
+        self.executeOneTimeRestore(to: webView, stateBlock: stateBlock) { restoreSuccess in
+            TabPersistenceManager.debugMessages.append("✅ 올인원 복원 완료: \(restoreSuccess ? "성공" : "실패")")
+               
+            // **3단계: 복원 후 데이터 점진적 채움 (스크롤 위치 고정)**
+            if restoreSuccess {
+                self.startProgressiveDataFilling(to: webView)
             }
-            
-            // **2단계: 저장된 상태 블록 기반으로 즉시 최종 위치 이동 (한 번만!)**
-            self.executeOneTimeRestore(to: webView, stateBlock: stateBlock) { restoreSuccess in
-                TabPersistenceManager.debugMessages.append("✅ 올인원 복원 완료: \(restoreSuccess ? "성공" : "실패")")
-                
-                // **3단계: 복원 후 데이터 점진적 채움 (스크롤 위치 고정)**
-                if restoreSuccess {
-                    self.startProgressiveDataFilling(to: webView)
-                }
-                
-                completion(restoreSuccess)
-            }
+               
+            completion(restoreSuccess)
         }
     }
+}
     
     // 🎯 **스켈레톤 전체 레이아웃 즉시 확보**
     private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
