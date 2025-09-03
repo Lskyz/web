@@ -252,120 +252,126 @@ struct BFCacheSnapshot: Codable {
     
     // 🎯 **스켈레톤 전체 레이아웃 즉시 확보**
     private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        let template = skeletonTemplate
-        
-        let fullSkeletonJS = """
-        (function() {
-            try {
-                // 기존 스켈레톤 정리
-                const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
-                existing.forEach(el => el.remove());
-                
-                // 전체 스켈레톤 컨테이너 생성
-                const skeletonContainer = document.createElement('div');
-                skeletonContainer.className = 'bfcache-skeleton-container';
-                skeletonContainer.style.cssText = `
+    let template = skeletonTemplate
+    let totalHeight = max(scrollStateBlock.totalContentHeight, CGFloat(template.totalSkeletonItems) * template.averageItemHeight)
+    
+    let fullSkeletonJS = """
+    (function() {
+        try {
+            // 기존 스켈레톤 정리
+            const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
+            existing.forEach(el => el.remove());
+            
+            // 전체 스켈레톤 컨테이너 생성
+            const skeletonContainer = document.createElement('div');
+            skeletonContainer.className = 'bfcache-skeleton-container';
+            skeletonContainer.style.cssText = `
+                position: relative;
+                min-height: ${totalHeight}px;
+                background: #f8f9fa;
+            `;
+            
+            // 개별 스켈레톤 아이템들 생성
+            for (let i = 0; i < \(template.totalSkeletonItems); i++) {
+                const skeletonItem = document.createElement('div');
+                skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
+                skeletonItem.style.cssText = `
+                    height: \(template.averageItemHeight)px;
+                    margin: 8px 16px;
+                    background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+                    background-size: 200% 100%;
+                    animation: bfcache-shimmer 1.8s infinite;
+                    border-radius: 8px;
                     position: relative;
-                    min-height: \(template.totalSkeletonItems * Int(template.averageItemHeight))px;
-                    background: #f8f9fa;
                 `;
                 
-                // 개별 스켈레톤 아이템들 생성
-                for (let i = 0; i < \(template.totalSkeletonItems); i++) {
-                    const skeletonItem = document.createElement('div');
-                    skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
-                    skeletonItem.style.cssText = `
-                        height: \(template.averageItemHeight)px;
-                        margin: 8px 16px;
-                        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-                        background-size: 200% 100%;
-                        animation: bfcache-shimmer 1.8s infinite;
-                        border-radius: 8px;
-                        position: relative;
-                    `;
-                    
-                    // 스켈레톤 내용 패턴 추가
-                    skeletonItem.innerHTML = `\(template.skeletonPattern)`;
-                    skeletonContainer.appendChild(skeletonItem);
-                }
-                
-                // 스켈레톤 애니메이션 CSS 주입
-                if (!document.getElementById('bfcache-skeleton-styles')) {
-                    const style = document.createElement('style');
-                    style.id = 'bfcache-skeleton-styles';
-                    style.textContent = `
-                        @keyframes bfcache-shimmer {
-                            0% { background-position: -200% 0; }
-                            100% { background-position: 200% 0; }
-                        }
-                        .bfcache-skeleton-container {
-                            /* iOS 웹뷰 최적화 */
-                            -webkit-transform: translateZ(0);
-                            will-change: auto;
-                        }
-                    `;
-                    document.head.appendChild(style);
-                }
-                
-                // DOM에 스켈레톤 추가 (기존 콘텐츠 교체)
-                const targetContainer = document.body;
-                const firstChild = targetContainer.firstChild;
-                if (firstChild) {
-                    targetContainer.insertBefore(skeletonContainer, firstChild);
-                } else {
-                    targetContainer.appendChild(skeletonContainer);
-                }
-                
-                // 전역 스켈레톤 상태 플래그
-                window.__BFCACHE_SKELETON_ACTIVE__ = true;
-                
-                return true;
-            } catch (e) {
-                console.error('스켈레톤 생성 실패:', e);
-                return false;
+                skeletonItem.innerHTML = `\(template.skeletonPattern)`;
+                skeletonContainer.appendChild(skeletonItem);
             }
-        })()
-        """
-        
-        webView.evaluateJavaScript(fullSkeletonJS) { result, error in
-            let success = (result as? Bool) ?? false
-            if success {
-                TabPersistenceManager.debugMessages.append("📐 전체 스켈레톤 생성 성공: \(template.totalSkeletonItems)개")
+            
+            // 스켈레톤 애니메이션 CSS 주입
+            if (!document.getElementById('bfcache-skeleton-styles')) {
+                const style = document.createElement('style');
+                style.id = 'bfcache-skeleton-styles';
+                style.textContent = `
+                    @keyframes bfcache-shimmer {
+                        0% { background-position: -200% 0; }
+                        100% { background-position: 200% 0; }
+                    }
+                    .bfcache-skeleton-container {
+                        -webkit-transform: translateZ(0);
+                        will-change: auto;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            // DOM에 스켈레톤 추가
+            const targetContainer = document.body;
+            const firstChild = targetContainer.firstChild;
+            if (firstChild) {
+                targetContainer.insertBefore(skeletonContainer, firstChild);
             } else {
-                TabPersistenceManager.debugMessages.append("❌ 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
+                targetContainer.appendChild(skeletonContainer);
             }
-            completion(success)
+            
+            window.__BFCACHE_SKELETON_ACTIVE__ = true;
+            return true;
+        } catch (e) {
+            console.error('스켈레톤 생성 실패:', e);
+            return false;
         }
+    })()
+    """
+    
+    webView.evaluateJavaScript(fullSkeletonJS) { result, error in
+        let success = (result as? Bool) ?? false
+        if success {
+            TabPersistenceManager.debugMessages.append("📐 스켈레톤 생성 성공: \(template.totalSkeletonItems)개, 높이=\(totalHeight)")
+        } else {
+            TabPersistenceManager.debugMessages.append("❌ 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
+        }
+        completion(success)
     }
+}
     
     // 🎯 **핵심: 단일 올인원 복원 - 스크롤 위치는 한 번만 이동**
     private func executeOneTimeRestore(to webView: WKWebView, stateBlock: ScrollStateBlock, completion: @escaping (Bool) -> Void) {
-        let finalScrollY = stateBlock.finalScrollY
-        let anchorItem = stateBlock.anchorItem
-        
-        let oneTimeRestoreJS = """
-        (function() {
-            try {
-                // iOS 웹뷰 스크롤 복원 최적화
+    let finalScrollY = stateBlock.finalScrollY
+    let anchorItem = stateBlock.anchorItem
+    
+    let oneTimeRestoreJS = """
+    (function() {
+        try {
+            // DOM 준비 확인
+            if (document.readyState !== 'complete') {
+                console.warn('DOM 미완료 - 스크롤 복원 지연');
+                return new Promise(resolve => {
+                    document.addEventListener('DOMContentLoaded', () => resolve(true));
+                }).then(() => performRestore());
+            }
+            return performRestore();
+            
+            function performRestore() {
+                // 1. 기본 스크롤 위치 설정
                 const targetY = \(finalScrollY);
-                
-                // 1. 네이티브 스크롤뷰와 동기화
                 window.scrollTo(0, targetY);
                 
-                // 2. 앵커 아이템 기준 정밀 위치 조정 (한 번만!)
+                // 2. 앵커 아이템 기준 정밀 조정
                 const anchorElement = document.querySelector('\(anchorItem.selector)');
-                if (anchorElement) {
+                if (!anchorElement) {
+                    console.warn('앵커 요소 없음: \(anchorItem.selector)');
+                } else {
                     const currentTop = anchorElement.getBoundingClientRect().top;
                     const expectedTop = \(anchorItem.offsetFromTop);
                     const adjustment = expectedTop - currentTop;
                     
                     if (Math.abs(adjustment) > 5) {
-                        // 5px 이상 차이날 때만 조정
                         window.scrollTo(0, targetY + adjustment);
                     }
                 }
                 
-                // 3. 컨테이너별 스크롤 동시 복원
+                // 3. 컨테이너별 스크롤 복원
                 const containerScrolls = \(jsonString(from: stateBlock.containerScrolls));
                 Object.keys(containerScrolls).forEach(selector => {
                     const container = document.querySelector(selector);
@@ -384,55 +390,80 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 5. React Query 캐시 확인 및 즉시 적용
+                // 5. React Query 캐시 적용
                 const cacheKeys = \(jsonString(from: stateBlock.cacheKeys));
                 if (window.__REACT_QUERY_STATE__ && cacheKeys.reactQuery) {
                     const cachedData = window.__REACT_QUERY_STATE__[cacheKeys.reactQuery];
-                    if (cachedData?.data) {
-                        // 캐시된 데이터를 즉시 렌더링 (스크롤 위치 변경 없이)
-                        if (window.hydrateCachedData) {
-                            window.hydrateCachedData(cachedData.data, false); // false = 스크롤 변경 금지
-                        }
+                    if (cachedData?.data && window.hydrateCachedData) {
+                        window.hydrateCachedData(cachedData.data, false);
                     }
                 }
                 
-                // 6. 스크롤 위치 고정 플래그 설정 (이후 데이터 로딩 중 스크롤 변경 방지)
+                // 6. 스크롤 위치 고정 플래그 설정
                 window.__BFCACHE_SCROLL_LOCKED__ = true;
                 window.__BFCACHE_FINAL_SCROLL_Y__ = window.scrollY;
                 
-                // 7. 복원 완료 이벤트 발송
+                // 7. 스크롤 이벤트 모니터링
+                const scrollLockHandler = () => {
+                    if (window.__BFCACHE_SCROLL_LOCKED__ && Math.abs(window.scrollY - window.__BFCACHE_FINAL_SCROLL_Y__) > 5) {
+                        console.warn('스크롤 변동 감지, 복원: ', window.scrollY);
+                        window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
+                    }
+                };
+                window.addEventListener('scroll', scrollLockHandler, { passive: false });
+                
+                // 8. 복원 완료 이벤트
                 window.dispatchEvent(new CustomEvent('bfcacheRestoreComplete', {
-                    detail: { 
+                    detail: {
                         finalScrollY: window.scrollY,
                         restoredFromCache: true,
                         timestamp: Date.now()
                     }
                 }));
                 
-                return true;
-            } catch (e) {
-                console.error('올인원 복원 실패:', e);
-                return false;
+                // 9. 스크롤 위치 검증
+                console.log('스크롤 복원 검증: 기대 Y=' + targetY + ', 실제 Y=' + window.scrollY);
+                return Math.abs(window.scrollY - targetY) < 5;
             }
-        })()
-        """
+        } catch (e) {
+            console.error('올인원 복원 실패:', e);
+            return false;
+        }
+    })()
+    """
+    
+    DispatchQueue.main.async {
+        // 네이티브 스크롤뷰 먼저 설정
+        webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
         
-        // 메인 스레드에서 동기화
-        DispatchQueue.main.async {
-            // 네이티브 스크롤뷰도 동기화
-            webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
-            
-            webView.evaluateJavaScript(oneTimeRestoreJS) { result, error in
-                let success = (result as? Bool) ?? false
-                if success {
-                    TabPersistenceManager.debugMessages.append("✅ 올인원 복원 성공: Y=\(finalScrollY)")
-                } else {
-                    TabPersistenceManager.debugMessages.append("❌ 올인원 복원 실패: \(error?.localizedDescription ?? "unknown")")
+        // JavaScript 실행 및 결과 확인
+        webView.evaluateJavaScript(oneTimeRestoreJS) { result, error in
+            let success = (result as? Bool) ?? false
+            if success {
+                TabPersistenceManager.debugMessages.append("✅ 올인원 복원 성공: Y=\(finalScrollY)")
+            } else {
+                TabPersistenceManager.debugMessages.append("❌ 올인원 복원 실패: \(error?.localizedDescription ?? "unknown")")
+                // 실제 스크롤 위치 확인
+                webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
+                    TabPersistenceManager.debugMessages.append("스크롤 검증: 기대 Y=\(finalScrollY), 실제 Y=\(scrollY ?? "unknown")")
                 }
-                completion(success)
+            }
+            completion(success)
+        }
+        
+        // 추가 검증: 100ms 후 스크롤 위치 재확인
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
+                if let currentY = scrollY as? CGFloat, abs(currentY - finalScrollY) > 5 {
+                    TabPersistenceManager.debugMessages.append("⚠️ 스크롤 위치 변동: 기대 Y=\(finalScrollY), 실제 Y=\(currentY)")
+                    // 보정 시도
+                    webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
+                    webView.evaluateJavaScript("window.scrollTo(0, \(finalScrollY));")
+                }
             }
         }
     }
+}
     
     // 🎯 **점진적 데이터 채움 - 복원 후 스크롤 위치 고정 상태에서 데이터만 교체**
     private func startProgressiveDataFilling(to webView: WKWebView) {
