@@ -1973,7 +1973,7 @@ final class BFCacheTransitionSystem: NSObject {
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
         
-        // 현재 웹뷰 스냅샷 사용
+        // 🚀 현재 웹뷰 스냅샷 뷰 생성
         let currentView: UIView
         if let snapshot = currentSnapshot {
             let imageView = UIImageView(image: snapshot)
