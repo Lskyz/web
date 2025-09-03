@@ -21,7 +21,7 @@ fileprivate func ts() -> String {
 
 // MARK: - 🚀 스크롤 복원 전략 열거형
 enum ScrollRestorationType {
-    case basic          // 정적 데이터 - 단순 위치 복원
+    case basic           // 정적 데이터 - 단순 위치 복원 (static 대신 basic 사용)
     case dynamic         // 동적 데이터 - 아이템 기준 복원  
     case lazyLoad        // 레이지 로딩 - 스켈레톤 + 점진 로드
     case cached          // 캐시된 데이터 - 즉시 복원
@@ -29,7 +29,7 @@ enum ScrollRestorationType {
     
     var maxWaitTime: TimeInterval {
         switch self {
-        case .static: return 0.1
+        case .basic: return 0.1
         case .dynamic: return 0.3
         case .lazyLoad: return 0.5
         case .cached: return 0.2
@@ -100,8 +100,8 @@ struct BFCacheSnapshot: Codable {
             return .lazyLoad
         }
         
-        // 기본은 static
-        return .static
+        // 기본은 basic
+        return .basic
     }
 }
 
@@ -214,7 +214,7 @@ final class BFCacheTransitionSystem: NSObject {
             anchorItem: nil,
             contentHeight: scrollData.height,
             visibleRange: nil,
-            restorationType: "static"
+            restorationType: "basic"
         )
         
         // 보이는 아이템 정보 수집 (빠르게, 최대 0.2초)
@@ -315,8 +315,8 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🎯 스크롤 복원 시작: \(restorationType)")
         
         switch restorationType {
-        case .static:
-            restoreStaticScroll(snapshot: snapshot, webView: webView, completion: completion)
+        case .basic:
+            restoreBasicScroll(snapshot: snapshot, webView: webView, completion: completion)
             
         case .dynamic:
             restoreDynamicScroll(snapshot: snapshot, webView: webView, completion: completion)
@@ -332,11 +332,11 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 🎯 **시나리오 1: 정적 스크롤 복원 (즉시)**
-    private func restoreStaticScroll(snapshot: BFCacheSnapshot, webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🎯 **시나리오 1: 기본 스크롤 복원 (즉시)**
+    private func restoreBasicScroll(snapshot: BFCacheSnapshot, webView: WKWebView, completion: @escaping (Bool) -> Void) {
         DispatchQueue.main.async {
             webView.scrollView.setContentOffset(snapshot.scrollState.scrollPosition, animated: false)
-            self.dbg("✅ 정적 스크롤 복원: \(snapshot.scrollState.scrollPosition)")
+            self.dbg("✅ 기본 스크롤 복원: \(snapshot.scrollState.scrollPosition)")
             completion(true)
         }
     }
@@ -344,7 +344,7 @@ final class BFCacheTransitionSystem: NSObject {
     // 🎯 **시나리오 2: 동적 스크롤 복원 (아이템 기준, 최대 0.3초)**
     private func restoreDynamicScroll(snapshot: BFCacheSnapshot, webView: WKWebView, completion: @escaping (Bool) -> Void) {
         guard let anchor = snapshot.scrollState.anchorItem else {
-            restoreStaticScroll(snapshot: snapshot, webView: webView, completion: completion)
+            restoreBasicScroll(snapshot: snapshot, webView: webView, completion: completion)
             return
         }
         
@@ -385,8 +385,8 @@ final class BFCacheTransitionSystem: NSObject {
                 if result as? Bool == true {
                     self.dbg("✅ 동적 스크롤 복원: 앵커 \(anchor.id)")
                 } else {
-                    // 실패시 정적 복원
-                    self.restoreStaticScroll(snapshot: snapshot, webView: webView, completion: { _ in })
+                    // 실패시 기본 복원
+                    self.restoreBasicScroll(snapshot: snapshot, webView: webView, completion: { _ in })
                 }
                 completion(true)
             }
@@ -454,7 +454,7 @@ final class BFCacheTransitionSystem: NSObject {
     // 🎯 **시나리오 5: 가상화 스크롤 복원 (인덱스 기반, 최대 0.2초)**
     private func restoreVirtualizedScroll(snapshot: BFCacheSnapshot, webView: WKWebView, completion: @escaping (Bool) -> Void) {
         guard let range = snapshot.scrollState.visibleRange else {
-            restoreStaticScroll(snapshot: snapshot, webView: webView, completion: completion)
+            restoreBasicScroll(snapshot: snapshot, webView: webView, completion: completion)
             return
         }
         
