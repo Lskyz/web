@@ -1,14 +1,13 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **블로그 5가지 시나리오 적용된 스크롤 복구 시스템**
-//  ✅ 시나리오 1: 정적 데이터 - History API 스타일 즉시 복원
-//  ✅ 시나리오 2: 동적 데이터 - 가시 아이템 정보 기준 복원  
-//  ✅ 시나리오 3: 레이지 로딩 - 스켈레톤 + 배치 로딩 복원
-//  ✅ 시나리오 4: 캐시 활용 - React Query 스타일 즉시 복원
-//  ✅ 시나리오 5: 가상화 - 시퀀스 기반 복원
-//  🚫 복잡한 4단계 시스템 제거 → 상황별 맞춤 복원으로 대체
-//  🚫 적응형 타이밍 학습 제거 → 고정된 합리적 대기시간
-//  ✅ 현실적인 복원 (완벽보단 자연스럽게)
+//  🎯 **올바른 점진적 복원 - 올인원 복원 후 데이터 점진적 채움**
+//  ✅ 1. 데이터·위치 동시 저장 - scrollY + 아이템 정보 + 시퀀스 통합
+//  ✅ 2. 스켈레톤 기반 즉시 채움 - 부족한 영역 스켈레톤으로 확보
+//  ✅ 3. 올인원 복원 - 저장된 블록 기반 **즉시 최종 위치 이동**
+//  ✅ 4. 스크롤 위치 고정 - 이후 데이터 로딩 시 위치 변동 없음
+//  ✅ 5. 비동기 데이터 교체 - 스켈레톤→실제 데이터 깜박임 없이 교체
+//  🚫 3단계 복원 제거 → 단일 복원 후 데이터만 점진적 채움
+//  ⚡ 사용자 경험: 이미 복원된 상태에서 점차 안정화
 //
 
 import UIKit
@@ -35,7 +34,7 @@ private class WeakGestureContext {
     }
 }
 
-// MARK: - 📸 블로그 시나리오 적용된 BFCache 스냅샷
+// MARK: - 📸 **올인원 점진적 복원 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -46,31 +45,94 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
-    // 📊 **새로 추가: 페이지 타입별 복원 전략**
-    let pageType: PageType
-    let visibleItemsInfo: [VisibleItemInfo]? // 시나리오 2: 동적 데이터용
-    let estimatedContentHeight: CGFloat?     // 시나리오 3: 레이지 로딩용
-    let sequenceInfo: SequenceInfo?          // 시나리오 5: 가상화용
+    // 🎯 **통합 스크롤 상태 블록** - 올인원 복원을 위한 완전한 상태
+    let scrollStateBlock: ScrollStateBlock
     
-    enum PageType: String, Codable {
-        case staticContent = "static"        // 시나리오 1: 정적 데이터
-        case dynamicContent = "dynamic"      // 시나리오 2: 동적 데이터  
-        case lazyLoading = "lazy"           // 시나리오 3: 레이지 로딩
-        case cached = "cached"              // 시나리오 4: 캐시 활용
-        case virtualized = "virtualized"    // 시나리오 5: 가상화
+    // 🎯 **스켈레톤 템플릿** - 부족한 데이터 영역 즉시 채움용
+    let skeletonTemplate: SkeletonTemplate
+    
+    // 🎯 **데이터 로딩 가이드** - 복원 후 비동기 데이터 채움 순서
+    let dataLoadingGuide: DataLoadingGuide
+    
+    // 🎯 **통합 스크롤 상태 블록** - 모든 정보를 한 번에 복원
+    struct ScrollStateBlock: Codable {
+        let finalScrollY: CGFloat          // 최종 복원 위치
+        let viewportHeight: CGFloat
+        let totalContentHeight: CGFloat
+        
+        // 앵커 아이템 정보 (스크롤 위치 기준점)
+        let anchorItem: AnchorItemInfo
+        
+        // 가시 영역 아이템들 (즉시 표시용)
+        let visibleItems: [VisibleItemInfo]
+        
+        // 가상화/무한 스크롤 상태
+        let virtualizationState: VirtualizationState
+        
+        // 컨테이너별 스크롤 상태
+        let containerScrolls: [String: CGFloat]
+        
+        // 캐시 키 정보 (React Query 스타일)
+        let cacheKeys: [String: String]
+        
+        struct AnchorItemInfo: Codable {
+            let id: String
+            let selector: String
+            let offsetFromTop: CGFloat     // 뷰포트 상단으로부터 거리
+            let elementHeight: CGFloat
+            let isSticky: Bool             // sticky 헤더인지 여부
+        }
+        
+        struct VisibleItemInfo: Codable {
+            let id: String
+            let selector: String
+            let offsetTop: CGFloat
+            let height: CGFloat
+            let content: String?           // 텍스트 콘텐츠 (검증용)
+            let hasImage: Bool            // 이미지 포함 여부
+            let loadPriority: Int         // 로딩 우선순위 (1=최우선)
+        }
+        
+        struct VirtualizationState: Codable {
+            let isVirtual: Bool
+            let currentSequence: Int       // 현재 시퀀스 번호
+            let visibleStartIndex: Int     // 가시 시작 인덱스
+            let visibleEndIndex: Int       // 가시 종료 인덱스
+            let totalKnownItems: Int
+            let pageInfo: PageInfo?
+            
+            struct PageInfo: Codable {
+                let currentPage: Int
+                let pageSize: Int
+                let loadedPages: [Int]     // 로딩된 페이지 목록
+                let hasNextPage: Bool
+            }
+        }
     }
     
-    struct VisibleItemInfo: Codable {
-        let id: String
-        let offsetTop: CGFloat
-        let elementSelector: String
+    // 🎯 **스켈레톤 템플릿** - 즉시 레이아웃 확보
+    struct SkeletonTemplate: Codable {
+        let averageItemHeight: CGFloat
+        let itemsPerScreen: Int
+        let totalSkeletonItems: Int       // 생성할 스켈레톤 개수
+        let skeletonPattern: String       // 스켈레톤 HTML 패턴
+        let placeholderStyles: [String: String] // CSS 스타일 맵
     }
     
-    struct SequenceInfo: Codable {
-        let listSequence: Int
-        let pageNumber: Int
-        let pageSize: Int
-        let totalItems: Int
+    // 🎯 **데이터 로딩 가이드** - 복원 후 비동기 채움 순서
+    struct DataLoadingGuide: Codable {
+        let loadingSequence: [LoadingStep]
+        let backgroundLoadingEnabled: Bool
+        let lockScrollDuringLoad: Bool     // 데이터 로딩 중 스크롤 위치 고정
+        
+        struct LoadingStep: Codable {
+            let stepId: String
+            let dataSource: String         // API 엔드포인트 또는 캐시 키
+            let targetSelectors: [String]  // 교체할 스켈레톤 선택자
+            let delayMs: Int              // 로딩 지연 시간
+            let priority: Int             // 1=최우선
+            let fallbackContent: String?   // 로딩 실패시 대체 콘텐츠
+        }
     }
     
     enum CaptureStatus: String, Codable {
@@ -80,8 +142,8 @@ struct BFCacheSnapshot: Codable {
     // MARK: - Codable 구현
     enum CodingKeys: String, CodingKey {
         case pageRecord, domSnapshot, scrollPosition, jsState, timestamp
-        case webViewSnapshotPath, captureStatus, version, pageType
-        case visibleItemsInfo, estimatedContentHeight, sequenceInfo
+        case webViewSnapshotPath, captureStatus, version
+        case scrollStateBlock, skeletonTemplate, dataLoadingGuide
     }
     
     init(from decoder: Decoder) throws {
@@ -93,10 +155,10 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
-        pageType = try container.decodeIfPresent(PageType.self, forKey: .pageType) ?? .staticContent
-        visibleItemsInfo = try container.decodeIfPresent([VisibleItemInfo].self, forKey: .visibleItemsInfo)
-        estimatedContentHeight = try container.decodeIfPresent(CGFloat.self, forKey: .estimatedContentHeight)
-        sequenceInfo = try container.decodeIfPresent(SequenceInfo.self, forKey: .sequenceInfo)
+        
+        scrollStateBlock = try container.decode(ScrollStateBlock.self, forKey: .scrollStateBlock)
+        skeletonTemplate = try container.decode(SkeletonTemplate.self, forKey: .skeletonTemplate)
+        dataLoadingGuide = try container.decode(DataLoadingGuide.self, forKey: .dataLoadingGuide)
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -113,10 +175,10 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
-        try container.encode(pageType, forKey: .pageType)
-        try container.encodeIfPresent(visibleItemsInfo, forKey: .visibleItemsInfo)
-        try container.encodeIfPresent(estimatedContentHeight, forKey: .estimatedContentHeight)
-        try container.encodeIfPresent(sequenceInfo, forKey: .sequenceInfo)
+        
+        try container.encode(scrollStateBlock, forKey: .scrollStateBlock)
+        try container.encode(skeletonTemplate, forKey: .skeletonTemplate)
+        try container.encode(dataLoadingGuide, forKey: .dataLoadingGuide)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -129,8 +191,9 @@ struct BFCacheSnapshot: Codable {
     init(pageRecord: PageRecord, scrollPosition: CGPoint, jsState: [String: Any]? = nil,
          timestamp: Date = Date(), webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, version: Int = 1,
-         pageType: PageType = .staticContent, visibleItemsInfo: [VisibleItemInfo]? = nil,
-         estimatedContentHeight: CGFloat? = nil, sequenceInfo: SequenceInfo? = nil) {
+         scrollStateBlock: ScrollStateBlock,
+         skeletonTemplate: SkeletonTemplate,
+         dataLoadingGuide: DataLoadingGuide) {
         self.pageRecord = pageRecord
         self.domSnapshot = nil
         self.scrollPosition = scrollPosition
@@ -139,10 +202,9 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
-        self.pageType = pageType
-        self.visibleItemsInfo = visibleItemsInfo
-        self.estimatedContentHeight = estimatedContentHeight
-        self.sequenceInfo = sequenceInfo
+        self.scrollStateBlock = scrollStateBlock
+        self.skeletonTemplate = skeletonTemplate
+        self.dataLoadingGuide = dataLoadingGuide
     }
     
     // 이미지 로드 메서드
@@ -153,234 +215,385 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🎯 **핵심: 블로그 5가지 시나리오별 복원 메서드**
+    // 🎯 **핵심: 올인원 점진적 복원 - 즉시 최종 위치 이동**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         guard captureStatus != .failed else {
             completion(false)
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🔄 시나리오별 복원 시작: \(pageType.rawValue)")
+        TabPersistenceManager.debugMessages.append("🎯 올인원 점진적 복원 시작: 즉시 최종 위치로 이동")
         
-        switch pageType {
-        case .staticContent:
-            restoreStaticContent(to: webView, completion: completion)
-        case .dynamicContent:
-            restoreDynamicContent(to: webView, completion: completion)
-        case .lazyLoading:
-            restoreLazyLoadingContent(to: webView, completion: completion)
-        case .cached:
-            restoreCachedContent(to: webView, completion: completion)
-        case .virtualized:
-            restoreVirtualizedContent(to: webView, completion: completion)
-        }
+        // iOS 웹뷰 특화: history.scrollRestoration 강제 manual
+        webView.evaluateJavaScript("if (history.scrollRestoration) { history.scrollRestoration = 'manual'; }") { _, _ in }
+        
+        performAllInOneRestore(to: webView, completion: completion)
     }
     
-    // 🎯 **시나리오 1: 정적 데이터 - History API 스타일 즉시 복원**
-    private func restoreStaticContent(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.async {
-            // 즉시 스크롤 복원 (정적이므로 대기 불필요)
-            webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+    // 🎯 **올인원 복원 + 점진적 데이터 채움 시스템**
+    private func performAllInOneRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let stateBlock = scrollStateBlock
+        
+        // **1단계: 스켈레톤으로 전체 레이아웃 즉시 확보**
+        createFullSkeleton(to: webView) { [weak self] skeletonSuccess in
+            guard let self = self else { 
+                completion(false)
+                return 
+            }
             
-            let basicScrollJS = """
-            (function() {
-                window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                return true;
-            })()
-            """
-            
-            webView.evaluateJavaScript(basicScrollJS) { result, _ in
-                let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("✅ 시나리오1 정적 복원: \(success ? "성공" : "실패")")
-                completion(success)
+            // **2단계: 저장된 상태 블록 기반으로 즉시 최종 위치 이동 (한 번만!)**
+            self.executeOneTimeRestore(to: webView, stateBlock: stateBlock) { restoreSuccess in
+                TabPersistenceManager.debugMessages.append("✅ 올인원 복원 완료: \(restoreSuccess ? "성공" : "실패")")
+                
+                // **3단계: 복원 후 데이터 점진적 채움 (스크롤 위치 고정)**
+                if restoreSuccess {
+                    self.startProgressiveDataFilling(to: webView)
+                }
+                
+                completion(restoreSuccess)
             }
         }
     }
     
-    // 🎯 **시나리오 2: 동적 데이터 - 가시 아이템 기준 복원**
-    private func restoreDynamicContent(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.async {
-            // 동적 데이터 로딩 대기 (현실적인 300ms)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.restoreWithVisibleItems(to: webView, completion: completion)
-            }
-        }
-    }
-    
-    private func restoreWithVisibleItems(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        guard let visibleItems = visibleItemsInfo, !visibleItems.isEmpty else {
-            // fallback to basic scroll
-            restoreStaticContent(to: webView, completion: completion)
-            return
-        }
+    // 🎯 **스켈레톤 전체 레이아웃 즉시 확보**
+    private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let template = skeletonTemplate
         
-        let targetItem = visibleItems[0] // 첫 번째 가시 아이템 기준
-        let dynamicScrollJS = """
+        let fullSkeletonJS = """
         (function() {
             try {
-                // 저장된 아이템을 찾아서 기준점으로 사용
-                const targetElement = document.querySelector('\(targetItem.elementSelector)');
-                if (targetElement) {
-                    targetElement.scrollIntoView();
-                    // 미세 조정
-                    window.scrollTo(\(scrollPosition.x), \(scrollPosition.y));
-                    return true;
-                } else {
-                    // 대체: 기본 스크롤 위치로
-                    window.scrollTo(\(scrollPosition.x), \(scrollPosition.y));
-                    return false;
+                // 기존 스켈레톤 정리
+                const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
+                existing.forEach(el => el.remove());
+                
+                // 전체 스켈레톤 컨테이너 생성
+                const skeletonContainer = document.createElement('div');
+                skeletonContainer.className = 'bfcache-skeleton-container';
+                skeletonContainer.style.cssText = `
+                    position: relative;
+                    min-height: \(template.totalSkeletonItems * Int(template.averageItemHeight))px;
+                    background: #f8f9fa;
+                `;
+                
+                // 개별 스켈레톤 아이템들 생성
+                for (let i = 0; i < \(template.totalSkeletonItems); i++) {
+                    const skeletonItem = document.createElement('div');
+                    skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
+                    skeletonItem.style.cssText = `
+                        height: \(template.averageItemHeight)px;
+                        margin: 8px 16px;
+                        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+                        background-size: 200% 100%;
+                        animation: bfcache-shimmer 1.8s infinite;
+                        border-radius: 8px;
+                        position: relative;
+                    `;
+                    
+                    // 스켈레톤 내용 패턴 추가
+                    skeletonItem.innerHTML = `\(template.skeletonPattern)`;
+                    skeletonContainer.appendChild(skeletonItem);
                 }
-            } catch(e) {
+                
+                // 스켈레톤 애니메이션 CSS 주입
+                if (!document.getElementById('bfcache-skeleton-styles')) {
+                    const style = document.createElement('style');
+                    style.id = 'bfcache-skeleton-styles';
+                    style.textContent = `
+                        @keyframes bfcache-shimmer {
+                            0% { background-position: -200% 0; }
+                            100% { background-position: 200% 0; }
+                        }
+                        .bfcache-skeleton-container {
+                            /* iOS 웹뷰 최적화 */
+                            -webkit-transform: translateZ(0);
+                            will-change: auto;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+                
+                // DOM에 스켈레톤 추가 (기존 콘텐츠 교체)
+                const targetContainer = document.body;
+                const firstChild = targetContainer.firstChild;
+                if (firstChild) {
+                    targetContainer.insertBefore(skeletonContainer, firstChild);
+                } else {
+                    targetContainer.appendChild(skeletonContainer);
+                }
+                
+                // 전역 스켈레톤 상태 플래그
+                window.__BFCACHE_SKELETON_ACTIVE__ = true;
+                
+                return true;
+            } catch (e) {
+                console.error('스켈레톤 생성 실패:', e);
                 return false;
             }
         })()
         """
         
-        webView.evaluateJavaScript(dynamicScrollJS) { result, _ in
+        webView.evaluateJavaScript(fullSkeletonJS) { result, error in
             let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("✅ 시나리오2 동적 복원: \(success ? "성공" : "실패")")
+            if success {
+                TabPersistenceManager.debugMessages.append("📐 전체 스켈레톤 생성 성공: \(template.totalSkeletonItems)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("❌ 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
+            }
             completion(success)
         }
     }
     
-    // 🎯 **시나리오 3: 레이지 로딩 - 스켈레톤 + 배치 로딩**
-    private func restoreLazyLoadingContent(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.async {
-            // 1단계: 스켈레톤으로 공간 확보
-            if let estimatedHeight = self.estimatedContentHeight {
-                self.createSkeletonPlaceholder(to: webView, height: estimatedHeight)
-            }
-            
-            // 2단계: 스크롤 위치 설정
-            webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-            
-            // 3단계: 실제 데이터 로딩 대기 (현실적인 500ms)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let lazyScrollJS = """
-                (function() {
-                    // 스켈레톤 제거 후 실제 스크롤 복원
-                    const skeletons = document.querySelectorAll('.bfcache-skeleton');
-                    skeletons.forEach(s => s.remove());
-                    
-                    window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                    return true;
-                })()
-                """
-                
-                webView.evaluateJavaScript(lazyScrollJS) { result, _ in
-                    let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("✅ 시나리오3 레이지 복원: \(success ? "성공" : "실패")")
-                    completion(success)
-                }
-            }
-        }
-    }
-    
-    private func createSkeletonPlaceholder(to webView: WKWebView, height: CGFloat) {
-        let skeletonJS = """
+    // 🎯 **핵심: 단일 올인원 복원 - 스크롤 위치는 한 번만 이동**
+    private func executeOneTimeRestore(to webView: WKWebView, stateBlock: ScrollStateBlock, completion: @escaping (Bool) -> Void) {
+        let finalScrollY = stateBlock.finalScrollY
+        let anchorItem = stateBlock.anchorItem
+        
+        let oneTimeRestoreJS = """
         (function() {
-            const skeleton = document.createElement('div');
-            skeleton.className = 'bfcache-skeleton';
-            skeleton.style.height = '\(height)px';
-            skeleton.style.backgroundColor = '#f0f0f0';
-            skeleton.style.position = 'absolute';
-            skeleton.style.top = '0';
-            skeleton.style.width = '100%';
-            skeleton.style.zIndex = '1000';
-            document.body.appendChild(skeleton);
+            try {
+                // iOS 웹뷰 스크롤 복원 최적화
+                const targetY = \(finalScrollY);
+                
+                // 1. 네이티브 스크롤뷰와 동기화
+                window.scrollTo(0, targetY);
+                
+                // 2. 앵커 아이템 기준 정밀 위치 조정 (한 번만!)
+                const anchorElement = document.querySelector('\(anchorItem.selector)');
+                if (anchorElement) {
+                    const currentTop = anchorElement.getBoundingClientRect().top;
+                    const expectedTop = \(anchorItem.offsetFromTop);
+                    const adjustment = expectedTop - currentTop;
+                    
+                    if (Math.abs(adjustment) > 5) {
+                        // 5px 이상 차이날 때만 조정
+                        window.scrollTo(0, targetY + adjustment);
+                    }
+                }
+                
+                // 3. 컨테이너별 스크롤 동시 복원
+                const containerScrolls = \(jsonString(from: stateBlock.containerScrolls));
+                Object.keys(containerScrolls).forEach(selector => {
+                    const container = document.querySelector(selector);
+                    if (container) {
+                        container.scrollTop = containerScrolls[selector];
+                    }
+                });
+                
+                // 4. 가상화/무한 스크롤 상태 복원
+                if (\(stateBlock.virtualizationState.isVirtual)) {
+                    if (window.virtualScroller) {
+                        window.virtualScroller.scrollToIndex(\(stateBlock.virtualizationState.visibleStartIndex));
+                    }
+                    if (window.infiniteScroll) {
+                        window.infiniteScroll.setCurrentPage(\(stateBlock.virtualizationState.pageInfo?.currentPage ?? 0));
+                    }
+                }
+                
+                // 5. React Query 캐시 확인 및 즉시 적용
+                const cacheKeys = \(jsonString(from: stateBlock.cacheKeys));
+                if (window.__REACT_QUERY_STATE__ && cacheKeys.reactQuery) {
+                    const cachedData = window.__REACT_QUERY_STATE__[cacheKeys.reactQuery];
+                    if (cachedData?.data) {
+                        // 캐시된 데이터를 즉시 렌더링 (스크롤 위치 변경 없이)
+                        if (window.hydrateCachedData) {
+                            window.hydrateCachedData(cachedData.data, false); // false = 스크롤 변경 금지
+                        }
+                    }
+                }
+                
+                // 6. 스크롤 위치 고정 플래그 설정 (이후 데이터 로딩 중 스크롤 변경 방지)
+                window.__BFCACHE_SCROLL_LOCKED__ = true;
+                window.__BFCACHE_FINAL_SCROLL_Y__ = window.scrollY;
+                
+                // 7. 복원 완료 이벤트 발송
+                window.dispatchEvent(new CustomEvent('bfcacheRestoreComplete', {
+                    detail: { 
+                        finalScrollY: window.scrollY,
+                        restoredFromCache: true,
+                        timestamp: Date.now()
+                    }
+                }));
+                
+                return true;
+            } catch (e) {
+                console.error('올인원 복원 실패:', e);
+                return false;
+            }
         })()
         """
         
-        webView.evaluateJavaScript(skeletonJS, completionHandler: nil)
-    }
-    
-    // 🎯 **시나리오 4: 캐시 활용 - React Query 스타일 즉시 복원**
-    private func restoreCachedContent(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        // 메인 스레드에서 동기화
         DispatchQueue.main.async {
-            // 캐시된 데이터가 있으므로 즉시 복원 가능
-            webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+            // 네이티브 스크롤뷰도 동기화
+            webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
             
-            let cachedScrollJS = """
-            (function() {
-                // 캐시된 상태이므로 즉시 스크롤 복원
-                window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                
-                // 저장된 컨테이너 스크롤도 복원
-                \(self.generateContainerScrollScript())
-                
-                return true;
-            })()
-            """
-            
-            webView.evaluateJavaScript(cachedScrollJS) { result, _ in
+            webView.evaluateJavaScript(oneTimeRestoreJS) { result, error in
                 let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("✅ 시나리오4 캐시 복원: \(success ? "성공" : "실패")")
+                if success {
+                    TabPersistenceManager.debugMessages.append("✅ 올인원 복원 성공: Y=\(finalScrollY)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("❌ 올인원 복원 실패: \(error?.localizedDescription ?? "unknown")")
+                }
                 completion(success)
             }
         }
     }
     
-    // 🎯 **시나리오 5: 가상화 - 시퀀스 기반 복원**
-    private func restoreVirtualizedContent(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        guard let sequence = sequenceInfo else {
-            restoreStaticContent(to: webView, completion: completion)
+    // 🎯 **점진적 데이터 채움 - 복원 후 스크롤 위치 고정 상태에서 데이터만 교체**
+    private func startProgressiveDataFilling(to webView: WKWebView) {
+        let guide = dataLoadingGuide
+        
+        TabPersistenceManager.debugMessages.append("📊 점진적 데이터 채움 시작: \(guide.loadingSequence.count)단계")
+        
+        // 로딩 단계를 우선순위 순으로 정렬
+        let sortedSteps = guide.loadingSequence.sorted { $0.priority < $1.priority }
+        
+        executeDataLoadingSteps(to: webView, steps: sortedSteps, currentIndex: 0)
+    }
+    
+    // **재귀적 데이터 로딩 단계 실행** (스크롤 위치는 절대 변경하지 않음)
+    private func executeDataLoadingSteps(to webView: WKWebView, steps: [DataLoadingGuide.LoadingStep], currentIndex: Int) {
+        guard currentIndex < steps.count else {
+            finalizeDataFilling(to: webView)
             return
         }
         
-        DispatchQueue.main.async {
-            let virtualizedJS = """
-            (function() {
-                try {
-                    // 가상화된 리스트에 시퀀스 정보 전달
-                    if (window.virtualList && window.virtualList.scrollToSequence) {
-                        window.virtualList.scrollToSequence(\(sequence.listSequence));
-                        return true;
-                    } else {
-                        // Fallback: 기본 스크롤
-                        window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                        return false;
-                    }
-                } catch(e) {
-                    return false;
-                }
-            })()
-            """
-            
-            webView.evaluateJavaScript(virtualizedJS) { result, _ in
-                let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("✅ 시나리오5 가상화 복원: \(success ? "성공" : "실패")")
-                completion(success)
+        let step = steps[currentIndex]
+        let delay = Double(step.delayMs) / 1000.0
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.executeDataLoadingStep(to: webView, step: step) { success in
+                TabPersistenceManager.debugMessages.append("📊 \(step.stepId) 로딩: \(success ? "성공" : "실패")")
+                
+                // 다음 단계로 진행 (성공 여부와 관계없이)
+                self?.executeDataLoadingSteps(to: webView, steps: steps, currentIndex: currentIndex + 1)
             }
         }
     }
     
-    // 컨테이너 스크롤 복원 스크립트 생성
-    private func generateContainerScrollScript() -> String {
-        guard let jsState = jsState,
-              let scrollData = jsState["scroll"] as? [String: Any],
-              let elements = scrollData["elements"] as? [[String: Any]],
-              !elements.isEmpty else {
-            return "// 저장된 컨테이너 스크롤 없음"
-        }
-        
-        var scriptParts: [String] = []
-        for element in elements.prefix(5) { // 상위 5개만
-            guard let selector = element["selector"] as? String,
-                  let top = element["top"] as? Double else { continue }
-            
-            scriptParts.append("""
+    // **개별 데이터 로딩 단계 실행**
+    private func executeDataLoadingStep(to webView: WKWebView, step: DataLoadingGuide.LoadingStep, completion: @escaping (Bool) -> Void) {
+        let dataFillJS = """
+        (function() {
             try {
-                const el = document.querySelector('\(selector)');
-                if (el) el.scrollTop = \(top);
-            } catch(e) {}
-            """)
-        }
+                // 스크롤 위치 고정 확인
+                if (!window.__BFCACHE_SCROLL_LOCKED__) {
+                    console.warn('스크롤 고정 상태가 아님 - 데이터 로딩 중단');
+                    return false;
+                }
+                
+                const targetSelectors = \(jsonString(from: step.targetSelectors));
+                let replacedCount = 0;
+                
+                // 캐시 또는 API에서 데이터 가져오기
+                let data = null;
+                
+                // React Query 캐시 우선 확인
+                if (window.__REACT_QUERY_STATE__ && '\(step.dataSource)'.startsWith('cache:')) {
+                    const cacheKey = '\(step.dataSource)'.replace('cache:', '');
+                    const cached = window.__REACT_QUERY_STATE__[cacheKey];
+                    if (cached?.data) {
+                        data = cached.data;
+                    }
+                }
+                
+                // 스켈레톤→실제 데이터 교체 (requestAnimationFrame으로 깜박임 방지)
+                targetSelectors.forEach(selector => {
+                    requestAnimationFrame(() => {
+                        const skeletons = document.querySelectorAll(selector);
+                        skeletons.forEach((skeleton, index) => {
+                            if (data && data[index]) {
+                                // 실제 데이터로 교체
+                                const realContent = document.createElement('div');
+                                realContent.innerHTML = data[index].html || data[index].content || '';
+                                realContent.className = skeleton.className.replace('bfcache-skeleton', '');
+                                
+                                skeleton.parentNode.replaceChild(realContent, skeleton);
+                                replacedCount++;
+                            } else if ('\(step.fallbackContent ?? "")') {
+                                // 폴백 콘텐츠로 교체
+                                skeleton.innerHTML = '\(step.fallbackContent ?? "")';
+                                skeleton.className = skeleton.className.replace('bfcache-skeleton', 'bfcache-fallback');
+                                replacedCount++;
+                            }
+                        });
+                    });
+                });
+                
+                // 스크롤 위치 재고정 (혹시 모를 변동 방지)
+                if (window.__BFCACHE_FINAL_SCROLL_Y__ !== undefined) {
+                    window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
+                }
+                
+                return replacedCount > 0;
+            } catch (e) {
+                console.error('데이터 로딩 단계 실패:', e);
+                return false;
+            }
+        })()
+        """
         
-        return scriptParts.joined(separator: "\n")
+        webView.evaluateJavaScript(dataFillJS) { result, error in
+            let success = (result as? Bool) ?? false
+            completion(success)
+        }
+    }
+    
+    // **데이터 채움 완료 처리**
+    private func finalizeDataFilling(to webView: WKWebView) {
+        let finalizeJS = """
+        (function() {
+            try {
+                // 남은 스켈레톤 제거
+                const remainingSkeletons = document.querySelectorAll('.bfcache-skeleton');
+                remainingSkeletons.forEach(skeleton => {
+                    skeleton.style.display = 'none'; // 즉시 숨김
+                    setTimeout(() => skeleton.remove(), 100); // 지연 제거
+                });
+                
+                // 스켈레톤 스타일 정리
+                const skeletonStyles = document.getElementById('bfcache-skeleton-styles');
+                if (skeletonStyles) {
+                    skeletonStyles.remove();
+                }
+                
+                // 스크롤 위치 고정 해제
+                window.__BFCACHE_SCROLL_LOCKED__ = false;
+                window.__BFCACHE_SKELETON_ACTIVE__ = false;
+                delete window.__BFCACHE_FINAL_SCROLL_Y__;
+                
+                // 점진적 데이터 채움 완료 이벤트
+                window.dispatchEvent(new CustomEvent('bfcacheDataFillComplete', {
+                    detail: { 
+                        finalScrollY: window.scrollY,
+                        timestamp: Date.now()
+                    }
+                }));
+                
+                return true;
+            } catch (e) {
+                console.error('데이터 채움 완료 처리 실패:', e);
+                return false;
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(finalizeJS) { result, error in
+            TabPersistenceManager.debugMessages.append("🎉 점진적 데이터 채움 완료")
+        }
+    }
+    
+    // JSON 문자열 헬퍼
+    private func jsonString(from object: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let string = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return string
     }
 }
 
-// MARK: - 🎯 **블로그 시나리오 적용된 BFCache 전환 시스템**
+// MARK: - 🎯 **올인원 점진적 복원 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -465,7 +678,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background
     }
     
-    // MARK: - 🎯 **블로그 시나리오 적용된 캡처 시스템**
+    // MARK: - 🎯 **통합 스크롤 상태 캡처 시스템**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -486,12 +699,12 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         serialQueue.async { [weak self] in
-            self?.performSmartCapture(task)
+            self?.performUnifiedCapture(task)
         }
     }
     
-    // 🎯 **스마트 캡처: 블로그 시나리오 자동 감지 + 맞춤 캡처**
-    private func performSmartCapture(_ task: CaptureTask) {
+    // 🎯 **통합 상태 캡처 - 모든 정보를 한 번에 수집**
+    private func performUnifiedCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
         guard !pendingCaptures.contains(pageID) else {
@@ -505,12 +718,12 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         pendingCaptures.insert(pageID)
-        dbg("🎯 스마트 캡처 시작: \(task.pageRecord.title)")
+        dbg("🎯 통합 상태 캡처 시작: \(task.pageRecord.title)")
         
-        // 메인 스레드에서 캐스케이딩 캡처 수행
+        // 메인 스레드에서 기본 데이터 수집
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
             guard webView.window != nil, !webView.bounds.isEmpty else {
-                self.dbg("⚠️ 웹뷰 준비 안됨 - 캐스케이딩 캡처 스킵: \(task.pageRecord.title)")
+                self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
                 return nil
             }
             
@@ -527,15 +740,11 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 🎯 **핵심: 페이지 타입 자동 감지**
-        let pageType = detectPageType(url: data.url, webView: webView)
-        
-        // 페이지 타입별 맞춤 캡처
-        let captureResult = performScenarioBasedCapture(
+        // **통합 상태 블록 생성** - 모든 정보를 한 번에 수집
+        let captureResult = createUnifiedScrollStateBlock(
             pageRecord: task.pageRecord,
             webView: webView,
-            captureData: data,
-            pageType: pageType
+            captureData: data
         )
         
         // 캐시 저장
@@ -546,7 +755,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         pendingCaptures.remove(pageID)
-        dbg("✅ 스마트 캡처 완료 (\(pageType.rawValue)): \(task.pageRecord.title)")
+        dbg("✅ 통합 상태 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -556,80 +765,52 @@ final class BFCacheTransitionSystem: NSObject {
         let url: URL
     }
     
-    // 🎯 **페이지 타입 자동 감지** (블로그 시나리오 매핑)
-    private func detectPageType(url: URL, webView: WKWebView) -> BFCacheSnapshot.PageType {
-        let urlString = url.absoluteString.lowercased()
-        let host = url.host?.lowercased() ?? ""
-        
-        // 시나리오 5: 가상화 (대량 리스트 감지)
-        if urlString.contains("list") || urlString.contains("feed") || 
-           urlString.contains("timeline") || host.contains("twitter") {
-            return .virtualized
-        }
-        
-        // 시나리오 3: 레이지 로딩 (무한스크롤 사이트)
-        if host.contains("instagram") || host.contains("facebook") || 
-           urlString.contains("infinite") || urlString.contains("scroll") {
-            return .lazyLoading
-        }
-        
-        // 시나리오 4: 캐시 활용 (이미 방문한 페이지)
-        if hasCache(for: UUID()) { // 실제로는 pageID로 체크
-            return .cached
-        }
-        
-        // 시나리오 2: 동적 데이터 (SPA, API 기반 사이트)
-        if urlString.contains("search") || urlString.contains("api") ||
-           host.contains("google") || host.contains("github") {
-            return .dynamicContent
-        }
-        
-        // 시나리오 1: 정적 데이터 (기본값)
-        return .staticContent
-    }
-    
-    // 🎯 **시나리오별 맞춤 캡처**
-    private func performScenarioBasedCapture(pageRecord: PageRecord, webView: WKWebView, 
-                                           captureData: CaptureData, pageType: BFCacheSnapshot.PageType) 
-                                           -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🎯 **통합 스크롤 상태 블록 생성** - 올인원 복원을 위한 완전한 정보 수집
+    private func createUnifiedScrollStateBlock(pageRecord: PageRecord, webView: WKWebView, 
+                                             captureData: CaptureData) 
+                                             -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         var visualSnapshot: UIImage?
-        var jsState: [String: Any]?
-        var visibleItemsInfo: [BFCacheSnapshot.VisibleItemInfo]?
-        var estimatedContentHeight: CGFloat?
-        var sequenceInfo: BFCacheSnapshot.SequenceInfo?
+        var scrollStateBlock: BFCacheSnapshot.ScrollStateBlock!
+        var skeletonTemplate: BFCacheSnapshot.SkeletonTemplate!
+        var dataLoadingGuide: BFCacheSnapshot.DataLoadingGuide!
         
-        // 공통: 비주얼 스냅샷
+        // 1. 비주얼 스냅샷 캡처
         visualSnapshot = captureVisualSnapshot(webView: webView, bounds: captureData.bounds)
         
-        // 시나리오별 특화 캡처
-        switch pageType {
-        case .staticContent:
-            // 시나리오 1: 기본 스크롤만 캡처
-            jsState = captureBasicScrollState(webView: webView)
-            
-        case .dynamicContent:
-            // 시나리오 2: 가시 아이템 정보 캡처
-            jsState = captureDynamicScrollState(webView: webView)
-            visibleItemsInfo = extractVisibleItemsInfo(from: jsState)
-            
-        case .lazyLoading:
-            // 시나리오 3: 콘텐츠 높이 추정 + 스켈레톤 정보
-            jsState = captureLazyScrollState(webView: webView)
-            estimatedContentHeight = estimateContentHeight(from: jsState)
-            
-        case .cached:
-            // 시나리오 4: 빠른 복원용 정보만
-            jsState = captureBasicScrollState(webView: webView)
-            
-        case .virtualized:
-            // 시나리오 5: 가상화 시퀀스 정보
-            jsState = captureVirtualizedState(webView: webView)
-            sequenceInfo = extractSequenceInfo(from: jsState)
-        }
+        // 2. 통합 스크롤 상태 블록 수집
+        let scrollData = executeUnifiedScrollCapture(webView: webView, scrollY: captureData.scrollPosition.y)
+        
+        // 3. 상태 블록 구성
+        scrollStateBlock = BFCacheSnapshot.ScrollStateBlock(
+            finalScrollY: captureData.scrollPosition.y,
+            viewportHeight: captureData.bounds.height,
+            totalContentHeight: scrollData?["contentHeight"] as? CGFloat ?? 0,
+            anchorItem: extractAnchorItem(from: scrollData),
+            visibleItems: extractVisibleItems(from: scrollData),
+            virtualizationState: extractVirtualizationState(from: scrollData),
+            containerScrolls: extractContainerScrolls(from: scrollData),
+            cacheKeys: extractCacheKeys(from: scrollData)
+        )
+        
+        // 4. 스켈레톤 템플릿 생성
+        skeletonTemplate = BFCacheSnapshot.SkeletonTemplate(
+            averageItemHeight: scrollData?["averageItemHeight"] as? CGFloat ?? 120,
+            itemsPerScreen: Int(captureData.bounds.height / 120),
+            totalSkeletonItems: calculateTotalSkeletons(from: scrollData),
+            skeletonPattern: createSkeletonPattern(from: scrollData),
+            placeholderStyles: [:]
+        )
+        
+        // 5. 데이터 로딩 가이드 생성
+        dataLoadingGuide = BFCacheSnapshot.DataLoadingGuide(
+            loadingSequence: createLoadingSequence(from: scrollData),
+            backgroundLoadingEnabled: true,
+            lockScrollDuringLoad: true
+        )
         
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if visualSnapshot != nil && jsState != nil {
+        if visualSnapshot != nil && scrollData != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = .visualOnly
@@ -648,102 +829,286 @@ final class BFCacheTransitionSystem: NSObject {
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             scrollPosition: captureData.scrollPosition,
-            jsState: jsState,
+            jsState: scrollData,
             timestamp: Date(),
             webViewSnapshotPath: nil,
             captureStatus: captureStatus,
             version: version,
-            pageType: pageType,
-            visibleItemsInfo: visibleItemsInfo,
-            estimatedContentHeight: estimatedContentHeight,
-            sequenceInfo: sequenceInfo
+            scrollStateBlock: scrollStateBlock,
+            skeletonTemplate: skeletonTemplate,
+            dataLoadingGuide: dataLoadingGuide
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // MARK: - 🎯 **시나리오별 JavaScript 캡처 메서드들**
-    
-    private func captureBasicScrollState(webView: WKWebView) -> [String: Any]? {
+    // 🎯 **통합 스크롤 캡처 JavaScript** - 모든 상황 대응 데이터 수집
+    private func executeUnifiedScrollCapture(webView: WKWebView, scrollY: CGFloat) -> [String: Any]? {
         return executeJavaScriptSync(webView: webView, script: """
         (function() {
             try {
-                return {
-                    scroll: { x: window.scrollX, y: window.scrollY }
+                // 기본 스크롤 정보
+                const scrollInfo = {
+                    scrollY: window.scrollY,
+                    scrollX: window.scrollX,
+                    viewportHeight: window.innerHeight,
+                    viewportWidth: window.innerWidth,
+                    contentHeight: document.documentElement.scrollHeight,
+                    contentWidth: document.documentElement.scrollWidth
                 };
-            } catch(e) { return null; }
-        })()
-        """)
-    }
-    
-    private func captureDynamicScrollState(webView: WKWebView) -> [String: Any]? {
-        return executeJavaScriptSync(webView: webView, script: """
-        (function() {
-            try {
-                // 가시 아이템들 정보 수집
-                const visibleItems = [];
-                const items = document.querySelectorAll('[data-item-id], .item, .card, article');
                 
-                for (let i = 0; i < Math.min(items.length, 10); i++) {
-                    const item = items[i];
-                    const rect = item.getBoundingClientRect();
-                    if (rect.top >= 0 && rect.top <= window.innerHeight) {
+                // 가시 영역 아이템들 수집 (모든 패턴 대응)
+                const visibleItems = [];
+                const commonSelectors = [
+                    'article', '.item', '.post', '.card', '.entry', '.content-item',
+                    '[data-id]', '[data-item-id]', '[data-index]',
+                    '.list-item', '.grid-item', 'li', '.row', '.tile'
+                ];
+                
+                const allElements = [];
+                commonSelectors.forEach(selector => {
+                    const elements = document.querySelectorAll(selector);
+                    elements.forEach(el => allElements.push(el));
+                });
+                
+                // 중복 제거 및 가시성 체크
+                const uniqueElements = [...new Set(allElements)];
+                uniqueElements.forEach((el, index) => {
+                    const rect = el.getBoundingClientRect();
+                    const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+                    
+                    if (isVisible && visibleItems.length < 20) { // 상위 20개만
                         visibleItems.push({
-                            id: item.id || item.dataset.itemId || 'item-' + i,
-                            offsetTop: item.offsetTop,
-                            selector: item.id ? '#' + item.id : '.item'
+                            id: el.id || el.dataset.id || el.dataset.itemId || 'item-' + index,
+                            selector: el.id ? '#' + el.id : commonSelectors.find(s => el.matches(s)) || '.unknown',
+                            offsetTop: el.offsetTop,
+                            height: rect.height,
+                            content: (el.textContent || '').substr(0, 100),
+                            hasImage: el.querySelector('img') !== null,
+                            loadPriority: rect.top < window.innerHeight/2 ? 1 : 2
                         });
+                    }
+                });
+                
+                // 앵커 아이템 (스크롤 기준점) 찾기
+                let anchorItem = null;
+                for (const item of visibleItems) {
+                    const el = document.querySelector(item.selector);
+                    if (el) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.top >= 0 && rect.top <= window.innerHeight/3) {
+                            anchorItem = {
+                                id: item.id,
+                                selector: item.selector,
+                                offsetFromTop: rect.top,
+                                elementHeight: rect.height,
+                                isSticky: getComputedStyle(el).position === 'sticky'
+                            };
+                            break;
+                        }
                     }
                 }
                 
-                return {
-                    scroll: { x: window.scrollX, y: window.scrollY },
-                    visibleItems: visibleItems
+                // 컨테이너별 스크롤 상태 (overflow 있는 요소들)
+                const containerScrolls = {};
+                const scrollContainers = document.querySelectorAll('[style*="overflow"], .scroll-container, .scrollable');
+                scrollContainers.forEach((container, index) => {
+                    if (container.scrollTop > 0 || container.scrollLeft > 0) {
+                        const selector = container.id ? '#' + container.id : '.scroll-container-' + index;
+                        containerScrolls[selector] = container.scrollTop;
+                    }
+                });
+                
+                // 가상화/무한 스크롤 상태 감지
+                const virtualizationState = {
+                    isVirtual: !!(window.virtualScroller || window.VirtualList || window.virtualList),
+                    currentSequence: 0,
+                    visibleStartIndex: 0,
+                    visibleEndIndex: visibleItems.length - 1,
+                    totalKnownItems: visibleItems.length,
+                    pageInfo: null
                 };
-            } catch(e) { return null; }
-        })()
-        """)
-    }
-    
-    private func captureLazyScrollState(webView: WKWebView) -> [String: Any]? {
-        return executeJavaScriptSync(webView: webView, script: """
-        (function() {
-            try {
-                return {
-                    scroll: { x: window.scrollX, y: window.scrollY },
-                    contentHeight: document.documentElement.scrollHeight,
-                    viewportHeight: window.innerHeight
-                };
-            } catch(e) { return null; }
-        })()
-        """)
-    }
-    
-    private func captureVirtualizedState(webView: WKWebView) -> [String: Any]? {
-        return executeJavaScriptSync(webView: webView, script: """
-        (function() {
-            try {
-                // 가상화 리스트 정보 추출 (있는 경우)
-                let listInfo = {};
-                if (window.virtualList) {
-                    listInfo = {
-                        sequence: window.virtualList.getCurrentSequence?.() || 0,
-                        pageNumber: window.virtualList.getCurrentPage?.() || 0,
-                        pageSize: window.virtualList.getPageSize?.() || 20,
-                        totalItems: window.virtualList.getTotalItems?.() || 0
+                
+                // React Virtual, react-window 등 감지
+                if (window.virtualScroller) {
+                    virtualizationState.currentSequence = window.virtualScroller.getCurrentSequence?.() || 0;
+                    virtualizationState.visibleStartIndex = window.virtualScroller.getVisibleStartIndex?.() || 0;
+                    virtualizationState.visibleEndIndex = window.virtualScroller.getVisibleEndIndex?.() || 0;
+                }
+                
+                // 무한 스크롤 페이지 정보
+                if (window.infiniteScroll || window.__INFINITE_SCROLL_STATE__) {
+                    const pageInfo = window.__INFINITE_SCROLL_STATE__ || {};
+                    virtualizationState.pageInfo = {
+                        currentPage: pageInfo.currentPage || 1,
+                        pageSize: pageInfo.pageSize || 20,
+                        loadedPages: pageInfo.loadedPages || [1],
+                        hasNextPage: pageInfo.hasNextPage !== false
                     };
                 }
                 
+                // React Query 캐시 키 수집
+                const cacheKeys = {};
+                if (window.__REACT_QUERY_STATE__) {
+                    const queryKeys = Object.keys(window.__REACT_QUERY_STATE__);
+                    if (queryKeys.length > 0) {
+                        cacheKeys.reactQuery = queryKeys[0]; // 첫 번째 활성 쿼리 키
+                    }
+                }
+                
+                // 스켈레톤 정보 계산
+                const averageItemHeight = visibleItems.length > 0 ? 
+                    visibleItems.reduce((sum, item) => sum + item.height, 0) / visibleItems.length : 120;
+                
                 return {
-                    scroll: { x: window.scrollX, y: window.scrollY },
-                    virtualList: listInfo
+                    ...scrollInfo,
+                    visibleItems,
+                    anchorItem,
+                    containerScrolls,
+                    virtualizationState,
+                    cacheKeys,
+                    averageItemHeight,
+                    timestamp: Date.now()
                 };
-            } catch(e) { return null; }
+            } catch (e) {
+                console.error('통합 스크롤 캡처 실패:', e);
+                return null;
+            }
         })()
         """)
     }
     
-    // MARK: - 헬퍼 메서드들
+    // 헬퍼 메서드들
+    private func extractAnchorItem(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo {
+        guard let data = data,
+              let anchorData = data["anchorItem"] as? [String: Any],
+              let id = anchorData["id"] as? String,
+              let selector = anchorData["selector"] as? String else {
+            return BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
+                id: "unknown", selector: "body", offsetFromTop: 0, elementHeight: 100, isSticky: false
+            )
+        }
+        
+        return BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
+            id: id,
+            selector: selector,
+            offsetFromTop: anchorData["offsetFromTop"] as? CGFloat ?? 0,
+            elementHeight: anchorData["elementHeight"] as? CGFloat ?? 100,
+            isSticky: anchorData["isSticky"] as? Bool ?? false
+        )
+    }
+    
+    private func extractVisibleItems(from data: [String: Any]?) -> [BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo] {
+        guard let data = data,
+              let itemsData = data["visibleItems"] as? [[String: Any]] else { return [] }
+        
+        return itemsData.compactMap { itemData in
+            guard let id = itemData["id"] as? String,
+                  let selector = itemData["selector"] as? String else { return nil }
+            
+            return BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo(
+                id: id,
+                selector: selector,
+                offsetTop: itemData["offsetTop"] as? CGFloat ?? 0,
+                height: itemData["height"] as? CGFloat ?? 100,
+                content: itemData["content"] as? String,
+                hasImage: itemData["hasImage"] as? Bool ?? false,
+                loadPriority: itemData["loadPriority"] as? Int ?? 2
+            )
+        }
+    }
+    
+    private func extractVirtualizationState(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.VirtualizationState {
+        guard let data = data,
+              let virtData = data["virtualizationState"] as? [String: Any] else {
+            return BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
+                isVirtual: false, currentSequence: 0, visibleStartIndex: 0, 
+                visibleEndIndex: 0, totalKnownItems: 0, pageInfo: nil
+            )
+        }
+        
+        var pageInfo: BFCacheSnapshot.ScrollStateBlock.VirtualizationState.PageInfo?
+        if let pageData = virtData["pageInfo"] as? [String: Any] {
+            pageInfo = BFCacheSnapshot.ScrollStateBlock.VirtualizationState.PageInfo(
+                currentPage: pageData["currentPage"] as? Int ?? 1,
+                pageSize: pageData["pageSize"] as? Int ?? 20,
+                loadedPages: pageData["loadedPages"] as? [Int] ?? [1],
+                hasNextPage: pageData["hasNextPage"] as? Bool ?? true
+            )
+        }
+        
+        return BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
+            isVirtual: virtData["isVirtual"] as? Bool ?? false,
+            currentSequence: virtData["currentSequence"] as? Int ?? 0,
+            visibleStartIndex: virtData["visibleStartIndex"] as? Int ?? 0,
+            visibleEndIndex: virtData["visibleEndIndex"] as? Int ?? 0,
+            totalKnownItems: virtData["totalKnownItems"] as? Int ?? 0,
+            pageInfo: pageInfo
+        )
+    }
+    
+    private func extractContainerScrolls(from data: [String: Any]?) -> [String: CGFloat] {
+        guard let data = data,
+              let scrolls = data["containerScrolls"] as? [String: Any] else { return [:] }
+        
+        var result: [String: CGFloat] = [:]
+        for (key, value) in scrolls {
+            if let scrollValue = value as? CGFloat {
+                result[key] = scrollValue
+            } else if let scrollValue = value as? Double {
+                result[key] = CGFloat(scrollValue)
+            }
+        }
+        return result
+    }
+    
+    private func extractCacheKeys(from data: [String: Any]?) -> [String: String] {
+        guard let data = data,
+              let cacheKeys = data["cacheKeys"] as? [String: String] else { return [:] }
+        return cacheKeys
+    }
+    
+    private func calculateTotalSkeletons(from data: [String: Any]?) -> Int {
+        guard let data = data else { return 10 }
+        
+        let contentHeight = data["contentHeight"] as? CGFloat ?? 1000
+        let averageHeight = data["averageItemHeight"] as? CGFloat ?? 120
+        let viewportHeight = data["viewportHeight"] as? CGFloat ?? 800
+        
+        let itemsInViewport = Int(viewportHeight / averageHeight) + 2 // 여유분
+        let totalItems = Int(contentHeight / averageHeight)
+        
+        return min(max(itemsInViewport, 5), max(totalItems, 30)) // 5~30 개 사이
+    }
+    
+    private func createSkeletonPattern(from data: [String: Any]?) -> String {
+        // 기본 스켈레톤 HTML 패턴
+        return """
+        <div style="height: 20px; background: #e2e8f0; margin-bottom: 8px; border-radius: 4px;"></div>
+        <div style="height: 16px; background: #f1f5f9; margin-bottom: 12px; border-radius: 4px; width: 80%;"></div>
+        """
+    }
+    
+    private func createLoadingSequence(from data: [String: Any]?) -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
+        return [
+            BFCacheSnapshot.DataLoadingGuide.LoadingStep(
+                stepId: "primary_content",
+                dataSource: "cache:main_query",
+                targetSelectors: [".bfcache-skeleton"],
+                delayMs: 50,
+                priority: 1,
+                fallbackContent: nil
+            ),
+            BFCacheSnapshot.DataLoadingGuide.LoadingStep(
+                stepId: "secondary_content", 
+                dataSource: "api:/api/additional",
+                targetSelectors: [".bfcache-skeleton:nth-child(n+6)"],
+                delayMs: 200,
+                priority: 2,
+                fallbackContent: "<div>Loading...</div>"
+            )
+        ]
+    }
     
     private func executeJavaScriptSync(webView: WKWebView, script: String) -> [String: Any]? {
         let semaphore = DispatchSemaphore(value: 0)
@@ -756,44 +1121,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        _ = semaphore.wait(timeout: .now() + 1.0)
+        _ = semaphore.wait(timeout: .now() + 2.0)
         return result
-    }
-    
-    private func extractVisibleItemsInfo(from jsState: [String: Any]?) -> [BFCacheSnapshot.VisibleItemInfo]? {
-        guard let jsState = jsState,
-              let visibleItems = jsState["visibleItems"] as? [[String: Any]] else { return nil }
-        
-        return visibleItems.compactMap { item in
-            guard let id = item["id"] as? String,
-                  let offsetTop = item["offsetTop"] as? Double,
-                  let selector = item["selector"] as? String else { return nil }
-            
-            return BFCacheSnapshot.VisibleItemInfo(
-                id: id,
-                offsetTop: CGFloat(offsetTop),
-                elementSelector: selector
-            )
-        }
-    }
-    
-    private func estimateContentHeight(from jsState: [String: Any]?) -> CGFloat? {
-        guard let jsState = jsState,
-              let contentHeight = jsState["contentHeight"] as? Double else { return nil }
-        return CGFloat(contentHeight)
-    }
-    
-    private func extractSequenceInfo(from jsState: [String: Any]?) -> BFCacheSnapshot.SequenceInfo? {
-        guard let jsState = jsState,
-              let virtualList = jsState["virtualList"] as? [String: Any],
-              let sequence = virtualList["sequence"] as? Int else { return nil }
-        
-        return BFCacheSnapshot.SequenceInfo(
-            listSequence: sequence,
-            pageNumber: virtualList["pageNumber"] as? Int ?? 0,
-            pageSize: virtualList["pageSize"] as? Int ?? 20,
-            totalItems: virtualList["totalItems"] as? Int ?? 0
-        )
     }
     
     private func captureVisualSnapshot(webView: WKWebView, bounds: CGRect) -> UIImage? {
@@ -872,7 +1201,7 @@ final class BFCacheTransitionSystem: NSObject {
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)] (\(finalSnapshot.pageType.rawValue))")
+            self.dbg("💾 통합 상태 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
             
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
@@ -962,7 +1291,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
-            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title) (\(snapshot.pageType.rawValue))")
+            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title)")
             return snapshot
         }
         
@@ -974,7 +1303,7 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 setMemoryCache(snapshot, for: pageID)
                 
-                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) (\(snapshot.pageType.rawValue))")
+                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title)")
                 return snapshot
             }
         }
@@ -997,7 +1326,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
-        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)] (\(snapshot.pageType.rawValue))")
+        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
     // MARK: - 캐시 정리 (기존 유지)
@@ -1050,7 +1379,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 제스처 시스템 (기존 유지하되 단순화된 복원 호출)
+    // MARK: - 🎯 제스처 시스템 (기존 유지하되 올인원 복원 호출)
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         webView.allowsBackForwardNavigationGestures = false
@@ -1071,7 +1400,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("BFCache 제스처 설정 완료")
+        dbg("올인원 점진적 복원 제스처 설정 완료")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -1364,7 +1693,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎯 **단순화된 전환 완료** (블로그 시나리오별 복원 호출)
+    // 🎯 **올인원 점진적 복원 적용 전환 완료**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1391,13 +1720,13 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                self?.performSimplifiedNavigation(context: context, previewContainer: previewContainer)
+                self?.performAllInOneNavigation(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // 🎯 **단순화된 네비게이션 수행** (블로그 시나리오별 복원 적용)
-    private func performSimplifiedNavigation(context: TransitionContext, previewContainer: UIView) {
+    // 🎯 **올인원 점진적 복원 네비게이션 수행**
+    private func performAllInOneNavigation(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             previewContainer.removeFromSuperview()
             activeTransitions.removeValue(forKey: context.tabID)
@@ -1414,27 +1743,27 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 앞으로가기 완료")
         }
         
-        // 🎯 **블로그 시나리오별 BFCache 복원**
-        tryScenarioBasedBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+        // 🎯 **올인원 점진적 복원 적용**
+        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 올인원 복원 \(success ? "성공" : "실패")")
             }
         }
         
-        // 안전장치: 최대 800ms 후 강제 정리 (현실적인 타임아웃)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        // 안전장치: 최대 1초 후 강제 정리 (올인원 복원은 더 빠름)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (800ms 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
             }
         }
     }
     
-    // 🎯 **핵심: 블로그 시나리오별 BFCache 복원**
-    private func tryScenarioBasedBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🎯 **올인원 점진적 BFCache 복원**
+    private func tryAllInOneBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -1443,19 +1772,19 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // 🎯 **핵심: 블로그 시나리오별 복원 호출**
+            // 🎯 **핵심: 올인원 점진적 복원 호출**
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 시나리오별 BFCache 복원 성공: \(currentRecord.title) (\(snapshot.pageType.rawValue))")
+                    self?.dbg("✅ 올인원 점진적 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ 시나리오별 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 올인원 점진적 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
         } else {
-            // BFCache 미스 - 현실적인 기본 대기
+            // BFCache 미스 - 기본 대기
             dbg("❌ BFCache 미스: \(currentRecord.title)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 completion(false)
             }
         }
@@ -1490,7 +1819,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 버튼 네비게이션 (블로그 시나리오 적용)
+    // MARK: - 버튼 네비게이션 (올인원 점진적 복원 적용)
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
@@ -1502,7 +1831,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryScenarioBasedBFCacheRestore(stateModel: stateModel, direction: .back) { _ in }
+        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: .back) { _ in }
     }
     
     func navigateForward(stateModel: WebViewStateModel) {
@@ -1515,7 +1844,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryScenarioBasedBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in }
+        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in }
     }
     
     // MARK: - 스와이프 제스처 감지 처리
@@ -1531,30 +1860,93 @@ final class BFCacheTransitionSystem: NSObject {
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가: \(url.absoluteString)")
     }
     
-    // MARK: - 🌐 JavaScript 스크립트 (기존 유지)
+    // MARK: - 🌐 JavaScript 스크립트 (올인원 점진적 복원용)
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted) {
-                console.log('🔄 BFCache 페이지 복원');
-                
-                if (window.location.pathname.includes('/feed') ||
-                    window.location.pathname.includes('/timeline') ||
-                    window.location.hostname.includes('twitter') ||
-                    window.location.hostname.includes('facebook')) {
-                    if (window.refreshDynamicContent) {
-                        window.refreshDynamicContent();
+        // 🎯 올인원 점진적 복원 지원 스크립트
+        (function() {
+            'use strict';
+            
+            // iOS 웹뷰 특화: 강제 manual 스크롤 복원
+            if (history.scrollRestoration) {
+                history.scrollRestoration = 'manual';
+            }
+            
+            // 페이지 보기/숨김 이벤트
+            window.addEventListener('pageshow', function(event) {
+                if (event.persisted) {
+                    console.log('🔄 BFCache 페이지 복원 - 올인원 점진적 시스템 활성');
+                    
+                    // React Query 캐시 상태 확인
+                    if (window.__REACT_QUERY_STATE__) {
+                        console.log('💾 React Query 캐시 감지됨');
                     }
+                    
+                    // 가상화 스크롤러 상태 확인
+                    if (window.virtualScroller || window.infiniteScroll) {
+                        console.log('🔄 가상화 스크롤 감지됨');
+                    }
+                    
+                    // 올인원 복원 준비 완료 이벤트
+                    window.dispatchEvent(new CustomEvent('bfcacheReadyForRestore', {
+                        detail: { timestamp: Date.now() }
+                    }));
                 }
-            }
-        });
-        
-        window.addEventListener('pagehide', function(event) {
-            if (event.persisted) {
-                console.log('📸 BFCache 페이지 저장');
-            }
-        });
+            });
+            
+            window.addEventListener('pagehide', function(event) {
+                if (event.persisted) {
+                    console.log('📸 BFCache 페이지 저장 - 통합 상태 수집');
+                }
+            });
+            
+            // 스크롤 위치 고정 헬퍼 함수들
+            window.lockScrollPosition = function(lockY) {
+                window.__BFCACHE_SCROLL_LOCKED__ = true;
+                window.__BFCACHE_FINAL_SCROLL_Y__ = lockY;
+                
+                // 스크롤 이벤트 리스너로 위치 강제 유지
+                const scrollLockHandler = () => {
+                    if (window.__BFCACHE_SCROLL_LOCKED__ && window.scrollY !== lockY) {
+                        window.scrollTo(0, lockY);
+                    }
+                };
+                
+                window.addEventListener('scroll', scrollLockHandler, { passive: false });
+                
+                // 잠금 해제 함수 반환
+                return () => {
+                    window.__BFCACHE_SCROLL_LOCKED__ = false;
+                    window.removeEventListener('scroll', scrollLockHandler);
+                    delete window.__BFCACHE_FINAL_SCROLL_Y__;
+                };
+            };
+            
+            // React Query 스타일 캐시 데이터 즉시 하이드레이션
+            window.hydrateCachedData = function(data, allowScrollChange = false) {
+                try {
+                    if (!allowScrollChange && window.__BFCACHE_SCROLL_LOCKED__) {
+                        // 스크롤 위치 고정 상태에서는 데이터만 교체
+                        requestAnimationFrame(() => {
+                            // DOM 업데이트 후 스크롤 위치 재확인
+                            if (window.__BFCACHE_FINAL_SCROLL_Y__ !== undefined) {
+                                window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
+                            }
+                        });
+                    }
+                    
+                    // 실제 데이터 렌더링 로직은 앱별로 구현 필요
+                    console.log('💧 캐시 데이터 하이드레이션:', data.length || 'unknown size');
+                    return true;
+                } catch (e) {
+                    console.error('하이드레이션 실패:', e);
+                    return false;
+                }
+            };
+            
+            console.log('✅ 올인원 점진적 복원 스크립트 로드 완료');
+        })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
@@ -1562,7 +1954,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache] \(msg)")
+        TabPersistenceManager.debugMessages.append("[올인원점진복원] \(msg)")
     }
 }
 
@@ -1579,7 +1971,7 @@ extension BFCacheTransitionSystem {
     static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         shared.setupGestures(for: webView, stateModel: stateModel)
-        TabPersistenceManager.debugMessages.append("✅ 블로그 시나리오 적용된 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 올인원 점진적 복원 시스템 설치 완료")
     }
     
     static func uninstall(from webView: WKWebView) {
@@ -1588,7 +1980,7 @@ extension BFCacheTransitionSystem {
                 webView.removeGestureRecognizer(gesture)
             }
         }
-        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧹 올인원 점진적 복원 시스템 제거 완료")
     }
     
     static func goBack(stateModel: WebViewStateModel) {
@@ -1608,7 +2000,7 @@ extension BFCacheTransitionSystem {
               let tabID = stateModel.tabID else { return }
         
         captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
-        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
+        dbg("📸 통합 상태 캡처 시작: \(rec.title)")
     }
 
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
@@ -1616,7 +2008,7 @@ extension BFCacheTransitionSystem {
               let tabID = stateModel.tabID else { return }
         
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
-        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
+        dbg("📸 도착 상태 캡처 시작: \(rec.title)")
         
         // 이전 페이지들도 메타데이터 확인
         if stateModel.dataModel.currentPageIndex > 0 {
@@ -1627,12 +2019,46 @@ extension BFCacheTransitionSystem {
                 let previousRecord = stateModel.dataModel.pageHistory[i]
                 
                 if !hasCache(for: previousRecord.id) {
+                    // 기본 스냅샷 생성 (통합 데이터는 없지만 메타데이터는 저장)
+                    let basicStateBlock = BFCacheSnapshot.ScrollStateBlock(
+                        finalScrollY: 0,
+                        viewportHeight: 800,
+                        totalContentHeight: 1000,
+                        anchorItem: BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
+                            id: "unknown", selector: "body", offsetFromTop: 0, elementHeight: 100, isSticky: false
+                        ),
+                        visibleItems: [],
+                        virtualizationState: BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
+                            isVirtual: false, currentSequence: 0, visibleStartIndex: 0,
+                            visibleEndIndex: 0, totalKnownItems: 0, pageInfo: nil
+                        ),
+                        containerScrolls: [:],
+                        cacheKeys: [:]
+                    )
+                    
+                    let basicSkeleton = BFCacheSnapshot.SkeletonTemplate(
+                        averageItemHeight: 120,
+                        itemsPerScreen: 7,
+                        totalSkeletonItems: 10,
+                        skeletonPattern: "<div>Loading...</div>",
+                        placeholderStyles: [:]
+                    )
+                    
+                    let basicGuide = BFCacheSnapshot.DataLoadingGuide(
+                        loadingSequence: [],
+                        backgroundLoadingEnabled: true,
+                        lockScrollDuringLoad: true
+                    )
+                    
                     let metadataSnapshot = BFCacheSnapshot(
                         pageRecord: previousRecord,
                         scrollPosition: .zero,
                         timestamp: Date(),
                         captureStatus: .failed,
-                        version: 1
+                        version: 1,
+                        scrollStateBlock: basicStateBlock,
+                        skeletonTemplate: basicSkeleton,
+                        dataLoadingGuide: basicGuide
                     )
                     
                     saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
