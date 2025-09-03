@@ -233,7 +233,6 @@ struct BFCacheSnapshot: Codable {
     // 🔥 **핵심: 사파리/네이버카페 방식 - 타이머 기반 연속 복원**
     private func performNativeForcedRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         let startTime = Date()
-        var attemptCount = 0
         let maxAttempts = 30 // 3초 동안 (0.1초마다)
         let targetPosition = calculateOptimalPosition(for: webView)
         
@@ -265,7 +264,6 @@ struct BFCacheSnapshot: Codable {
                 webView: webView,
                 targetPosition: targetPosition,
                 startTime: startTime,
-                attemptCount: &attemptCount,
                 maxAttempts: maxAttempts,
                 completion: completion
             )
