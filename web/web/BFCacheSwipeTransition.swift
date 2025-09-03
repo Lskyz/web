@@ -1020,7 +1020,7 @@ extension BFCacheTransitionSystem {
                         anchorItem: nil,
                         contentHeight: nil,
                         visibleRange: nil,
-                        restorationType: "static"
+                        restorationType: "basic"
                     )
                     
                     let metadataSnapshot = BFCacheSnapshot(
