@@ -1016,7 +1016,7 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        guard let webView = task.webView else {
+        guard task.webView != nil else {
             dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
             return
         }
