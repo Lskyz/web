@@ -124,6 +124,13 @@ struct SafeJSState: Codable {
         self.timestamp = Date()
     }
     
+    init(stringValues: [String: String], numberValues: [String: Double], boolValues: [String: Bool], timestamp: Date) {
+        self.stringValues = stringValues
+        self.numberValues = numberValues
+        self.boolValues = boolValues
+        self.timestamp = timestamp
+    }
+    
     init(from unsafeState: [String: Any]?) {
         guard let unsafeState = unsafeState else {
             self.init()
@@ -161,10 +168,7 @@ struct SafeJSState: Codable {
             }
         }
         
-        self.stringValues = strings
-        self.numberValues = numbers
-        self.boolValues = bools
-        self.timestamp = Date()
+        self.init(stringValues: strings, numberValues: numbers, boolValues: bools, timestamp: Date())
     }
     
     func toDictionary() -> [String: Any] {
