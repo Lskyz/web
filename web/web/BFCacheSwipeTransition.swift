@@ -17,6 +17,19 @@ fileprivate func ts() -> String {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss.SSS"
     return f.string(from: Date())
+    
+    static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
+        // 복원 중이면 무시
+        if stateModel.dataModel.isHistoryNavigationActive() {
+            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시: \(url.absoluteString)")
+            return
+        }
+        
+        // 새 페이지로 추가
+        stateModel.dataModel.addNewPage(url: url, title: "")
+        stateModel.syncCurrentURL(url)
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지 추가: \(url.absoluteString)")
+    }
 }
 
 // MARK: - 🚀 스크롤 복원 전략 열거형
