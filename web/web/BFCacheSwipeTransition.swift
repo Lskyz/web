@@ -776,7 +776,7 @@ private func clearVersion(for id: UUID) {
         }
     }
     
-    pprivate func performAtomicCapture(_ task: CaptureTask) {
+    private func performAtomicCapture(_ task: CaptureTask) {
     let pageID = task.pageRecord.id
 
     // 중복 캡처 방지 (진행 중인 것만)
