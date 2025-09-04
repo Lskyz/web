@@ -2209,8 +2209,40 @@ mainSyncOrNow {
     
     // MARK: - 🌐 JavaScript 스크립트
     
-    static func makeBFCacheScript() -> WKUserScript {
+    sstatic func makeBFCacheScript() -> WKUserScript {
     let scriptSource = """
+// ---- Polyfills (once per page) ------------------------------------------
+(function(){
+  if (window.__bfc_polyfill_installed__) return;
+  window.__bfc_polyfill_installed__ = true;
+
+  // CSS.escape (simple/safe)
+  if (!window.CSS) window.CSS = {};
+  if (typeof CSS.escape !== 'function') {
+    CSS.escape = function(value) {
+      return String(value).replace(/[^a-zA-Z0-9_\\-]/g, '\\\\$&');
+    };
+  }
+
+  // Element.matches / Element.closest (old WebKit)
+  if (!Element.prototype.matches) {
+    Element.prototype.matches =
+      Element.prototype.msMatchesSelector ||
+      Element.prototype.webkitMatchesSelector;
+  }
+  if (!Element.prototype.closest) {
+    Element.prototype.closest = function(sel){
+      var el = this;
+      while (el && el.nodeType === 1) {
+        if (el.matches && el.matches(sel)) return el;
+        el = el.parentElement || el.parentNode;
+      }
+      return null;
+    };
+  }
+})();
+
+// ---- BFCache helpers -----------------------------------------------------
 try { if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; } } catch(e) {}
 
 window.addEventListener('pageshow', function(event) {
@@ -2222,12 +2254,17 @@ window.addEventListener('pageshow', function(event) {
 
 window.addEventListener('pagehide', function(event) {
   if (event.persisted) {
-    // BFCache 저장 시점 로그 훅
+    // BFCache 저장 시점 로그/훅
   }
 });
 """
-    return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    return WKUserScript(
+        source: scriptSource,
+        injectionTime: .atDocumentStart, // 폴리필이 가장 먼저 주입
+        forMainFrameOnly: false          // iframe에도 적용
+    )
 }
+
 
     
     // MARK: - 디버그
