@@ -2038,7 +2038,7 @@ extension BFCacheTransitionSystem: UIGestureRecognizerDelegate {
         return isHorizontalDominant
     }
     
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBegin gesture: UIGestureRecognizer) -> Bool {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let ctx = objc_getAssociatedObject(gestureRecognizer, "bfcache_ctx") as? WeakGestureContext else {
             return false
         }
