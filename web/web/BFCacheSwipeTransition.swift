@@ -1060,7 +1060,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 버전 증가 (스레드 안전)
         let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
             guard let self = self else { return 1 }
-            let currentVersion = self._versionStore[pageRecord.id] ?? 0
+            let currentVersion = self._cacheVersion[pageRecord.id] ?? 0
             let newVersion = currentVersion + 1
             self._cacheVersion[pageRecord.id] = newVersion
             return newVersion
@@ -1445,7 +1445,7 @@ final class BFCacheTransitionSystem: NSObject {
                                     // 스레드 안전하게 인덱스 업데이트
                                     self.setDiskIndex(pageDir.path, for: metadata.pageID)
                                     self.cacheAccessQueue.async(flags: .barrier) {
-                                        self._versionStore[metadata.pageID] = metadata.version
+                                        self._cacheVersion[metadata.pageID] = metadata.version
                                     }
                                     loadedCount += 1
                                 }
@@ -1540,7 +1540,7 @@ final class BFCacheTransitionSystem: NSObject {
             for pageID in pageIDs {
                 self._memoryCache.removeValue(forKey: pageID)
                 self._diskCacheIndex.removeValue(forKey: pageID)
-                self._versionStore.removeValue(forKey: pageID)
+                self._cacheVersion.removeValue(forKey: pageID)
             }
         }
         
