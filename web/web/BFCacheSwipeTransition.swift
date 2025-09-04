@@ -17,6 +17,7 @@
 //  🎯 **핵심 수정: 동적 사이트 스냅샷 매칭 문제 해결**
 //  🔧 **스냅샷 매칭 문제 완전 해결** - 강화된 디버깅 + 캐시 무결성 검증
 //  🎯 **SPA 스냅샷 매칭 버그 수정** - 제스처 시작 시점 인덱스 고정
+//  ⏱️ **DOM 안정화 후 캡처** - SPA 페이지 완전 로드 대기
 //
 
 import UIKit
@@ -562,6 +563,7 @@ final class BFCacheTransitionSystem: NSObject {
     enum CaptureType {
         case immediate  // 현재 페이지 (높은 우선순위)
         case background // 과거 페이지 (일반 우선순위)
+        case delayed    // ⏱️ **추가: DOM 안정화 후 캡처**
     }
     
     // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
@@ -585,13 +587,87 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        dbg("📸 캡처 요청: '\(pageRecord.title)' [ID: \(String(pageRecord.id.uuidString.prefix(8)))] URL: \(pageRecord.url.absoluteString) 인덱스: \(historyIndex)")
+        dbg("📸 캡처 요청: '\(pageRecord.title)' [ID: \(String(pageRecord.id.uuidString.prefix(8)))] URL: \(pageRecord.url.absoluteString) 인덱스: \(historyIndex) 타입: \(type)")
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView, historyIndex: historyIndex)
         
-        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
-            self?.performAtomicCapture(task)
+        // ⏱️ **DOM 안정화 대기가 필요한 경우**
+        if type == .delayed {
+            waitForDOMStabilization(webView: webView) { [weak self] in
+                self?.serialQueue.async {
+                    self?.performAtomicCapture(task)
+                }
+            }
+        } else {
+            // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
+            serialQueue.async { [weak self] in
+                self?.performAtomicCapture(task)
+            }
+        }
+    }
+    
+    // ⏱️ **DOM 안정화 대기 메서드**
+    private func waitForDOMStabilization(webView: WKWebView, completion: @escaping () -> Void) {
+        dbg("⏱️ DOM 안정화 대기 시작")
+        
+        // JavaScript로 DOM 변경 감지
+        let checkDOMScript = """
+        (function() {
+            // 네트워크 요청 활성 여부 체크
+            const hasActiveRequests = window.performance.getEntriesByType('resource')
+                .filter(r => !r.responseEnd).length > 0;
+            
+            // 제목이 기본값이 아닌지 체크
+            const hasValidTitle = document.title && 
+                                  document.title !== 'about:blank' && 
+                                  !document.title.includes('네이버 카페');
+            
+            // 주요 콘텐츠 영역 체크
+            const hasMainContent = document.querySelector('main, article, [role="main"], .content') !== null;
+            
+            return {
+                stable: !hasActiveRequests && hasValidTitle && hasMainContent,
+                title: document.title,
+                hasRequests: hasActiveRequests,
+                hasContent: hasMainContent
+            };
+        })()
+        """
+        
+        var retryCount = 0
+        let maxRetries = 10  // 최대 1초 대기 (100ms * 10)
+        
+        func checkStability() {
+            webView.evaluateJavaScript(checkDOMScript) { [weak self] result, error in
+                if let dict = result as? [String: Any],
+                   let stable = dict["stable"] as? Bool {
+                    
+                    if stable {
+                        self?.dbg("✅ DOM 안정화 확인: 제목='\(dict["title"] ?? "")'")
+                        completion()
+                    } else {
+                        retryCount += 1
+                        if retryCount < maxRetries {
+                            self?.dbg("⏳ DOM 불안정 (\(retryCount)/\(maxRetries)): 요청=\(dict["hasRequests"] ?? false), 콘텐츠=\(dict["hasContent"] ?? false)")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                checkStability()
+                            }
+                        } else {
+                            self?.dbg("⚠️ DOM 안정화 타임아웃 - 강제 진행")
+                            completion()
+                        }
+                    }
+                } else {
+                    // 에러 발생 시 즉시 진행
+                    self?.dbg("⚠️ DOM 체크 실패 - 즉시 캡처")
+                    completion()
+                }
+            }
+        }
+        
+        // 최소 대기 시간 후 체크 시작
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            checkStability()
         }
     }
     
@@ -612,6 +688,7 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("   URL: \(currentRecord.url.absoluteString)")
         dbg("   인덱스: \(currentIndex)/\(stateModel.dataModel.pageHistory.count)")
         dbg("   TabID: \(String(tabID.uuidString.prefix(8)))")
+        dbg("   타입: \(type)")
         
         captureSnapshot(pageRecord: currentRecord, webView: webView, type: type, tabID: tabID, historyIndex: currentIndex)
     }
@@ -1280,7 +1357,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // 🔧 **핵심 수정: 무결성 검증이 포함된 안전한 조회 메서드**
+    // 🔧 **핵심 수정: ID 기반 조회만 수행 (제목 검증 제거)**
     private func retrieveSnapshotSafely(for targetRecord: PageRecord) -> BFCacheSnapshot? {
         let pageID = targetRecord.id
         
@@ -1290,33 +1367,10 @@ final class BFCacheTransitionSystem: NSObject {
             return nil
         }
         
-        // 🔧 **무결성 검증**
-        guard snapshot.validateIntegrity(against: targetRecord) else {
-            dbg("❌ 무결성 검증 실패 - 캐시 제거: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
-            
-            // 오염된 캐시 제거
-            removeFromMemoryCache(pageID)
-            
-            // 디스크에서도 제거 (백그라운드)
-            diskIOQueue.async { [weak self] in
-                guard let self = self,
-                      let diskPath = self.cacheAccessQueue.sync(execute: { self._diskCacheIndex[pageID] }) else { return }
-                
-                let pageDir = URL(fileURLWithPath: diskPath)
-                try? FileManager.default.removeItem(at: pageDir)
-                
-                self.cacheAccessQueue.async(flags: .barrier) {
-                    self._diskCacheIndex.removeValue(forKey: pageID)
-                    self._cacheVersion.removeValue(forKey: pageID)
-                }
-                
-                self.dbg("🗑️ 오염된 캐시 디스크 삭제: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
-            }
-            
-            return nil
-        }
+        // 🎯 **제목 검증 제거 - ID만으로 매칭**
+        // SPA에서는 제목이 동적으로 변경될 수 있으므로 ID만 신뢰
+        dbg("✅ 캐시 히트: 저장된 제목 '\(snapshot.pageRecord.title)' → 현재 제목 '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))] 인덱스: \(snapshot.historyIndex)")
         
-        dbg("✅ 무결성 검증 통과: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))] 인덱스: \(snapshot.historyIndex)")
         return snapshot
     }
     
@@ -1344,19 +1398,33 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         let targetRecord = pageHistory[targetIndex]
+        
+        // 🎯 **중요: 히스토리 상태 덤프 (디버깅용)**
+        dbg("   히스토리 덤프:")
+        for (idx, record) in pageHistory.enumerated() {
+            let marker = idx == currentIndex ? "👉" : (idx == targetIndex ? "🎯" : "  ")
+            dbg("     [\(idx)] \(marker) '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
+        }
+        
         let targetSnapshot = retrieveSnapshotSafely(for: targetRecord)
         
         dbg("🎯 타겟 확정:")
         dbg("   타겟 인덱스: \(targetIndex)")
-        dbg("   타겟 제목: '\(targetRecord.title)'")
+        dbg("   타겟 제목 (현재): '\(targetRecord.title)'")
         dbg("   타겟 ID: \(String(targetRecord.id.uuidString.prefix(8)))")
         dbg("   타겟 URL: \(targetRecord.url.absoluteString)")
         dbg("   캐시 상태: \(targetSnapshot != nil ? "✅ 있음" : "❌ 없음")")
         
         if let snapshot = targetSnapshot {
+            dbg("   스냅샷 제목 (저장됨): '\(snapshot.pageRecord.title)'")
             dbg("   스냅샷 버전: v\(snapshot.version)")
             dbg("   스냅샷 상태: \(snapshot.captureStatus)")
             dbg("   스냅샷 인덱스: \(snapshot.historyIndex)")
+            
+            // 🎯 **제목 불일치 경고**
+            if snapshot.pageRecord.title != targetRecord.title {
+                dbg("   ⚠️ 제목 불일치 - 저장: '\(snapshot.pageRecord.title)' vs 현재: '\(targetRecord.title)'")
+            }
         }
         
         return (targetIndex, targetRecord, targetSnapshot)
@@ -1691,8 +1759,12 @@ final class BFCacheTransitionSystem: NSObject {
                 targetView = imageView
                 dbg("📸 타겟 페이지 BFCache 스냅샷 사용: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
             } else {
-                targetView = createInfoCard(for: record, in: webView.bounds)
-                dbg("ℹ️ 타겟 페이지 정보 카드 생성: '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
+                // ⚠️ **스냅샷의 캡처된 제목 사용**
+                let displayTitle = targetSnapshot?.pageRecord.title ?? record.title
+                var displayRecord = record
+                displayRecord.title = displayTitle
+                targetView = createInfoCard(for: displayRecord, in: webView.bounds)
+                dbg("ℹ️ 타겟 페이지 정보 카드 생성: '\(displayTitle)' [ID: \(String(record.id.uuidString.prefix(8)))]")
             }
         } else {
             targetView = UIView()
@@ -2085,12 +2157,12 @@ extension BFCacheTransitionSystem {
         captureCurrentPageSnapshot(webView: webView, stateModel: stateModel, type: .immediate)
     }
 
-    /// 🎯 **핵심 수정 10: 페이지 로드 완료 후 자동 캐시 강화 (명시적 캡처)**
+    /// ⏱️ **핵심 수정: 페이지 로드 완료 후 DOM 안정화를 기다리고 캡처**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
-        dbg("📸 도착 스냅샷 캡처 요청")
+        dbg("📸 도착 스냅샷 캡처 요청 (DOM 안정화 대기)")
         
-        // 현재 페이지 캡처 (백그라운드 우선순위)
-        captureCurrentPageSnapshot(webView: webView, stateModel: stateModel, type: .background)
+        // ⏱️ **DOM 안정화를 기다리고 캡처 (delayed 타입 사용)**
+        captureCurrentPageSnapshot(webView: webView, stateModel: stateModel, type: .delayed)
         
         // 🔧 **개선된 이전 페이지 캐시 강화 로직**
         if let tabID = stateModel.tabID, stateModel.dataModel.currentPageIndex > 0 {
