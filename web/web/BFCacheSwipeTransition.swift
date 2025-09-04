@@ -1600,7 +1600,7 @@ final class BFCacheTransitionSystem: NSObject {
         guard let pageID = notification.userInfo?["pageID"] as? UUID else { return }
         
         // 활성 전환 중인 것들에서 해당 페이지의 미리보기 업데이트
-        for (tabID, context) in activeTransitions {
+        for (_, context) in activeTransitions {
             if let targetIndex = context.direction == .back ?
                 context.stateModel?.dataModel.currentPageIndex.advanced(by: -1) :
                 context.stateModel?.dataModel.currentPageIndex.advanced(by: 1),
