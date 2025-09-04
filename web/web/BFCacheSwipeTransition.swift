@@ -481,7 +481,7 @@ struct BFCacheSnapshot: Codable {
                     
                     for (let i = 0; i < count; i++) {
                         const skeletonElement = document.createElement('div');
-                        skeletonElement.className = `bfcache-skeleton bfcache-skeleton-\${skeleton.componentType}-\${i}`;
+
                         skeletonElement.innerHTML = skeleton.htmlTemplate;
                         
                         // 컴포넌트별 스타일 적용
