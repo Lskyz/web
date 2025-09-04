@@ -639,6 +639,34 @@ final class BFCacheTransitionSystem: NSObject {
     private let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
     private var _memoryCache: [UUID: BFCacheSnapshot] = [:]
     private var _diskCacheIndex: [UUID: String] = [:]
+
+    // 🧮 스냅샷 버전 저장소 (전용 직렬 큐로 원자 처리)
+private let versionQueue = DispatchQueue(label: "bfcache.version", qos: .userInitiated)
+private var _cacheVersion: [UUID: Int] = [:]
+
+@inline(__always)
+private func nextVersion(for id: UUID) -> Int {
+    return versionQueue.sync {
+        let v = (_cacheVersion[id] ?? 0) + 1
+        _cacheVersion[id] = v
+        return v
+    }
+}
+
+@inline(__always)
+private func setVersion(_ v: Int, for id: UUID) {
+    versionQueue.sync {
+        _cacheVersion[id] = v
+    }
+}
+
+@inline(__always)
+private func clearVersion(for id: UUID) {
+    versionQueue.sync {
+        _cacheVersion.removeValue(forKey: id)
+    }
+}
+
     
     // 🔄 **사이트별 타이밍 프로파일**
     private var _siteTimingProfiles: [String: SiteTimingProfile] = [:]
@@ -1058,13 +1086,8 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         // 버전 증가 (스레드 안전)
-        let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
-            guard let self = self else { return 1 }
-            let currentVersion = self._cacheVersion[pageRecord.id] ?? 0
-            let newVersion = currentVersion + 1
-            self._cacheVersion[pageRecord.id] = newVersion
-            return newVersion
-        }
+        let version: Int = nextVersion(for: pageRecord.id)
+
         
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
@@ -1540,7 +1563,8 @@ final class BFCacheTransitionSystem: NSObject {
             for pageID in pageIDs {
                 self._memoryCache.removeValue(forKey: pageID)
                 self._diskCacheIndex.removeValue(forKey: pageID)
-                self._cacheVersion.removeValue(forKey: pageID)
+                self.clearVersion(for: pageID)
+
             }
         }
         
