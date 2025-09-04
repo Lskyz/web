@@ -293,52 +293,45 @@ DispatchQueue.main.async {
         
         // **1단계: 비율 기반 1차 정렬 (0ms)**
         restoreSteps.append((1, { stepCompletion in
-            TabPersistenceManager.debugMessages.append("🔄 1단계: 비율 기반 초기 정렬")
-            
-            let restoreJS = """
-(function() {
-  try {
-    // CSS.escape 폴리필 (낮은 iOS에서 안전)
-    if (typeof CSS === 'undefined') { window.CSS = {}; }
-    if (typeof CSS.escape !== 'function') {
-      CSS.escape = function(s){ return String(s).replace(/[^a-zA-Z0-9_\\-]/g,'\\\\$&'); };
-    }
+    TabPersistenceManager.debugMessages.append("🔄 1단계: 비율 기반 초기 정렬")
 
-    const doc = document.documentElement;
-    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-    const docH = doc.scrollHeight || 0;
-    const maxTop = Math.max(0, docH - vh);
-
-    const fromRatio = Math.round(\(self.scrollRatio) * maxTop);
-    const fromPx    = Math.min(maxTop, Math.max(0, \(Int(self.scrollPosition.y))));
-
-    // 문서가 아직 로딩 중이면 load 시점에 적용 예약
-    if (document.readyState !== 'complete') {
-      window.addEventListener('load', function(){
-        const docH2 = document.documentElement.scrollHeight || 0;
-        const vh2 = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-        const maxTop2 = Math.max(0, docH2 - vh2);
-        const y = Math.max(0, Math.min(maxTop2, fromRatio || fromPx));
+    let restoreJS = """
+    (function() {
+      try {
+        if (typeof CSS === 'undefined') { window.CSS = {}; }
+        if (typeof CSS.escape !== 'function') {
+          CSS.escape = function(s){ return String(s).replace(/[^a-zA-Z0-9_\\-]/g,'\\\\$&'); };
+        }
+        const doc = document.documentElement;
+        const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+        const docH = doc.scrollHeight || 0;
+        const maxTop = Math.max(0, docH - vh);
+        const fromRatio = Math.round(\(self.scrollRatio) * maxTop);
+        const fromPx    = Math.min(maxTop, Math.max(0, \(Int(self.scrollPosition.y))));
+        if (document.readyState !== 'complete') {
+          window.addEventListener('load', function(){
+            const docH2 = document.documentElement.scrollHeight || 0;
+            const vh2 = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+            const maxTop2 = Math.max(0, docH2 - vh2);
+            const y = Math.max(0, Math.min(maxTop2, fromRatio || fromPx));
+            window.scrollTo(0, y);
+          }, { once: true });
+          return true;
+        }
+        const y = Math.max(0, Math.min(maxTop, fromRatio || fromPx));
         window.scrollTo(0, y);
-      }, { once: true });
-      return true; // 예약 완료로 간주
+        return true;
+      } catch(e) { return false; }
+    })()
+    """
+
+    webView.evaluateJavaScript(restoreJS) { result, _ in
+        let success = (result as? Bool) ?? false
+        TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
+        stepCompletion(success)
     }
+}))
 
-    const y = Math.max(0, Math.min(maxTop, fromRatio || fromPx));
-    window.scrollTo(0, y);
-    return true;
-  } catch(e) { return false; }
-})()
-"""
-
-            """
-            
-            webView.evaluateJavaScript(restoreJS) { result, _ in
-                let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
-                stepCompletion(success)
-            }
-        }))
         
         // **2단계: 앵커 복원 (적응형 대기)**
         if let anchor = self.anchor {
@@ -393,7 +386,7 @@ DispatchQueue.main.async {
         
         // **5단계: 최종 검증 및 적응 루프**
         restoreSteps.append((5, { stepCompletion in
-            let waitTime = min(profile.getAdaptiveWaitTime(step: 4) 0.12)
+            let waitTime = min(profile.getAdaptiveWaitTime(step: 4), 0.12)
             TabPersistenceManager.debugMessages.append("🔄 5단계: 최종 검증 및 적응 루프 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -957,8 +950,9 @@ private func clearVersion(for id: UUID) {
         }
         
         // 여기까지 오면 모든 시도 실패
-let scrollHeight = mainSyncOrNow { webView.scrollView.contentSize.height }
-let scrollRatio = scrollHeight > 0 ? captureData.scrollPosition.y / scrollHeight : 0.0
+llet (contentH, viewH) = mainSyncOrNow { (webView.scrollView.contentSize.height, webView.bounds.height) }
+let scrollable = max(contentH - viewH, 1)
+let scrollRatio = scrollable > 1 ? captureData.scrollPosition.y / scrollable : 0.0
 
 return (
     BFCacheSnapshot(
@@ -2231,25 +2225,25 @@ mainSyncOrNow {
     // MARK: - 🌐 JavaScript 스크립트
     
     static func makeBFCacheScript() -> WKUserScript {
-        let scriptSource = """
+    let scriptSource = """
 try { if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; } } catch(e) {}
 
 window.addEventListener('pageshow', function(event) {
-    if (event.persisted) {
-        console.log('🔄 BFCache 페이지 복원');
-        ...
-    }
+  if (event.persisted) {
+    // 필요 시 동적 콘텐츠 재요청 훅
+    // if (window.refreshDynamicContent) window.refreshDynamicContent();
+  }
 });
 
 window.addEventListener('pagehide', function(event) {
-    if (event.persisted) {
-        console.log('📸 BFCache 페이지 저장');
-    }
+  if (event.persisted) {
+    // BFCache 저장 시점 로그 훅
+  }
 });
 """
-
-        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-    }
+    return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+}
+}
     
     // MARK: - 디버그
     
