@@ -798,15 +798,15 @@ private func clearVersion(for id: UUID) {
         if task.type == .background {
     waitForStableState(webView: webView) { [weak self] in
         guard let self = self else { return }
+        // ⬇️ 안정상태 콜백은 메인 스레드에서 오므로, 반드시 serialQueue로 되돌린 뒤 캡처 실행
         self.serialQueue.async {
             self.performCaptureAfterStable(task: task)
         }
     }
 } else {
-    // (이미 serialQueue 안이지만, 일관성 위해 아래처럼 감싸도 됨)
+    // immediate는 지금 우리가 serialQueue 위라 그대로 진행
     performCaptureAfterStable(task: task)
 }
-
     
     private func waitForStableState(webView: WKWebView, completion: @escaping () -> Void) {
         let stableScript = """
