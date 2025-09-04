@@ -599,7 +599,7 @@ struct BFCacheSnapshot: Codable {
                         
                         if (reactKey && anchorElement.getAttribute && anchorElement.getAttribute('data-reactkey') !== reactKey) {
                             console.warn('React key 불일치 - 앵커 요소 재검색');
-                            const correctAnchor = document.querySelector(`[data-reactkey="\${reactKey}"]`);
+                            const correctAnchor = document.querySelector(`[data-reactkey="\\${reactKey}"]`);
                             if (correctAnchor) {
                                 anchorElement = correctAnchor;
                             }
@@ -1219,7 +1219,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     // 🎯 **강화된 동적 사이트 캡처 JavaScript** - React/SPA 완전 분석
     private func executeEnhancedDynamicCapture(webView: WKWebView, scrollY: CGFloat) -> [String: Any]? {
-        return executeJavaScriptSync(webView: webView, script: """
+        let script = """
         (function() {
             try {
                 console.log('🔍 강화된 동적 사이트 분석 시작');
@@ -1381,7 +1381,7 @@ final class BFCacheTransitionSystem: NSObject {
                         const reactInfo = getReactInfo(element);
                         if (reactInfo) {
                             components.push({
-                                id: element.id || `comp-\${depth}-\${i}`,
+                                id: element.id || `comp-\\${depth}-\\${i}`,
                                 type: determineComponentType(element),
                                 selector: getElementSelector(element),
                                 props: reactInfo.props,
@@ -1454,7 +1454,7 @@ final class BFCacheTransitionSystem: NSObject {
                     const iframes = [];
                     document.querySelectorAll('iframe').forEach((iframe, index) => {
                         const state = {
-                            iframeSelector: iframe.id ? `#\${iframe.id}` : `iframe:nth-child(\${index + 1})`,
+                            iframeSelector: iframe.id ? `#\\${iframe.id}` : `iframe:nth-child(\\${index + 1})`,
                             src: iframe.src,
                             scrollX: 0,
                             scrollY: 0,
@@ -1477,7 +1477,7 @@ final class BFCacheTransitionSystem: NSObject {
                                     try {
                                         if (nested.contentWindow && nested.contentDocument) {
                                             state.nestedFrames.push({
-                                                iframeSelector: nested.id ? `#\${nested.id}` : `iframe:nth-child(\${nestedIndex + 1})`,
+                                                iframeSelector: nested.id ? `#\\${nested.id}` : `iframe:nth-child(\\${nestedIndex + 1})`,
                                                 src: nested.src,
                                                 scrollX: nested.contentWindow.scrollX,
                                                 scrollY: nested.contentWindow.scrollY,
@@ -1565,7 +1565,7 @@ final class BFCacheTransitionSystem: NSObject {
                             };
                             
                             visibleItems.push({
-                                id: el.id || el.dataset.id || el.dataset.itemId || `enhanced-item-\${index}`,
+                                id: el.id || el.dataset.id || el.dataset.itemId || `enhanced-item-\\${index}`,
                                 selector: getElementSelector(el),
                                 offsetTop: el.offsetTop,
                                 height: rect.height,
@@ -1796,10 +1796,10 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 // === 유틸리티 함수들 ===
                 function getElementSelector(element) {
-                    if (element.id) return `#\${element.id}`;
+                    if (element.id) return `#\\${element.id}`;
                     if (element.className && typeof element.className === 'string') {
                         const classes = element.className.split(' ').filter(c => c && !c.includes('sk-')); // 스켈레톤 클래스 제외
-                        if (classes.length > 0) return `.\${classes[0]}`;
+                        if (classes.length > 0) return `.\\${classes[0]}`;
                     }
                     return element.tagName.toLowerCase();
                 }
@@ -1881,7 +1881,7 @@ final class BFCacheTransitionSystem: NSObject {
                     // React Query 스타일 키 생성
                     if (frameworkInfo.framework === 'react') {
                         const id = element.id || element.dataset.id;
-                        if (id) return `query_\${id}`;
+                        if (id) return `query_\\${id}`;
                     }
                     
                     return null;
@@ -1904,7 +1904,9 @@ final class BFCacheTransitionSystem: NSObject {
                 return null;
             }
         })()
-        """)
+        """
+        
+        return executeJavaScriptSync(webView: webView, script: script)
     }
     
     // 헬퍼 메서드들 - React/SPA 정보 추출
@@ -1970,7 +1972,7 @@ final class BFCacheTransitionSystem: NSObject {
                   let src = iframeInfo["src"] as? String else { return nil }
             
             let nestedFrames: [BFCacheSnapshot.ScrollStateBlock.IframeScrollState] = []
-            if let nested = iframeInfo["nestedFrames"] as? [[String: Any]] {
+            if let _ = iframeInfo["nestedFrames"] as? [[String: Any]] {
                 // 재귀적으로 중첩 iframe 처리는 간단화
                 // 실제로는 더 복잡한 로직 필요
             }
@@ -2148,7 +2150,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 컴포넌트별 스켈레톤 생성
         let componentSkeletons = componentTypes.map { (type, info) in
-            let count = info["count"] as? Int ?? 1
+            let _ = info["count"] as? Int ?? 1
             let avgHeight = info["averageHeight"] as? CGFloat ?? 120
             let hasImages = (info["hasImages"] as? Int ?? 0) > 0
             let hasText = (info["hasText"] as? Int ?? 0) > 0
@@ -3441,7 +3443,7 @@ final class BFCacheTransitionSystem: NSObject {
             // 프레임워크별 데이터 즉시 하이드레이션 (강화)
             window.hydrateCachedData = function(data, framework = 'react', allowScrollChange = false) {
                 try {
-                    console.log(`💧 \${framework} 데이터 하이드레이션 시작:`, data);
+                    console.log(`💧 \\${framework} 데이터 하이드레이션 시작:`, data);
                     
                     if (!allowScrollChange && window.__BFCACHE_SCROLL_LOCKED__) {
                         // 스크롤 위치 고정 상태에서는 데이터만 교체
@@ -3490,10 +3492,10 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                     
                     // 실제 데이터 렌더링 로직은 앱별로 구현 필요
-                    console.log(`💧 \${framework} 하이드레이션 완료`);
+                    console.log(`💧 \\${framework} 하이드레이션 완료`);
                     return true;
                 } catch (e) {
-                    console.error(`\${framework} 하이드레이션 실패:`, e);
+                    console.error(`\\${framework} 하이드레이션 실패:`, e);
                     return false;
                 }
             };
