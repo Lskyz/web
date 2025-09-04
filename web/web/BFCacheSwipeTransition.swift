@@ -796,13 +796,17 @@ private func clearVersion(for id: UUID) {
         
         // 안정 상태 대기 (immediate 타입은 즉시, background는 대기)
         if task.type == .background {
-            waitForStableState(webView: webView) { [weak self] in
-                self?.performCaptureAfterStable(task: task)
-            }
-        } else {
-            performCaptureAfterStable(task: task)
+    waitForStableState(webView: webView) { [weak self] in
+        guard let self = self else { return }
+        self.serialQueue.async {
+            self.performCaptureAfterStable(task: task)
         }
     }
+} else {
+    // (이미 serialQueue 안이지만, 일관성 위해 아래처럼 감싸도 됨)
+    performCaptureAfterStable(task: task)
+}
+
     
     private func waitForStableState(webView: WKWebView, completion: @escaping () -> Void) {
         let stableScript = """
@@ -853,7 +857,7 @@ private func clearVersion(for id: UUID) {
         }
         
         // 메인 스레드에서 웹뷰 상태 확인
-        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+        let captureData = mainSyncOrNow { () -> CaptureData? in
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
                 self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
@@ -921,7 +925,7 @@ private func clearVersion(for id: UUID) {
         }
         
         // 여기까지 오면 모든 시도 실패
-        let scrollHeight = DispatchQueue.main.sync { () -> CGFloat in
+        let scrollHeight = mainSyncOrNow { webView.scrollView.contentSize.height }
             return webView.scrollView.contentSize.height
         }
         let scrollRatio = scrollHeight > 0 ? captureData.scrollPosition.y / scrollHeight : 0.0
@@ -943,22 +947,22 @@ private func clearVersion(for id: UUID) {
         let semaphore = DispatchSemaphore(value: 0)
         
         // 1. 비주얼 스냅샷 (메인 스레드)
-        DispatchQueue.main.sync {
-            let config = WKSnapshotConfiguration()
-            config.rect = captureData.bounds
-            config.afterScreenUpdates = false
-            
-            webView.takeSnapshot(with: config) { image, error in
-                if let error = error {
-                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
-                    // Fallback: layer 렌더링
-                    visualSnapshot = self.renderWebViewToImage(webView)
-                } else {
-                    visualSnapshot = image
-                }
-                semaphore.signal()
-            }
+        mainSyncOrNow {
+    let config = WKSnapshotConfiguration()
+    config.rect = captureData.bounds
+    config.afterScreenUpdates = false
+    
+    webView.takeSnapshot(with: config) { image, error in
+        if let error = error {
+            self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+            visualSnapshot = self.renderWebViewToImage(webView)
+        } else {
+            visualSnapshot = image
         }
+        semaphore.signal()
+    }
+}
+
         
         // ⚡ 적절한 타임아웃 (2.5초)
         let result = semaphore.wait(timeout: .now() + 2.5)
@@ -969,8 +973,8 @@ private func clearVersion(for id: UUID) {
         
         // 2. DOM 캡처
         let domSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let domScript = """
+        mainSyncOrNow {
+        let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
@@ -1002,11 +1006,10 @@ private func clearVersion(for id: UUID) {
         
         // 3. 🎯 앵커/아이템 기반 JS 상태 캡처
         let jsSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let jsScript = generateEnhancedCaptureScript()
-            
-            webView.evaluateJavaScript(jsScript) { result, error in
-                if let data = result as? [String: Any] {
+mainSyncOrNow {
+    let jsScript = generateEnhancedCaptureScript()
+    webView.evaluateJavaScript(jsScript) { result, error in
+        if let data = result as? [String: Any] {
                     jsState = data
                     
                     // 앵커 데이터 추출
@@ -2260,7 +2263,13 @@ extension BFCacheTransitionSystem {
         
         TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
     }
-    
+
+    // 메인스레드 재진입 안전 래퍼 (메인이면 즉시, 아니면 동기 디스패치)
+@inline(__always)
+private func mainSyncOrNow<T>(_ work: () -> T) -> T {
+    if Thread.isMainThread { return work() }
+    return DispatchQueue.main.sync { work() }
+}
     // 버튼 네비게이션 래퍼
     static func goBack(stateModel: WebViewStateModel) {
         shared.navigateBack(stateModel: stateModel)
