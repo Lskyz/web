@@ -321,35 +321,35 @@ DispatchQueue.main.async {
         // **2단계: 앵커 복원 (적응형 대기)**
         if let anchor = self.anchor {
             restoreSteps.append((2, { stepCompletion in
-                let waitTime = min(profile.getAdaptiveWaitTime(step: 1), 0.12)
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 앵커 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let anchorJS = self.generateAnchorRestoreScript(anchor)
-                    webView.evaluateJavaScript(anchorJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
+    TabPersistenceManager.debugMessages.append("🔄 2단계: 앵커 복원 (즉시+백오프)")
+    let anchorJS = self.generateAnchorRestoreScript(anchor)
+    webView.evaluateJavaScript(anchorJS) { result, _ in
+        let ok = (result as? Bool) ?? false
+        if ok { stepCompletion(true); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            webView.evaluateJavaScript(anchorJS) { r2, _ in
+                stepCompletion((r2 as? Bool) ?? false)
+            }
+        }
+    }
+}))
         }
         
         // **3단계: 아이템 정밀 복원**
         if let item = self.item {
             restoreSteps.append((3, { stepCompletion in
-                let waitTime = min(profile.getAdaptiveWaitTime(step: 2), 0.12)
-                TabPersistenceManager.debugMessages.append("🔄 3단계: 아이템 정밀 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let itemJS = self.generateItemRestoreScript(item)
-                    webView.evaluateJavaScript(itemJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
+    TabPersistenceManager.debugMessages.append("🔄 3단계: 아이템 정밀 복원 (즉시+백오프)")
+    let itemJS = self.generateItemRestoreScript(item)
+    webView.evaluateJavaScript(itemJS) { result, _ in
+        let ok = (result as? Bool) ?? false
+        if ok { stepCompletion(true); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            webView.evaluateJavaScript(itemJS) { r2, _ in
+                stepCompletion((r2 as? Bool) ?? false)
+            }
+        }
+    }
+}))
         }
         
         // **4단계: 컨테이너 보정**
@@ -935,7 +935,7 @@ private func clearVersion(for id: UUID) {
         }
         
         // 여기까지 오면 모든 시도 실패
-llet (contentH, viewH) = mainSyncOrNow { (webView.scrollView.contentSize.height, webView.bounds.height) }
+let (contentH, viewH) = mainSyncOrNow { (webView.scrollView.contentSize.height, webView.bounds.height) }
 let scrollable = max(contentH - viewH, 1)
 let scrollRatio = scrollable > 1 ? captureData.scrollPosition.y / scrollable : 0.0
 
@@ -2228,7 +2228,7 @@ window.addEventListener('pagehide', function(event) {
 """
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
 }
-}
+
     
     // MARK: - 디버그
     
