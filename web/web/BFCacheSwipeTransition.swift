@@ -14,6 +14,7 @@
 import UIKit
 import WebKit
 import SwiftUI
+import Darwin
 
 // MARK: - 타임스탬프 유틸
 fileprivate func ts() -> String {
