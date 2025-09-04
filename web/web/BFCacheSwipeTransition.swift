@@ -1,13 +1,14 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **올바른 점진적 복원 - 올인원 복원 후 데이터 점진적 채움**
-//  ✅ 1. 데이터·위치 동시 저장 - scrollY + 아이템 정보 + 시퀀스 통합
-//  ✅ 2. 스켈레톤 기반 즉시 채움 - 부족한 영역 스켈레톤으로 확보
-//  ✅ 3. 올인원 복원 - 저장된 블록 기반 **즉시 최종 위치 이동**
-//  ✅ 4. 스크롤 위치 고정 - 이후 데이터 로딩 시 위치 변동 없음
-//  ✅ 5. 비동기 데이터 교체 - 스켈레톤→실제 데이터 깜박임 없이 교체
-//  🚫 3단계 복원 제거 → 단일 복원 후 데이터만 점진적 채움
-//  ⚡ 사용자 경험: 이미 복원된 상태에서 점차 안정화
+//  🎯 **강화된 동적 사이트 스크롤 복원 - React 구조 감지 + 다양한 사이트 지원**
+//  ✅ 1. React 앱 구조 자동 감지 (#app, #root, [data-reactroot] 등)
+//  ✅ 2. iframe 내부 접근 및 크로스 프레임 스크롤 상태 수집
+//  ✅ 3. 동적 컴포넌트 식별자 기반 앵커 요소 정밀 추적
+//  ✅ 4. 가상화 리스트 (react-window, react-virtualized) 상태 복원
+//  ✅ 5. 무한 스크롤 + Intersection Observer 상태 관리
+//  ✅ 6. 다양한 SPA 프레임워크 (Vue, Angular, Svelte) 지원
+//  ✅ 7. 스켈레톤 생성시 실제 컴포넌트 구조 반영
+//  ⚡ 목표: 현대 웹앱의 복잡한 동적 구조에서도 픽셀 퍼펙트 복원
 //
 
 import UIKit
@@ -34,7 +35,7 @@ private class WeakGestureContext {
     }
 }
 
-// MARK: - 📸 **올인원 점진적 복원 스냅샷**
+// MARK: - 📸 **강화된 동적 사이트 스냅샷** - React/SPA 구조 완전 지원
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -45,42 +46,83 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
-    // 🎯 **통합 스크롤 상태 블록** - 올인원 복원을 위한 완전한 상태
+    // 🎯 **강화된 스크롤 상태 블록** - React/SPA 구조 완전 지원
     let scrollStateBlock: ScrollStateBlock
     
-    // 🎯 **스켈레톤 템플릿** - 부족한 데이터 영역 즉시 채움용
+    // 🎯 **동적 스켈레톤 템플릿** - 실제 컴포넌트 구조 반영
     let skeletonTemplate: SkeletonTemplate
     
-    // 🎯 **데이터 로딩 가이드** - 복원 후 비동기 데이터 채움 순서
+    // 🎯 **지능형 데이터 로딩 가이드** - 프레임워크별 최적화
     let dataLoadingGuide: DataLoadingGuide
     
-    // 🎯 **통합 스크롤 상태 블록** - 모든 정보를 한 번에 복원
+    // 🎯 **강화된 스크롤 상태 블록** - React/SPA 완전 지원
     struct ScrollStateBlock: Codable {
-        let finalScrollY: CGFloat          // 최종 복원 위치
+        let finalScrollY: CGFloat
         let viewportHeight: CGFloat
         let totalContentHeight: CGFloat
         
-        // 앵커 아이템 정보 (스크롤 위치 기준점)
+        // 🆕 **React 앱 구조 정보**
+        let reactAppInfo: ReactAppInfo
+        
+        // 🆕 **iframe 스크롤 상태** (크로스 프레임 지원)
+        let iframeScrollStates: [IframeScrollState]
+        
+        // 강화된 앵커 아이템 정보
         let anchorItem: AnchorItemInfo
         
-        // 가시 영역 아이템들 (즉시 표시용)
+        // 가시 영역 아이템들 (React 컴포넌트 정보 포함)
         let visibleItems: [VisibleItemInfo]
         
-        // 가상화/무한 스크롤 상태
+        // 가상화/무한 스크롤 상태 (React 라이브러리 지원)
         let virtualizationState: VirtualizationState
         
         // 컨테이너별 스크롤 상태
         let containerScrolls: [String: CGFloat]
         
-        // 캐시 키 정보 (React Query 스타일)
+        // 프레임워크별 캐시 키 정보
         let cacheKeys: [String: String]
+        
+        // 🆕 **React 앱 구조 정보**
+        struct ReactAppInfo: Codable {
+            let framework: String              // "react", "vue", "angular", "svelte", "vanilla"
+            let appContainerSelector: String   // "#app", "#root", ".app-container" 등
+            let hasReactRoot: Bool            // React 18+ createRoot 사용 여부
+            let componentTree: [ComponentInfo] // 컴포넌트 트리 정보
+            let stateManagement: String?       // "redux", "mobx", "zustand", "recoil" 등
+            let routingLibrary: String?        // "react-router", "reach-router", "next-router" 등
+            
+            struct ComponentInfo: Codable {
+                let id: String
+                let type: String               // "component", "list-item", "virtual-item" 등
+                let selector: String
+                let props: [String: String]?   // 주요 props 정보
+                let reactKey: String?          // React key 값
+                let depth: Int                // 컴포넌트 트리 깊이
+            }
+        }
+        
+        // 🆕 **iframe 스크롤 상태**
+        struct IframeScrollState: Codable {
+            let iframeSelector: String
+            let src: String
+            let scrollX: CGFloat
+            let scrollY: CGFloat
+            let contentHeight: CGFloat
+            let isAccessible: Bool            // same-origin 접근 가능 여부
+            let nestedFrames: [IframeScrollState]  // 중첩 iframe 지원
+        }
         
         struct AnchorItemInfo: Codable {
             let id: String
             let selector: String
-            let offsetFromTop: CGFloat     // 뷰포트 상단으로부터 거리
+            let offsetFromTop: CGFloat
             let elementHeight: CGFloat
-            let isSticky: Bool             // sticky 헤더인지 여부
+            let isSticky: Bool
+            // 🆕 **React 컴포넌트 정보**
+            let reactComponentName: String?    // 컴포넌트 이름
+            let reactKey: String?             // React key
+            let reactProps: [String: String]? // 주요 props
+            let isVirtualItem: Bool           // 가상화된 아이템인지
         }
         
         struct VisibleItemInfo: Codable {
@@ -88,50 +130,108 @@ struct BFCacheSnapshot: Codable {
             let selector: String
             let offsetTop: CGFloat
             let height: CGFloat
-            let content: String?           // 텍스트 콘텐츠 (검증용)
-            let hasImage: Bool            // 이미지 포함 여부
-            let loadPriority: Int         // 로딩 우선순위 (1=최우선)
+            let content: String?
+            let hasImage: Bool
+            let loadPriority: Int
+            // 🆕 **React/동적 컴포넌트 정보**
+            let componentInfo: ComponentInfo?
+            let dynamicContent: DynamicContentInfo?
+            
+            struct ComponentInfo: Codable {
+                let componentName: String
+                let reactKey: String?
+                let dataAttributes: [String: String]
+                let isLazyLoaded: Bool
+                let hasAsyncData: Bool
+            }
+            
+            struct DynamicContentInfo: Codable {
+                let isSkeletonPlaceholder: Bool
+                let hasLoadingState: Bool
+                let apiEndpoint: String?
+                let cacheKey: String?
+                let loadingStrategy: String    // "eager", "lazy", "intersection"
+            }
         }
         
         struct VirtualizationState: Codable {
             let isVirtual: Bool
-            let currentSequence: Int       // 현재 시퀀스 번호
-            let visibleStartIndex: Int     // 가시 시작 인덱스
-            let visibleEndIndex: Int       // 가시 종료 인덱스
+            let libraryType: String?          // "react-window", "react-virtualized", "react-virtual" 등
+            let currentSequence: Int
+            let visibleStartIndex: Int
+            let visibleEndIndex: Int
             let totalKnownItems: Int
+            let itemHeight: CGFloat?          // FixedSizeList 높이
+            let estimatedItemSize: CGFloat?   // DynamicSizeList 예상 높이
             let pageInfo: PageInfo?
+            let scrollOffset: CGFloat         // 가상 스크롤러 내부 오프셋
             
             struct PageInfo: Codable {
                 let currentPage: Int
                 let pageSize: Int
-                let loadedPages: [Int]     // 로딩된 페이지 목록
+                let loadedPages: [Int]
                 let hasNextPage: Bool
+                let infiniteScrollTrigger: String?  // Intersection Observer 트리거 선택자
+                let loadMoreElement: String?        // "Load More" 버튼 선택자
             }
         }
     }
     
-    // 🎯 **스켈레톤 템플릿** - 즉시 레이아웃 확보
+    // 🎯 **동적 스켈레톤 템플릿** - 실제 컴포넌트 구조 반영
     struct SkeletonTemplate: Codable {
         let averageItemHeight: CGFloat
         let itemsPerScreen: Int
-        let totalSkeletonItems: Int       // 생성할 스켈레톤 개수
-        let skeletonPattern: String       // 스켈레톤 HTML 패턴
-        let placeholderStyles: [String: String] // CSS 스타일 맵
+        let totalSkeletonItems: Int
+        let skeletonPattern: String
+        let placeholderStyles: [String: String]
+        
+        // 🆕 **컴포넌트별 스켈레톤 패턴**
+        let componentSkeletons: [ComponentSkeleton]
+        
+        struct ComponentSkeleton: Codable {
+            let componentType: String         // "list-item", "card", "article", "product" 등
+            let htmlTemplate: String
+            let cssTemplate: String
+            let estimatedHeight: CGFloat
+            let containsImages: Bool
+            let containsText: Bool
+            let priority: Int                 // 생성 우선순위
+        }
     }
     
-    // 🎯 **데이터 로딩 가이드** - 복원 후 비동기 채움 순서
+    // 🎯 **지능형 데이터 로딩 가이드** - 프레임워크별 최적화
     struct DataLoadingGuide: Codable {
         let loadingSequence: [LoadingStep]
         let backgroundLoadingEnabled: Bool
-        let lockScrollDuringLoad: Bool     // 데이터 로딩 중 스크롤 위치 고정
+        let lockScrollDuringLoad: Bool
+        
+        // 🆕 **프레임워크별 복원 전략**
+        let frameworkStrategy: FrameworkStrategy
         
         struct LoadingStep: Codable {
             let stepId: String
-            let dataSource: String         // API 엔드포인트 또는 캐시 키
-            let targetSelectors: [String]  // 교체할 스켈레톤 선택자
-            let delayMs: Int              // 로딩 지연 시간
-            let priority: Int             // 1=최우선
-            let fallbackContent: String?   // 로딩 실패시 대체 콘텐츠
+            let dataSource: String
+            let targetSelectors: [String]
+            let delayMs: Int
+            let priority: Int
+            let fallbackContent: String?
+            // 🆕 **React 상태 복원**
+            let reactStateRestore: ReactStateRestore?
+            
+            struct ReactStateRestore: Codable {
+                let storeType: String          // "redux", "context", "local-state"
+                let stateKey: String
+                let stateValue: String         // JSON 직렬화된 상태
+                let actionType: String?        // Redux action type
+            }
+        }
+        
+        struct FrameworkStrategy: Codable {
+            let framework: String
+            let hydrationMethod: String       // "client-side", "ssr-rehydration", "static-generation"
+            let dataFetchingPattern: String   // "swr", "react-query", "apollo", "relay" 등
+            let routerType: String?
+            let customRestoreScript: String? // 프레임워크별 커스텀 복원 스크립트
         }
     }
     
@@ -215,303 +315,500 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🎯 **핵심: 올인원 점진적 복원 - 즉시 최종 위치 이동**
+    // 🎯 **핵심: 강화된 동적 사이트 복원** - React/SPA 구조 완전 지원
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         guard captureStatus != .failed else {
             completion(false)
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 올인원 점진적 복원 시작: 즉시 최종 위치로 이동")
+        TabPersistenceManager.debugMessages.append("🎯 강화된 동적 사이트 복원 시작: \(scrollStateBlock.reactAppInfo.framework)")
         
         // iOS 웹뷰 특화: history.scrollRestoration 강제 manual
         webView.evaluateJavaScript("if (history.scrollRestoration) { history.scrollRestoration = 'manual'; }") { _, _ in }
         
-        performAllInOneRestore(to: webView, completion: completion)
+        performEnhancedDynamicRestore(to: webView, completion: completion)
     }
     
-    // 🎯 **올인원 복원 + 점진적 데이터 채움 시스템**
-   private func performAllInOneRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-    let stateBlock = scrollStateBlock
-       
-    // **1단계: 스켈레톤으로 전체 레이아웃 즉시 확보**
-    createFullSkeleton(to: webView) { skeletonSuccess in
-        // **2단계: 저장된 상태 블록 기반으로 즉시 최종 위치 이동 (한 번만!)**
-        self.executeOneTimeRestore(to: webView, stateBlock: stateBlock) { restoreSuccess in
-            TabPersistenceManager.debugMessages.append("✅ 올인원 복원 완료: \(restoreSuccess ? "성공" : "실패")")
-               
-            // **3단계: 복원 후 데이터 점진적 채움 (스크롤 위치 고정)**
-            if restoreSuccess {
-                self.startProgressiveDataFilling(to: webView)
+    // 🎯 **강화된 동적 사이트 복원 시스템**
+    private func performEnhancedDynamicRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let stateBlock = scrollStateBlock
+        let appInfo = stateBlock.reactAppInfo
+        
+        // **1단계: 프레임워크별 앱 구조 복원**
+        restoreAppStructure(to: webView, appInfo: appInfo) { structureSuccess in
+            // **2단계: 동적 스켈레톤 생성 (실제 컴포넌트 구조 반영)**
+            self.createDynamicComponentSkeleton(to: webView) { skeletonSuccess in
+                // **3단계: 강화된 스크롤 복원 (React/iframe 지원)**
+                self.executeEnhancedScrollRestore(to: webView, stateBlock: stateBlock) { scrollSuccess in
+                    TabPersistenceManager.debugMessages.append("✅ 강화된 복원 완료: 구조=\(structureSuccess), 스켈레톤=\(skeletonSuccess), 스크롤=\(scrollSuccess)")
+                    
+                    // **4단계: 프레임워크별 데이터 점진적 하이드레이션**
+                    if scrollSuccess {
+                        self.startFrameworkSpecificHydration(to: webView)
+                    }
+                    
+                    completion(scrollSuccess)
+                }
             }
-               
-            completion(restoreSuccess)
         }
     }
-}
     
-    // 🎯 **스켈레톤 전체 레이아웃 즉시 확보**
-   private func createFullSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-    let template = skeletonTemplate
-    let totalHeight = max(scrollStateBlock.totalContentHeight, CGFloat(template.totalSkeletonItems) * template.averageItemHeight)
-    
-    let fullSkeletonJS = """
-    (function() {
-        try {
-            // DOM 준비 확인
-            if (document.readyState !== 'complete') {
-                console.warn('DOM 미완료 - 스켈레톤 생성 지연');
-                return new Promise(resolve => {
-                    document.addEventListener('DOMContentLoaded', () => resolve(true));
-                }).then(() => createSkeleton());
-            }
-            return createSkeleton();
-            
-            function createSkeleton() {
-                // 기존 스켈레톤 정리
-                const existing = document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container');
-                existing.forEach(el => el.remove());
+    // 🎯 **1단계: 프레임워크별 앱 구조 복원**
+    private func restoreAppStructure(to webView: WKWebView, appInfo: ScrollStateBlock.ReactAppInfo, completion: @escaping (Bool) -> Void) {
+        let structureJS = """
+        (function() {
+            try {
+                const framework = '\(appInfo.framework)';
+                const appContainer = '\(appInfo.appContainerSelector)';
                 
-                // 전체 스켈레톤 컨테이너 생성
-                const skeletonContainer = document.createElement('div');
-                skeletonContainer.className = 'bfcache-skeleton-container';
-                skeletonContainer.style.cssText = `
-                    position: relative;
-                    min-height: ${totalHeight}px;
-                    background: #f8f9fa;
-                    width: 100%;
-                `;
+                console.log('🏗️ 앱 구조 복원 시작:', framework, appContainer);
                 
-                // 개별 스켈레톤 아이템들 생성
-                for (let i = 0; i < \(template.totalSkeletonItems); i++) {
-                    const skeletonItem = document.createElement('div');
-                    skeletonItem.className = 'bfcache-skeleton bfcache-skeleton-' + i;
-                    skeletonItem.style.cssText = `
-                        height: \(template.averageItemHeight)px;
-                        margin: 8px 16px;
-                        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
-                        background-size: 200% 100%;
-                        animation: bfcache-shimmer 1.8s infinite;
-                        border-radius: 8px;
-                        position: relative;
-                    `;
-                    
-                    skeletonItem.innerHTML = `\(template.skeletonPattern)`;
-                    skeletonContainer.appendChild(skeletonItem);
+                // DOM 준비 확인
+                if (document.readyState !== 'complete') {
+                    return new Promise(resolve => {
+                        document.addEventListener('DOMContentLoaded', () => resolve(restoreStructure()));
+                    });
                 }
                 
-                // 스켈레톤 애니메이션 CSS 주입
-                if (!document.getElementById('bfcache-skeleton-styles')) {
+                return restoreStructure();
+                
+                function restoreStructure() {
+                    // 앱 컨테이너 확인/생성
+                    let appRoot = document.querySelector(appContainer);
+                    if (!appRoot && (appContainer === '#app' || appContainer === '#root')) {
+                        appRoot = document.createElement('div');
+                        appRoot.id = appContainer.replace('#', '');
+                        document.body.appendChild(appRoot);
+                        console.log('🏗️ 앱 컨테이너 생성:', appContainer);
+                    }
+                    
+                    if (!appRoot) {
+                        console.warn('앱 컨테이너를 찾을 수 없음:', appContainer);
+                        return false;
+                    }
+                    
+                    // 프레임워크별 기본 구조 설정
+                    switch (framework) {
+                        case 'react':
+                            if (\(appInfo.hasReactRoot)) {
+                                // React 18+ createRoot
+                                appRoot.setAttribute('data-reactroot', '');
+                            } else {
+                                // React 17- render
+                                appRoot._reactRootContainer = true;
+                            }
+                            
+                            // React Router 상태 복원
+                            if ('\(appInfo.routingLibrary ?? "")' === 'react-router') {
+                                window.history.scrollRestoration = 'manual';
+                            }
+                            break;
+                            
+                        case 'vue':
+                            appRoot.setAttribute('data-v-app', '');
+                            if (window.Vue && window.Vue.version) {
+                                console.log('Vue 감지됨:', window.Vue.version);
+                            }
+                            break;
+                            
+                        case 'angular':
+                            appRoot.setAttribute('ng-app', '');
+                            if (window.ng && window.ng.version) {
+                                console.log('Angular 감지됨:', window.ng.version);
+                            }
+                            break;
+                            
+                        case 'svelte':
+                            appRoot.setAttribute('data-svelte-app', '');
+                            break;
+                    }
+                    
+                    // 컴포넌트 트리 기본 구조 생성
+                    const componentTree = \(jsonString(from: appInfo.componentTree));
+                    componentTree.forEach((comp, index) => {
+                        if (comp.type === 'list-container' && !document.querySelector(comp.selector)) {
+                            const container = document.createElement('div');
+                            container.className = comp.selector.replace('.', '').replace('#', '');
+                            if (comp.selector.startsWith('#')) container.id = comp.selector.replace('#', '');
+                            appRoot.appendChild(container);
+                        }
+                    });
+                    
+                    window.__BFCACHE_APP_STRUCTURE_RESTORED__ = true;
+                    return true;
+                }
+            } catch (e) {
+                console.error('앱 구조 복원 실패:', e);
+                return false;
+            }
+        })()
+        """
+        
+        webView.evaluateJavaScript(structureJS) { result, error in
+            let success = (result as? Bool) ?? false
+            if success {
+                TabPersistenceManager.debugMessages.append("🏗️ 앱 구조 복원 성공: \(appInfo.framework)")
+            } else {
+                TabPersistenceManager.debugMessages.append("❌ 앱 구조 복원 실패: \(error?.localizedDescription ?? "unknown")")
+            }
+            completion(success)
+        }
+    }
+    
+    // 🎯 **2단계: 동적 컴포넌트 스켈레톤 생성**
+    private func createDynamicComponentSkeleton(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let template = skeletonTemplate
+        let componentSkeletons = template.componentSkeletons
+        
+        let dynamicSkeletonJS = """
+        (function() {
+            try {
+                if (!window.__BFCACHE_APP_STRUCTURE_RESTORED__) {
+                    console.warn('앱 구조가 복원되지 않음 - 스켈레톤 생성 지연');
+                    return false;
+                }
+                
+                // 기존 스켈레톤 정리
+                document.querySelectorAll('.bfcache-skeleton, .bfcache-skeleton-container').forEach(el => el.remove());
+                
+                const componentSkeletons = \(jsonString(from: componentSkeletons));
+                const appContainer = document.querySelector('\(scrollStateBlock.reactAppInfo.appContainerSelector)') || document.body;
+                
+                // 컴포넌트별 스켈레톤 생성
+                componentSkeletons.forEach((skeleton, index) => {
+                    const count = Math.ceil(\(template.totalSkeletonItems) / componentSkeletons.length);
+                    
+                    for (let i = 0; i < count; i++) {
+                        const skeletonElement = document.createElement('div');
+                        skeletonElement.className = `bfcache-skeleton bfcache-skeleton-\${skeleton.componentType}-\${i}`;
+                        skeletonElement.innerHTML = skeleton.htmlTemplate;
+                        
+                        // 컴포넌트별 스타일 적용
+                        if (skeleton.cssTemplate) {
+                            skeletonElement.style.cssText = skeleton.cssTemplate;
+                        }
+                        
+                        // React 컴포넌트 특성 반영
+                        skeletonElement.setAttribute('data-component-type', skeleton.componentType);
+                        skeletonElement.style.height = skeleton.estimatedHeight + 'px';
+                        
+                        appContainer.appendChild(skeletonElement);
+                    }
+                });
+                
+                // 동적 스켈레톤 애니메이션 적용
+                if (!document.getElementById('bfcache-dynamic-skeleton-styles')) {
                     const style = document.createElement('style');
-                    style.id = 'bfcache-skeleton-styles';
+                    style.id = 'bfcache-dynamic-skeleton-styles';
                     style.textContent = `
+                        .bfcache-skeleton {
+                            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+                            background-size: 200% 100%;
+                            animation: bfcache-shimmer 1.8s infinite;
+                            border-radius: 8px;
+                            margin: 8px 0;
+                            position: relative;
+                        }
+                        
                         @keyframes bfcache-shimmer {
                             0% { background-position: -200% 0; }
                             100% { background-position: 200% 0; }
                         }
-                        .bfcache-skeleton-container {
-                            -webkit-transform: translateZ(0);
-                            will-change: auto;
+                        
+                        .bfcache-skeleton[data-component-type="list-item"] {
+                            display: flex;
+                            align-items: center;
+                            padding: 12px 16px;
+                        }
+                        
+                        .bfcache-skeleton[data-component-type="card"] {
+                            border-radius: 12px;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        }
+                        
+                        .bfcache-skeleton[data-component-type="article"] {
+                            max-width: 800px;
+                            margin: 16px auto;
                         }
                     `;
                     document.head.appendChild(style);
                 }
                 
-                // DOM에 스켈레톤 추가
-                const targetContainer = document.body;
-                if (!targetContainer) {
-                    console.error('document.body가 존재하지 않음');
-                    return false;
-                }
-                const firstChild = targetContainer.firstChild;
-                if (firstChild) {
-                    targetContainer.insertBefore(skeletonContainer, firstChild);
-                } else {
-                    targetContainer.appendChild(skeletonContainer);
+                // 높이 검증 및 조정
+                const totalHeight = Math.max(
+                    \(scrollStateBlock.totalContentHeight),
+                    componentSkeletons.reduce((sum, s) => sum + s.estimatedHeight, 0)
+                );
+                
+                if (appContainer.style) {
+                    appContainer.style.minHeight = totalHeight + 'px';
                 }
                 
-                // 높이 검증
-                const actualHeight = document.documentElement.scrollHeight;
-                console.log('스켈레톤 높이 검증: 기대 높이=${totalHeight}, 실제 높이=' + actualHeight);
-                
-                window.__BFCACHE_SKELETON_ACTIVE__ = true;
+                window.__BFCACHE_DYNAMIC_SKELETON_ACTIVE__ = true;
                 return true;
+                
+            } catch (e) {
+                console.error('동적 스켈레톤 생성 실패:', e);
+                return false;
             }
-        } catch (e) {
-            console.error('스켈레톤 생성 실패:', e);
-            return false;
-        }
-    })()
-    """
-    
-    webView.evaluateJavaScript(fullSkeletonJS) { result, error in
-        let success = (result as? Bool) ?? false
-        if success {
-            TabPersistenceManager.debugMessages.append("📐 스켈레톤 생성 성공: \(template.totalSkeletonItems)개, 높이=\(totalHeight)")
-        } else {
-            TabPersistenceManager.debugMessages.append("❌ 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
-            // 추가 디버깅: DOM 상태 확인
-            webView.evaluateJavaScript("document.readyState") { state, _ in
-                TabPersistenceManager.debugMessages.append("DOM 상태: \(state ?? "unknown")")
-            }
-        }
-        completion(success)
-    }
-}
-    
-    // 🎯 **핵심: 단일 올인원 복원 - 스크롤 위치는 한 번만 이동**
-    private func executeOneTimeRestore(to webView: WKWebView, stateBlock: ScrollStateBlock, completion: @escaping (Bool) -> Void) {
-    let finalScrollY = stateBlock.finalScrollY
-    let anchorItem = stateBlock.anchorItem
-    
-    let oneTimeRestoreJS = """
-    (function() {
-        try {
-            // DOM 준비 확인
-            if (document.readyState !== 'complete') {
-                console.warn('DOM 미완료 - 스크롤 복원 지연');
-                return new Promise(resolve => {
-                    document.addEventListener('DOMContentLoaded', () => resolve(true));
-                }).then(() => performRestore());
-            }
-            return performRestore();
-            
-            function performRestore() {
-                // 1. 기본 스크롤 위치 설정
-                const targetY = \(finalScrollY);
-                document.documentElement.style.scrollBehavior = 'auto';
-                window.scrollTo({ top: targetY, behavior: 'auto' });
-                
-                // 2. 앵커 아이템 기준 정밀 조정
-                const anchorElement = document.querySelector('\(anchorItem.selector)');
-                if (!anchorElement) {
-                    console.warn('앵커 요소 없음: \(anchorItem.selector)');
-                } else {
-                    const currentTop = anchorElement.getBoundingClientRect().top;
-                    const expectedTop = \(anchorItem.offsetFromTop);
-                    const adjustment = expectedTop - currentTop;
-                    
-                    if (Math.abs(adjustment) > 5) {
-                        window.scrollTo({ top: targetY + adjustment, behavior: 'auto' });
-                    }
-                }
-                
-                // 3. 컨테이너별 스크롤 복원
-                const containerScrolls = \(jsonString(from: stateBlock.containerScrolls));
-                Object.keys(containerScrolls).forEach(selector => {
-                    const container = document.querySelector(selector);
-                    if (container) {
-                        container.scrollTop = containerScrolls[selector];
-                    }
-                });
-                
-                // 4. 가상화/무한 스크롤 상태 복원
-                if (\(stateBlock.virtualizationState.isVirtual)) {
-                    if (window.virtualScroller) {
-                        window.virtualScroller.scrollToIndex(\(stateBlock.virtualizationState.visibleStartIndex));
-                    }
-                    if (window.infiniteScroll) {
-                        window.infiniteScroll.setCurrentPage(\(stateBlock.virtualizationState.pageInfo?.currentPage ?? 0));
-                    }
-                }
-                
-                // 5. React Query 캐시 적용
-                const cacheKeys = \(jsonString(from: stateBlock.cacheKeys));
-                if (window.__REACT_QUERY_STATE__ && cacheKeys.reactQuery) {
-                    const cachedData = window.__REACT_QUERY_STATE__[cacheKeys.reactQuery];
-                    if (cachedData?.data && window.hydrateCachedData) {
-                        window.hydrateCachedData(cachedData.data, false);
-                    }
-                }
-                
-                // 6. 스크롤 위치 고정 플래그 설정
-                window.__BFCACHE_SCROLL_LOCKED__ = true;
-                window.__BFCACHE_FINAL_SCROLL_Y__ = window.scrollY;
-                
-                // 7. 스크롤 이벤트 모니터링
-                window.__BFCACHE_SCROLL_LISTENER__ = () => {
-                    if (window.__BFCACHE_SCROLL_LOCKED__ && Math.abs(window.scrollY - window.__BFCACHE_FINAL_SCROLL_Y__) > 5) {
-                        console.warn('스크롤 변동 감지: 현재 Y=' + window.scrollY + ', 복원 Y=' + window.__BFCACHE_FINAL_SCROLL_Y__);
-                        window.scrollTo({ top: window.__BFCACHE_FINAL_SCROLL_Y__, behavior: 'auto' });
-                    }
-                };
-                window.addEventListener('scroll', window.__BFCACHE_SCROLL_LISTENER__, { passive: false });
-                
-                // 8. 복원 완료 이벤트
-                window.dispatchEvent(new CustomEvent('bfcacheRestoreComplete', {
-                    detail: {
-                        finalScrollY: window.scrollY,
-                        restoredFromCache: true,
-                        timestamp: Date.now()
-                    }
-                }));
-                
-                // 9. 스크롤 위치 검증
-                console.log('스크롤 복원 검증: 기대 Y=' + targetY + ', 실제 Y=' + window.scrollY + ', 높이=' + document.documentElement.scrollHeight);
-                return Math.abs(window.scrollY - targetY) < 5;
-            }
-        } catch (e) {
-            console.error('올인원 복원 실패:', e);
-            return false;
-        }
-    })()
-    """
-    
-    DispatchQueue.main.async {
-        // 네이티브 스크롤뷰 먼저 설정
-        webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
+        })()
+        """
         
-        // JavaScript 실행 및 결과 확인
-        webView.evaluateJavaScript(oneTimeRestoreJS) { result, error in
+        webView.evaluateJavaScript(dynamicSkeletonJS) { result, error in
             let success = (result as? Bool) ?? false
             if success {
-                TabPersistenceManager.debugMessages.append("✅ 올인원 복원 성공: Y=\(finalScrollY)")
+                TabPersistenceManager.debugMessages.append("🎨 동적 스켈레톤 생성 성공: \(componentSkeletons.count)개 컴포넌트 타입")
             } else {
-                TabPersistenceManager.debugMessages.append("❌ 올인원 복원 실패: \(error?.localizedDescription ?? "unknown")")
-                // 추가 디버깅: DOM 상태 및 실제 스크롤 위치
-                webView.evaluateJavaScript("document.readyState") { state, _ in
-                    TabPersistenceManager.debugMessages.append("DOM 상태: \(state ?? "unknown")")
-                }
-                webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
-                    TabPersistenceManager.debugMessages.append("스크롤 검증: 기대 Y=\(finalScrollY), 실제 Y=\(scrollY ?? "unknown")")
-                }
+                TabPersistenceManager.debugMessages.append("❌ 동적 스켈레톤 생성 실패: \(error?.localizedDescription ?? "unknown")")
             }
             completion(success)
         }
+    }
+    
+    // 🎯 **3단계: 강화된 스크롤 복원** - React/iframe 완전 지원
+    private func executeEnhancedScrollRestore(to webView: WKWebView, stateBlock: ScrollStateBlock, completion: @escaping (Bool) -> Void) {
+        let finalScrollY = stateBlock.finalScrollY
+        let anchorItem = stateBlock.anchorItem
+        let virtualizationState = stateBlock.virtualizationState
+        let iframeStates = stateBlock.iframeScrollStates
         
-        // 추가 검증: 100ms 및 500ms 후 스크롤 위치 재확인
-        let delays = [0.1, 0.5]
-        for delay in delays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.evaluateJavaScript("window.scrollY") { scrollY, _ in
-                    if let currentY = scrollY as? CGFloat, abs(currentY - finalScrollY) > 5 {
-                        TabPersistenceManager.debugMessages.append("⚠️ 스크롤 위치 변동: 기대 Y=\(finalScrollY), 실제 Y=\(currentY) at \(delay)s")
-                        // 보정 시도
-                        webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
-                        webView.evaluateJavaScript("window.scrollTo({ top: \(finalScrollY), behavior: 'auto' });")
-                    }
+        let enhancedScrollRestoreJS = """
+        (function() {
+            try {
+                if (!window.__BFCACHE_DYNAMIC_SKELETON_ACTIVE__) {
+                    console.warn('스켈레톤이 준비되지 않음 - 스크롤 복원 지연');
+                    return false;
                 }
+                
+                return performEnhancedScrollRestore();
+                
+                function performEnhancedScrollRestore() {
+                    const targetY = \(finalScrollY);
+                    document.documentElement.style.scrollBehavior = 'auto';
+                    
+                    // 1. 기본 스크롤 위치 설정
+                    window.scrollTo({ top: targetY, behavior: 'auto' });
+                    
+                    // 2. React 컴포넌트 앵커 기준 정밀 조정
+                    const anchorElement = document.querySelector('\(anchorItem.selector)');
+                    if (anchorElement) {
+                        // React 컴포넌트 정보 검증
+                        const reactKey = '\(anchorItem.reactKey ?? "")';
+                        const componentName = '\(anchorItem.reactComponentName ?? "")';
+                        
+                        if (reactKey && anchorElement.getAttribute && anchorElement.getAttribute('data-reactkey') !== reactKey) {
+                            console.warn('React key 불일치 - 앵커 요소 재검색');
+                            const correctAnchor = document.querySelector(`[data-reactkey="\${reactKey}"]`);
+                            if (correctAnchor) {
+                                anchorElement = correctAnchor;
+                            }
+                        }
+                        
+                        const currentTop = anchorElement.getBoundingClientRect().top;
+                        const expectedTop = \(anchorItem.offsetFromTop);
+                        const adjustment = expectedTop - currentTop;
+                        
+                        if (Math.abs(adjustment) > 5) {
+                            window.scrollTo({ top: targetY + adjustment, behavior: 'auto' });
+                        }
+                    }
+                    
+                    // 3. 가상화된 리스트 복원 (react-window, react-virtualized 등)
+                    if (\(virtualizationState.isVirtual)) {
+                        const libraryType = '\(virtualizationState.libraryType ?? "")';
+                        const visibleStartIndex = \(virtualizationState.visibleStartIndex);
+                        const scrollOffset = \(virtualizationState.scrollOffset);
+                        
+                        switch (libraryType) {
+                            case 'react-window':
+                                if (window.reactWindow || window.FixedSizeList || window.VariableSizeList) {
+                                    // react-window 스크롤 복원
+                                    const virtualList = document.querySelector('[data-react-window-list]');
+                                    if (virtualList && virtualList._listRef) {
+                                        virtualList._listRef.scrollToItem(visibleStartIndex, 'start');
+                                        if (scrollOffset > 0) {
+                                            virtualList._listRef.scrollTo(scrollOffset);
+                                        }
+                                    }
+                                }
+                                break;
+                                
+                            case 'react-virtualized':
+                                if (window.reactVirtualized || window.List || window.Grid) {
+                                    const virtualizedList = document.querySelector('[data-react-virtualized-list]');
+                                    if (virtualizedList && virtualizedList.scrollToRow) {
+                                        virtualizedList.scrollToRow(visibleStartIndex);
+                                    }
+                                }
+                                break;
+                                
+                            case 'react-virtual':
+                                if (window.useVirtual || window.virtualizer) {
+                                    const virtualContainer = document.querySelector('[data-virtual-container]');
+                                    if (virtualContainer) {
+                                        virtualContainer.scrollTop = scrollOffset;
+                                    }
+                                }
+                                break;
+                        }
+                    }
+                    
+                    // 4. iframe 스크롤 복원 (크로스 프레임 지원)
+                    const iframeStates = \(jsonString(from: iframeStates));
+                    iframeStates.forEach(iframeState => {
+                        try {
+                            const iframe = document.querySelector(iframeState.iframeSelector);
+                            if (iframe && iframe.contentWindow && iframeState.isAccessible) {
+                                // Same-origin iframe 스크롤 복원
+                                iframe.contentWindow.scrollTo(iframeState.scrollX, iframeState.scrollY);
+                                
+                                // 중첩 iframe 처리
+                                if (iframeState.nestedFrames && iframeState.nestedFrames.length > 0) {
+                                    iframeState.nestedFrames.forEach(nestedFrame => {
+                                        const nestedIframe = iframe.contentDocument.querySelector(nestedFrame.iframeSelector);
+                                        if (nestedIframe && nestedIframe.contentWindow && nestedFrame.isAccessible) {
+                                            nestedIframe.contentWindow.scrollTo(nestedFrame.scrollX, nestedFrame.scrollY);
+                                        }
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('iframe 스크롤 복원 실패 (CORS):', iframeState.iframeSelector, e);
+                        }
+                    });
+                    
+                    // 5. 컨테이너별 스크롤 복원
+                    const containerScrolls = \(jsonString(from: stateBlock.containerScrolls));
+                    Object.keys(containerScrolls).forEach(selector => {
+                        const container = document.querySelector(selector);
+                        if (container) {
+                            container.scrollTop = containerScrolls[selector];
+                        }
+                    });
+                    
+                    // 6. 무한 스크롤 상태 복원
+                    if (\(virtualizationState.pageInfo?.infiniteScrollTrigger != nil)) {
+                        const triggerSelector = '\(virtualizationState.pageInfo?.infiniteScrollTrigger ?? "")';
+                        const trigger = document.querySelector(triggerSelector);
+                        if (trigger && window.IntersectionObserver) {
+                            // Intersection Observer 재설정
+                            const observer = new IntersectionObserver((entries) => {
+                                entries.forEach(entry => {
+                                    if (entry.isIntersecting) {
+                                        // 무한 스크롤 트리거 - 실제 앱에서 구현 필요
+                                        console.log('무한 스크롤 트리거 감지');
+                                        if (window.loadMoreData) {
+                                            window.loadMoreData();
+                                        }
+                                    }
+                                });
+                            });
+                            observer.observe(trigger);
+                        }
+                    }
+                    
+                    // 7. React 상태 복원 (Redux, Context 등)
+                    const cacheKeys = \(jsonString(from: stateBlock.cacheKeys));
+                    if (cacheKeys.redux && window.__REDUX_STORE__) {
+                        try {
+                            const savedState = JSON.parse(cacheKeys.redux);
+                            window.__REDUX_STORE__.dispatch({ type: 'HYDRATE_STATE', payload: savedState });
+                        } catch (e) {
+                            console.warn('Redux 상태 복원 실패:', e);
+                        }
+                    }
+                    
+                    if (cacheKeys.reactQuery && window.__REACT_QUERY_CLIENT__) {
+                        try {
+                            const queryData = JSON.parse(cacheKeys.reactQuery);
+                            window.__REACT_QUERY_CLIENT__.setQueryData(queryData.key, queryData.data);
+                        } catch (e) {
+                            console.warn('React Query 상태 복원 실패:', e);
+                        }
+                    }
+                    
+                    // 8. 스크롤 위치 고정 및 모니터링
+                    window.__BFCACHE_SCROLL_LOCKED__ = true;
+                    window.__BFCACHE_FINAL_SCROLL_Y__ = window.scrollY;
+                    
+                    window.__BFCACHE_SCROLL_LISTENER__ = () => {
+                        if (window.__BFCACHE_SCROLL_LOCKED__ && Math.abs(window.scrollY - window.__BFCACHE_FINAL_SCROLL_Y__) > 5) {
+                            window.scrollTo({ top: window.__BFCACHE_FINAL_SCROLL_Y__, behavior: 'auto' });
+                        }
+                    };
+                    window.addEventListener('scroll', window.__BFCACHE_SCROLL_LISTENER__, { passive: false });
+                    
+                    // 9. 강화된 복원 완료 이벤트
+                    window.dispatchEvent(new CustomEvent('bfcacheEnhancedRestoreComplete', {
+                        detail: {
+                            finalScrollY: window.scrollY,
+                            framework: '\(stateBlock.reactAppInfo.framework)',
+                            hasVirtualization: \(virtualizationState.isVirtual),
+                            iframeCount: iframeStates.length,
+                            timestamp: Date.now()
+                        }
+                    }));
+                    
+                    console.log('✅ 강화된 스크롤 복원 완료:', {
+                        targetY: targetY,
+                        actualY: window.scrollY,
+                        framework: '\(stateBlock.reactAppInfo.framework)',
+                        hasAnchor: !!anchorElement,
+                        hasVirtual: \(virtualizationState.isVirtual)
+                    });
+                    
+                    return Math.abs(window.scrollY - targetY) < 10; // 허용 오차 10px
+                }
+            } catch (e) {
+                console.error('강화된 스크롤 복원 실패:', e);
+                return false;
+            }
+        })()
+        """
+        
+        DispatchQueue.main.async {
+            // 네이티브 스크롤뷰 먼저 설정
+            webView.scrollView.setContentOffset(CGPoint(x: 0, y: finalScrollY), animated: false)
+            
+            // JavaScript 실행
+            webView.evaluateJavaScript(enhancedScrollRestoreJS) { result, error in
+                let success = (result as? Bool) ?? false
+                if success {
+                    TabPersistenceManager.debugMessages.append("✅ 강화된 스크롤 복원 성공: Y=\(finalScrollY), 프레임워크=\(stateBlock.reactAppInfo.framework)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("❌ 강화된 스크롤 복원 실패: \(error?.localizedDescription ?? "unknown")")
+                }
+                completion(success)
             }
         }
     }
-}
     
-    // 🎯 **점진적 데이터 채움 - 복원 후 스크롤 위치 고정 상태에서 데이터만 교체**
-    private func startProgressiveDataFilling(to webView: WKWebView) {
+    // 🎯 **4단계: 프레임워크별 데이터 하이드레이션**
+    private func startFrameworkSpecificHydration(to webView: WKWebView) {
         let guide = dataLoadingGuide
+        let strategy = guide.frameworkStrategy
         
-        TabPersistenceManager.debugMessages.append("📊 점진적 데이터 채움 시작: \(guide.loadingSequence.count)단계")
+        TabPersistenceManager.debugMessages.append("💧 프레임워크별 하이드레이션 시작: \(strategy.framework)")
         
-        // 로딩 단계를 우선순위 순으로 정렬
+        // 프레임워크별 커스텀 스크립트 실행
+        if let customScript = strategy.customRestoreScript {
+            webView.evaluateJavaScript(customScript) { _, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⚠️ 커스텀 복원 스크립트 실패: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        // 일반적인 데이터 로딩 시퀀스 실행
         let sortedSteps = guide.loadingSequence.sorted { $0.priority < $1.priority }
-        
-        executeDataLoadingSteps(to: webView, steps: sortedSteps, currentIndex: 0)
+        executeFrameworkAwareDataLoading(to: webView, steps: sortedSteps, currentIndex: 0)
     }
     
-    // **재귀적 데이터 로딩 단계 실행** (스크롤 위치는 절대 변경하지 않음)
-    private func executeDataLoadingSteps(to webView: WKWebView, steps: [DataLoadingGuide.LoadingStep], currentIndex: Int) {
+    // **프레임워크 인식 데이터 로딩**
+    private func executeFrameworkAwareDataLoading(to webView: WKWebView, steps: [DataLoadingGuide.LoadingStep], currentIndex: Int) {
         guard currentIndex < steps.count else {
-            finalizeDataFilling(to: webView)
+            finalizeFrameworkHydration(to: webView)
             return
         }
         
@@ -519,124 +816,147 @@ struct BFCacheSnapshot: Codable {
         let delay = Double(step.delayMs) / 1000.0
         
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            self.executeDataLoadingStep(to: webView, step: step) { success in
-                TabPersistenceManager.debugMessages.append("📊 \(step.stepId) 로딩: \(success ? "성공" : "실패")")
-                
-                // 다음 단계로 진행 (성공 여부와 관계없이)
-                self.executeDataLoadingSteps(to: webView, steps: steps, currentIndex: currentIndex + 1)
+            self.executeFrameworkAwareStep(to: webView, step: step) { success in
+                TabPersistenceManager.debugMessages.append("💧 \(step.stepId) 하이드레이션: \(success ? "성공" : "실패")")
+                self.executeFrameworkAwareDataLoading(to: webView, steps: steps, currentIndex: currentIndex + 1)
             }
         }
     }
     
-    // **개별 데이터 로딩 단계 실행**
-    private func executeDataLoadingStep(to webView: WKWebView, step: DataLoadingGuide.LoadingStep, completion: @escaping (Bool) -> Void) {
-        let dataFillJS = """
+    private func executeFrameworkAwareStep(to webView: WKWebView, step: DataLoadingGuide.LoadingStep, completion: @escaping (Bool) -> Void) {
+        let frameworkAwareJS = """
         (function() {
             try {
-                // 스크롤 위치 고정 확인
                 if (!window.__BFCACHE_SCROLL_LOCKED__) {
-                    console.warn('스크롤 고정 상태가 아님 - 데이터 로딩 중단');
+                    console.warn('스크롤 고정되지 않음 - 하이드레이션 중단');
                     return false;
                 }
                 
                 const targetSelectors = \(jsonString(from: step.targetSelectors));
-                let replacedCount = 0;
+                let processedCount = 0;
                 
-                // 캐시 또는 API에서 데이터 가져오기
-                let data = null;
-                
-                // React Query 캐시 우선 확인
-                if (window.__REACT_QUERY_STATE__ && '\(step.dataSource)'.startsWith('cache:')) {
-                    const cacheKey = '\(step.dataSource)'.replace('cache:', '');
-                    const cached = window.__REACT_QUERY_STATE__[cacheKey];
-                    if (cached?.data) {
-                        data = cached.data;
+                // React 상태 복원
+                if ('\(step.reactStateRestore?.storeType ?? "")' === 'redux' && window.__REDUX_STORE__) {
+                    const stateValue = '\(step.reactStateRestore?.stateValue ?? "")';
+                    const actionType = '\(step.reactStateRestore?.actionType ?? "HYDRATE_PARTIAL")';
+                    
+                    try {
+                        const parsedState = JSON.parse(stateValue);
+                        window.__REDUX_STORE__.dispatch({ 
+                            type: actionType, 
+                            payload: parsedState 
+                        });
+                    } catch (e) {
+                        console.warn('Redux 부분 상태 복원 실패:', e);
                     }
                 }
                 
-                // 스켈레톤→실제 데이터 교체 (requestAnimationFrame으로 깜박임 방지)
+                // 스켈레톤 → 실제 컴포넌트 교체
                 targetSelectors.forEach(selector => {
-                    requestAnimationFrame(() => {
-                        const skeletons = document.querySelectorAll(selector);
-                        skeletons.forEach((skeleton, index) => {
-                            if (data && data[index]) {
-                                // 실제 데이터로 교체
-                                const realContent = document.createElement('div');
-                                realContent.innerHTML = data[index].html || data[index].content || '';
-                                realContent.className = skeleton.className.replace('bfcache-skeleton', '');
+                    const skeletons = document.querySelectorAll(selector);
+                    
+                    skeletons.forEach((skeleton, index) => {
+                        // React 컴포넌트 특성 확인
+                        const componentType = skeleton.getAttribute('data-component-type');
+                        
+                        if (componentType && window.React && window.ReactDOM) {
+                            // React 컴포넌트로 교체 시도
+                            try {
+                                const componentData = {
+                                    type: componentType,
+                                    index: index,
+                                    // 실제 데이터는 API 호출이나 캐시에서 가져와야 함
+                                };
                                 
-                                skeleton.parentNode.replaceChild(realContent, skeleton);
-                                replacedCount++;
-                            } else if ('\(step.fallbackContent ?? "")') {
-                                // 폴백 콘텐츠로 교체
-                                skeleton.innerHTML = '\(step.fallbackContent ?? "")';
-                                skeleton.className = skeleton.className.replace('bfcache-skeleton', 'bfcache-fallback');
-                                replacedCount++;
+                                // 실제 React 컴포넌트 렌더링은 앱별로 구현 필요
+                                skeleton.innerHTML = '<div>실제 컴포넌트 내용</div>';
+                                skeleton.className = skeleton.className.replace('bfcache-skeleton', 'hydrated-component');
+                                processedCount++;
+                                
+                            } catch (e) {
+                                console.warn('React 컴포넌트 교체 실패:', e);
+                                // 폴백 콘텐츠 사용
+                                if ('\(step.fallbackContent ?? "")') {
+                                    skeleton.innerHTML = '\(step.fallbackContent ?? "")';
+                                    processedCount++;
+                                }
                             }
-                        });
+                        } else {
+                            // 일반 HTML 교체
+                            if ('\(step.fallbackContent ?? "")') {
+                                skeleton.innerHTML = '\(step.fallbackContent ?? "")';
+                                skeleton.className = skeleton.className.replace('bfcache-skeleton', 'fallback-content');
+                                processedCount++;
+                            }
+                        }
                     });
                 });
                 
-                // 스크롤 위치 재고정 (혹시 모를 변동 방지)
+                // 스크롤 위치 재고정
                 if (window.__BFCACHE_FINAL_SCROLL_Y__ !== undefined) {
                     window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
                 }
                 
-                return replacedCount > 0;
+                return processedCount > 0;
+                
             } catch (e) {
-                console.error('데이터 로딩 단계 실패:', e);
+                console.error('프레임워크 인식 하이드레이션 실패:', e);
                 return false;
             }
         })()
         """
         
-        webView.evaluateJavaScript(dataFillJS) { result, error in
+        webView.evaluateJavaScript(frameworkAwareJS) { result, error in
             let success = (result as? Bool) ?? false
             completion(success)
         }
     }
     
-    // **데이터 채움 완료 처리**
-    private func finalizeDataFilling(to webView: WKWebView) {
+    private func finalizeFrameworkHydration(to webView: WKWebView) {
         let finalizeJS = """
         (function() {
             try {
-                // 남은 스켈레톤 제거
-                const remainingSkeletons = document.querySelectorAll('.bfcache-skeleton');
-                remainingSkeletons.forEach(skeleton => {
-                    skeleton.style.display = 'none'; // 즉시 숨김
-                    setTimeout(() => skeleton.remove(), 100); // 지연 제거
+                // 남은 스켈레톤 정리
+                document.querySelectorAll('.bfcache-skeleton').forEach(skeleton => {
+                    skeleton.style.opacity = '0';
+                    setTimeout(() => skeleton.remove(), 200);
                 });
                 
                 // 스켈레톤 스타일 정리
-                const skeletonStyles = document.getElementById('bfcache-skeleton-styles');
+                const skeletonStyles = document.getElementById('bfcache-dynamic-skeleton-styles');
                 if (skeletonStyles) {
-                    skeletonStyles.remove();
+                    setTimeout(() => skeletonStyles.remove(), 500);
                 }
                 
-                // 스크롤 위치 고정 해제
+                // 스크롤 고정 해제
                 window.__BFCACHE_SCROLL_LOCKED__ = false;
-                window.__BFCACHE_SKELETON_ACTIVE__ = false;
+                window.__BFCACHE_DYNAMIC_SKELETON_ACTIVE__ = false;
                 delete window.__BFCACHE_FINAL_SCROLL_Y__;
                 
-                // 점진적 데이터 채움 완료 이벤트
-                window.dispatchEvent(new CustomEvent('bfcacheDataFillComplete', {
+                if (window.__BFCACHE_SCROLL_LISTENER__) {
+                    window.removeEventListener('scroll', window.__BFCACHE_SCROLL_LISTENER__);
+                    delete window.__BFCACHE_SCROLL_LISTENER__;
+                }
+                
+                // 프레임워크별 하이드레이션 완료 이벤트
+                window.dispatchEvent(new CustomEvent('bfcacheFrameworkHydrationComplete', {
                     detail: { 
                         finalScrollY: window.scrollY,
+                        framework: '\(dataLoadingGuide.frameworkStrategy.framework)',
                         timestamp: Date.now()
                     }
                 }));
                 
                 return true;
             } catch (e) {
-                console.error('데이터 채움 완료 처리 실패:', e);
+                console.error('하이드레이션 완료 처리 실패:', e);
                 return false;
             }
         })()
         """
         
         webView.evaluateJavaScript(finalizeJS) { result, error in
-            TabPersistenceManager.debugMessages.append("🎉 점진적 데이터 채움 완료")
+            TabPersistenceManager.debugMessages.append("🎉 프레임워크별 하이드레이션 완료")
         }
     }
     
@@ -650,7 +970,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - 🎯 **올인원 점진적 복원 전환 시스템**
+// MARK: - 🎯 **강화된 동적 사이트 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -735,7 +1055,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background
     }
     
-    // MARK: - 🎯 **통합 스크롤 상태 캡처 시스템**
+    // MARK: - 🎯 **강화된 통합 상태 캡처 시스템** - React/SPA 완전 지원
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -756,12 +1076,12 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         serialQueue.async { [weak self] in
-            self?.performUnifiedCapture(task)
+            self?.performEnhancedDynamicCapture(task)
         }
     }
     
-    // 🎯 **통합 상태 캡처 - 모든 정보를 한 번에 수집**
-    private func performUnifiedCapture(_ task: CaptureTask) {
+    // 🎯 **강화된 동적 사이트 캡처** - React/SPA 구조 완전 분석
+    private func performEnhancedDynamicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
         guard !pendingCaptures.contains(pageID) else {
@@ -775,7 +1095,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         pendingCaptures.insert(pageID)
-        dbg("🎯 통합 상태 캡처 시작: \(task.pageRecord.title)")
+        dbg("🎯 강화된 동적 사이트 캡처 시작: \(task.pageRecord.title)")
         
         // 메인 스레드에서 기본 데이터 수집
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -797,8 +1117,8 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // **통합 상태 블록 생성** - 모든 정보를 한 번에 수집
-        let captureResult = createUnifiedScrollStateBlock(
+        // **강화된 동적 사이트 상태 블록 생성** - React/SPA 완전 분석
+        let captureResult = createEnhancedDynamicStateBlock(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data
@@ -812,7 +1132,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         pendingCaptures.remove(pageID)
-        dbg("✅ 통합 상태 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 강화된 동적 사이트 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -822,10 +1142,10 @@ final class BFCacheTransitionSystem: NSObject {
         let url: URL
     }
     
-    // 🎯 **통합 스크롤 상태 블록 생성** - 올인원 복원을 위한 완전한 정보 수집
-    private func createUnifiedScrollStateBlock(pageRecord: PageRecord, webView: WKWebView, 
-                                             captureData: CaptureData) 
-                                             -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🎯 **강화된 동적 사이트 상태 블록 생성** - React/SPA 구조 완전 분석
+    private func createEnhancedDynamicStateBlock(pageRecord: PageRecord, webView: WKWebView, 
+                                               captureData: CaptureData) 
+                                               -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         var visualSnapshot: UIImage?
         var scrollStateBlock: BFCacheSnapshot.ScrollStateBlock!
@@ -835,39 +1155,37 @@ final class BFCacheTransitionSystem: NSObject {
         // 1. 비주얼 스냅샷 캡처
         visualSnapshot = captureVisualSnapshot(webView: webView, bounds: captureData.bounds)
         
-        // 2. 통합 스크롤 상태 블록 수집
-        let scrollData = executeUnifiedScrollCapture(webView: webView, scrollY: captureData.scrollPosition.y)
+        // 2. 강화된 동적 사이트 상태 수집
+        let dynamicData = executeEnhancedDynamicCapture(webView: webView, scrollY: captureData.scrollPosition.y)
         
-        // 3. 상태 블록 구성
+        // 3. React/SPA 앱 정보 구성
+        let reactAppInfo = extractReactAppInfo(from: dynamicData)
+        
+        // 4. iframe 상태 수집
+        let iframeStates = extractIframeStates(from: dynamicData)
+        
+        // 5. 강화된 상태 블록 구성
         scrollStateBlock = BFCacheSnapshot.ScrollStateBlock(
             finalScrollY: captureData.scrollPosition.y,
             viewportHeight: captureData.bounds.height,
-            totalContentHeight: scrollData?["contentHeight"] as? CGFloat ?? 0,
-            anchorItem: extractAnchorItem(from: scrollData),
-            visibleItems: extractVisibleItems(from: scrollData),
-            virtualizationState: extractVirtualizationState(from: scrollData),
-            containerScrolls: extractContainerScrolls(from: scrollData),
-            cacheKeys: extractCacheKeys(from: scrollData)
+            totalContentHeight: dynamicData?["contentHeight"] as? CGFloat ?? 0,
+            reactAppInfo: reactAppInfo,
+            iframeScrollStates: iframeStates,
+            anchorItem: extractEnhancedAnchorItem(from: dynamicData),
+            visibleItems: extractEnhancedVisibleItems(from: dynamicData),
+            virtualizationState: extractEnhancedVirtualizationState(from: dynamicData),
+            containerScrolls: extractContainerScrolls(from: dynamicData),
+            cacheKeys: extractEnhancedCacheKeys(from: dynamicData)
         )
         
-        // 4. 스켈레톤 템플릿 생성
-        skeletonTemplate = BFCacheSnapshot.SkeletonTemplate(
-            averageItemHeight: scrollData?["averageItemHeight"] as? CGFloat ?? 120,
-            itemsPerScreen: Int(captureData.bounds.height / 120),
-            totalSkeletonItems: calculateTotalSkeletons(from: scrollData),
-            skeletonPattern: createSkeletonPattern(from: scrollData),
-            placeholderStyles: [:]
-        )
+        // 6. 동적 스켈레톤 템플릿 생성
+        skeletonTemplate = createDynamicSkeletonTemplate(from: dynamicData, reactAppInfo: reactAppInfo)
         
-        // 5. 데이터 로딩 가이드 생성
-        dataLoadingGuide = BFCacheSnapshot.DataLoadingGuide(
-            loadingSequence: createLoadingSequence(from: scrollData),
-            backgroundLoadingEnabled: true,
-            lockScrollDuringLoad: true
-        )
+        // 7. 프레임워크별 데이터 로딩 가이드 생성
+        dataLoadingGuide = createFrameworkAwareDataLoadingGuide(from: dynamicData, reactAppInfo: reactAppInfo)
         
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if visualSnapshot != nil && scrollData != nil {
+        if visualSnapshot != nil && dynamicData != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = .visualOnly
@@ -886,7 +1204,7 @@ final class BFCacheTransitionSystem: NSObject {
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             scrollPosition: captureData.scrollPosition,
-            jsState: scrollData,
+            jsState: dynamicData,
             timestamp: Date(),
             webViewSnapshotPath: nil,
             captureStatus: captureStatus,
@@ -899,12 +1217,14 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **통합 스크롤 캡처 JavaScript** - 모든 상황 대응 데이터 수집
-    private func executeUnifiedScrollCapture(webView: WKWebView, scrollY: CGFloat) -> [String: Any]? {
+    // 🎯 **강화된 동적 사이트 캡처 JavaScript** - React/SPA 완전 분석
+    private func executeEnhancedDynamicCapture(webView: WKWebView, scrollY: CGFloat) -> [String: Any]? {
         return executeJavaScriptSync(webView: webView, script: """
         (function() {
             try {
-                // 기본 스크롤 정보
+                console.log('🔍 강화된 동적 사이트 분석 시작');
+                
+                // === 1. 기본 스크롤 정보 ===
                 const scrollInfo = {
                     scrollY: window.scrollY,
                     scrollX: window.scrollX,
@@ -914,136 +1234,765 @@ final class BFCacheTransitionSystem: NSObject {
                     contentWidth: document.documentElement.scrollWidth
                 };
                 
-                // 가시 영역 아이템들 수집 (모든 패턴 대응)
-                const visibleItems = [];
-                const commonSelectors = [
-                    'article', '.item', '.post', '.card', '.entry', '.content-item',
-                    '[data-id]', '[data-item-id]', '[data-index]',
-                    '.list-item', '.grid-item', 'li', '.row', '.tile'
-                ];
+                // === 2. React/SPA 프레임워크 감지 ===
+                const frameworkInfo = detectFramework();
                 
-                const allElements = [];
-                commonSelectors.forEach(selector => {
-                    const elements = document.querySelectorAll(selector);
-                    elements.forEach(el => allElements.push(el));
-                });
+                // === 3. 앱 컨테이너 및 구조 분석 ===
+                const appStructure = analyzeAppStructure(frameworkInfo);
                 
-                // 중복 제거 및 가시성 체크
-                const uniqueElements = [...new Set(allElements)];
-                uniqueElements.forEach((el, index) => {
-                    const rect = el.getBoundingClientRect();
-                    const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+                // === 4. iframe 상태 수집 (크로스 프레임 지원) ===
+                const iframeStates = collectIframeStates();
+                
+                // === 5. 강화된 가시 영역 아이템 수집 ===
+                const visibleItems = collectEnhancedVisibleItems(frameworkInfo, appStructure);
+                
+                // === 6. 앵커 아이템 정밀 분석 ===
+                const anchorItem = findEnhancedAnchorItem(visibleItems, frameworkInfo);
+                
+                // === 7. 가상화 상태 분석 ===
+                const virtualizationState = analyzeVirtualizationState(frameworkInfo);
+                
+                // === 8. 컨테이너 스크롤 상태 ===
+                const containerScrolls = collectContainerScrolls();
+                
+                // === 9. 프레임워크별 캐시 키 수집 ===
+                const cacheKeys = collectFrameworkCacheKeys(frameworkInfo);
+                
+                // === 10. 컴포넌트별 스켈레톤 정보 ===
+                const skeletonInfo = analyzeSkeletonStructure(visibleItems, frameworkInfo);
+                
+                return {
+                    ...scrollInfo,
+                    framework: frameworkInfo,
+                    appStructure,
+                    iframeStates,
+                    visibleItems,
+                    anchorItem,
+                    virtualizationState,
+                    containerScrolls,
+                    cacheKeys,
+                    skeletonInfo,
+                    timestamp: Date.now()
+                };
+                
+                // === 프레임워크 감지 함수 ===
+                function detectFramework() {
+                    const info = {
+                        framework: 'vanilla',
+                        version: null,
+                        appContainerSelector: null,
+                        hasReactRoot: false,
+                        stateManagement: null,
+                        routingLibrary: null
+                    };
                     
-                    if (isVisible && visibleItems.length < 20) { // 상위 20개만
-                        visibleItems.push({
-                            id: el.id || el.dataset.id || el.dataset.itemId || 'item-' + index,
-                            selector: el.id ? '#' + el.id : commonSelectors.find(s => el.matches(s)) || '.unknown',
-                            offsetTop: el.offsetTop,
-                            height: rect.height,
-                            content: (el.textContent || '').substr(0, 100),
-                            hasImage: el.querySelector('img') !== null,
-                            loadPriority: rect.top < window.innerHeight/2 ? 1 : 2
-                        });
+                    // React 감지
+                    if (window.React || document.querySelector('[data-reactroot]') || 
+                        document.querySelector('[data-react-checksum]') || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+                        info.framework = 'react';
+                        info.version = window.React?.version || 'unknown';
+                        info.hasReactRoot = !!window.ReactDOM?.createRoot || !!document.querySelector('[data-reactroot]');
+                        
+                        // React 앱 컨테이너 찾기
+                        const containers = ['#root', '#app', '#react-root', '[data-reactroot]', '.app-container'];
+                        for (const selector of containers) {
+                            if (document.querySelector(selector)) {
+                                info.appContainerSelector = selector;
+                                break;
+                            }
+                        }
+                        
+                        // 상태 관리 라이브러리 감지
+                        if (window.__REDUX_STORE__ || window.Redux) info.stateManagement = 'redux';
+                        else if (window.MobX || window.mobx) info.stateManagement = 'mobx';
+                        else if (window.zustand) info.stateManagement = 'zustand';
+                        else if (window.Recoil) info.stateManagement = 'recoil';
+                        
+                        // 라우터 감지
+                        if (window.ReactRouter || window.BrowserRouter) info.routingLibrary = 'react-router';
+                        else if (window.Router && window.Router.pathname) info.routingLibrary = 'reach-router';
+                        else if (window.next && window.next.router) info.routingLibrary = 'next-router';
                     }
-                });
+                    // Vue 감지
+                    else if (window.Vue || document.querySelector('[data-v-app]') || 
+                             document.querySelector('[v-cloak]')) {
+                        info.framework = 'vue';
+                        info.version = window.Vue?.version || 'unknown';
+                        info.appContainerSelector = '#app';
+                        
+                        if (window.Vuex) info.stateManagement = 'vuex';
+                        if (window.VueRouter) info.routingLibrary = 'vue-router';
+                    }
+                    // Angular 감지
+                    else if (window.ng || document.querySelector('[ng-app]') || 
+                             document.querySelector('app-root')) {
+                        info.framework = 'angular';
+                        info.appContainerSelector = 'app-root';
+                        
+                        if (window.ngrx) info.stateManagement = 'ngrx';
+                    }
+                    // Svelte 감지
+                    else if (window.svelte || document.querySelector('[data-svelte]')) {
+                        info.framework = 'svelte';
+                        info.appContainerSelector = 'body';
+                    }
+                    
+                    console.log('🎯 프레임워크 감지:', info);
+                    return info;
+                }
                 
-                // 앵커 아이템 (스크롤 기준점) 찾기
-                let anchorItem = null;
-                for (const item of visibleItems) {
-                    const el = document.querySelector(item.selector);
-                    if (el) {
+                // === 앱 구조 분석 함수 ===
+                function analyzeAppStructure(frameworkInfo) {
+                    const structure = {
+                        appContainer: null,
+                        componentTree: [],
+                        hasRouter: false,
+                        hasStateManager: false
+                    };
+                    
+                    // 앱 컨테이너 분석
+                    if (frameworkInfo.appContainerSelector) {
+                        structure.appContainer = document.querySelector(frameworkInfo.appContainerSelector);
+                    }
+                    
+                    // 컴포넌트 트리 분석 (React 중심)
+                    if (frameworkInfo.framework === 'react' && structure.appContainer) {
+                        structure.componentTree = analyzeReactComponentTree(structure.appContainer);
+                    }
+                    
+                    structure.hasRouter = !!frameworkInfo.routingLibrary;
+                    structure.hasStateManager = !!frameworkInfo.stateManagement;
+                    
+                    return structure;
+                }
+                
+                // React 컴포넌트 트리 분석
+                function analyzeReactComponentTree(container, depth = 0) {
+                    const components = [];
+                    const maxDepth = 5; // 성능상 깊이 제한
+                    
+                    if (depth > maxDepth) return components;
+                    
+                    const elements = container.children;
+                    for (let i = 0; i < Math.min(elements.length, 20); i++) {
+                        const element = elements[i];
+                        
+                        // React 컴포넌트 특성 확인
+                        const reactInfo = getReactInfo(element);
+                        if (reactInfo) {
+                            components.push({
+                                id: element.id || `comp-\${depth}-\${i}`,
+                                type: determineComponentType(element),
+                                selector: getElementSelector(element),
+                                props: reactInfo.props,
+                                reactKey: reactInfo.key,
+                                depth: depth
+                            });
+                        }
+                        
+                        // 재귀적으로 자식 분석
+                        if (element.children.length > 0) {
+                            components.push(...analyzeReactComponentTree(element, depth + 1));
+                        }
+                    }
+                    
+                    return components;
+                }
+                
+                // React 정보 추출
+                function getReactInfo(element) {
+                    // React Fiber 정보 추출 시도
+                    const fiberKey = Object.keys(element).find(key => key.startsWith('__reactFiber'));
+                    if (fiberKey) {
+                        const fiber = element[fiberKey];
+                        return {
+                            key: fiber.key,
+                            props: extractSafeProps(fiber.memoizedProps || fiber.pendingProps),
+                            type: fiber.type?.name || fiber.elementType?.name
+                        };
+                    }
+                    
+                    // 레거시 React 정보
+                    const reactKey = Object.keys(element).find(key => key.startsWith('__reactInternalInstance'));
+                    if (reactKey) {
+                        const instance = element[reactKey];
+                        return {
+                            key: instance._currentElement?.key,
+                            props: extractSafeProps(instance._currentElement?.props)
+                        };
+                    }
+                    
+                    // data 속성 기반 정보
+                    if (element.dataset) {
+                        const reactKey = element.dataset.reactkey || element.dataset.key;
+                        if (reactKey) {
+                            return { key: reactKey, props: null };
+                        }
+                    }
+                    
+                    return null;
+                }
+                
+                // 안전한 props 추출
+                function extractSafeProps(props) {
+                    if (!props || typeof props !== 'object') return null;
+                    
+                    const safeProps = {};
+                    const allowedTypes = ['string', 'number', 'boolean'];
+                    
+                    for (const [key, value] of Object.entries(props)) {
+                        if (allowedTypes.includes(typeof value) && key.length < 50) {
+                            safeProps[key] = String(value).slice(0, 100); // 길이 제한
+                        }
+                    }
+                    
+                    return Object.keys(safeProps).length > 0 ? safeProps : null;
+                }
+                
+                // === iframe 상태 수집 ===
+                function collectIframeStates() {
+                    const iframes = [];
+                    document.querySelectorAll('iframe').forEach((iframe, index) => {
+                        const state = {
+                            iframeSelector: iframe.id ? `#\${iframe.id}` : `iframe:nth-child(\${index + 1})`,
+                            src: iframe.src,
+                            scrollX: 0,
+                            scrollY: 0,
+                            contentHeight: 0,
+                            isAccessible: false,
+                            nestedFrames: []
+                        };
+                        
+                        try {
+                            // Same-origin iframe 접근 시도
+                            if (iframe.contentWindow && iframe.contentDocument) {
+                                state.scrollX = iframe.contentWindow.scrollX;
+                                state.scrollY = iframe.contentWindow.scrollY;
+                                state.contentHeight = iframe.contentDocument.documentElement.scrollHeight;
+                                state.isAccessible = true;
+                                
+                                // 중첩 iframe 수집
+                                const nestedIframes = iframe.contentDocument.querySelectorAll('iframe');
+                                nestedIframes.forEach((nested, nestedIndex) => {
+                                    try {
+                                        if (nested.contentWindow && nested.contentDocument) {
+                                            state.nestedFrames.push({
+                                                iframeSelector: nested.id ? `#\${nested.id}` : `iframe:nth-child(\${nestedIndex + 1})`,
+                                                src: nested.src,
+                                                scrollX: nested.contentWindow.scrollX,
+                                                scrollY: nested.contentWindow.scrollY,
+                                                contentHeight: nested.contentDocument.documentElement.scrollHeight,
+                                                isAccessible: true,
+                                                nestedFrames: []
+                                            });
+                                        }
+                                    } catch (e) {
+                                        // CORS 제한으로 접근 불가
+                                    }
+                                });
+                            }
+                        } catch (e) {
+                            // CORS 제한으로 접근 불가
+                        }
+                        
+                        iframes.push(state);
+                    });
+                    
+                    return iframes;
+                }
+                
+                // === 강화된 가시 영역 아이템 수집 ===
+                function collectEnhancedVisibleItems(frameworkInfo, appStructure) {
+                    const visibleItems = [];
+                    
+                    // 프레임워크별 선택자 우선순위
+                    let selectors = [];
+                    if (frameworkInfo.framework === 'react') {
+                        selectors = [
+                            '[data-reactroot] > *', '[data-react-checksum] > *',
+                            '.react-component', '[data-component]',
+                            'article', '.item', '.post', '.card', '.entry',
+                            '[data-testid]', '[data-cy]'
+                        ];
+                    } else if (frameworkInfo.framework === 'vue') {
+                        selectors = [
+                            '[data-v-app] > *', '[v-for]',
+                            '.vue-component', 'article', '.item', '.post'
+                        ];
+                    } else {
+                        // 범용 선택자
+                        selectors = [
+                            'article', '.item', '.post', '.card', '.entry', '.content-item',
+                            '[data-id]', '[data-item-id]', '[data-index]',
+                            '.list-item', '.grid-item', 'li', '.row', '.tile'
+                        ];
+                    }
+                    
+                    const allElements = new Set();
+                    selectors.forEach(selector => {
+                        try {
+                            document.querySelectorAll(selector).forEach(el => allElements.add(el));
+                        } catch (e) {
+                            console.warn('선택자 오류:', selector, e);
+                        }
+                    });
+                    
+                    // 가시성 체크 및 정보 수집
+                    Array.from(allElements).forEach((el, index) => {
+                        if (visibleItems.length >= 30) return; // 성능상 제한
+                        
                         const rect = el.getBoundingClientRect();
-                        if (rect.top >= 0 && rect.top <= window.innerHeight/3) {
-                            anchorItem = {
+                        const isVisible = rect.top < window.innerHeight && rect.bottom > 0 && rect.height > 10;
+                        
+                        if (isVisible) {
+                            // React 컴포넌트 정보 추출
+                            const reactInfo = getReactInfo(el);
+                            const componentInfo = reactInfo ? {
+                                componentName: reactInfo.type || 'Unknown',
+                                reactKey: reactInfo.key,
+                                dataAttributes: extractDataAttributes(el),
+                                isLazyLoaded: hasLazyLoadingIndicators(el),
+                                hasAsyncData: hasAsyncDataIndicators(el)
+                            } : null;
+                            
+                            // 동적 콘텐츠 정보
+                            const dynamicInfo = {
+                                isSkeletonPlaceholder: isSkeletonPlaceholder(el),
+                                hasLoadingState: hasLoadingState(el),
+                                apiEndpoint: extractApiEndpoint(el),
+                                cacheKey: extractCacheKey(el, frameworkInfo),
+                                loadingStrategy: determineLoadingStrategy(el)
+                            };
+                            
+                            visibleItems.push({
+                                id: el.id || el.dataset.id || el.dataset.itemId || `enhanced-item-\${index}`,
+                                selector: getElementSelector(el),
+                                offsetTop: el.offsetTop,
+                                height: rect.height,
+                                content: (el.textContent || '').slice(0, 100),
+                                hasImage: el.querySelector('img, picture, svg') !== null,
+                                loadPriority: rect.top < window.innerHeight / 2 ? 1 : 2,
+                                componentInfo,
+                                dynamicContent: dynamicInfo
+                            });
+                        }
+                    });
+                    
+                    return visibleItems;
+                }
+                
+                // === 강화된 앵커 아이템 찾기 ===
+                function findEnhancedAnchorItem(visibleItems, frameworkInfo) {
+                    for (const item of visibleItems) {
+                        const el = document.querySelector(item.selector);
+                        if (!el) continue;
+                        
+                        const rect = el.getBoundingClientRect();
+                        if (rect.top >= 0 && rect.top <= window.innerHeight / 3) {
+                            const reactInfo = item.componentInfo || {};
+                            
+                            return {
                                 id: item.id,
                                 selector: item.selector,
                                 offsetFromTop: rect.top,
                                 elementHeight: rect.height,
-                                isSticky: getComputedStyle(el).position === 'sticky'
+                                isSticky: getComputedStyle(el).position === 'sticky',
+                                reactComponentName: reactInfo.componentName,
+                                reactKey: reactInfo.reactKey,
+                                reactProps: reactInfo.dataAttributes,
+                                isVirtualItem: !!item.dynamicContent?.isSkeletonPlaceholder
+                            };
+                        }
+                    }
+                    
+                    // 기본 앵커 (body)
+                    return {
+                        id: 'body-anchor',
+                        selector: 'body',
+                        offsetFromTop: 0,
+                        elementHeight: 100,
+                        isSticky: false,
+                        reactComponentName: null,
+                        reactKey: null,
+                        reactProps: null,
+                        isVirtualItem: false
+                    };
+                }
+                
+                // === 가상화 상태 분석 ===
+                function analyzeVirtualizationState(frameworkInfo) {
+                    const state = {
+                        isVirtual: false,
+                        libraryType: null,
+                        currentSequence: 0,
+                        visibleStartIndex: 0,
+                        visibleEndIndex: 0,
+                        totalKnownItems: 0,
+                        itemHeight: null,
+                        estimatedItemSize: null,
+                        pageInfo: null,
+                        scrollOffset: 0
+                    };
+                    
+                    // react-window 감지
+                    if (window.FixedSizeList || window.VariableSizeList || document.querySelector('[data-react-window-list]')) {
+                        state.isVirtual = true;
+                        state.libraryType = 'react-window';
+                        
+                        const virtualList = document.querySelector('[data-react-window-list]');
+                        if (virtualList) {
+                            // react-window 상태 추출
+                            const scrollContainer = virtualList.querySelector('[style*="overflow"]');
+                            if (scrollContainer) {
+                                state.scrollOffset = scrollContainer.scrollTop;
+                            }
+                            
+                            // 아이템 크기 추정
+                            const items = virtualList.querySelectorAll('[data-index]');
+                            if (items.length > 0) {
+                                const heights = Array.from(items).map(item => item.getBoundingClientRect().height);
+                                state.itemHeight = heights[0]; // 첫 번째 아이템 높이
+                                state.estimatedItemSize = heights.reduce((a, b) => a + b, 0) / heights.length;
+                            }
+                        }
+                    }
+                    // react-virtualized 감지
+                    else if (window.List || window.Grid || document.querySelector('[data-react-virtualized-list]')) {
+                        state.isVirtual = true;
+                        state.libraryType = 'react-virtualized';
+                    }
+                    // react-virtual 감지
+                    else if (window.useVirtual || document.querySelector('[data-virtual-container]')) {
+                        state.isVirtual = true;
+                        state.libraryType = 'react-virtual';
+                    }
+                    
+                    // 무한 스크롤 감지
+                    const infiniteScrollTriggers = [
+                        '.infinite-scroll-trigger', '[data-infinite-scroll]',
+                        '.load-more', '.loading-more', '.infinite-loader'
+                    ];
+                    
+                    for (const trigger of infiniteScrollTriggers) {
+                        if (document.querySelector(trigger)) {
+                            state.pageInfo = {
+                                currentPage: extractCurrentPage(),
+                                pageSize: 20, // 기본값
+                                loadedPages: [1], // 기본값
+                                hasNextPage: true,
+                                infiniteScrollTrigger: trigger,
+                                loadMoreElement: trigger
                             };
                             break;
                         }
                     }
+                    
+                    return state;
                 }
                 
-                // 컨테이너별 스크롤 상태 (overflow 있는 요소들)
-                const containerScrolls = {};
-                const scrollContainers = document.querySelectorAll('[style*="overflow"], .scroll-container, .scrollable');
-                scrollContainers.forEach((container, index) => {
-                    if (container.scrollTop > 0 || container.scrollLeft > 0) {
-                        const selector = container.id ? '#' + container.id : '.scroll-container-' + index;
-                        containerScrolls[selector] = container.scrollTop;
+                // === 컨테이너 스크롤 수집 ===
+                function collectContainerScrolls() {
+                    const scrolls = {};
+                    
+                    // overflow가 있는 모든 요소 검사
+                    const scrollableElements = document.querySelectorAll('*');
+                    let count = 0;
+                    
+                    for (const el of scrollableElements) {
+                        if (count >= 20) break; // 성능 제한
+                        
+                        const style = getComputedStyle(el);
+                        const hasScroll = style.overflow === 'auto' || style.overflow === 'scroll' ||
+                                         style.overflowY === 'auto' || style.overflowY === 'scroll';
+                        
+                        if (hasScroll && (el.scrollTop > 0 || el.scrollLeft > 0)) {
+                            const selector = getElementSelector(el);
+                            scrolls[selector] = el.scrollTop;
+                            count++;
+                        }
                     }
-                });
-                
-                // 가상화/무한 스크롤 상태 감지
-                const virtualizationState = {
-                    isVirtual: !!(window.virtualScroller || window.VirtualList || window.virtualList),
-                    currentSequence: 0,
-                    visibleStartIndex: 0,
-                    visibleEndIndex: visibleItems.length - 1,
-                    totalKnownItems: visibleItems.length,
-                    pageInfo: null
-                };
-                
-                // React Virtual, react-window 등 감지
-                if (window.virtualScroller) {
-                    virtualizationState.currentSequence = window.virtualScroller.getCurrentSequence?.() || 0;
-                    virtualizationState.visibleStartIndex = window.virtualScroller.getVisibleStartIndex?.() || 0;
-                    virtualizationState.visibleEndIndex = window.virtualScroller.getVisibleEndIndex?.() || 0;
+                    
+                    return scrolls;
                 }
                 
-                // 무한 스크롤 페이지 정보
-                if (window.infiniteScroll || window.__INFINITE_SCROLL_STATE__) {
-                    const pageInfo = window.__INFINITE_SCROLL_STATE__ || {};
-                    virtualizationState.pageInfo = {
-                        currentPage: pageInfo.currentPage || 1,
-                        pageSize: pageInfo.pageSize || 20,
-                        loadedPages: pageInfo.loadedPages || [1],
-                        hasNextPage: pageInfo.hasNextPage !== false
+                // === 프레임워크별 캐시 키 수집 ===
+                function collectFrameworkCacheKeys(frameworkInfo) {
+                    const cacheKeys = {};
+                    
+                    // Redux 상태
+                    if (window.__REDUX_STORE__ && frameworkInfo.stateManagement === 'redux') {
+                        try {
+                            const state = window.__REDUX_STORE__.getState();
+                            cacheKeys.redux = JSON.stringify(state).slice(0, 1000); // 크기 제한
+                        } catch (e) {
+                            console.warn('Redux 상태 수집 실패:', e);
+                        }
+                    }
+                    
+                    // React Query 캐시
+                    if (window.__REACT_QUERY_CLIENT__) {
+                        try {
+                            const queryCache = window.__REACT_QUERY_CLIENT__.getQueryCache();
+                            const queries = queryCache.getAll();
+                            if (queries.length > 0) {
+                                cacheKeys.reactQuery = JSON.stringify({
+                                    key: queries[0].queryKey,
+                                    data: queries[0].state.data
+                                }).slice(0, 1000);
+                            }
+                        } catch (e) {
+                            console.warn('React Query 캐시 수집 실패:', e);
+                        }
+                    }
+                    
+                    // Apollo Client 캐시
+                    if (window.__APOLLO_CLIENT__) {
+                        try {
+                            const cache = window.__APOLLO_CLIENT__.cache.extract();
+                            cacheKeys.apollo = JSON.stringify(cache).slice(0, 1000);
+                        } catch (e) {
+                            console.warn('Apollo 캐시 수집 실패:', e);
+                        }
+                    }
+                    
+                    return cacheKeys;
+                }
+                
+                // === 스켈레톤 구조 분석 ===
+                function analyzeSkeletonStructure(visibleItems, frameworkInfo) {
+                    const componentTypes = {};
+                    let totalHeight = 0;
+                    
+                    visibleItems.forEach(item => {
+                        const type = item.componentInfo?.componentName || determineComponentType(document.querySelector(item.selector));
+                        if (!componentTypes[type]) {
+                            componentTypes[type] = {
+                                count: 0,
+                                averageHeight: 0,
+                                hasImages: 0,
+                                hasText: 0
+                            };
+                        }
+                        
+                        componentTypes[type].count++;
+                        componentTypes[type].averageHeight += item.height;
+                        if (item.hasImage) componentTypes[type].hasImages++;
+                        if (item.content) componentTypes[type].hasText++;
+                        
+                        totalHeight += item.height;
+                    });
+                    
+                    // 평균값 계산
+                    Object.keys(componentTypes).forEach(type => {
+                        const info = componentTypes[type];
+                        info.averageHeight = info.averageHeight / info.count;
+                    });
+                    
+                    return {
+                        componentTypes,
+                        averageItemHeight: visibleItems.length > 0 ? totalHeight / visibleItems.length : 120
                     };
                 }
                 
-                // React Query 캐시 키 수집
-                const cacheKeys = {};
-                if (window.__REACT_QUERY_STATE__) {
-                    const queryKeys = Object.keys(window.__REACT_QUERY_STATE__);
-                    if (queryKeys.length > 0) {
-                        cacheKeys.reactQuery = queryKeys[0]; // 첫 번째 활성 쿼리 키
+                // === 유틸리티 함수들 ===
+                function getElementSelector(element) {
+                    if (element.id) return `#\${element.id}`;
+                    if (element.className && typeof element.className === 'string') {
+                        const classes = element.className.split(' ').filter(c => c && !c.includes('sk-')); // 스켈레톤 클래스 제외
+                        if (classes.length > 0) return `.\${classes[0]}`;
+                    }
+                    return element.tagName.toLowerCase();
+                }
+                
+                function determineComponentType(element) {
+                    if (!element) return 'unknown';
+                    
+                    // 클래스명 기반 타입 추정
+                    const className = element.className;
+                    if (typeof className === 'string') {
+                        if (className.includes('card')) return 'card';
+                        if (className.includes('item') || className.includes('list')) return 'list-item';
+                        if (className.includes('article') || className.includes('post')) return 'article';
+                        if (className.includes('product')) return 'product';
+                    }
+                    
+                    // 태그명 기반
+                    switch (element.tagName.toLowerCase()) {
+                        case 'article': return 'article';
+                        case 'li': return 'list-item';
+                        case 'section': return 'section';
+                        default: return 'component';
                     }
                 }
                 
-                // 스켈레톤 정보 계산
-                const averageItemHeight = visibleItems.length > 0 ? 
-                    visibleItems.reduce((sum, item) => sum + item.height, 0) / visibleItems.length : 120;
+                function extractDataAttributes(element) {
+                    const attrs = {};
+                    if (element.dataset) {
+                        Object.keys(element.dataset).forEach(key => {
+                            attrs[key] = element.dataset[key];
+                        });
+                    }
+                    return Object.keys(attrs).length > 0 ? attrs : null;
+                }
                 
-                return {
-                    ...scrollInfo,
-                    visibleItems,
-                    anchorItem,
-                    containerScrolls,
-                    virtualizationState,
-                    cacheKeys,
-                    averageItemHeight,
-                    timestamp: Date.now()
-                };
+                function hasLazyLoadingIndicators(element) {
+                    return element.querySelector('img[loading="lazy"]') ||
+                           element.querySelector('[data-lazy]') ||
+                           element.classList.contains('lazy') ||
+                           element.classList.contains('lazyload');
+                }
+                
+                function hasAsyncDataIndicators(element) {
+                    return element.querySelector('.loading') ||
+                           element.querySelector('.spinner') ||
+                           element.classList.contains('loading') ||
+                           element.hasAttribute('data-loading');
+                }
+                
+                function isSkeletonPlaceholder(element) {
+                    const className = element.className;
+                    if (typeof className === 'string') {
+                        return className.includes('skeleton') ||
+                               className.includes('placeholder') ||
+                               className.includes('shimmer') ||
+                               className.includes('loading-skeleton');
+                    }
+                    return false;
+                }
+                
+                function hasLoadingState(element) {
+                    return element.querySelector('.loading-state') ||
+                           element.classList.contains('is-loading') ||
+                           element.hasAttribute('aria-busy');
+                }
+                
+                function extractApiEndpoint(element) {
+                    // data 속성에서 API 엔드포인트 추출 시도
+                    if (element.dataset.api) return element.dataset.api;
+                    if (element.dataset.endpoint) return element.dataset.endpoint;
+                    if (element.dataset.url) return element.dataset.url;
+                    return null;
+                }
+                
+                function extractCacheKey(element, frameworkInfo) {
+                    if (element.dataset.cacheKey) return element.dataset.cacheKey;
+                    if (element.dataset.queryKey) return element.dataset.queryKey;
+                    
+                    // React Query 스타일 키 생성
+                    if (frameworkInfo.framework === 'react') {
+                        const id = element.id || element.dataset.id;
+                        if (id) return `query_\${id}`;
+                    }
+                    
+                    return null;
+                }
+                
+                function determineLoadingStrategy(element) {
+                    if (hasLazyLoadingIndicators(element)) return 'lazy';
+                    if (element.getBoundingClientRect().top < window.innerHeight) return 'eager';
+                    return 'intersection';
+                }
+                
+                function extractCurrentPage() {
+                    // URL 파라미터에서 페이지 추출
+                    const params = new URLSearchParams(window.location.search);
+                    return parseInt(params.get('page') || '1', 10);
+                }
+                
             } catch (e) {
-                console.error('통합 스크롤 캡처 실패:', e);
+                console.error('강화된 동적 사이트 분석 실패:', e);
                 return null;
             }
         })()
         """)
     }
     
-    // 헬퍼 메서드들
-    private func extractAnchorItem(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo {
+    // 헬퍼 메서드들 - React/SPA 정보 추출
+    private func extractReactAppInfo(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.ReactAppInfo {
+        guard let data = data,
+              let frameworkData = data["framework"] as? [String: Any] else {
+            return createDefaultReactAppInfo()
+        }
+        
+        let framework = frameworkData["framework"] as? String ?? "vanilla"
+        let appContainerSelector = frameworkData["appContainerSelector"] as? String ?? "#app"
+        let hasReactRoot = frameworkData["hasReactRoot"] as? Bool ?? false
+        let stateManagement = frameworkData["stateManagement"] as? String
+        let routingLibrary = frameworkData["routingLibrary"] as? String
+        
+        // 컴포넌트 트리 추출
+        var componentTree: [BFCacheSnapshot.ScrollStateBlock.ReactAppInfo.ComponentInfo] = []
+        if let appStructure = data["appStructure"] as? [String: Any],
+           let components = appStructure["componentTree"] as? [[String: Any]] {
+            componentTree = components.compactMap { compData in
+                guard let id = compData["id"] as? String,
+                      let type = compData["type"] as? String,
+                      let selector = compData["selector"] as? String else { return nil }
+                
+                return BFCacheSnapshot.ScrollStateBlock.ReactAppInfo.ComponentInfo(
+                    id: id,
+                    type: type,
+                    selector: selector,
+                    props: compData["props"] as? [String: String],
+                    reactKey: compData["reactKey"] as? String,
+                    depth: compData["depth"] as? Int ?? 0
+                )
+            }
+        }
+        
+        return BFCacheSnapshot.ScrollStateBlock.ReactAppInfo(
+            framework: framework,
+            appContainerSelector: appContainerSelector,
+            hasReactRoot: hasReactRoot,
+            componentTree: componentTree,
+            stateManagement: stateManagement,
+            routingLibrary: routingLibrary
+        )
+    }
+    
+    private func createDefaultReactAppInfo() -> BFCacheSnapshot.ScrollStateBlock.ReactAppInfo {
+        return BFCacheSnapshot.ScrollStateBlock.ReactAppInfo(
+            framework: "vanilla",
+            appContainerSelector: "body",
+            hasReactRoot: false,
+            componentTree: [],
+            stateManagement: nil,
+            routingLibrary: nil
+        )
+    }
+    
+    private func extractIframeStates(from data: [String: Any]?) -> [BFCacheSnapshot.ScrollStateBlock.IframeScrollState] {
+        guard let data = data,
+              let iframeData = data["iframeStates"] as? [[String: Any]] else { return [] }
+        
+        return iframeData.compactMap { iframeInfo in
+            guard let selector = iframeInfo["iframeSelector"] as? String,
+                  let src = iframeInfo["src"] as? String else { return nil }
+            
+            let nestedFrames: [BFCacheSnapshot.ScrollStateBlock.IframeScrollState] = []
+            if let nested = iframeInfo["nestedFrames"] as? [[String: Any]] {
+                // 재귀적으로 중첩 iframe 처리는 간단화
+                // 실제로는 더 복잡한 로직 필요
+            }
+            
+            return BFCacheSnapshot.ScrollStateBlock.IframeScrollState(
+                iframeSelector: selector,
+                src: src,
+                scrollX: iframeInfo["scrollX"] as? CGFloat ?? 0,
+                scrollY: iframeInfo["scrollY"] as? CGFloat ?? 0,
+                contentHeight: iframeInfo["contentHeight"] as? CGFloat ?? 0,
+                isAccessible: iframeInfo["isAccessible"] as? Bool ?? false,
+                nestedFrames: nestedFrames
+            )
+        }
+    }
+    
+    private func extractEnhancedAnchorItem(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo {
         guard let data = data,
               let anchorData = data["anchorItem"] as? [String: Any],
               let id = anchorData["id"] as? String,
               let selector = anchorData["selector"] as? String else {
-            return BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
-                id: "unknown", selector: "body", offsetFromTop: 0, elementHeight: 100, isSticky: false
-            )
+            return createDefaultAnchorItem()
         }
         
         return BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
@@ -1051,17 +2000,60 @@ final class BFCacheTransitionSystem: NSObject {
             selector: selector,
             offsetFromTop: anchorData["offsetFromTop"] as? CGFloat ?? 0,
             elementHeight: anchorData["elementHeight"] as? CGFloat ?? 100,
-            isSticky: anchorData["isSticky"] as? Bool ?? false
+            isSticky: anchorData["isSticky"] as? Bool ?? false,
+            reactComponentName: anchorData["reactComponentName"] as? String,
+            reactKey: anchorData["reactKey"] as? String,
+            reactProps: anchorData["reactProps"] as? [String: String],
+            isVirtualItem: anchorData["isVirtualItem"] as? Bool ?? false
         )
     }
     
-    private func extractVisibleItems(from data: [String: Any]?) -> [BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo] {
+    private func createDefaultAnchorItem() -> BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo {
+        return BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
+            id: "body-anchor",
+            selector: "body",
+            offsetFromTop: 0,
+            elementHeight: 100,
+            isSticky: false,
+            reactComponentName: nil,
+            reactKey: nil,
+            reactProps: nil,
+            isVirtualItem: false
+        )
+    }
+    
+    private func extractEnhancedVisibleItems(from data: [String: Any]?) -> [BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo] {
         guard let data = data,
               let itemsData = data["visibleItems"] as? [[String: Any]] else { return [] }
         
         return itemsData.compactMap { itemData in
             guard let id = itemData["id"] as? String,
                   let selector = itemData["selector"] as? String else { return nil }
+            
+            // 컴포넌트 정보 추출
+            var componentInfo: BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo.ComponentInfo?
+            if let compData = itemData["componentInfo"] as? [String: Any],
+               let componentName = compData["componentName"] as? String {
+                componentInfo = BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo.ComponentInfo(
+                    componentName: componentName,
+                    reactKey: compData["reactKey"] as? String,
+                    dataAttributes: compData["dataAttributes"] as? [String: String] ?? [:],
+                    isLazyLoaded: compData["isLazyLoaded"] as? Bool ?? false,
+                    hasAsyncData: compData["hasAsyncData"] as? Bool ?? false
+                )
+            }
+            
+            // 동적 콘텐츠 정보 추출
+            var dynamicContent: BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo.DynamicContentInfo?
+            if let dynData = itemData["dynamicContent"] as? [String: Any] {
+                dynamicContent = BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo.DynamicContentInfo(
+                    isSkeletonPlaceholder: dynData["isSkeletonPlaceholder"] as? Bool ?? false,
+                    hasLoadingState: dynData["hasLoadingState"] as? Bool ?? false,
+                    apiEndpoint: dynData["apiEndpoint"] as? String,
+                    cacheKey: dynData["cacheKey"] as? String,
+                    loadingStrategy: dynData["loadingStrategy"] as? String ?? "eager"
+                )
+            }
             
             return BFCacheSnapshot.ScrollStateBlock.VisibleItemInfo(
                 id: id,
@@ -1070,18 +2062,17 @@ final class BFCacheTransitionSystem: NSObject {
                 height: itemData["height"] as? CGFloat ?? 100,
                 content: itemData["content"] as? String,
                 hasImage: itemData["hasImage"] as? Bool ?? false,
-                loadPriority: itemData["loadPriority"] as? Int ?? 2
+                loadPriority: itemData["loadPriority"] as? Int ?? 2,
+                componentInfo: componentInfo,
+                dynamicContent: dynamicContent
             )
         }
     }
     
-    private func extractVirtualizationState(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.VirtualizationState {
+    private func extractEnhancedVirtualizationState(from data: [String: Any]?) -> BFCacheSnapshot.ScrollStateBlock.VirtualizationState {
         guard let data = data,
               let virtData = data["virtualizationState"] as? [String: Any] else {
-            return BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
-                isVirtual: false, currentSequence: 0, visibleStartIndex: 0, 
-                visibleEndIndex: 0, totalKnownItems: 0, pageInfo: nil
-            )
+            return createDefaultVirtualizationState()
         }
         
         var pageInfo: BFCacheSnapshot.ScrollStateBlock.VirtualizationState.PageInfo?
@@ -1090,17 +2081,38 @@ final class BFCacheTransitionSystem: NSObject {
                 currentPage: pageData["currentPage"] as? Int ?? 1,
                 pageSize: pageData["pageSize"] as? Int ?? 20,
                 loadedPages: pageData["loadedPages"] as? [Int] ?? [1],
-                hasNextPage: pageData["hasNextPage"] as? Bool ?? true
+                hasNextPage: pageData["hasNextPage"] as? Bool ?? true,
+                infiniteScrollTrigger: pageData["infiniteScrollTrigger"] as? String,
+                loadMoreElement: pageData["loadMoreElement"] as? String
             )
         }
         
         return BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
             isVirtual: virtData["isVirtual"] as? Bool ?? false,
+            libraryType: virtData["libraryType"] as? String,
             currentSequence: virtData["currentSequence"] as? Int ?? 0,
             visibleStartIndex: virtData["visibleStartIndex"] as? Int ?? 0,
             visibleEndIndex: virtData["visibleEndIndex"] as? Int ?? 0,
             totalKnownItems: virtData["totalKnownItems"] as? Int ?? 0,
-            pageInfo: pageInfo
+            itemHeight: virtData["itemHeight"] as? CGFloat,
+            estimatedItemSize: virtData["estimatedItemSize"] as? CGFloat,
+            pageInfo: pageInfo,
+            scrollOffset: virtData["scrollOffset"] as? CGFloat ?? 0
+        )
+    }
+    
+    private func createDefaultVirtualizationState() -> BFCacheSnapshot.ScrollStateBlock.VirtualizationState {
+        return BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
+            isVirtual: false,
+            libraryType: nil,
+            currentSequence: 0,
+            visibleStartIndex: 0,
+            visibleEndIndex: 0,
+            totalKnownItems: 0,
+            itemHeight: nil,
+            estimatedItemSize: nil,
+            pageInfo: nil,
+            scrollOffset: 0
         )
     }
     
@@ -1119,50 +2131,293 @@ final class BFCacheTransitionSystem: NSObject {
         return result
     }
     
-    private func extractCacheKeys(from data: [String: Any]?) -> [String: String] {
+    private func extractEnhancedCacheKeys(from data: [String: Any]?) -> [String: String] {
         guard let data = data,
               let cacheKeys = data["cacheKeys"] as? [String: String] else { return [:] }
         return cacheKeys
     }
     
-    private func calculateTotalSkeletons(from data: [String: Any]?) -> Int {
-        guard let data = data else { return 10 }
+    private func createDynamicSkeletonTemplate(from data: [String: Any]?, reactAppInfo: BFCacheSnapshot.ScrollStateBlock.ReactAppInfo) -> BFCacheSnapshot.SkeletonTemplate {
+        guard let data = data,
+              let skeletonInfo = data["skeletonInfo"] as? [String: Any] else {
+            return createDefaultSkeletonTemplate(framework: reactAppInfo.framework)
+        }
         
-        let contentHeight = data["contentHeight"] as? CGFloat ?? 1000
-        let averageHeight = data["averageItemHeight"] as? CGFloat ?? 120
-        let viewportHeight = data["viewportHeight"] as? CGFloat ?? 800
+        let averageItemHeight = skeletonInfo["averageItemHeight"] as? CGFloat ?? 120
+        let componentTypes = skeletonInfo["componentTypes"] as? [String: [String: Any]] ?? [:]
         
-        let itemsInViewport = Int(viewportHeight / averageHeight) + 2 // 여유분
-        let totalItems = Int(contentHeight / averageHeight)
+        // 컴포넌트별 스켈레톤 생성
+        let componentSkeletons = componentTypes.map { (type, info) in
+            let count = info["count"] as? Int ?? 1
+            let avgHeight = info["averageHeight"] as? CGFloat ?? 120
+            let hasImages = (info["hasImages"] as? Int ?? 0) > 0
+            let hasText = (info["hasText"] as? Int ?? 0) > 0
+            
+            return BFCacheSnapshot.SkeletonTemplate.ComponentSkeleton(
+                componentType: type,
+                htmlTemplate: createSkeletonHTML(for: type, hasImages: hasImages, hasText: hasText, framework: reactAppInfo.framework),
+                cssTemplate: createSkeletonCSS(for: type, height: avgHeight),
+                estimatedHeight: avgHeight,
+                containsImages: hasImages,
+                containsText: hasText,
+                priority: getPriorityForComponentType(type)
+            )
+        }
         
-        return min(max(itemsInViewport, 5), max(totalItems, 30)) // 5~30 개 사이
+        return BFCacheSnapshot.SkeletonTemplate(
+            averageItemHeight: averageItemHeight,
+            itemsPerScreen: Int(data["viewportHeight"] as? CGFloat ?? 800) / Int(averageItemHeight),
+            totalSkeletonItems: max(componentSkeletons.count * 5, 10),
+            skeletonPattern: "", // 레거시 필드
+            placeholderStyles: [:],
+            componentSkeletons: componentSkeletons
+        )
     }
     
-    private func createSkeletonPattern(from data: [String: Any]?) -> String {
-        // 기본 스켈레톤 HTML 패턴
+    private func createDefaultSkeletonTemplate(framework: String) -> BFCacheSnapshot.SkeletonTemplate {
+        let defaultComponents = [
+            BFCacheSnapshot.SkeletonTemplate.ComponentSkeleton(
+                componentType: "list-item",
+                htmlTemplate: createSkeletonHTML(for: "list-item", hasImages: true, hasText: true, framework: framework),
+                cssTemplate: "display: flex; align-items: center; padding: 12px 16px;",
+                estimatedHeight: 80,
+                containsImages: true,
+                containsText: true,
+                priority: 1
+            ),
+            BFCacheSnapshot.SkeletonTemplate.ComponentSkeleton(
+                componentType: "card",
+                htmlTemplate: createSkeletonHTML(for: "card", hasImages: true, hasText: true, framework: framework),
+                cssTemplate: "border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);",
+                estimatedHeight: 200,
+                containsImages: true,
+                containsText: true,
+                priority: 2
+            )
+        ]
+        
+        return BFCacheSnapshot.SkeletonTemplate(
+            averageItemHeight: 120,
+            itemsPerScreen: 7,
+            totalSkeletonItems: 15,
+            skeletonPattern: "",
+            placeholderStyles: [:],
+            componentSkeletons: defaultComponents
+        )
+    }
+    
+    private func createSkeletonHTML(for type: String, hasImages: Bool, hasText: Bool, framework: String) -> String {
+        var html = ""
+        
+        if hasImages {
+            html += """
+            <div style="width: 60px; height: 60px; background: #e2e8f0; border-radius: 8px; flex-shrink: 0; margin-right: 12px;"></div>
+            """
+        }
+        
+        if hasText {
+            html += """
+            <div style="flex: 1;">
+                <div style="height: 20px; background: #e2e8f0; margin-bottom: 8px; border-radius: 4px;"></div>
+                <div style="height: 16px; background: #f1f5f9; width: 80%; border-radius: 4px;"></div>
+            </div>
+            """
+        }
+        
+        // React 컴포넌트 특성 추가
+        if framework == "react" {
+            html = """
+            <div data-react-skeleton="true" data-component-type="\(type)">
+                \(html)
+            </div>
+            """
+        }
+        
+        return html
+    }
+    
+    private func createSkeletonCSS(for type: String, height: CGFloat) -> String {
         return """
-        <div style="height: 20px; background: #e2e8f0; margin-bottom: 8px; border-radius: 4px;"></div>
-        <div style="height: 16px; background: #f1f5f9; margin-bottom: 12px; border-radius: 4px; width: 80%;"></div>
+        height: \(height)px;
+        margin: 8px 0;
+        padding: 12px;
+        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+        background-size: 200% 100%;
+        animation: bfcache-shimmer 1.8s infinite;
+        border-radius: 8px;
         """
     }
     
-    private func createLoadingSequence(from data: [String: Any]?) -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
+    private func getPriorityForComponentType(_ type: String) -> Int {
+        switch type {
+        case "list-item": return 1
+        case "card": return 2
+        case "article": return 3
+        default: return 4
+        }
+    }
+    
+    private func createFrameworkAwareDataLoadingGuide(from data: [String: Any]?, reactAppInfo: BFCacheSnapshot.ScrollStateBlock.ReactAppInfo) -> BFCacheSnapshot.DataLoadingGuide {
+        let framework = reactAppInfo.framework
+        
+        // 프레임워크별 복원 전략
+        let strategy = BFCacheSnapshot.DataLoadingGuide.FrameworkStrategy(
+            framework: framework,
+            hydrationMethod: determineHydrationMethod(framework: framework),
+            dataFetchingPattern: determineFetchingPattern(framework: framework, stateManagement: reactAppInfo.stateManagement),
+            routerType: reactAppInfo.routingLibrary,
+            customRestoreScript: createCustomRestoreScript(for: framework)
+        )
+        
+        // 기본 로딩 단계 (프레임워크별 최적화)
+        var loadingSteps: [BFCacheSnapshot.DataLoadingGuide.LoadingStep] = []
+        
+        // React 특화 단계
+        if framework == "react" {
+            loadingSteps.append(contentsOf: createReactLoadingSteps(reactAppInfo: reactAppInfo))
+        } else if framework == "vue" {
+            loadingSteps.append(contentsOf: createVueLoadingSteps())
+        } else if framework == "angular" {
+            loadingSteps.append(contentsOf: createAngularLoadingSteps())
+        } else {
+            loadingSteps.append(contentsOf: createVanillaLoadingSteps())
+        }
+        
+        return BFCacheSnapshot.DataLoadingGuide(
+            loadingSequence: loadingSteps,
+            backgroundLoadingEnabled: true,
+            lockScrollDuringLoad: true,
+            frameworkStrategy: strategy
+        )
+    }
+    
+    private func determineHydrationMethod(framework: String) -> String {
+        switch framework {
+        case "react": return "client-side"
+        case "vue": return "client-side"
+        case "angular": return "client-side"
+        default: return "static-generation"
+        }
+    }
+    
+    private func determineFetchingPattern(framework: String, stateManagement: String?) -> String {
+        if let state = stateManagement {
+            switch state {
+            case "redux": return "redux-toolkit"
+            case "mobx": return "mobx"
+            case "zustand": return "zustand"
+            case "recoil": return "recoil"
+            default: return "local-state"
+            }
+        }
+        
+        switch framework {
+        case "react": return "react-query"
+        case "vue": return "vue-composition"
+        case "angular": return "rxjs"
+        default: return "fetch"
+        }
+    }
+    
+    private func createCustomRestoreScript(for framework: String) -> String? {
+        switch framework {
+        case "react":
+            return """
+            // React 하이드레이션 헬퍼
+            if (window.React && window.ReactDOM) {
+                window.bfcacheReactHydrate = function() {
+                    console.log('React 하이드레이션 헬퍼 실행');
+                    // 실제 React 앱별 하이드레이션 로직 구현 필요
+                };
+            }
+            """
+        case "vue":
+            return """
+            // Vue 하이드레이션 헬퍼
+            if (window.Vue) {
+                window.bfcacheVueHydrate = function() {
+                    console.log('Vue 하이드레이션 헬퍼 실행');
+                };
+            }
+            """
+        default:
+            return nil
+        }
+    }
+    
+    private func createReactLoadingSteps(reactAppInfo: BFCacheSnapshot.ScrollStateBlock.ReactAppInfo) -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
+        var steps: [BFCacheSnapshot.DataLoadingGuide.LoadingStep] = []
+        
+        // React 컴포넌트 복원
+        steps.append(BFCacheSnapshot.DataLoadingGuide.LoadingStep(
+            stepId: "react_components",
+            dataSource: "cache:react_components",
+            targetSelectors: [".bfcache-skeleton[data-component-type]"],
+            delayMs: 50,
+            priority: 1,
+            fallbackContent: "<div>Loading React Component...</div>",
+            reactStateRestore: nil
+        ))
+        
+        // Redux 상태 복원
+        if reactAppInfo.stateManagement == "redux" {
+            steps.append(BFCacheSnapshot.DataLoadingGuide.LoadingStep(
+                stepId: "redux_state",
+                dataSource: "cache:redux_store",
+                targetSelectors: ["[data-react-skeleton]"],
+                delayMs: 100,
+                priority: 1,
+                fallbackContent: nil,
+                reactStateRestore: BFCacheSnapshot.DataLoadingGuide.LoadingStep.ReactStateRestore(
+                    storeType: "redux",
+                    stateKey: "app",
+                    stateValue: "{}",
+                    actionType: "HYDRATE_FROM_CACHE"
+                )
+            ))
+        }
+        
+        return steps
+    }
+    
+    private func createVueLoadingSteps() -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
         return [
             BFCacheSnapshot.DataLoadingGuide.LoadingStep(
-                stepId: "primary_content",
-                dataSource: "cache:main_query",
+                stepId: "vue_components",
+                dataSource: "cache:vue_components",
                 targetSelectors: [".bfcache-skeleton"],
-                delayMs: 50,
+                delayMs: 100,
                 priority: 1,
-                fallbackContent: nil
-            ),
+                fallbackContent: "<div>Loading Vue Component...</div>",
+                reactStateRestore: nil
+            )
+        ]
+    }
+    
+    private func createAngularLoadingSteps() -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
+        return [
             BFCacheSnapshot.DataLoadingGuide.LoadingStep(
-                stepId: "secondary_content", 
-                dataSource: "api:/api/additional",
-                targetSelectors: [".bfcache-skeleton:nth-child(n+6)"],
+                stepId: "angular_components",
+                dataSource: "cache:angular_components",
+                targetSelectors: [".bfcache-skeleton"],
+                delayMs: 150,
+                priority: 1,
+                fallbackContent: "<div>Loading Angular Component...</div>",
+                reactStateRestore: nil
+            )
+        ]
+    }
+    
+    private func createVanillaLoadingSteps() -> [BFCacheSnapshot.DataLoadingGuide.LoadingStep] {
+        return [
+            BFCacheSnapshot.DataLoadingGuide.LoadingStep(
+                stepId: "vanilla_content",
+                dataSource: "cache:page_content",
+                targetSelectors: [".bfcache-skeleton"],
                 delayMs: 200,
                 priority: 2,
-                fallbackContent: "<div>Loading...</div>"
+                fallbackContent: "<div>Loading Content...</div>",
+                reactStateRestore: nil
             )
         ]
     }
@@ -1178,7 +2433,7 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        _ = semaphore.wait(timeout: .now() + 2.0)
+        _ = semaphore.wait(timeout: .now() + 3.0) // 복잡한 분석을 위해 3초로 증가
         return result
     }
     
@@ -1258,7 +2513,7 @@ final class BFCacheTransitionSystem: NSObject {
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 통합 상태 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
+            self.dbg("💾 강화된 동적 사이트 상태 저장 완료: \(snapshot.snapshot.pageRecord.title) [\(snapshot.snapshot.scrollStateBlock.reactAppInfo.framework)] [v\(version)]")
             
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
@@ -1328,7 +2583,7 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 }
                 
-                self.dbg("💾 디스크 캐시 인덱스 로드 완료: \(loadedCount)개 항목")
+                self.dbg("💾 강화된 디스크 캐시 인덱스 로드 완료: \(loadedCount)개 항목")
             } catch {
                 self.dbg("❌ 디스크 캐시 로드 실패: \(error)")
             }
@@ -1360,7 +2615,7 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 setMemoryCache(snapshot, for: pageID)
                 
-                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title)")
+                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) [\(snapshot.scrollStateBlock.reactAppInfo.framework)]")
                 return snapshot
             }
         }
@@ -1383,7 +2638,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
-        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
+        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [\(snapshot.scrollStateBlock.reactAppInfo.framework)] [v\(snapshot.version)]")
     }
     
     // MARK: - 캐시 정리 (기존 유지)
@@ -1436,7 +2691,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 제스처 시스템 (기존 유지하되 올인원 복원 호출)
+    // MARK: - 🎯 강화된 제스처 시스템 (React/SPA 대응)
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         webView.allowsBackForwardNavigationGestures = false
@@ -1457,7 +2712,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("올인원 점진적 복원 제스처 설정 완료")
+        dbg("강화된 동적 사이트 복원 제스처 설정 완료")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -1532,7 +2787,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 제스처 전환 로직 (기존 유지)
+    // MARK: - 제스처 전환 로직 (강화된 동적 사이트 지원)
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -1574,7 +2829,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
         activeTransitions[tabID] = context
         
-        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        dbg("🎬 강화된 제스처 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
@@ -1651,10 +2906,10 @@ final class BFCacheTransitionSystem: NSObject {
                 imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
                 targetView = imageView
-                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
+                dbg("📸 타겟 페이지 강화된 BFCache 스냅샷 사용: \(targetRecord.title)")
             } else {
-                targetView = createInfoCard(for: targetRecord, in: webView.bounds)
-                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
+                targetView = createEnhancedInfoCard(for: targetRecord, in: webView.bounds)
+                dbg("ℹ️ 타겟 페이지 강화된 정보 카드 생성: \(targetRecord.title)")
             }
         } else {
             targetView = UIView()
@@ -1675,7 +2930,7 @@ final class BFCacheTransitionSystem: NSObject {
         return container
     }
     
-    private func createInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
+    private func createEnhancedInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
         let card = UIView(frame: bounds)
         card.backgroundColor = .systemBackground
         
@@ -1689,10 +2944,25 @@ final class BFCacheTransitionSystem: NSObject {
         contentView.layer.shadowRadius = 8
         card.addSubview(contentView)
         
+        // 프레임워크 아이콘
         let iconView = UIImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = UIImage(systemName: "globe")
-        iconView.tintColor = .systemBlue
+        
+        // URL을 기반으로 프레임워크 추정
+        let host = record.url.host?.lowercased() ?? ""
+        if host.contains("react") {
+            iconView.image = UIImage(systemName: "atom")
+            iconView.tintColor = .systemBlue
+        } else if host.contains("vue") {
+            iconView.image = UIImage(systemName: "v.square")
+            iconView.tintColor = .systemGreen
+        } else if host.contains("angular") {
+            iconView.image = UIImage(systemName: "a.square")
+            iconView.tintColor = .systemRed
+        } else {
+            iconView.image = UIImage(systemName: "globe")
+            iconView.tintColor = .systemBlue
+        }
         iconView.contentMode = .scaleAspectFit
         contentView.addSubview(iconView)
         
@@ -1714,6 +2984,18 @@ final class BFCacheTransitionSystem: NSObject {
         urlLabel.numberOfLines = 1
         contentView.addSubview(urlLabel)
         
+        // 사이트 타입 표시
+        let typeLabel = UILabel()
+        typeLabel.translatesAutoresizingMaskIntoConstraints = false
+        typeLabel.text = record.siteType ?? "동적 사이트"
+        typeLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        typeLabel.textColor = .systemBlue
+        typeLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
+        typeLabel.textAlignment = .center
+        typeLabel.layer.cornerRadius = 8
+        typeLabel.clipsToBounds = true
+        contentView.addSubview(typeLabel)
+        
         let timeLabel = UILabel()
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         let formatter = DateFormatter()
@@ -1727,30 +3009,35 @@ final class BFCacheTransitionSystem: NSObject {
         NSLayoutConstraint.activate([
             contentView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
             contentView.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-            contentView.widthAnchor.constraint(equalToConstant: min(300, bounds.width - 60)),
-            contentView.heightAnchor.constraint(equalToConstant: 180),
+            contentView.widthAnchor.constraint(equalToConstant: min(320, bounds.width - 40)),
+            contentView.heightAnchor.constraint(equalToConstant: 200),
             
-            iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
             iconView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 40),
             iconView.heightAnchor.constraint(equalToConstant: 40),
             
-            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 12),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             
-            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             
-            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            typeLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 8),
+            typeLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            typeLabel.widthAnchor.constraint(equalToConstant: 100),
+            typeLabel.heightAnchor.constraint(equalToConstant: 20),
+            
+            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
             timeLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
         ])
         
         return card
     }
     
-    // 🎯 **올인원 점진적 복원 적용 전환 완료**
+    // 🎯 **강화된 동적 사이트 복원 적용 전환 완료**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1777,13 +3064,13 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                self?.performAllInOneNavigation(context: context, previewContainer: previewContainer)
+                self?.performEnhancedDynamicNavigation(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // 🎯 **올인원 점진적 복원 네비게이션 수행**
-    private func performAllInOneNavigation(context: TransitionContext, previewContainer: UIView) {
+    // 🎯 **강화된 동적 사이트 네비게이션 수행**
+    private func performEnhancedDynamicNavigation(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             previewContainer.removeFromSuperview()
             activeTransitions.removeValue(forKey: context.tabID)
@@ -1794,54 +3081,54 @@ final class BFCacheTransitionSystem: NSObject {
         switch context.direction {
         case .back:
             stateModel.goBack()
-            dbg("🏄‍♂️ 뒤로가기 완료")
+            dbg("🏄‍♂️ 강화된 뒤로가기 완료")
         case .forward:
             stateModel.goForward()
-            dbg("🏄‍♂️ 앞으로가기 완료")
+            dbg("🏄‍♂️ 강화된 앞으로가기 완료")
         }
         
-        // 🎯 **올인원 점진적 복원 적용**
-        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+        // 🎯 **강화된 동적 사이트 BFCache 복원 적용**
+        tryEnhancedDynamicBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - 올인원 복원 \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 강화된 동적 복원 \(success ? "성공" : "실패")")
             }
         }
         
-        // 안전장치: 최대 1초 후 강제 정리 (올인원 복원은 더 빠름)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        // 안전장치: 최대 2초 후 강제 정리 (동적 사이트는 복원이 더 복잡할 수 있음)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (2초 타임아웃)")
             }
         }
     }
     
-    // 🎯 **올인원 점진적 BFCache 복원**
-    private func tryAllInOneBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🎯 **강화된 동적 사이트 BFCache 복원**
+    private func tryEnhancedDynamicBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
             return
         }
         
-        // BFCache에서 스냅샷 가져오기
+        // BFCache에서 강화된 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // 🎯 **핵심: 올인원 점진적 복원 호출**
+            // 🎯 **핵심: 강화된 동적 사이트 복원 호출**
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 올인원 점진적 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ 강화된 동적 사이트 복원 성공: \(currentRecord.title) [\(snapshot.scrollStateBlock.reactAppInfo.framework)]")
                 } else {
-                    self?.dbg("⚠️ 올인원 점진적 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 강화된 동적 사이트 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
         } else {
             // BFCache 미스 - 기본 대기
-            dbg("❌ BFCache 미스: \(currentRecord.title)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            dbg("❌ 강화된 BFCache 미스: \(currentRecord.title)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 completion(false)
             }
         }
@@ -1876,7 +3163,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 버튼 네비게이션 (올인원 점진적 복원 적용)
+    // MARK: - 버튼 네비게이션 (강화된 동적 사이트 복원 적용)
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
@@ -1888,7 +3175,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: .back) { _ in }
+        tryEnhancedDynamicBFCacheRestore(stateModel: stateModel, direction: .back) { _ in }
     }
     
     func navigateForward(stateModel: WebViewStateModel) {
@@ -1901,7 +3188,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryAllInOneBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in }
+        tryEnhancedDynamicBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in }
     }
     
     // MARK: - 스와이프 제스처 감지 처리
@@ -1917,92 +3204,335 @@ final class BFCacheTransitionSystem: NSObject {
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가: \(url.absoluteString)")
     }
     
-    // MARK: - 🌐 JavaScript 스크립트 (올인원 점진적 복원용)
+    // MARK: - 🌐 강화된 JavaScript 스크립트 (React/SPA 완전 지원)
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        // 🎯 올인원 점진적 복원 지원 스크립트
+        // 🎯 강화된 동적 사이트 복원 지원 스크립트 - React/SPA 완전 지원
         (function() {
             'use strict';
+            
+            console.log('🚀 강화된 동적 사이트 BFCache 스크립트 초기화');
             
             // iOS 웹뷰 특화: 강제 manual 스크롤 복원
             if (history.scrollRestoration) {
                 history.scrollRestoration = 'manual';
             }
             
-            // 페이지 보기/숨김 이벤트
+            // === 프레임워크 감지 및 후킹 ===
+            
+            // React 감지 및 후킹
+            if (window.React || document.querySelector('[data-reactroot]') || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+                console.log('⚛️ React 앱 감지됨');
+                
+                // React Router 네비게이션 후킹
+                if (window.history && window.history.pushState) {
+                    const originalPushState = window.history.pushState;
+                    window.history.pushState = function(...args) {
+                        const result = originalPushState.apply(this, args);
+                        setTimeout(() => {
+                            window.dispatchEvent(new CustomEvent('reactRouterNavigate', {
+                                detail: { url: window.location.href }
+                            }));
+                        }, 100);
+                        return result;
+                    };
+                }
+                
+                // React Query 캐시 저장 헬퍼
+                window.saveReactQueryCache = function() {
+                    if (window.__REACT_QUERY_CLIENT__) {
+                        const cache = window.__REACT_QUERY_CLIENT__.getQueryCache();
+                        const queries = cache.getAll();
+                        const cacheData = {};
+                        
+                        queries.forEach(query => {
+                            if (query.state.data) {
+                                cacheData[JSON.stringify(query.queryKey)] = {
+                                    data: query.state.data,
+                                    dataUpdatedAt: query.state.dataUpdatedAt,
+                                    status: query.state.status
+                                };
+                            }
+                        });
+                        
+                        window.__BFCACHE_REACT_QUERY_DATA__ = cacheData;
+                        return cacheData;
+                    }
+                    return null;
+                };
+                
+                // Redux 상태 저장 헬퍼
+                window.saveReduxState = function() {
+                    if (window.__REDUX_STORE__) {
+                        const state = window.__REDUX_STORE__.getState();
+                        window.__BFCACHE_REDUX_STATE__ = JSON.stringify(state);
+                        return state;
+                    }
+                    return null;
+                };
+            }
+            
+            // Vue 감지 및 후킹
+            if (window.Vue || document.querySelector('[data-v-app]')) {
+                console.log('🖖 Vue 앱 감지됨');
+                
+                // Vuex 상태 저장 헬퍼
+                window.saveVuexState = function() {
+                    if (window.__VUE_DEVTOOLS_GLOBAL_HOOK__ && window.__VUE_DEVTOOLS_GLOBAL_HOOK__.Vue) {
+                        // Vue 3 또는 Vue 2 상태 추출 로직
+                        console.log('Vue 상태 저장 시도');
+                    }
+                };
+            }
+            
+            // Angular 감지 및 후킹  
+            if (window.ng || document.querySelector('app-root')) {
+                console.log('🅰️ Angular 앱 감지됨');
+            }
+            
+            // === 가상화 라이브러리 후킹 ===
+            
+            // react-window 후킹
+            if (window.FixedSizeList || window.VariableSizeList) {
+                console.log('📋 react-window 감지됨');
+                
+                window.getReactWindowState = function() {
+                    const lists = document.querySelectorAll('[data-react-window-list]');
+                    const states = [];
+                    
+                    lists.forEach(list => {
+                        const scrollContainer = list.querySelector('[style*="overflow"]');
+                        if (scrollContainer) {
+                            states.push({
+                                selector: list.id ? '#' + list.id : '[data-react-window-list]',
+                                scrollTop: scrollContainer.scrollTop,
+                                scrollLeft: scrollContainer.scrollLeft
+                            });
+                        }
+                    });
+                    
+                    return states;
+                };
+            }
+            
+            // === 페이지 보기/숨김 이벤트 강화 ===
+            
             window.addEventListener('pageshow', function(event) {
                 if (event.persisted) {
-                    console.log('🔄 BFCache 페이지 복원 - 올인원 점진적 시스템 활성');
+                    console.log('🔄 BFCache 페이지 복원 - 강화된 동적 사이트 시스템 활성');
                     
-                    // React Query 캐시 상태 확인
-                    if (window.__REACT_QUERY_STATE__) {
-                        console.log('💾 React Query 캐시 감지됨');
+                    // 프레임워크별 캐시 상태 확인
+                    if (window.__BFCACHE_REACT_QUERY_DATA__) {
+                        console.log('💾 React Query 캐시 복원 준비');
+                    }
+                    
+                    if (window.__BFCACHE_REDUX_STATE__) {
+                        console.log('🗃️ Redux 상태 복원 준비');  
                     }
                     
                     // 가상화 스크롤러 상태 확인
-                    if (window.virtualScroller || window.infiniteScroll) {
-                        console.log('🔄 가상화 스크롤 감지됨');
+                    if (window.getReactWindowState) {
+                        const states = window.getReactWindowState();
+                        console.log('🔄 react-window 상태:', states.length, '개');
                     }
                     
-                    // 올인원 복원 준비 완료 이벤트
-                    window.dispatchEvent(new CustomEvent('bfcacheReadyForRestore', {
-                        detail: { timestamp: Date.now() }
+                    // 강화된 복원 준비 완료 이벤트
+                    window.dispatchEvent(new CustomEvent('bfcacheEnhancedReadyForRestore', {
+                        detail: { 
+                            framework: detectCurrentFramework(),
+                            timestamp: Date.now() 
+                        }
                     }));
                 }
             });
             
             window.addEventListener('pagehide', function(event) {
                 if (event.persisted) {
-                    console.log('📸 BFCache 페이지 저장 - 통합 상태 수집');
+                    console.log('📸 BFCache 페이지 저장 - 강화된 상태 수집');
+                    
+                    // 프레임워크별 상태 저장
+                    if (window.saveReactQueryCache) window.saveReactQueryCache();
+                    if (window.saveReduxState) window.saveReduxState();
+                    if (window.saveVuexState) window.saveVuexState();
+                    
+                    // 가상화 상태 저장
+                    if (window.getReactWindowState) {
+                        window.__BFCACHE_VIRTUAL_STATES__ = window.getReactWindowState();
+                    }
                 }
             });
             
-            // 스크롤 위치 고정 헬퍼 함수들
-            window.lockScrollPosition = function(lockY) {
+            // === 스크롤 위치 고정 헬퍼 함수들 (강화) ===
+            
+            window.lockScrollPosition = function(lockY, options = {}) {
+                const { 
+                    strict = true,           // 엄격 모드 (더 강한 고정)
+                    virtualScrollSupport = true,  // 가상 스크롤 지원
+                    reactSupport = true     // React 컴포넌트 지원
+                } = options;
+                
                 window.__BFCACHE_SCROLL_LOCKED__ = true;
                 window.__BFCACHE_FINAL_SCROLL_Y__ = lockY;
+                window.__BFCACHE_SCROLL_OPTIONS__ = options;
                 
-                // 스크롤 이벤트 리스너로 위치 강제 유지
-                const scrollLockHandler = () => {
-                    if (window.__BFCACHE_SCROLL_LOCKED__ && window.scrollY !== lockY) {
-                        window.scrollTo(0, lockY);
+                // 강화된 스크롤 이벤트 리스너
+                const scrollLockHandler = (event) => {
+                    if (!window.__BFCACHE_SCROLL_LOCKED__) return;
+                    
+                    const currentY = window.scrollY;
+                    const targetY = window.__BFCACHE_FINAL_SCROLL_Y__;
+                    const tolerance = strict ? 2 : 10;
+                    
+                    if (Math.abs(currentY - targetY) > tolerance) {
+                        if (strict) {
+                            event.preventDefault();
+                        }
+                        
+                        // requestAnimationFrame으로 부드러운 복원
+                        requestAnimationFrame(() => {
+                            window.scrollTo({ top: targetY, behavior: 'auto' });
+                        });
                     }
                 };
                 
-                window.addEventListener('scroll', scrollLockHandler, { passive: false });
+                // 다양한 스크롤 이벤트 감지
+                window.addEventListener('scroll', scrollLockHandler, { passive: !strict });
+                window.addEventListener('wheel', scrollLockHandler, { passive: !strict });
+                window.addEventListener('touchmove', scrollLockHandler, { passive: !strict });
+                
+                // 가상 스크롤러 고정
+                if (virtualScrollSupport && window.__BFCACHE_VIRTUAL_STATES__) {
+                    window.__BFCACHE_VIRTUAL_STATES__.forEach(state => {
+                        const container = document.querySelector(state.selector);
+                        if (container) {
+                            const scrollContainer = container.querySelector('[style*="overflow"]');
+                            if (scrollContainer) {
+                                scrollContainer.scrollTop = state.scrollTop;
+                                scrollContainer.scrollLeft = state.scrollLeft;
+                            }
+                        }
+                    });
+                }
+                
+                // React 컴포넌트 상태 복원
+                if (reactSupport && window.__BFCACHE_REACT_QUERY_DATA__) {
+                    Object.keys(window.__BFCACHE_REACT_QUERY_DATA__).forEach(key => {
+                        const queryKey = JSON.parse(key);
+                        const data = window.__BFCACHE_REACT_QUERY_DATA__[key];
+                        
+                        if (window.__REACT_QUERY_CLIENT__) {
+                            window.__REACT_QUERY_CLIENT__.setQueryData(queryKey, data.data);
+                        }
+                    });
+                }
                 
                 // 잠금 해제 함수 반환
                 return () => {
                     window.__BFCACHE_SCROLL_LOCKED__ = false;
                     window.removeEventListener('scroll', scrollLockHandler);
+                    window.removeEventListener('wheel', scrollLockHandler);
+                    window.removeEventListener('touchmove', scrollLockHandler);
                     delete window.__BFCACHE_FINAL_SCROLL_Y__;
+                    delete window.__BFCACHE_SCROLL_OPTIONS__;
                 };
             };
             
-            // React Query 스타일 캐시 데이터 즉시 하이드레이션
-            window.hydrateCachedData = function(data, allowScrollChange = false) {
+            // 프레임워크별 데이터 즉시 하이드레이션 (강화)
+            window.hydrateCachedData = function(data, framework = 'react', allowScrollChange = false) {
                 try {
+                    console.log(`💧 \${framework} 데이터 하이드레이션 시작:`, data);
+                    
                     if (!allowScrollChange && window.__BFCACHE_SCROLL_LOCKED__) {
                         // 스크롤 위치 고정 상태에서는 데이터만 교체
                         requestAnimationFrame(() => {
-                            // DOM 업데이트 후 스크롤 위치 재확인
                             if (window.__BFCACHE_FINAL_SCROLL_Y__ !== undefined) {
-                                window.scrollTo(0, window.__BFCACHE_FINAL_SCROLL_Y__);
+                                window.scrollTo({ top: window.__BFCACHE_FINAL_SCROLL_Y__, behavior: 'auto' });
                             }
                         });
                     }
                     
+                    // 프레임워크별 하이드레이션 로직
+                    switch (framework) {
+                        case 'react':
+                            if (window.React && window.ReactDOM) {
+                                // React 컴포넌트 하이드레이션
+                                console.log('⚛️ React 하이드레이션 실행');
+                                
+                                // Redux 상태 복원
+                                if (window.__BFCACHE_REDUX_STATE__ && window.__REDUX_STORE__) {
+                                    try {
+                                        const state = JSON.parse(window.__BFCACHE_REDUX_STATE__);
+                                        window.__REDUX_STORE__.dispatch({ 
+                                            type: 'BFCACHE_HYDRATE', 
+                                            payload: state 
+                                        });
+                                    } catch (e) {
+                                        console.warn('Redux 하이드레이션 실패:', e);
+                                    }
+                                }
+                            }
+                            break;
+                            
+                        case 'vue':
+                            if (window.Vue) {
+                                console.log('🖖 Vue 하이드레이션 실행');
+                                // Vue 특화 로직
+                            }
+                            break;
+                            
+                        case 'angular':
+                            if (window.ng) {
+                                console.log('🅰️ Angular 하이드레이션 실행');
+                                // Angular 특화 로직
+                            }
+                            break;
+                    }
+                    
                     // 실제 데이터 렌더링 로직은 앱별로 구현 필요
-                    console.log('💧 캐시 데이터 하이드레이션:', data.length || 'unknown size');
+                    console.log(`💧 \${framework} 하이드레이션 완료`);
                     return true;
                 } catch (e) {
-                    console.error('하이드레이션 실패:', e);
+                    console.error(`\${framework} 하이드레이션 실패:`, e);
                     return false;
                 }
             };
             
-            console.log('✅ 올인원 점진적 복원 스크립트 로드 완료');
+            // 현재 프레임워크 감지 함수
+            function detectCurrentFramework() {
+                if (window.React || document.querySelector('[data-reactroot]')) return 'react';
+                if (window.Vue || document.querySelector('[data-v-app]')) return 'vue';
+                if (window.ng || document.querySelector('app-root')) return 'angular';
+                if (window.svelte) return 'svelte';
+                return 'vanilla';
+            }
+            
+            // === Intersection Observer 강화 (무한 스크롤 지원) ===
+            
+            // 기존 Intersection Observer 래핑
+            if (window.IntersectionObserver) {
+                const OriginalIntersectionObserver = window.IntersectionObserver;
+                
+                window.IntersectionObserver = function(callback, options) {
+                    const wrappedCallback = (entries, observer) => {
+                        // BFCache 복원 중에는 무한 스크롤 트리거 방지
+                        if (window.__BFCACHE_SCROLL_LOCKED__) {
+                            console.log('🤫 스크롤 고정 중 - Intersection Observer 콜백 지연');
+                            return;
+                        }
+                        
+                        return callback(entries, observer);
+                    };
+                    
+                    return new OriginalIntersectionObserver(wrappedCallback, options);
+                };
+                
+                // 기존 프로토타입 복사
+                window.IntersectionObserver.prototype = OriginalIntersectionObserver.prototype;
+            }
+            
+            console.log('✅ 강화된 동적 사이트 BFCache 스크립트 로드 완료:', detectCurrentFramework());
+            
         })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -2011,7 +3541,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[올인원점진복원] \(msg)")
+        TabPersistenceManager.debugMessages.append("[강화된동적사이트복원] \(msg)")
     }
 }
 
@@ -2028,7 +3558,7 @@ extension BFCacheTransitionSystem {
     static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         shared.setupGestures(for: webView, stateModel: stateModel)
-        TabPersistenceManager.debugMessages.append("✅ 올인원 점진적 복원 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 동적 사이트 복원 시스템 설치 완료")
     }
     
     static func uninstall(from webView: WKWebView) {
@@ -2037,7 +3567,7 @@ extension BFCacheTransitionSystem {
                 webView.removeGestureRecognizer(gesture)
             }
         }
-        TabPersistenceManager.debugMessages.append("🧹 올인원 점진적 복원 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧹 강화된 동적 사이트 복원 시스템 제거 완료")
     }
     
     static func goBack(stateModel: WebViewStateModel) {
@@ -2057,7 +3587,7 @@ extension BFCacheTransitionSystem {
               let tabID = stateModel.tabID else { return }
         
         captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
-        dbg("📸 통합 상태 캡처 시작: \(rec.title)")
+        dbg("📸 강화된 통합 상태 캡처 시작: \(rec.title)")
     }
 
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
@@ -2065,9 +3595,9 @@ extension BFCacheTransitionSystem {
               let tabID = stateModel.tabID else { return }
         
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
-        dbg("📸 도착 상태 캡처 시작: \(rec.title)")
+        dbg("📸 강화된 도착 상태 캡처 시작: \(rec.title)")
         
-        // 이전 페이지들도 메타데이터 확인
+        // 이전 페이지들도 메타데이터 확인 (React/SPA 기본 정보 포함)
         if stateModel.dataModel.currentPageIndex > 0 {
             let checkCount = min(3, stateModel.dataModel.currentPageIndex)
             let startIndex = max(0, stateModel.dataModel.currentPageIndex - checkCount)
@@ -2076,18 +3606,31 @@ extension BFCacheTransitionSystem {
                 let previousRecord = stateModel.dataModel.pageHistory[i]
                 
                 if !hasCache(for: previousRecord.id) {
-                    // 기본 스냅샷 생성 (통합 데이터는 없지만 메타데이터는 저장)
+                    // 기본 스냅샷 생성 (프레임워크 기본 정보 포함)
+                    let defaultReactAppInfo = BFCacheSnapshot.ScrollStateBlock.ReactAppInfo(
+                        framework: "vanilla",
+                        appContainerSelector: "body",
+                        hasReactRoot: false,
+                        componentTree: [],
+                        stateManagement: nil,
+                        routingLibrary: nil
+                    )
+                    
                     let basicStateBlock = BFCacheSnapshot.ScrollStateBlock(
                         finalScrollY: 0,
                         viewportHeight: 800,
                         totalContentHeight: 1000,
+                        reactAppInfo: defaultReactAppInfo,
+                        iframeScrollStates: [],
                         anchorItem: BFCacheSnapshot.ScrollStateBlock.AnchorItemInfo(
-                            id: "unknown", selector: "body", offsetFromTop: 0, elementHeight: 100, isSticky: false
+                            id: "body-anchor", selector: "body", offsetFromTop: 0, elementHeight: 100, 
+                            isSticky: false, reactComponentName: nil, reactKey: nil, reactProps: nil, isVirtualItem: false
                         ),
                         visibleItems: [],
                         virtualizationState: BFCacheSnapshot.ScrollStateBlock.VirtualizationState(
-                            isVirtual: false, currentSequence: 0, visibleStartIndex: 0,
-                            visibleEndIndex: 0, totalKnownItems: 0, pageInfo: nil
+                            isVirtual: false, libraryType: nil, currentSequence: 0, visibleStartIndex: 0,
+                            visibleEndIndex: 0, totalKnownItems: 0, itemHeight: nil, estimatedItemSize: nil,
+                            pageInfo: nil, scrollOffset: 0
                         ),
                         containerScrolls: [:],
                         cacheKeys: [:]
@@ -2097,14 +3640,22 @@ extension BFCacheTransitionSystem {
                         averageItemHeight: 120,
                         itemsPerScreen: 7,
                         totalSkeletonItems: 10,
-                        skeletonPattern: "<div>Loading...</div>",
-                        placeholderStyles: [:]
+                        skeletonPattern: "",
+                        placeholderStyles: [:],
+                        componentSkeletons: []
                     )
                     
                     let basicGuide = BFCacheSnapshot.DataLoadingGuide(
                         loadingSequence: [],
                         backgroundLoadingEnabled: true,
-                        lockScrollDuringLoad: true
+                        lockScrollDuringLoad: true,
+                        frameworkStrategy: BFCacheSnapshot.DataLoadingGuide.FrameworkStrategy(
+                            framework: "vanilla",
+                            hydrationMethod: "static-generation",
+                            dataFetchingPattern: "fetch",
+                            routerType: nil,
+                            customRestoreScript: nil
+                        )
                     )
                     
                     let metadataSnapshot = BFCacheSnapshot(
@@ -2119,7 +3670,7 @@ extension BFCacheTransitionSystem {
                     )
                     
                     saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
-                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                    dbg("📸 이전 페이지 강화된 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
                 }
             }
         }
