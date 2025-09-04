@@ -2209,7 +2209,7 @@ mainSyncOrNow {
     
     // MARK: - 🌐 JavaScript 스크립트
     
-    sstatic func makeBFCacheScript() -> WKUserScript {
+    static func makeBFCacheScript() -> WKUserScript {
     let scriptSource = """
 // ---- Polyfills (once per page) ------------------------------------------
 (function(){
