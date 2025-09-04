@@ -269,11 +269,15 @@ struct BFCacheSnapshot: Codable {
         }
         
         TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (앵커/아이템 기반)")
-        
-        // 적응형 타이밍으로 다단계 복원 실행
-        DispatchQueue.main.async {
-            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
-        }
+
+// ⚡ 0ms Fast-path: 네이티브 스크롤뷰에 먼저 픽셀 오프셋 반영 (즉각 체감)
+DispatchQueue.main.async {
+    webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+    
+    // 이어서 다단계 복원 실행 (앵커/아이템/비율 보정)
+    self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
+}
+
     }
     
     // 🔄 **핵심: 앵커/아이템 기반 다단계 복원**
@@ -292,15 +296,41 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔄 1단계: 비율 기반 초기 정렬")
             
             let restoreJS = """
-            (function() {
-                try {
-                    const vh = window.visualViewport?.height || window.innerHeight;
-                    const maxTop = Math.max(1, document.documentElement.scrollHeight - vh);
-                    const targetY = Math.round(\(self.scrollRatio) * maxTop);
-                    window.scrollTo(0, targetY);
-                    return true;
-                } catch(e) { return false; }
-            })()
+(function() {
+  try {
+    // CSS.escape 폴리필 (낮은 iOS에서 안전)
+    if (typeof CSS === 'undefined') { window.CSS = {}; }
+    if (typeof CSS.escape !== 'function') {
+      CSS.escape = function(s){ return String(s).replace(/[^a-zA-Z0-9_\\-]/g,'\\\\$&'); };
+    }
+
+    const doc = document.documentElement;
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const docH = doc.scrollHeight || 0;
+    const maxTop = Math.max(0, docH - vh);
+
+    const fromRatio = Math.round(\(self.scrollRatio) * maxTop);
+    const fromPx    = Math.min(maxTop, Math.max(0, \(Int(self.scrollPosition.y))));
+
+    // 문서가 아직 로딩 중이면 load 시점에 적용 예약
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', function(){
+        const docH2 = document.documentElement.scrollHeight || 0;
+        const vh2 = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+        const maxTop2 = Math.max(0, docH2 - vh2);
+        const y = Math.max(0, Math.min(maxTop2, fromRatio || fromPx));
+        window.scrollTo(0, y);
+      }, { once: true });
+      return true; // 예약 완료로 간주
+    }
+
+    const y = Math.max(0, Math.min(maxTop, fromRatio || fromPx));
+    window.scrollTo(0, y);
+    return true;
+  } catch(e) { return false; }
+})()
+"""
+
             """
             
             webView.evaluateJavaScript(restoreJS) { result, _ in
@@ -313,7 +343,7 @@ struct BFCacheSnapshot: Codable {
         // **2단계: 앵커 복원 (적응형 대기)**
         if let anchor = self.anchor {
             restoreSteps.append((2, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 1)
+                let waitTime = min(profile.getAdaptiveWaitTime(step: 1), 0.12)
                 TabPersistenceManager.debugMessages.append("🔄 2단계: 앵커 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -330,7 +360,7 @@ struct BFCacheSnapshot: Codable {
         // **3단계: 아이템 정밀 복원**
         if let item = self.item {
             restoreSteps.append((3, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 2)
+                let waitTime = min(profile.getAdaptiveWaitTime(step: 2), 0.12)
                 TabPersistenceManager.debugMessages.append("🔄 3단계: 아이템 정밀 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -347,7 +377,7 @@ struct BFCacheSnapshot: Codable {
         // **4단계: 컨테이너 보정**
         if let containers = self.containers, !containers.isEmpty {
             restoreSteps.append((4, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 3)
+                let waitTime = min(profile.getAdaptiveWaitTime(step: 3), 0.12)
                 TabPersistenceManager.debugMessages.append("🔄 4단계: 컨테이너 스크롤 보정 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -363,7 +393,7 @@ struct BFCacheSnapshot: Codable {
         
         // **5단계: 최종 검증 및 적응 루프**
         restoreSteps.append((5, { stepCompletion in
-            let waitTime = profile.getAdaptiveWaitTime(step: 4)
+            let waitTime = min(profile.getAdaptiveWaitTime(step: 4) 0.12)
             TabPersistenceManager.debugMessages.append("🔄 5단계: 최종 검증 및 적응 루프 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -1082,10 +1112,9 @@ mainSyncOrNow {
         _ = jsSemaphore.wait(timeout: .now() + 1.2)
         
         // 스크롤 비율 계산
-        let scrollHeight = DispatchQueue.main.sync { () -> CGFloat in
-            return webView.scrollView.contentSize.height
-        }
-        let scrollRatio = scrollHeight > 0 ? captureData.scrollPosition.y / scrollHeight : 0.0
+       let (contentH, viewH) = mainSyncOrNow { (webView.scrollView.contentSize.height, webView.bounds.height) }
+       let scrollable = max(contentH - viewH, 1)
+       let scrollRatio = scrollable > 1 ? min(max(captureData.scrollPosition.y / scrollable, 0), 1) : 0
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -2203,28 +2232,22 @@ mainSyncOrNow {
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted) {
-                console.log('🔄 BFCache 페이지 복원');
-                
-                // 동적 콘텐츠 새로고침 (필요시)
-                if (window.location.pathname.includes('/feed') ||
-                    window.location.pathname.includes('/timeline') ||
-                    window.location.hostname.includes('twitter') ||
-                    window.location.hostname.includes('facebook')) {
-                    if (window.refreshDynamicContent) {
-                        window.refreshDynamicContent();
-                    }
-                }
-            }
-        });
-        
-        window.addEventListener('pagehide', function(event) {
-            if (event.persisted) {
-                console.log('📸 BFCache 페이지 저장');
-            }
-        });
-        """
+try { if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; } } catch(e) {}
+
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        console.log('🔄 BFCache 페이지 복원');
+        ...
+    }
+});
+
+window.addEventListener('pagehide', function(event) {
+    if (event.persisted) {
+        console.log('📸 BFCache 페이지 저장');
+    }
+});
+"""
+
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
     
