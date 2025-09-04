@@ -776,37 +776,39 @@ private func clearVersion(for id: UUID) {
         }
     }
     
-    private func performAtomicCapture(_ task: CaptureTask) {
-        let pageID = task.pageRecord.id
-        
-        // 중복 캡처 방지 (진행 중인 것만)
-        guard !pendingCaptures.contains(pageID) else {
-            dbg("⏸️ 중복 캡처 방지: \(task.pageRecord.title)")
-            return
-        }
-        
-        guard let webView = task.webView else {
-            dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
-            return
-        }
-        
-        // 진행 중 표시
-        pendingCaptures.insert(pageID)
-        dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
-        
-        // 안정 상태 대기 (immediate 타입은 즉시, background는 대기)
-        if task.type == .background {
-    waitForStableState(webView: webView) { [weak self] in
-        guard let self = self else { return }
-        // ⬇️ 안정상태 콜백은 메인 스레드에서 오므로, 반드시 serialQueue로 되돌린 뒤 캡처 실행
-        self.serialQueue.async {
-            self.performCaptureAfterStable(task: task)
-        }
+    pprivate func performAtomicCapture(_ task: CaptureTask) {
+    let pageID = task.pageRecord.id
+
+    // 중복 캡처 방지 (진행 중인 것만)
+    guard !pendingCaptures.contains(pageID) else {
+        dbg("⏸️ 중복 캡처 방지: \(task.pageRecord.title)")
+        return
     }
-} else {
-    // immediate는 지금 우리가 serialQueue 위라 그대로 진행
-    performCaptureAfterStable(task: task)
+
+    guard let webView = task.webView else {
+        dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
+        return
+    }
+
+    // 진행 중 표시
+    pendingCaptures.insert(pageID)
+    dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+
+    // 안정 상태 대기 (immediate 타입은 즉시, background는 대기)
+    if task.type == .background {
+        waitForStableState(webView: webView) { [weak self] in
+            guard let self = self else { return }
+            // ⬇️ 콜백은 메인에서 오니까 직렬 큐로 되돌려 캡처 실행
+            self.serialQueue.async {
+                self.performCaptureAfterStable(task: task)
+            }
+        }
+    } else {
+        // immediate는 지금 serialQueue 위라 그대로 진행
+        performCaptureAfterStable(task: task)
+    }
 }
+
     
     private func waitForStableState(webView: WKWebView, completion: @escaping () -> Void) {
         let stableScript = """
@@ -925,13 +927,20 @@ private func clearVersion(for id: UUID) {
         }
         
         // 여기까지 오면 모든 시도 실패
-        let scrollHeight = mainSyncOrNow { webView.scrollView.contentSize.height }
-            return webView.scrollView.contentSize.height
-        }
-        let scrollRatio = scrollHeight > 0 ? captureData.scrollPosition.y / scrollHeight : 0.0
-        
-        return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, scrollRatio: scrollRatio, timestamp: Date(), captureStatus: .failed, version: 1), nil)
-    }
+let scrollHeight = mainSyncOrNow { webView.scrollView.contentSize.height }
+let scrollRatio = scrollHeight > 0 ? captureData.scrollPosition.y / scrollHeight : 0.0
+
+return (
+    BFCacheSnapshot(
+        pageRecord: pageRecord,
+        scrollPosition: captureData.scrollPosition,
+        scrollRatio: scrollRatio,
+        timestamp: Date(),
+        captureStatus: .failed,
+        version: 1
+    ),
+    nil
+)
     
     private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
