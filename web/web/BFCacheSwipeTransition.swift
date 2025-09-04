@@ -15,6 +15,7 @@
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //  🎯 **핵심 수정: 동적 사이트 스냅샷 매칭 문제 해결**
+//  🔧 **스냅샷 매칭 문제 완전 해결** - 강화된 디버깅 + 캐시 무결성 검증
 //
 
 import UIKit
@@ -93,6 +94,10 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
+    // 🔧 **추가: 캐시 무결성 검증을 위한 추가 메타데이터**
+    let urlHash: String  // URL의 해시값으로 추가 검증
+    let titleSnapshot: String  // 캡처 시점의 제목
+    
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
@@ -110,6 +115,8 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
+        case urlHash
+        case titleSnapshot
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -128,6 +135,10 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
+        
+        // 🔧 **무결성 검증 필드 (없으면 기본값)**
+        urlHash = try container.decodeIfPresent(String.self, forKey: .urlHash) ?? ""
+        titleSnapshot = try container.decodeIfPresent(String.self, forKey: .titleSnapshot) ?? pageRecord.title
     }
     
     func encode(to encoder: Encoder) throws {
@@ -146,9 +157,11 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
+        try container.encode(urlHash, forKey: .urlHash)
+        try container.encode(titleSnapshot, forKey: .titleSnapshot)
     }
     
-    // 직접 초기화용 init
+    // 🔧 **수정된 초기화 - 무결성 검증 필드 추가**
     init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
@@ -158,6 +171,27 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
+        
+        // 🔧 **무결성 검증을 위한 추가 메타데이터**
+        self.urlHash = String(pageRecord.url.absoluteString.hashValue)
+        self.titleSnapshot = pageRecord.title
+    }
+    
+    // 🔧 **무결성 검증 메서드**
+    func validateIntegrity(against targetRecord: PageRecord) -> Bool {
+        let targetUrlHash = String(targetRecord.url.absoluteString.hashValue)
+        let urlMatches = (urlHash == targetUrlHash)
+        let idMatches = (pageRecord.id == targetRecord.id)
+        
+        if !urlMatches || !idMatches {
+            TabPersistenceManager.debugMessages.append("❌ 스냅샷 무결성 실패:")
+            TabPersistenceManager.debugMessages.append("   저장된: ID=\(String(pageRecord.id.uuidString.prefix(8))), URL=\(pageRecord.url.absoluteString), 제목='\(titleSnapshot)'")
+            TabPersistenceManager.debugMessages.append("   요청된: ID=\(String(targetRecord.id.uuidString.prefix(8))), URL=\(targetRecord.url.absoluteString), 제목='\(targetRecord.title)'")
+            TabPersistenceManager.debugMessages.append("   URL일치: \(urlMatches), ID일치: \(idMatches)")
+            return false
+        }
+        
+        return true
     }
     
     // 이미지 로드 메서드
@@ -535,12 +569,14 @@ final class BFCacheTransitionSystem: NSObject {
     // 중복 방지를 위한 진행 중인 캡처 추적
     private var pendingCaptures: Set<UUID> = []
     
-    // 🎯 **핵심 수정 1: 명시적 pageRecord를 받는 캡처 메서드**
+    // 🔧 **강화된 디버깅: 캡처 시작 시 상세 로깅**
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
             dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
         }
+        
+        dbg("📸 캡처 요청: '\(pageRecord.title)' [ID: \(String(pageRecord.id.uuidString.prefix(8)))] URL: \(pageRecord.url.absoluteString)")
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
@@ -558,7 +594,14 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        dbg("📸 현재 페이지 캡처 시작: '\(currentRecord.title)' [ID: \(String(currentRecord.id.uuidString.prefix(8)))] 인덱스: \(stateModel.dataModel.currentPageIndex)")
+        // 🔧 **강화된 디버깅: 현재 상태 상세 로깅**
+        dbg("📸 현재 페이지 캡처 시작:")
+        dbg("   제목: '\(currentRecord.title)'")
+        dbg("   ID: \(String(currentRecord.id.uuidString.prefix(8)))")
+        dbg("   URL: \(currentRecord.url.absoluteString)")
+        dbg("   인덱스: \(stateModel.dataModel.currentPageIndex)/\(stateModel.dataModel.pageHistory.count)")
+        dbg("   TabID: \(String(tabID.uuidString.prefix(8)))")
+        
         captureSnapshot(pageRecord: currentRecord, webView: webView, type: type, tabID: tabID)
     }
     
@@ -607,6 +650,9 @@ final class BFCacheTransitionSystem: NSObject {
             captureData: data,
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
+        
+        // 🔧 **강화된 디버깅: 캡처 결과 상세 로깅**
+        dbg("📸 캡처 완료: '\(task.pageRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))], 상태: \(captureResult.snapshot.captureStatus)")
         
         // 캡처 완료 후 저장
         if let tabID = task.tabID {
@@ -1070,7 +1116,13 @@ final class BFCacheTransitionSystem: NSObject {
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)] [ID: \(String(pageID.uuidString.prefix(8)))]")
+            // 🔧 **강화된 디버깅: 저장 완료 후 상세 정보**
+            self.dbg("💾 디스크 저장 완료:")
+            self.dbg("   제목: '\(snapshot.snapshot.pageRecord.title)'")
+            self.dbg("   ID: \(String(pageID.uuidString.prefix(8)))")
+            self.dbg("   URL: \(snapshot.snapshot.pageRecord.url.absoluteString)")
+            self.dbg("   버전: v\(version)")
+            self.dbg("   상태: \(snapshot.snapshot.captureStatus)")
             
             // 5. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
@@ -1183,12 +1235,12 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
+    // MARK: - 🔍 **핵심 수정: 강화된 스냅샷 조회 시스템 (무결성 검증 추가)**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
-            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title) [ID: \(String(pageID.uuidString.prefix(8)))]")
+            dbg("💭 메모리 캐시 히트: '\(snapshot.pageRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
             return snapshot
         }
         
@@ -1202,7 +1254,7 @@ final class BFCacheTransitionSystem: NSObject {
                 // 메모리 캐시에도 저장 (최적화)
                 setMemoryCache(snapshot, for: pageID)
                 
-                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) [ID: \(String(pageID.uuidString.prefix(8)))]")
+                dbg("💾 디스크 캐시 히트: '\(snapshot.pageRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
                 return snapshot
             }
         }
@@ -1211,10 +1263,64 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // 🎯 **핵심 수정 3: 정확한 타겟 페이지 조회 메서드 추가**
+    // 🔧 **핵심 수정: 무결성 검증이 포함된 안전한 조회 메서드**
+    private func retrieveSnapshotSafely(for targetRecord: PageRecord) -> BFCacheSnapshot? {
+        let pageID = targetRecord.id
+        
+        // 기본 조회
+        guard let snapshot = retrieveSnapshot(for: pageID) else {
+            dbg("❌ 캐시 미스: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
+            return nil
+        }
+        
+        // 🔧 **무결성 검증**
+        guard snapshot.validateIntegrity(against: targetRecord) else {
+            dbg("❌ 무결성 검증 실패 - 캐시 제거: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
+            
+            // 오염된 캐시 제거
+            removeFromMemoryCache(pageID)
+            
+            // 디스크에서도 제거 (백그라운드)
+            diskIOQueue.async { [weak self] in
+                guard let self = self,
+                      let diskPath = self.cacheAccessQueue.sync(execute: { self._diskCacheIndex[pageID] }) else { return }
+                
+                let pageDir = URL(fileURLWithPath: diskPath)
+                try? FileManager.default.removeItem(at: pageDir)
+                
+                self.cacheAccessQueue.async(flags: .barrier) {
+                    self._diskCacheIndex.removeValue(forKey: pageID)
+                    self._cacheVersion.removeValue(forKey: pageID)
+                }
+                
+                self.dbg("🗑️ 오염된 캐시 디스크 삭제: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
+            }
+            
+            return nil
+        }
+        
+        dbg("✅ 무결성 검증 통과: '\(targetRecord.title)' [ID: \(String(pageID.uuidString.prefix(8)))]")
+        return snapshot
+    }
+    
+    // 🔧 **핵심 수정: 강화된 디버깅이 포함된 타겟 페이지 조회 메서드**
     private func getTargetPageSnapshot(stateModel: WebViewStateModel, direction: NavigationDirection) -> (record: PageRecord?, snapshot: BFCacheSnapshot?) {
         let currentIndex = stateModel.dataModel.currentPageIndex
         let pageHistory = stateModel.dataModel.pageHistory
+        
+        // 🔧 **강화된 디버깅: 현재 상태 로깅**
+        dbg("🎯 타겟 페이지 조회 시작:")
+        dbg("   현재 인덱스: \(currentIndex)")
+        dbg("   전체 히스토리: \(pageHistory.count)개")
+        dbg("   방향: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        
+        if !pageHistory.isEmpty {
+            dbg("   히스토리 목록:")
+            for (index, record) in pageHistory.enumerated() {
+                let marker = (index == currentIndex) ? "👉" : "  "
+                dbg("     [\(index)] \(marker) '\(record.title)' [ID: \(String(record.id.uuidString.prefix(8)))]")
+            }
+        }
         
         let targetIndex = direction == .back ? currentIndex - 1 : currentIndex + 1
         
@@ -1224,9 +1330,23 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         let targetRecord = pageHistory[targetIndex]
-        let targetSnapshot = retrieveSnapshot(for: targetRecord.id)
         
-        dbg("🎯 타겟 페이지 조회: 인덱스 \(targetIndex), 제목: '\(targetRecord.title)' [ID: \(String(targetRecord.id.uuidString.prefix(8)))], 캐시: \(targetSnapshot != nil ? "✅" : "❌")")
+        // 🔧 **핵심 수정: 안전한 조회 사용 (무결성 검증 포함)**
+        let targetSnapshot = retrieveSnapshotSafely(for: targetRecord)
+        
+        // 🔧 **강화된 디버깅: 조회 결과 상세 로깅**
+        dbg("🎯 타겟 페이지 조회 결과:")
+        dbg("   타겟 인덱스: \(targetIndex)")
+        dbg("   타겟 제목: '\(targetRecord.title)'")
+        dbg("   타겟 ID: \(String(targetRecord.id.uuidString.prefix(8)))")
+        dbg("   타겟 URL: \(targetRecord.url.absoluteString)")
+        dbg("   캐시 상태: \(targetSnapshot != nil ? "✅ 있음" : "❌ 없음")")
+        
+        if let snapshot = targetSnapshot {
+            dbg("   스냅샷 버전: v\(snapshot.version)")
+            dbg("   스냅샷 상태: \(snapshot.captureStatus)")
+            dbg("   캡처 시각: \(DateFormatter.shortTime.string(from: snapshot.timestamp))")
+        }
         
         return (targetRecord, targetSnapshot)
     }
@@ -1250,7 +1370,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
-        dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)] [ID: \(String(pageID.uuidString.prefix(8)))]")
+        dbg("💭 메모리 캐시 저장: '\(snapshot.pageRecord.title)' [v\(snapshot.version)] [ID: \(String(pageID.uuidString.prefix(8)))]")
     }
     
     // MARK: - 🧹 **개선된 캐시 정리**
@@ -1729,8 +1849,8 @@ final class BFCacheTransitionSystem: NSObject {
         // 사이트별 프로파일 조회/생성
         var siteProfile = getSiteProfile(for: currentRecord.url) ?? SiteTimingProfile(hostname: currentRecord.url.host ?? "unknown")
         
-        // BFCache에서 스냅샷 가져오기
-        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
+        // 🔧 **핵심 수정: 안전한 조회 사용**
+        if let snapshot = retrieveSnapshotSafely(for: currentRecord) {
             // BFCache 히트 - 적응형 복원
             snapshot.restore(to: webView, siteProfile: siteProfile) { [weak self] success in
                 // 로딩 시간 기록
@@ -1960,4 +2080,12 @@ extension BFCacheTransitionSystem {
             }
         }
     }
+}
+
+extension DateFormatter {
+    static let shortTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }()
 }
