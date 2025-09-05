@@ -14,6 +14,7 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
+//  🌐 **동적 사이트 특화 개선** - 디시인사이드, 네이버 카페 최적화
 //
 
 import UIKit
@@ -72,10 +73,10 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 적응형 대기 시간 계산
+    // 🌐 **개선된 적응형 대기 시간 계산** - 동적 사이트 최소 보장
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = averageLoadingTime
-        let stepMultiplier = Double(step) * 0.1
+        let baseTime = max(averageLoadingTime, 0.5) // 🌐 최소 0.5초 보장 (동적 사이트 고려)
+        let stepMultiplier = Double(step) * 0.15 // 🌐 0.1 → 0.15초로 증가 (더 안정적)
         let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
@@ -188,7 +189,7 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
+        TabPersistenceManager.debugMessages.append("🌐 BFCache 동적 사이트 다단계 복원 시작 (적응형)")
         
         // 적응형 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
@@ -196,7 +197,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템**
+    // 🔄 **핵심: 다단계 복원 시스템 - 동적 사이트 최적화**
     private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -305,7 +306,11 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
+                // 🌐 단계별 소요 시간 기록
+                let stepStart = Date()
                 stepInfo.action { success in
+                    let stepDuration = Date().timeIntervalSince(stepStart)
+                    TabPersistenceManager.debugMessages.append("🔄 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -324,7 +329,7 @@ struct BFCacheSnapshot: Codable {
         executeNextStep()
     }
     
-    // 컨테이너 스크롤 복원 스크립트 생성
+    // 🌐 **개선된 컨테이너 스크롤 복원 스크립트** - 동적 속성 고려
     private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
@@ -351,6 +356,17 @@ struct BFCacheSnapshot: Codable {
                                 if (el && typeof el.scrollTop === 'number') {
                                     el.scrollTop = item.top || 0;
                                     el.scrollLeft = item.left || 0;
+                                    
+                                    // 🌐 동적 콘텐츠 상태 확인 및 복원
+                                    if (item.dynamicAttrs) {
+                                        for (const [key, value] of Object.entries(item.dynamicAttrs)) {
+                                            if (el.getAttribute(key) !== value) {
+                                                console.log('🌐 콘텐츠 불일치 감지:', sel, key, value);
+                                                // 동적 속성 복원 시도
+                                                el.setAttribute(key, value);
+                                            }
+                                        }
+                                    }
                                     restored++;
                                 }
                             });
@@ -359,7 +375,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('컨테이너 스크롤 복원:', restored, '개');
+                console.log('🌐 컨테이너 스크롤 복원:', restored, '개');
                 return restored > 0;
             } catch(e) {
                 console.error('컨테이너 스크롤 복원 실패:', e);
@@ -369,7 +385,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // iframe 스크롤 복원 스크립트 생성
+    // 🌐 **개선된 iframe 스크롤 복원 스크립트** - Cross-origin 지원
     private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
         let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
@@ -382,20 +398,52 @@ struct BFCacheSnapshot: Codable {
                     const iframe = document.querySelector(iframeInfo.selector);
                     if (iframe && iframe.contentWindow) {
                         try {
-                            // Same-origin인 경우에만 접근 가능
+                            // Same-origin iframe 복원
                             iframe.contentWindow.scrollTo(
                                 iframeInfo.scrollX || 0,
                                 iframeInfo.scrollY || 0
                             );
                             restored++;
                         } catch(e) {
-                            // Cross-origin iframe은 무시
-                            console.log('Cross-origin iframe 스킵:', iframeInfo.selector);
+                            // 🌐 Cross-origin iframe 처리
+                            try {
+                                iframe.contentWindow.postMessage({
+                                    type: 'restoreScroll',
+                                    scrollX: iframeInfo.scrollX || 0,
+                                    scrollY: iframeInfo.scrollY || 0
+                                }, '*');
+                                console.log('🌐 Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
+                                restored++;
+                            } catch(crossOriginError) {
+                                console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
+                            }
                         }
                     }
                 }
                 
-                console.log('iframe 스크롤 복원:', restored, '개');
+                // 🌐 iframe 내부 무한 스크롤 콘텐츠 복원 시도
+                const infiniteScrollSelectors = ['.list', '.feed', '.board', '.gallery', '.gall_list', '.article-board'];
+                document.querySelectorAll('iframe').forEach(iframe => {
+                    try {
+                        const iframeDoc = iframe.contentWindow.document;
+                        for (const selector of infiniteScrollSelectors) {
+                            const scrollable = iframeDoc.querySelector(selector);
+                            if (scrollable && iframeInfo.dynamicAttrs) {
+                                for (const [key, value] of Object.entries(iframeInfo.dynamicAttrs)) {
+                                    scrollable.setAttribute(key, value);
+                                }
+                                scrollable.scrollTop = iframeInfo.scrollY || 0;
+                                scrollable.scrollLeft = iframeInfo.scrollX || 0;
+                                restored++;
+                                console.log('🌐 iframe 무한 스크롤 복원:', selector);
+                            }
+                        }
+                    } catch(e) {
+                        console.log('Cross-origin iframe 콘텐츠 복원 스킵:', iframe.src);
+                    }
+                });
+                
+                console.log('🌐 iframe 스크롤 복원:', restored, '개');
                 return restored > 0;
             } catch(e) {
                 console.error('iframe 스크롤 복원 실패:', e);
@@ -542,6 +590,9 @@ final class BFCacheTransitionSystem: NSObject {
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
+        // 🌐 캡처 대상 사이트 로그
+        dbg("🔍 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
             self?.performAtomicCapture(task)
@@ -594,6 +645,15 @@ final class BFCacheTransitionSystem: NSObject {
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
+        // 🌐 캡처된 jsState 로그
+        if let jsState = captureResult.snapshot.jsState {
+            dbg("🔍 캡처된 jsState 키: \(Array(jsState.keys))")
+            if let scrollData = jsState["scroll"] as? [String: Any],
+               let elements = scrollData["elements"] as? [[String: Any]] {
+                dbg("🔍 캡처된 스크롤 요소: \(elements.count)개")
+            }
+        }
+        
         // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
@@ -628,7 +688,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
+            Thread.sleep(forTimeInterval: 0.1) // 🌐 0.08초 → 0.1초 (동적 사이트 안정성)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -659,8 +719,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
-        let result = semaphore.wait(timeout: .now() + 2.5)
+        // ⚡ 적절한 타임아웃 (2.5초 → 3초로 동적 사이트 고려)
+        let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
@@ -697,7 +757,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // 🌐 0.8초 → 1.0초 (안정성)
         
         // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -711,7 +771,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
+        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🌐 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -746,241 +806,285 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
+    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성 - 동적 사이트 특화**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
-            try {
-                // 🔍 **1단계: 범용 스크롤 요소 스캔**
-                function findAllScrollableElements() {
-                    const scrollables = [];
-                    const maxElements = 50; // 성능 고려 제한
-                    
-                    // 1) 명시적 overflow 스타일을 가진 요소들
-                    const explicitScrollables = document.querySelectorAll('*');
-                    let count = 0;
-                    
-                    for (const el of explicitScrollables) {
-                        if (count >= maxElements) break;
-                        
-                        const style = window.getComputedStyle(el);
-                        const overflowY = style.overflowY;
-                        const overflowX = style.overflowX;
-                        
-                        // 스크롤 가능한 요소 판별
-                        if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
-                            (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
+            return new Promise(resolve => {
+                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용)**
+                function waitForDynamicContent(callback) {
+                    let timeout;
+                    const observer = new MutationObserver(() => {
+                        clearTimeout(timeout);
+                        timeout = setTimeout(() => {
+                            observer.disconnect();
+                            callback();
+                        }, 200); // 200ms 동안 DOM 변경 없으면 완료
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                    setTimeout(() => {
+                        observer.disconnect();
+                        callback();
+                    }, 3000); // 최대 3초 대기
+                }
+
+                function captureScrollData() {
+                    try {
+                        // 🔍 **1단계: 범용 스크롤 요소 스캔**
+                        function findAllScrollableElements() {
+                            const scrollables = [];
+                            const maxElements = 50; // 성능 고려 제한
                             
-                            // 현재 스크롤 위치가 0이 아닌 경우만 저장
-                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
-                                const selector = generateBestSelector(el);
-                                if (selector) {
-                                    scrollables.push({
-                                        selector: selector,
-                                        top: el.scrollTop,
-                                        left: el.scrollLeft,
-                                        maxTop: el.scrollHeight - el.clientHeight,
-                                        maxLeft: el.scrollWidth - el.clientWidth,
-                                        id: el.id || '',
-                                        className: el.className || '',
-                                        tagName: el.tagName.toLowerCase()
-                                    });
-                                    count++;
+                            // 1) 명시적 overflow 스타일을 가진 요소들
+                            const explicitScrollables = document.querySelectorAll('*');
+                            let count = 0;
+                            
+                            for (const el of explicitScrollables) {
+                                if (count >= maxElements) break;
+                                
+                                const style = window.getComputedStyle(el);
+                                const overflowY = style.overflowY;
+                                const overflowX = style.overflowX;
+                                
+                                // 스크롤 가능한 요소 판별
+                                if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
+                                    (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
+                                    
+                                    // 현재 스크롤 위치가 0이 아닌 경우만 저장
+                                    if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                                        const selector = generateBestSelector(el);
+                                        if (selector) {
+                                            // 🌐 동적 콘텐츠 식별을 위한 데이터 속성 저장
+                                            const dynamicAttrs = {};
+                                            for (const attr of el.attributes) {
+                                                if (attr.name.startsWith('data-')) {
+                                                    dynamicAttrs[attr.name] = attr.value;
+                                                }
+                                            }
+                                            scrollables.push({
+                                                selector: selector,
+                                                top: el.scrollTop,
+                                                left: el.scrollLeft,
+                                                maxTop: el.scrollHeight - el.clientHeight,
+                                                maxLeft: el.scrollWidth - el.clientWidth,
+                                                id: el.id || '',
+                                                className: el.className || '',
+                                                tagName: el.tagName.toLowerCase(),
+                                                dynamicAttrs: dynamicAttrs // 🌐 동적 속성 추가
+                                            });
+                                            count++;
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
-                    
-                    // 2) 일반적인 스크롤 컨테이너들
-                    const commonScrollContainers = [
-                        '.scroll-container', '.scrollable', '.content', '.main', '.body',
-                        '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll'
-                    ];
-                    
-                    for (const selector of commonScrollContainers) {
-                        if (count >= maxElements) break;
-                        
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            if (count >= maxElements) break;
                             
-                            if ((el.scrollTop > 0 || el.scrollLeft > 0) && 
-                                !scrollables.some(s => s.selector === generateBestSelector(el))) {
+                            // 🌐 2) 무한 스크롤 사이트에 흔한 컨테이너들 (디시인사이드, 네이버 카페 고려)
+                            const commonScrollContainers = [
+                                '.scroll-container', '.scrollable', '.content', '.main', '.body',
+                                '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
+                                '.list', '.feed', '.timeline', '.board', '.gallery', '.gall_list', '.article-board'
+                            ];
+                            
+                            for (const selector of commonScrollContainers) {
+                                if (count >= maxElements) break;
                                 
-                                scrollables.push({
-                                    selector: generateBestSelector(el) || selector,
-                                    top: el.scrollTop,
-                                    left: el.scrollLeft,
-                                    maxTop: el.scrollHeight - el.clientHeight,
-                                    maxLeft: el.scrollWidth - el.clientWidth,
-                                    id: el.id || '',
-                                    className: el.className || '',
-                                    tagName: el.tagName.toLowerCase()
-                                });
-                                count++;
+                                const elements = document.querySelectorAll(selector);
+                                for (const el of elements) {
+                                    if (count >= maxElements) break;
+                                    
+                                    if ((el.scrollTop > 0 || el.scrollLeft > 0) && 
+                                        !scrollables.some(s => s.selector === generateBestSelector(el))) {
+                                        
+                                        // 🌐 동적 속성 수집
+                                        const dynamicAttrs = {};
+                                        for (const attr of el.attributes) {
+                                            if (attr.name.startsWith('data-')) {
+                                                dynamicAttrs[attr.name] = attr.value;
+                                            }
+                                        }
+                                        
+                                        scrollables.push({
+                                            selector: generateBestSelector(el) || selector,
+                                            top: el.scrollTop,
+                                            left: el.scrollLeft,
+                                            maxTop: el.scrollHeight - el.clientHeight,
+                                            maxLeft: el.scrollWidth - el.clientWidth,
+                                            id: el.id || '',
+                                            className: el.className || '',
+                                            tagName: el.tagName.toLowerCase(),
+                                            dynamicAttrs: dynamicAttrs
+                                        });
+                                        count++;
+                                    }
+                                }
                             }
+                            
+                            return scrollables;
                         }
-                    }
-                    
-                    return scrollables;
-                }
-                
-                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만)**
-                function detectIframeScrolls() {
-                    const iframes = [];
-                    const iframeElements = document.querySelectorAll('iframe');
-                    
-                    for (const iframe of iframeElements) {
-                        try {
-                            // Same-origin 체크
-                            const contentWindow = iframe.contentWindow;
-                            if (contentWindow && contentWindow.location) {
-                                const scrollX = contentWindow.scrollX || 0;
-                                const scrollY = contentWindow.scrollY || 0;
-                                
-                                if (scrollX > 0 || scrollY > 0) {
+                        
+                        // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin + Cross-origin 대응)**
+                        function detectIframeScrolls() {
+                            const iframes = [];
+                            const iframeElements = document.querySelectorAll('iframe');
+                            
+                            for (const iframe of iframeElements) {
+                                try {
+                                    // Same-origin 체크
+                                    const contentWindow = iframe.contentWindow;
+                                    if (contentWindow && contentWindow.location) {
+                                        const scrollX = contentWindow.scrollX || 0;
+                                        const scrollY = contentWindow.scrollY || 0;
+                                        
+                                        if (scrollX > 0 || scrollY > 0) {
+                                            // 🌐 동적 속성 수집
+                                            const dynamicAttrs = {};
+                                            for (const attr of iframe.attributes) {
+                                                if (attr.name.startsWith('data-')) {
+                                                    dynamicAttrs[attr.name] = attr.value;
+                                                }
+                                            }
+                                            
+                                            iframes.push({
+                                                selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
+                                                scrollX: scrollX,
+                                                scrollY: scrollY,
+                                                src: iframe.src || '',
+                                                id: iframe.id || '',
+                                                className: iframe.className || '',
+                                                dynamicAttrs: dynamicAttrs
+                                            });
+                                        }
+                                    }
+                                } catch(e) {
+                                    // 🌐 Cross-origin iframe도 기본 정보 저장 (복원 시 postMessage 활용)
+                                    const dynamicAttrs = {};
+                                    for (const attr of iframe.attributes) {
+                                        if (attr.name.startsWith('data-')) {
+                                            dynamicAttrs[attr.name] = attr.value;
+                                        }
+                                    }
+                                    
+                                    // iframe 추정 스크롤 (외부에서 추정 불가하므로 0으로 기록)
                                     iframes.push({
-                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
-                                        scrollX: scrollX,
-                                        scrollY: scrollY,
+                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop() || 'unknown'}"]`,
+                                        scrollX: 0,
+                                        scrollY: 0,
                                         src: iframe.src || '',
                                         id: iframe.id || '',
-                                        className: iframe.className || ''
+                                        className: iframe.className || '',
+                                        dynamicAttrs: dynamicAttrs,
+                                        crossOrigin: true
                                     });
+                                    console.log('🌐 Cross-origin iframe 기록:', iframe.src);
                                 }
                             }
-                        } catch(e) {
-                            // Cross-origin iframe은 접근 불가 - 무시
-                            console.log('Cross-origin iframe 스킵:', iframe.src);
+                            
+                            return iframes;
                         }
-                    }
-                    
-                    return iframes;
-                }
-                
-                // 📏 **3단계: 동적 높이 요소 감지**
-                function detectDynamicElements() {
-                    const dynamics = [];
-                    
-                    // 일반적인 동적 콘텐츠 컨테이너들
-                    const dynamicSelectors = [
-                        '[data-infinite]', '[data-lazy]', '.infinite-scroll',
-                        '.lazy-load', '.dynamic-content', '.feed', '.timeline',
-                        '[data-scroll-container]', '.virtualized'
-                    ];
-                    
-                    for (const selector of dynamicSelectors) {
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
-                                dynamics.push({
-                                    selector: generateBestSelector(el) || selector,
-                                    top: el.scrollTop,
-                                    left: el.scrollLeft,
-                                    type: 'dynamic'
+                        
+                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응
+                        function generateBestSelector(element) {
+                            if (!element || element.nodeType !== 1) return null;
+                            
+                            // 1순위: ID가 있으면 ID 사용
+                            if (element.id) {
+                                return `#${element.id}`;
+                            }
+                            
+                            // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
+                            const dataAttrs = Array.from(element.attributes)
+                                .filter(attr => attr.name.startsWith('data-'))
+                                .map(attr => `[${attr.name}="${attr.value}"]`);
+                            if (dataAttrs.length > 0) {
+                                const attrSelector = element.tagName.toLowerCase() + dataAttrs.join('');
+                                if (document.querySelectorAll(attrSelector).length === 1) {
+                                    return attrSelector;
+                                }
+                            }
+                            
+                            // 3순위: 고유한 클래스 조합
+                            if (element.className) {
+                                const classes = element.className.trim().split(/\\s+/);
+                                const uniqueClasses = classes.filter(cls => {
+                                    const elements = document.querySelectorAll(`.${cls}`);
+                                    return elements.length === 1 && elements[0] === element;
                                 });
+                                
+                                if (uniqueClasses.length > 0) {
+                                    return `.${uniqueClasses.join('.')}`;
+                                }
+                                
+                                // 클래스 조합으로 고유성 확보
+                                if (classes.length > 0) {
+                                    const classSelector = `.${classes.join('.')}`;
+                                    if (document.querySelectorAll(classSelector).length === 1) {
+                                        return classSelector;
+                                    }
+                                }
                             }
+                            
+                            // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
+                            let path = [];
+                            let current = element;
+                            while (current && current !== document.documentElement) {
+                                let selector = current.tagName.toLowerCase();
+                                if (current.id) {
+                                    path.unshift(`#${current.id}`);
+                                    break;
+                                }
+                                if (current.className) {
+                                    const classes = current.className.trim().split(/\\s+/).join('.');
+                                    selector += `.${classes}`;
+                                }
+                                path.unshift(selector);
+                                current = current.parentElement;
+                                
+                                // 경로가 너무 길어지면 중단
+                                if (path.length > 5) break;
+                            }
+                            return path.join(' > ');
                         }
-                    }
-                    
-                    return dynamics;
-                }
-                
-                // 최적의 selector 생성
-                function generateBestSelector(element) {
-                    if (!element || element.nodeType !== 1) return null;
-                    
-                    // 1순위: ID가 있으면 ID 사용
-                    if (element.id) {
-                        return `#${element.id}`;
-                    }
-                    
-                    // 2순위: 고유한 클래스 조합
-                    if (element.className) {
-                        const classes = element.className.trim().split(/\\s+/);
-                        const uniqueClasses = classes.filter(cls => {
-                            const elements = document.querySelectorAll(`.${cls}`);
-                            return elements.length === 1 && elements[0] === element;
+                        
+                        // 🔍 **메인 실행**
+                        const scrollableElements = findAllScrollableElements();
+                        const iframeScrolls = detectIframeScrolls();
+                        
+                        console.log(`🌐 동적 사이트 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        
+                        resolve({
+                            scroll: { 
+                                x: window.scrollX, 
+                                y: window.scrollY,
+                                elements: scrollableElements
+                            },
+                            iframes: iframeScrolls,
+                            href: window.location.href,
+                            title: document.title,
+                            timestamp: Date.now(),
+                            userAgent: navigator.userAgent,
+                            viewport: {
+                                width: window.innerWidth,
+                                height: window.innerHeight
+                            }
                         });
-                        
-                        if (uniqueClasses.length > 0) {
-                            return `.${uniqueClasses[0]}`;
-                        }
-                        
-                        // 클래스 조합으로 고유성 확보
-                        if (classes.length > 0) {
-                            const classSelector = `.${classes.join('.')}`;
-                            if (document.querySelectorAll(classSelector).length === 1) {
-                                return classSelector;
-                            }
-                        }
+                    } catch(e) { 
+                        console.error('🌐 동적 사이트 스크롤 감지 실패:', e);
+                        resolve({
+                            scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
+                            iframes: [],
+                            href: window.location.href,
+                            title: document.title
+                        });
                     }
-                    
-                    // 3순위: 태그명 + 속성
-                    const tag = element.tagName.toLowerCase();
-                    const attributes = [];
-                    
-                    // data 속성 우선
-                    for (const attr of element.attributes) {
-                        if (attr.name.startsWith('data-')) {
-                            attributes.push(`[${attr.name}="${attr.value}"]`);
-                        }
-                    }
-                    
-                    if (attributes.length > 0) {
-                        const attrSelector = tag + attributes.join('');
-                        if (document.querySelectorAll(attrSelector).length === 1) {
-                            return attrSelector;
-                        }
-                    }
-                    
-                    // 4순위: nth-child 사용
-                    let parent = element.parentElement;
-                    if (parent) {
-                        const siblings = Array.from(parent.children);
-                        const index = siblings.indexOf(element);
-                        if (index !== -1) {
-                            return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
-                        }
-                    }
-                    
-                    // 최후: 태그명만
-                    return tag;
                 }
-                
-                // 🔍 **메인 실행**
-                const scrollableElements = findAllScrollableElements();
-                const iframeScrolls = detectIframeScrolls();
-                const dynamicElements = detectDynamicElements();
-                
-                console.log(`🔍 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개, 동적 ${dynamicElements.length}개`);
-                
-                return {
-                    scroll: { 
-                        x: window.scrollX, 
-                        y: window.scrollY,
-                        elements: scrollableElements,
-                        dynamics: dynamicElements
-                    },
-                    iframes: iframeScrolls,
-                    href: window.location.href,
-                    title: document.title,
-                    timestamp: Date.now(),
-                    userAgent: navigator.userAgent,
-                    viewport: {
-                        width: window.innerWidth,
-                        height: window.innerHeight
-                    }
-                };
-            } catch(e) { 
-                console.error('스크롤 감지 실패:', e);
-                return {
-                    scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
-                    iframes: [],
-                    href: window.location.href,
-                    title: document.title
-                };
-            }
+
+                // 🌐 동적 콘텐츠 완료 대기 후 캡처
+                if (document.readyState === 'complete') {
+                    waitForDynamicContent(captureScrollData);
+                } else {
+                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureScrollData));
+                }
+            });
         })()
         """
     }
@@ -1029,7 +1133,7 @@ final class BFCacheTransitionSystem: NSObject {
                     try stateData.write(to: statePath)
                     self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
-                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
+                    self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
@@ -1666,12 +1770,12 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        // 🛡️ **안전장치: 최대 1.5초 후 강제 정리** (🌐 동적 사이트 고려해 1초 → 1.5초)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (1.5초 타임아웃)")
             }
         }
     }
@@ -1808,11 +1912,13 @@ final class BFCacheTransitionSystem: NSObject {
             if (event.persisted) {
                 console.log('🔄 BFCache 페이지 복원');
                 
-                // 동적 콘텐츠 새로고침 (필요시)
+                // 🌐 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
                     window.location.pathname.includes('/timeline') ||
                     window.location.hostname.includes('twitter') ||
-                    window.location.hostname.includes('facebook')) {
+                    window.location.hostname.includes('facebook') ||
+                    window.location.hostname.includes('dcinside') ||
+                    window.location.hostname.includes('cafe.naver')) {
                     if (window.refreshDynamicContent) {
                         window.refreshDynamicContent();
                     }
@@ -1823,6 +1929,18 @@ final class BFCacheTransitionSystem: NSObject {
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
                 console.log('📸 BFCache 페이지 저장');
+            }
+        });
+        
+        // 🌐 Cross-origin iframe 스크롤 복원 리스너
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'restoreScroll') {
+                try {
+                    window.scrollTo(event.data.scrollX || 0, event.data.scrollY || 0);
+                    console.log('🌐 Cross-origin iframe 스크롤 복원:', event.data.scrollX, event.data.scrollY);
+                } catch(e) {
+                    console.error('Cross-origin iframe 스크롤 복원 실패:', e);
+                }
             }
         });
         """
@@ -1854,7 +1972,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 🌐 강화된 BFCache 시스템 설치 완료 (동적 사이트 최적화)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
