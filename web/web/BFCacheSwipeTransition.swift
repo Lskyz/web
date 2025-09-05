@@ -47,12 +47,12 @@ private class GestureContext {
     }
     
     func validateAndExecute(_ operation: () -> Void) {
-        return validationQueue.sync {
+        validationQueue.sync {
             guard isValid else {
                 TabPersistenceManager.debugMessages.append("🧵 무효한 컨텍스트 - 작업 취소: \(String(gestureID.uuidString.prefix(8)))")
-                return nil
+                return
             }
-            return operation()
+            operation()
         }
     }
     
@@ -1588,12 +1588,12 @@ final class BFCacheTransitionSystem: NSObject {
             guard let self = self,
                   let webView = context.webView,
                   let stateModel = context.stateModel else {
-                dbg("🧵 컨텍스트 무효 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
+                TabPersistenceManager.debugMessages.append("🧵 컨텍스트 무효 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
                 gesture.state = .cancelled
-                return nil
+                return
             }
             
-            return self.processGestureState(
+            self.processGestureState(
                 gesture: gesture,
                 tabID: tabID,
                 webView: webView,
