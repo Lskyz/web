@@ -8,16 +8,12 @@
 //  💾 스마트 메모리 관리 
 //  🔧 **StateModel과 완벽 동기화**
 //  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
-//  ⚡ **미리보기 즉시 제거 - 애니메이션 완료 즉시 정리**
+//  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
 //  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
-//  🎯 **동적 렌더링 완료 대기** - SPA/동적 사이트 최적화
-//  📸 **캡처 타이밍 최적화** - 떠나기 전 우선, 도착 후 지연
-//  🛡️ **견고한 제스처 처리** - 먹통 방지 + 강제 정리
-//  ✨ **그림자 제거로 가장자리 잔상 해결** - 깔끔한 플랫 전환
 //
 
 import UIKit
@@ -52,8 +48,6 @@ struct SiteTimingProfile: Codable {
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
-    var isSPASite: Bool = false // 🆕 SPA 사이트 여부
-    var dynamicRenderingTime: TimeInterval = 1.5 // 🆕 동적 렌더링 대기 시간
     
     var successRate: Double {
         guard totalRestores > 0 else { return 0.0 }
@@ -78,25 +72,12 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 🆕 SPA 사이트 마킹
-    mutating func markAsSPA() {
-        isSPASite = true
-        // SPA 사이트는 더 긴 렌더링 시간 필요
-        dynamicRenderingTime = max(2.0, dynamicRenderingTime)
-    }
-    
     // 적응형 대기 시간 계산
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
         let baseTime = averageLoadingTime
         let stepMultiplier = Double(step) * 0.1
         let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
-        let spaFactor = isSPASite ? 1.5 : 1.0 // SPA 사이트는 더 오래 대기
-        return (baseTime + stepMultiplier) * successFactor * spaFactor
-    }
-    
-    // 🆕 동적 렌더링 완료 대기 시간
-    func getDynamicRenderingWaitTime() -> TimeInterval {
-        return isSPASite ? dynamicRenderingTime : min(1.0, dynamicRenderingTime)
+        return (baseTime + stepMultiplier) * successFactor
     }
 }
 
@@ -110,14 +91,12 @@ struct BFCacheSnapshot: Codable {
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
     let version: Int
-    var renderingCompleted: Bool = false // 🆕 렌더링 완료 여부
     
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
-        case rendering      // 🆕 렌더링 중
     }
     
     // Codable을 위한 CodingKeys
@@ -130,7 +109,6 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
-        case renderingCompleted
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -149,7 +127,6 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
-        renderingCompleted = try container.decodeIfPresent(Bool.self, forKey: .renderingCompleted) ?? false
     }
     
     func encode(to encoder: Encoder) throws {
@@ -168,11 +145,10 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
-        try container.encode(renderingCompleted, forKey: .renderingCompleted)
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1, renderingCompleted: Bool = false) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -181,7 +157,6 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
-        self.renderingCompleted = renderingCompleted
     }
     
     // 이미지 로드 메서드
@@ -205,15 +180,6 @@ struct BFCacheSnapshot: Codable {
             DispatchQueue.main.async {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
                 TabPersistenceManager.debugMessages.append("BFCache 스크롤만 즉시 복원")
-                completion(true)
-            }
-            return
-            
-        case .rendering:
-            // 렌더링 중인 스냅샷은 기본 복원만
-            DispatchQueue.main.async {
-                webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("BFCache 렌더링 중 스냅샷 - 기본 복원")
                 completion(true)
             }
             return
@@ -517,19 +483,6 @@ final class BFCacheTransitionSystem: NSObject {
         saveSiteTimingProfiles()
     }
     
-    // 🆕 SPA 사이트 마킹
-    private func markSiteAsSPA(url: URL) {
-        guard let hostname = url.host else { return }
-        cacheAccessQueue.async(flags: .barrier) { [weak self] in
-            guard let self = self else { return }
-            var profile = self._siteTimingProfiles[hostname] ?? SiteTimingProfile(hostname: hostname)
-            profile.markAsSPA()
-            self._siteTimingProfiles[hostname] = profile
-        }
-        saveSiteTimingProfiles()
-        dbg("🆕 SPA 사이트 마킹: \(hostname)")
-    }
-    
     // MARK: - 📁 파일 시스템 경로
     private var bfCacheDirectory: URL {
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -544,17 +497,11 @@ final class BFCacheTransitionSystem: NSObject {
         return tabDirectory(for: tabID).appendingPathComponent("Page_\(pageID.uuidString)_v\(version)", isDirectory: true)
     }
     
-    // MARK: - 🛡️ **견고한 전환 상태 관리**
+    // MARK: - 전환 상태
     private var activeTransitions: [UUID: TransitionContext] = [:]
-    private let transitionAccessQueue = DispatchQueue(label: "bfcache.transition", attributes: .concurrent)
     
-    // MARK: - ✨ **픽셀 정렬 유틸리티** (서브픽셀 시접 제거)
-    private func pixelAlign(_ v: CGFloat, scale: CGFloat = UIScreen.main.scale) -> CGFloat {
-        return (v * scale).rounded() / scale
-    }
-    
-    // 🛡️ **견고한 전환 컨텍스트 (강제 정리 타이머 포함)**
-    private class TransitionContext {
+    // 전환 컨텍스트
+    private struct TransitionContext {
         let tabID: UUID
         weak var webView: WKWebView?
         weak var stateModel: WebViewStateModel?
@@ -563,43 +510,6 @@ final class BFCacheTransitionSystem: NSObject {
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
         var currentSnapshot: UIImage?
-        var createdAt: Date = Date()
-        var cleanupTimer: Timer?
-        
-        init(tabID: UUID, webView: WKWebView?, stateModel: WebViewStateModel?, isGesture: Bool, direction: NavigationDirection, initialTransform: CGAffineTransform, previewContainer: UIView?, currentSnapshot: UIImage?) {
-            self.tabID = tabID
-            self.webView = webView
-            self.stateModel = stateModel
-            self.isGesture = isGesture
-            self.direction = direction
-            self.initialTransform = initialTransform
-            self.previewContainer = previewContainer
-            self.currentSnapshot = currentSnapshot
-            
-            // 🛡️ **자동 정리 타이머 (안전장치) - 5초 후 강제 정리**
-            self.cleanupTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-                self?.forceCleanup()
-            }
-        }
-        
-        func forceCleanup() {
-            DispatchQueue.main.async { [weak self] in
-                self?.previewContainer?.removeFromSuperview()
-                self?.cleanupTimer?.invalidate()
-                self?.cleanupTimer = nil
-                TabPersistenceManager.debugMessages.append("🛡️ 전환 컨텍스트 강제 정리 (타이머)")
-            }
-        }
-        
-        func cleanup() {
-            cleanupTimer?.invalidate()
-            cleanupTimer = nil
-            previewContainer?.removeFromSuperview()
-        }
-        
-        deinit {
-            cleanupTimer?.invalidate()
-        }
     }
     
     enum NavigationDirection {
@@ -609,30 +519,6 @@ final class BFCacheTransitionSystem: NSObject {
     enum CaptureType {
         case immediate  // 현재 페이지 (높은 우선순위)
         case background // 과거 페이지 (일반 우선순위)
-        case leaving    // 🆕 떠나기 전 캡처 (최고 우선순위)
-        case arrival    // 🆕 도착 후 캡처 (지연된 캡처)
-    }
-    
-    // MARK: - 🛡️ **견고한 전환 상태 접근자**
-    
-    private func getTransition(for tabID: UUID) -> TransitionContext? {
-        return transitionAccessQueue.sync { activeTransitions[tabID] }
-    }
-    
-    private func setTransition(_ context: TransitionContext?, for tabID: UUID) {
-        transitionAccessQueue.async(flags: .barrier) {
-            if let context = context {
-                self.activeTransitions[tabID] = context
-            } else {
-                self.activeTransitions.removeValue(forKey: tabID)
-            }
-        }
-    }
-    
-    private func removeTransition(for tabID: UUID) -> TransitionContext? {
-        return transitionAccessQueue.sync(flags: .barrier) {
-            return activeTransitions.removeValue(forKey: tabID)
-        }
     }
     
     // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
@@ -643,33 +529,22 @@ final class BFCacheTransitionSystem: NSObject {
         let type: CaptureType
         weak var webView: WKWebView?
         let requestedAt: Date = Date()
-        let delayCapture: TimeInterval // 🆕 지연 캡처 시간
     }
     
     // 중복 방지를 위한 진행 중인 캡처 추적
     private var pendingCaptures: Set<UUID> = []
     
-    func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil, delay: TimeInterval = 0) {
+    func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
             dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
         }
         
-        let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView, delayCapture: delay)
+        let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        if delay > 0 {
-            // 지연된 캡처
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.serialQueue.async { [weak self] in
-                    self?.performAtomicCapture(task)
-                }
-            }
-        } else {
-            // 즉시 캡처
-            serialQueue.async { [weak self] in
-                self?.performAtomicCapture(task)
-            }
+        serialQueue.async { [weak self] in
+            self?.performAtomicCapture(task)
         }
     }
     
@@ -711,16 +586,12 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 🆕 동적 렌더링 완료 감지
-        let renderingCompleted = checkRenderingCompleted(webView: webView, pageRecord: task.pageRecord)
-        
         // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
-            retryCount: task.type == .leaving ? 3 : (task.type == .immediate ? 2 : 0),  // leaving은 최대 재시도
-            renderingCompleted: renderingCompleted
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
         // 캡처 완료 후 저장
@@ -741,65 +612,11 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🆕 동적 렌더링 완료 감지
-    private func checkRenderingCompleted(webView: WKWebView, pageRecord: PageRecord) -> Bool {
-        // SPA 사이트 체크
-        let isSPASite = getSiteProfile(for: pageRecord.url)?.isSPASite ?? false
-        
-        // 로딩 중이면 렌더링 미완료
-        if webView.isLoading {
-            return false
-        }
-        
-        // SPA 사이트는 더 엄격한 체크 필요
-        if isSPASite {
-            // JavaScript로 렌더링 상태 체크
-            let semaphore = DispatchSemaphore(value: 0)
-            var renderingComplete = false
-            
-            DispatchQueue.main.async {
-                let checkRenderingJS = """
-                (function() {
-                    try {
-                        // DOM이 안정적인지 체크
-                        if (document.readyState !== 'complete') return false;
-                        
-                        // 주요 콘텐츠 영역이 있는지 체크
-                        const mainContent = document.querySelector('main, [role="main"], article, .content, #content');
-                        if (!mainContent || mainContent.children.length === 0) return false;
-                        
-                        // 로딩 인디케이터가 없는지 체크
-                        const loadingElements = document.querySelectorAll('[class*="loading"], [class*="spinner"], [aria-busy="true"]');
-                        if (loadingElements.length > 0) return false;
-                        
-                        // 최소 텍스트 콘텐츠가 있는지 체크
-                        const textContent = document.body.textContent || '';
-                        return textContent.trim().length > 50;
-                    } catch(e) {
-                        return false;
-                    }
-                })()
-                """
-                
-                webView.evaluateJavaScript(checkRenderingJS) { result, error in
-                    renderingComplete = (result as? Bool) ?? false
-                    semaphore.signal()
-                }
-            }
-            
-            _ = semaphore.wait(timeout: .now() + 0.5)
-            return renderingComplete
-        }
-        
-        // 일반 사이트는 기본 체크만
-        return true
-    }
-    
     // 🔧 **실패 복구 기능 추가된 캡처**
-    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0, renderingCompleted: Bool) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData, renderingCompleted: renderingCompleted)
+            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
             
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
@@ -811,14 +628,14 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.1) // 재시도 간격 단축
+            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
         }
         
         // 여기까지 오면 모든 시도 실패
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, renderingCompleted: Bool) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
@@ -828,7 +645,7 @@ final class BFCacheTransitionSystem: NSObject {
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
-            config.afterScreenUpdates = renderingCompleted // 렌더링 완료 상태에 따라 설정
+            config.afterScreenUpdates = false
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
@@ -842,9 +659,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 적절한 타임아웃 (렌더링 완료 여부에 따라 조정)
-        let timeoutInterval: TimeInterval = renderingCompleted ? 2.0 : 3.0
-        let result = semaphore.wait(timeout: .now() + timeoutInterval)
+        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
+        let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
@@ -881,7 +697,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0)
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
         // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -895,13 +711,11 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.5) // JS 실행 시간 여유
+        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if !renderingCompleted {
-            captureStatus = .rendering
-        } else if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
+        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
@@ -926,8 +740,7 @@ final class BFCacheTransitionSystem: NSObject {
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version,
-            renderingCompleted: renderingCompleted
+            version: version
         )
         
         return (snapshot, visualSnapshot)
@@ -1461,7 +1274,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🛡️ **견고한 제스처 시스템 (먹통 방지 + 강제 정리 적용)**
+    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1486,7 +1299,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("✨ 깔끔한 BFCache 제스처 설정 완료 (그림자 제거)")
+        dbg("BFCache 제스처 설정 완료")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -1502,94 +1315,72 @@ final class BFCacheTransitionSystem: NSObject {
         let isLeftEdge = (gesture.edges == .left)
         let width = gesture.view?.bounds.width ?? 1
         
-        // 🛡️ **개선된 조건 검사 - 더 관대하게 적용**
+        // 수직 슬롭/부호 반대 방지
         let absX = abs(translation.x), absY = abs(translation.y)
-        let horizontalEnough = absX > 5 && absX > absY * 0.7 // 완화된 조건
-        let signOK = isLeftEdge ? (translation.x >= -10) : (translation.x <= 10) // 약간의 여유
+        let horizontalEnough = absX > 8 && absX > absY
+        let signOK = isLeftEdge ? (translation.x >= 0) : (translation.x <= 0)
         
         switch gesture.state {
         case .began:
             // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
-            if let existingTransition = getTransition(for: tabID) {
+            guard activeTransitions[tabID] == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
-                return
+                return 
             }
             
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 현재 페이지 즉시 캡처 (최고 우선순위 - leaving 타입)
+                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
+                if let existing = activeTransitions[tabID] {
+                    existing.previewContainer?.removeFromSuperview()
+                    activeTransitions.removeValue(forKey: tabID)
+                    dbg("🛡️ 기존 전환 강제 정리")
+                }
+                
+                // 현재 페이지 즉시 캡처 (높은 우선순위)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
-                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
                 }
                 
                 // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
                 captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
-                    DispatchQueue.main.async {
-                        self?.beginGestureTransitionWithSnapshot(
-                            tabID: tabID,
-                            webView: webView,
-                            stateModel: stateModel,
-                            direction: direction,
-                            currentSnapshot: snapshot
-                        )
-                    }
+                    self?.beginGestureTransitionWithSnapshot(
+                        tabID: tabID,
+                        webView: webView,
+                        stateModel: stateModel,
+                        direction: direction,
+                        currentSnapshot: snapshot
+                    )
                 }
             } else {
                 gesture.state = .cancelled
             }
             
         case .changed:
-            // 🛡️ **개선된 조건 검사**: 전환이 이미 시작된 경우 더 관대하게 처리
-            let activeTransition = getTransition(for: tabID)
-            if activeTransition != nil {
-                // 전환이 이미 시작된 경우 더 관대한 조건 적용
-                if absX > 1 { // 최소한의 움직임만 요구
-                    updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
-                }
-            } else {
-                // 전환이 시작되지 않은 경우 원래 조건 적용
-                if horizontalEnough && signOK {
-                    updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
-                } else {
-                    // 🛡️ **개선**: 조건이 맞지 않아도 바로 cancel하지 않고 기다림
-                    dbg("🛡️ 제스처 조건 대기 중: absX=\(String(format: "%.1f", absX)), absY=\(String(format: "%.1f", absY))")
-                }
-            }
+            guard horizontalEnough && signOK else { return }
+            updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
             
         case .ended:
-            // 🛡️ **견고한 종료 처리**
-            let activeTransition = getTransition(for: tabID)
-            if activeTransition != nil {
-                let progress = min(1.0, absX / width)
-                let shouldComplete = progress > 0.25 || abs(velocity.x) > 600 // 완화된 조건
-                
-                if shouldComplete {
-                    completeGestureTransition(tabID: tabID)
-                } else {
-                    cancelGestureTransition(tabID: tabID)
-                }
+            let progress = min(1.0, absX / width)
+            let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
+            if shouldComplete {
+                completeGestureTransition(tabID: tabID)
             } else {
-                // 전환이 시작되지 않았으면 그냥 무시
-                dbg("🛡️ 전환 시작되지 않음 - 제스처 종료")
+                cancelGestureTransition(tabID: tabID)
             }
             
         case .cancelled, .failed:
-            // 🛡️ **견고한 취소 처리**
-            if getTransition(for: tabID) != nil {
-                cancelGestureTransition(tabID: tabID)
-            } else {
-                dbg("🛡️ 취소할 전환 없음")
-            }
+            cancelGestureTransition(tabID: tabID)
             
         default:
             break
         }
     }
     
-    // MARK: - 🛡️ **견고한 제스처 전환 로직**
+    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -1610,13 +1401,6 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
-        // 🛡️ **이중 체크**: 이미 전환이 있으면 정리 후 새로 시작
-        if let existing = getTransition(for: tabID) {
-            existing.cleanup()
-            removeTransition(for: tabID)
-            dbg("🛡️ 기존 전환 정리 후 새 전환 시작")
-        }
-        
         let initialTransform = webView.transform
         
         let previewContainer = createPreviewContainer(
@@ -1636,74 +1420,69 @@ final class BFCacheTransitionSystem: NSObject {
             previewContainer: previewContainer,
             currentSnapshot: currentSnapshot
         )
+        activeTransitions[tabID] = context
         
-        setTransition(context, for: tabID)
-        dbg("🎬 깔끔한 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기") (그림자 없음)")
+        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
-        guard let context = getTransition(for: tabID),
+        guard let context = activeTransitions[tabID],
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { 
-            dbg("⚠️ 전환 컨텍스트 없음 - 진행 업데이트 스킵")
-            return 
-        }
+              let previewContainer = context.previewContainer else { return }
         
         let screenWidth = webView.bounds.width
         let currentWebView = previewContainer.viewWithTag(1001)
         let targetPreview = previewContainer.viewWithTag(1002)
         
-        // ✨ **픽셀 정렬 적용으로 서브픽셀 시접 제거**
         if isLeftEdge {
-            let moveDistance = pixelAlign(max(0, min(screenWidth, translation)))
+            let moveDistance = max(0, min(screenWidth, translation))
             currentWebView?.frame.origin.x = moveDistance
-            targetPreview?.frame.origin.x = pixelAlign(-screenWidth + moveDistance)
+            targetPreview?.frame.origin.x = -screenWidth + moveDistance
+            
+            let shadowOpacity = Float(0.3 * (moveDistance / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
         } else {
-            let moveDistance = pixelAlign(max(-screenWidth, min(0, translation)))
+            let moveDistance = max(-screenWidth, min(0, translation))
             currentWebView?.frame.origin.x = moveDistance
-            targetPreview?.frame.origin.x = pixelAlign(screenWidth + moveDistance)
+            targetPreview?.frame.origin.x = screenWidth + moveDistance
+            
+            let shadowOpacity = Float(0.3 * (abs(moveDistance) / screenWidth))
+            currentWebView?.layer.shadowOpacity = shadowOpacity
         }
-        
-        // ✨ **그림자 효과 완전 제거 - 깔끔한 전환**
-        // (기존 shadowOpacity 설정 코드 모두 제거됨)
     }
     
     private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage? = nil) -> UIView {
         let container = UIView(frame: webView.bounds)
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
-        container.isOpaque = true // ✨ 블렌딩 최소화
         
-        // ✨ **현재 웹뷰 스냅샷 - 깔끔한 설정**
+        // 현재 웹뷰 스냅샷 사용
         let currentView: UIView
         if let snapshot = currentSnapshot {
             let imageView = UIImageView(image: snapshot)
-            imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
+            imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
-            imageView.isOpaque = true // ✨ 블렌딩 최소화
             currentView = imageView
         } else {
             if let fallbackImage = renderWebViewToImage(webView) {
                 let imageView = UIImageView(image: fallbackImage)
-                imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
+                imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
-                imageView.isOpaque = true // ✨ 블렌딩 최소화
                 currentView = imageView
             } else {
                 currentView = UIView(frame: webView.bounds)
                 currentView.backgroundColor = .systemBackground
-                currentView.isOpaque = true
             }
         }
         
         currentView.frame = webView.bounds
         currentView.tag = 1001
         
-        // ✨ **그림자 효과 완전 제거**
-        currentView.layer.shadowOpacity = 0
-        currentView.layer.shadowOffset = .zero
-        currentView.layer.shadowRadius = 0
-        currentView.layer.shadowPath = nil
+        // 그림자 설정
+        currentView.layer.shadowColor = UIColor.black.cgColor
+        currentView.layer.shadowOpacity = 0.3
+        currentView.layer.shadowOffset = CGSize(width: direction == .back ? -5 : 5, height: 0)
+        currentView.layer.shadowRadius = 10
         
         container.addSubview(currentView)
         
@@ -1720,9 +1499,8 @@ final class BFCacheTransitionSystem: NSObject {
             if let snapshot = retrieveSnapshot(for: targetRecord.id),
                let targetImage = snapshot.loadImage() {
                 let imageView = UIImageView(image: targetImage)
-                imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
+                imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
-                imageView.isOpaque = true // ✨ 블렌딩 최소화
                 targetView = imageView
                 dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
             } else {
@@ -1732,17 +1510,15 @@ final class BFCacheTransitionSystem: NSObject {
         } else {
             targetView = UIView()
             targetView.backgroundColor = .systemBackground
-            targetView.isOpaque = true
         }
         
         targetView.frame = webView.bounds
         targetView.tag = 1002
         
-        // ✨ **픽셀 정렬 적용**
         if direction == .back {
-            targetView.frame.origin.x = pixelAlign(-webView.bounds.width)
+            targetView.frame.origin.x = -webView.bounds.width
         } else {
-            targetView.frame.origin.x = pixelAlign(webView.bounds.width)
+            targetView.frame.origin.x = webView.bounds.width
         }
         
         container.insertSubview(targetView, at: 0)
@@ -1753,20 +1529,15 @@ final class BFCacheTransitionSystem: NSObject {
     private func createInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
         let card = UIView(frame: bounds)
         card.backgroundColor = .systemBackground
-        card.isOpaque = true // ✨ 블렌딩 최소화
         
         let contentView = UIView()
         contentView.translatesAutoresizingMaskIntoConstraints = false
         contentView.backgroundColor = .secondarySystemBackground
         contentView.layer.cornerRadius = 12
-        contentView.isOpaque = true // ✨ 블렌딩 최소화
-        
-        // ✨ **그림자 제거 - 깔끔한 카드**
-        contentView.layer.shadowOpacity = 0
-        contentView.layer.shadowOffset = .zero
-        contentView.layer.shadowRadius = 0
-        contentView.layer.shadowPath = nil
-        
+        contentView.layer.shadowColor = UIColor.black.cgColor
+        contentView.layer.shadowOpacity = 0.1
+        contentView.layer.shadowOffset = CGSize(width: 0, height: 2)
+        contentView.layer.shadowRadius = 8
         card.addSubview(contentView)
         
         let iconView = UIImageView()
@@ -1830,14 +1601,11 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // ⚡ **핵심 개선: 애니메이션 완료 즉시 컨테이너 제거**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
     private func completeGestureTransition(tabID: UUID) {
-        guard let context = getTransition(for: tabID),
+        guard let context = activeTransitions[tabID],
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { 
-            dbg("⚠️ 완료할 전환 컨텍스트 없음")
-            return 
-        }
+              let previewContainer = context.previewContainer else { return }
         
         let screenWidth = webView.bounds.width
         let currentView = previewContainer.viewWithTag(1001)
@@ -1851,45 +1619,60 @@ final class BFCacheTransitionSystem: NSObject {
             options: [.curveEaseOut],
             animations: {
                 if context.direction == .back {
-                    currentView?.frame.origin.x = self.pixelAlign(screenWidth)
+                    currentView?.frame.origin.x = screenWidth
                     targetView?.frame.origin.x = 0
                 } else {
-                    currentView?.frame.origin.x = self.pixelAlign(-screenWidth)
+                    currentView?.frame.origin.x = -screenWidth
                     targetView?.frame.origin.x = 0
                 }
+                currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // ⚡ **즉시 미리보기 컨테이너 제거**
-                context.cleanup()
-                self?.removeTransition(for: tabID)
-                self?.dbg("⚡ 애니메이션 완료 - 미리보기 즉시 제거")
-                
-                // 네비게이션은 별도로 비동기 수행
-                self?.performNavigationAsync(context: context)
+                // 🎬 **적응형 타이밍으로 네비게이션 수행**
+                self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // ⚡ **네비게이션만 별도 비동기 수행 (미리보기와 분리)**
-    private func performNavigationAsync(context: TransitionContext) {
-        guard let stateModel = context.stateModel else { return }
+    // 🔄 **적응형 타이밍을 적용한 네비게이션 수행**
+    private func performNavigationWithAdaptiveTiming(context: TransitionContext, previewContainer: UIView) {
+        guard let stateModel = context.stateModel else {
+            // 실패 시 즉시 정리
+            previewContainer.removeFromSuperview()
+            activeTransitions.removeValue(forKey: context.tabID)
+            return
+        }
         
         // 로딩 시간 측정 시작
         let navigationStartTime = Date()
         
-        // 네비게이션 수행
+        // 네비게이션 먼저 수행
         switch context.direction {
         case .back:
             stateModel.goBack()
-            dbg("🏄‍♂️ 깔끔한 뒤로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
             stateModel.goForward()
-            dbg("🏄‍♂️ 깔끔한 앞으로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // BFCache 복원은 백그라운드에서 조용히 수행
+        // 🔄 **적응형 BFCache 복원 + 타이밍 학습**
         tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
-            self?.dbg("🔄 BFCache 복원 \(success ? "성공" : "실패") (백그라운드)")
+            // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
+            DispatchQueue.main.async {
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
+            }
+        }
+        
+        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            if self?.activeTransitions[context.tabID] != nil {
+                previewContainer.removeFromSuperview()
+                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
+            }
         }
     }
     
@@ -1915,9 +1698,9 @@ final class BFCacheTransitionSystem: NSObject {
                 self?.updateSiteProfile(siteProfile)
                 
                 if success {
-                    self?.dbg("✅ 깔끔한 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
+                    self?.dbg("✅ 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
                 } else {
-                    self?.dbg("⚠️ 깔끔한 적응형 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 적응형 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -1937,14 +1720,11 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 🛡️ **견고한 취소 처리**
+
     private func cancelGestureTransition(tabID: UUID) {
-        guard let context = getTransition(for: tabID),
+        guard let context = activeTransitions[tabID],
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { 
-            dbg("⚠️ 취소할 전환 컨텍스트 없음")
-            return 
-        }
+              let previewContainer = context.previewContainer else { return }
         
         let screenWidth = webView.bounds.width
         let currentView = previewContainer.viewWithTag(1001)
@@ -1956,17 +1736,16 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.frame.origin.x = 0
                 
                 if context.direction == .back {
-                    targetView?.frame.origin.x = self.pixelAlign(-screenWidth)
+                    targetView?.frame.origin.x = -screenWidth
                 } else {
-                    targetView?.frame.origin.x = self.pixelAlign(screenWidth)
+                    targetView?.frame.origin.x = screenWidth
                 }
                 
-                // ✨ **그림자 효과 제거로 깔끔한 취소 애니메이션**
+                currentView?.layer.shadowOpacity = 0.3
             },
-            completion: { [weak self] _ in
-                context.cleanup()
-                self?.removeTransition(for: tabID)
-                self?.dbg("🛡️ 깔끔한 제스처 취소 완료")
+            completion: { _ in
+                previewContainer.removeFromSuperview()
+                self.activeTransitions.removeValue(forKey: tabID)
             }
         )
     }
@@ -1978,9 +1757,9 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 즉시 캡처 (최고 우선순위 - leaving 타입)
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goBack()
@@ -1994,9 +1773,9 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 현재 페이지 즉시 캡처 (최고 우선순위 - leaving 타입)
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goForward()
@@ -2060,11 +1839,7 @@ final class BFCacheTransitionSystem: NSObject {
 // MARK: - UIGestureRecognizerDelegate
 extension BFCacheTransitionSystem: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // ✨ **스크롤뷰와의 동시 인식 해제 - 가장자리 시접 깔끔하게**
-        if otherGestureRecognizer.view is UIScrollView { 
-            return false 
-        }
-        return false
+        return true
     }
 }
 
@@ -2079,19 +1854,11 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 깔끔한 BFCache 시스템 설치 완료 (그림자 제거)")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
     static func uninstall(from webView: WKWebView) {
-        // 🛡️ **모든 활성 전환 강제 정리**
-        for tabID in shared.activeTransitions.keys {
-            if let context = shared.removeTransition(for: tabID) {
-                context.cleanup()
-                shared.dbg("🛡️ 웹뷰 해제 시 전환 컨텍스트 강제 정리: \(tabID)")
-            }
-        }
-        
         // 제스처 제거
         webView.gestureRecognizers?.forEach { gesture in
             if gesture is UIScreenEdgePanGestureRecognizer {
@@ -2099,7 +1866,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🧹 깔끔한 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
@@ -2113,36 +1880,26 @@ extension BFCacheTransitionSystem {
 }
 
 // MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
-
 extension BFCacheTransitionSystem {
 
-    /// 🆕 **개선된 떠나기 전 캡처** - 사용자 액션 감지 시 즉시 고품질 캡처
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 즉시 캡처 (최고 우선순위 - leaving 타입)
-        captureSnapshot(pageRecord: rec, webView: webView, type: .leaving, tabID: tabID)
-        dbg("📸 떠나기 스냅샷 캡처 시작 (최고 우선순위): \(rec.title)")
+        // 즉시 캡처 (최고 우선순위)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
+        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 📸 **개선된 도착 후 캡처** - 동적 렌더링 완료 대기 후 캡처
+    /// 📸 **페이지 로드 완료 후 자동 캐시 강화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // SPA 사이트 감지 및 마킹
-        if let siteType = rec.siteType, siteType.contains("spa") || siteType.contains("_") {
-            markSiteAsSPA(url: rec.url)
-        }
-        
-        // 사이트별 동적 렌더링 대기 시간 계산
-        let siteProfile = getSiteProfile(for: rec.url) ?? SiteTimingProfile(hostname: rec.url.host ?? "unknown")
-        let dynamicWaitTime = siteProfile.getDynamicRenderingWaitTime()
-        
-        // 🆕 **동적 렌더링 완료 대기 후 캐처** (arrival 타입)
-        captureSnapshot(pageRecord: rec, webView: webView, type: .arrival, tabID: tabID, delay: dynamicWaitTime)
-        dbg("📸 도착 스냅샷 캐처 예약 (동적 렌더링 대기 \(String(format: "%.1f", dynamicWaitTime))초): \(rec.title)")
+        // 현재 페이지 캡처 (백그라운드 우선순위)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
+        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
         // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
         if stateModel.dataModel.currentPageIndex > 0 {
