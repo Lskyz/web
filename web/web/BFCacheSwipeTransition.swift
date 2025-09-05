@@ -15,6 +15,7 @@
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //  🌐 **동적 사이트 특화 개선** - 디시인사이드, 네이버 카페 최적화
+//  🔧 **최종보정 로그 수정** - 4단계 보정 강제 실행 보장
 //
 
 import UIKit
@@ -168,36 +169,41 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
+    // ⚡ **수정: 다단계 복원 메서드 - 최종보정 강제 실행 보장**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
-        // 캡처 상태에 따른 복원 전략
+        TabPersistenceManager.debugMessages.append("🔧 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
+        
+        // 🔧 **핵심 수정: 모든 상태에서 다단계 복원 시도 (최종보정 보장)**
         switch captureStatus {
         case .failed:
-            completion(false)
-            return
-            
-        case .visualOnly:
-            // 스크롤만 즉시 복원
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 기본 스크롤만 복원")
+            // 기본 스크롤만 즉시 복원
             DispatchQueue.main.async {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("BFCache 스크롤만 즉시 복원")
-                completion(true)
+                TabPersistenceManager.debugMessages.append("🔧 기본 스크롤 복원 완료")
+                completion(false)
             }
             return
             
-        case .partial, .complete:
-            break
+        case .visualOnly:
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 기본 복원 + 최종보정")
+            
+        case .partial:
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 전체 다단계 복원")
+            
+        case .complete:
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 전체 다단계 복원")
         }
         
         TabPersistenceManager.debugMessages.append("🌐 BFCache 동적 사이트 다단계 복원 시작 (적응형)")
         
-        // 적응형 타이밍으로 다단계 복원 실행
+        // 🔧 **모든 케이스에서 다단계 복원 실행**
         DispatchQueue.main.async {
             self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템 - 동적 사이트 최적화**
+    // 🔄 **핵심 수정: 다단계 복원 시스템 - 최종보정 단계 강제 보장**
     private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -208,7 +214,9 @@ struct BFCacheSnapshot: Codable {
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
+        TabPersistenceManager.debugMessages.append("🔧 다단계 복원 단계 구성 시작")
+        
+        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms) - 항상 포함**
         restoreSteps.append((1, { stepCompletion in
             let targetPos = self.scrollPosition
             TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
@@ -235,10 +243,12 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
+        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기) - 조건부 포함**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
+            
+            TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
                 let waitTime = profile.getAdaptiveWaitTime(step: 1)
@@ -253,11 +263,15 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
             }))
+        } else {
+            TabPersistenceManager.debugMessages.append("🔧 2단계 스킵 - 컨테이너 스크롤 요소 없음")
         }
         
-        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
+        // **3단계: iframe 스크롤 복원 (더 긴 대기) - 조건부 포함**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
+            
+            TabPersistenceManager.debugMessages.append("🔧 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
             restoreSteps.append((3, { stepCompletion in
                 let waitTime = profile.getAdaptiveWaitTime(step: 2)
@@ -272,9 +286,13 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
             }))
+        } else {
+            TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정**
+        // **4단계: 최종 확인 및 보정 - 항상 포함 (🔧 핵심 수정)**
+        TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
+        
         restoreSteps.append((4, { stepCompletion in
             let waitTime = profile.getAdaptiveWaitTime(step: 3)
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
@@ -286,19 +304,39 @@ struct BFCacheSnapshot: Codable {
                         // 최종 메인 스크롤 확인 및 보정
                         if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
                             window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                            console.log('🔧 최종 보정: 스크롤 위치 수정', window.scrollY, '->', \(self.scrollPosition.y));
                         }
-                        return window.scrollY >= \(self.scrollPosition.y - 20);
-                    } catch(e) { return false; }
+                        
+                        // 🌐 동적 사이트 추가 보정
+                        const currentY = window.scrollY;
+                        const targetY = \(self.scrollPosition.y);
+                        const tolerance = 20;
+                        const isCorrect = Math.abs(currentY - targetY) <= tolerance;
+                        
+                        console.log('🔧 동적사이트 최종보정 완료:', {
+                            current: currentY,
+                            target: targetY,
+                            tolerance: tolerance,
+                            isCorrect: isCorrect
+                        });
+                        
+                        return isCorrect;
+                    } catch(e) { 
+                        console.error('🔧 최종보정 실패:', e);
+                        return false; 
+                    }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("🔧 4단계 동적사이트 최종보정 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
         }))
+        
+        TabPersistenceManager.debugMessages.append("🔧 총 \(restoreSteps.count)단계 복원 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -306,11 +344,13 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
+                TabPersistenceManager.debugMessages.append("🔧 \(stepInfo.step)단계 실행 시작")
+                
                 // 🌐 단계별 소요 시간 기록
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("🔄 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("🔧 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -321,7 +361,8 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔧 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔧 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
                 completion(overallSuccess)
             }
         }
@@ -337,6 +378,8 @@ struct BFCacheSnapshot: Codable {
             try {
                 const elements = \(elementsJSON);
                 let restored = 0;
+                
+                console.log('🌐 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
                 
                 for (const item of elements) {
                     if (!item.selector) continue;
@@ -375,7 +418,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🌐 컨테이너 스크롤 복원:', restored, '개');
+                console.log('🌐 컨테이너 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
                 console.error('컨테이너 스크롤 복원 실패:', e);
@@ -393,6 +436,8 @@ struct BFCacheSnapshot: Codable {
             try {
                 const iframes = \(iframeJSON);
                 let restored = 0;
+                
+                console.log('🌐 iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
                 
                 for (const iframeInfo of iframes) {
                     const iframe = document.querySelector(iframeInfo.selector);
@@ -443,7 +488,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 });
                 
-                console.log('🌐 iframe 스크롤 복원:', restored, '개');
+                console.log('🌐 iframe 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
                 console.error('iframe 스크롤 복원 실패:', e);
