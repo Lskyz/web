@@ -1,10 +1,19 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **간소화된 BFCache 전환 시스템**
-//  ✅ 안정화 대기 로직 제거
-//  🛡️ 웹뷰 상태 검증 로직 제거
-//  ⚡ 직접 캡처 방식으로 단순화
-//  🚀 **타임아웃 최적화 - 로딩 속도 개선**
+//  🎯 **강화된 BFCache 전환 시스템**
+//  ✅ 직렬화 큐로 레이스 컨디션 완전 제거
+//  🔄 원자적 연산으로 데이터 일관성 보장
+//  📸 실패 복구 메커니즘 추가
+//  ♾️ 무제한 영구 캐싱 (탭별 관리)
+//  💾 스마트 메모리 관리 
+//  🔧 **StateModel과 완벽 동기화**
+//  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
+//  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
+//  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
+//  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
+//  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
+//  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
+//  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //
 
 import UIKit
@@ -35,7 +44,7 @@ private class WeakGestureContext {
 struct SiteTimingProfile: Codable {
     let hostname: String
     var loadingSamples: [TimeInterval] = []
-    var averageLoadingTime: TimeInterval = 0.2  // 🚀 기본값 단축: 0.5초 → 0.2초
+    var averageLoadingTime: TimeInterval = 0.5
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
@@ -63,16 +72,16 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 🚀 적응형 대기 시간 계산 - 전체적으로 단축
+    // 적응형 대기 시간 계산
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = min(averageLoadingTime, 0.3)  // 🚀 최대 0.3초로 제한
-        let stepMultiplier = Double(step) * 0.05     // 🚀 단계별 증가량 단축: 0.1 → 0.05
-        let successFactor = successRate > 0.8 ? 0.6 : 0.8  // 🚀 성공률 높으면 더 빠르게
+        let baseTime = averageLoadingTime
+        let stepMultiplier = Double(step) * 0.1
+        let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
 }
 
-// MARK: - 📸 **BFCache 페이지 스냅샷**
+// MARK: - 📸 BFCache 페이지 스냅샷
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -83,12 +92,6 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
-    // 🆕 **앵커 기반 스크롤 복원 정보**
-    var anchorBasedPosition: AnchorBasedPosition?
-    
-    // 🆕 **무한 스크롤 상태**
-    var infiniteScrollState: InfiniteScrollState?
-    
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
@@ -96,32 +99,16 @@ struct BFCacheSnapshot: Codable {
         case failed         // 캡처 실패
     }
     
-    // 🆕 **앵커 기반 위치 정보**
-    struct AnchorBasedPosition: Codable {
-        let anchorSelector: String
-        let anchorId: String?
-        let offsetFromAnchor: CGPoint
-        let anchorBounds: CGRect
-        let anchorText: String?
-        let anchorIndex: Int // 같은 selector의 몇 번째인지
-    }
-    
-    // 🆕 **무한 스크롤 상태**
-    struct InfiniteScrollState: Codable {
-        let totalItems: Int
-        let loadedItems: Int
-        let currentPageNumber: Int?
-        let lastVisibleItemId: String?
-        let scrollContainerSelector: String?
-        let hasMoreContent: Bool
-        let estimatedTotalHeight: Double
-    }
-    
     // Codable을 위한 CodingKeys
     enum CodingKeys: String, CodingKey {
-        case pageRecord, domSnapshot, scrollPosition, jsState, timestamp
-        case webViewSnapshotPath, captureStatus, version
-        case anchorBasedPosition, infiniteScrollState
+        case pageRecord
+        case domSnapshot
+        case scrollPosition
+        case jsState
+        case timestamp
+        case webViewSnapshotPath
+        case captureStatus
+        case version
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -140,10 +127,6 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
-        
-        // 새로운 필드들
-        anchorBasedPosition = try container.decodeIfPresent(AnchorBasedPosition.self, forKey: .anchorBasedPosition)
-        infiniteScrollState = try container.decodeIfPresent(InfiniteScrollState.self, forKey: .infiniteScrollState)
     }
     
     func encode(to encoder: Encoder) throws {
@@ -162,14 +145,10 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
-        
-        // 새로운 필드들
-        try container.encodeIfPresent(anchorBasedPosition, forKey: .anchorBasedPosition)
-        try container.encodeIfPresent(infiniteScrollState, forKey: .infiniteScrollState)
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1, anchorBasedPosition: AnchorBasedPosition? = nil, infiniteScrollState: InfiniteScrollState? = nil) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -178,8 +157,6 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
-        self.anchorBasedPosition = anchorBasedPosition
-        self.infiniteScrollState = infiniteScrollState
     }
     
     // 이미지 로드 메서드
@@ -190,7 +167,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **간소화된 복원 메서드**
+    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -199,10 +176,10 @@ struct BFCacheSnapshot: Codable {
             return
             
         case .visualOnly:
-            // 기본 스크롤만 즉시 복원
+            // 스크롤만 즉시 복원
             DispatchQueue.main.async {
                 webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("BFCache 기본 스크롤만 즉시 복원")
+                TabPersistenceManager.debugMessages.append("BFCache 스크롤만 즉시 복원")
                 completion(true)
             }
             return
@@ -211,16 +188,16 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작")
+        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
         
         // 적응형 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
-            self.performAdvancedMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 🔄 **간소화된 다단계 복원 시스템**
-    private func performAdvancedMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+    // 🔄 **핵심: 다단계 복원 시스템**
+    private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
@@ -230,121 +207,93 @@ struct BFCacheSnapshot: Codable {
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        // **1단계: 앵커 기반 복원 (최우선) - 0ms**
-        if let anchorPos = anchorBasedPosition {
-            restoreSteps.append((1, { stepCompletion in
-                TabPersistenceManager.debugMessages.append("🎯 1단계: 앵커 기반 복원 (즉시)")
-                
-                let anchorRestoreJS = self.generateAnchorBasedRestoreScript(anchorPos)
-                
-                webView.evaluateJavaScript(anchorRestoreJS) { result, error in
-                    let success = (result as? Bool) ?? false
-                    if success {
-                        TabPersistenceManager.debugMessages.append("🎯 앵커 복원 성공: \(anchorPos.anchorSelector)")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("⚠️ 앵커 복원 실패, 기본 스크롤로 대체")
-                        // 앵커 실패시 기본 스크롤 복원
-                        webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
-                    }
-                    stepCompletion(success)
-                }
-            }))
-        } else {
-            // **1-1단계: 기본 메인 윈도우 스크롤 복원 (0ms)**
-            restoreSteps.append((1, { stepCompletion in
-                let targetPos = self.scrollPosition
-                TabPersistenceManager.debugMessages.append("🔄 1단계: 기본 스크롤 복원 (즉시)")
-                
-                // 네이티브 스크롤뷰 즉시 설정
-                webView.scrollView.setContentOffset(targetPos, animated: false)
-                
-                // JavaScript 메인 스크롤 복원
-                let mainScrollJS = """
-                (function() {
-                    try {
-                        window.scrollTo(\(targetPos.x), \(targetPos.y));
-                        document.documentElement.scrollTop = \(targetPos.y);
-                        document.body.scrollTop = \(targetPos.y);
-                        return true;
-                    } catch(e) { return false; }
-                })()
-                """
-                
-                webView.evaluateJavaScript(mainScrollJS) { result, _ in
-                    let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
-                    stepCompletion(success)
-                }
-            }))
-        }
+        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
+        restoreSteps.append((1, { stepCompletion in
+            let targetPos = self.scrollPosition
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
+            
+            // 네이티브 스크롤뷰 즉시 설정
+            webView.scrollView.setContentOffset(targetPos, animated: false)
+            
+            // JavaScript 메인 스크롤 복원
+            let mainScrollJS = """
+            (function() {
+                try {
+                    window.scrollTo(\(targetPos.x), \(targetPos.y));
+                    document.documentElement.scrollTop = \(targetPos.y);
+                    document.body.scrollTop = \(targetPos.y);
+                    return true;
+                } catch(e) { return false; }
+            })()
+            """
+            
+            webView.evaluateJavaScript(mainScrollJS) { result, _ in
+                let success = (result as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
+                stepCompletion(success)
+            }
+        }))
         
-        // **2단계: 무한 스크롤 상태 복원 (적응형 대기)**
-        if let infiniteState = infiniteScrollState {
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 1)
-                TabPersistenceManager.debugMessages.append("♾️ 2단계: 무한 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let infiniteScrollJS = self.generateInfiniteScrollRestoreScript(infiniteState)
-                    webView.evaluateJavaScript(infiniteScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("♾️ 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        }
-        
-        // **3단계: 컨테이너 스크롤 복원 (광고 제외) (적응형 대기)**
+        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            restoreSteps.append((3, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 2)
-                TabPersistenceManager.debugMessages.append("📦 3단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            restoreSteps.append((2, { stepCompletion in
+                let waitTime = profile.getAdaptiveWaitTime(step: 1)
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateAdvancedContainerScrollScript(elements)
+                    let containerScrollJS = self.generateContainerScrollScript(elements)
                     webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("📦 3단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         }
         
-        // **4단계: iframe 스크롤 복원 (더 긴 대기)**
+        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            restoreSteps.append((4, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 3)
-                TabPersistenceManager.debugMessages.append("🖼️ 4단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            restoreSteps.append((3, { stepCompletion in
+                let waitTime = profile.getAdaptiveWaitTime(step: 2)
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let iframeScrollJS = self.generateIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🖼️ 4단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         }
         
-        // **5단계: 최종 확인 및 보정**
-        restoreSteps.append((5, { stepCompletion in
-            let waitTime = profile.getAdaptiveWaitTime(step: 4)
-            TabPersistenceManager.debugMessages.append("✅ 5단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+        // **4단계: 최종 확인 및 보정**
+        restoreSteps.append((4, { stepCompletion in
+            let waitTime = profile.getAdaptiveWaitTime(step: 3)
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                let finalVerifyJS = self.generateFinalVerificationScript()
+                let finalVerifyJS = """
+                (function() {
+                    try {
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                        }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                    } catch(e) { return false; }
+                })()
+                """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("✅ 5단계 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
@@ -375,204 +324,14 @@ struct BFCacheSnapshot: Codable {
         executeNextStep()
     }
     
-    // 🎯 **앵커 기반 복원 스크립트**
-    private func generateAnchorBasedRestoreScript(_ anchor: AnchorBasedPosition) -> String {
-        return """
-        (function() {
-            try {
-                console.log('🎯 앵커 기반 복원 시작:', '\(anchor.anchorSelector)');
-                
-                // 1. 앵커 요소 찾기 (여러 방법 시도)
-                let anchorElement = null;
-                
-                // ID 우선
-                if ('\(anchor.anchorId ?? "")') {
-                    anchorElement = document.getElementById('\(anchor.anchorId!)');
-                    if (anchorElement) console.log('✅ ID로 앵커 발견');
-                }
-                
-                // Selector로 찾기
-                if (!anchorElement) {
-                    const elements = document.querySelectorAll('\(anchor.anchorSelector)');
-                    if (elements.length > \(anchor.anchorIndex)) {
-                        anchorElement = elements[\(anchor.anchorIndex)];
-                        console.log('✅ Selector로 앵커 발견 (인덱스: \(anchor.anchorIndex))');
-                    } else if (elements.length > 0) {
-                        anchorElement = elements[0];
-                        console.log('⚠️ 인덱스 불일치, 첫 번째 요소 사용');
-                    }
-                }
-                
-                // 텍스트 내용으로 찾기
-                if (!anchorElement && '\(anchor.anchorText ?? "")') {
-                    const allElements = document.querySelectorAll('*');
-                    for (const el of allElements) {
-                        if (el.textContent && el.textContent.includes('\(anchor.anchorText!)')) {
-                            anchorElement = el;
-                            console.log('✅ 텍스트로 앵커 발견');
-                            break;
-                        }
-                    }
-                }
-                
-                if (!anchorElement) {
-                    console.log('❌ 앵커 요소를 찾을 수 없음');
-                    return false;
-                }
-                
-                // 2. 앵커 기준 스크롤 위치 계산
-                const rect = anchorElement.getBoundingClientRect();
-                const scrollX = window.scrollX + rect.left + \(anchor.offsetFromAnchor.x);
-                const scrollY = window.scrollY + rect.top + \(anchor.offsetFromAnchor.y);
-                
-                console.log('🎯 계산된 스크롤 위치:', scrollX, scrollY);
-                
-                // 3. 스크롤 실행
-                window.scrollTo(scrollX, scrollY);
-                document.documentElement.scrollTop = scrollY;
-                document.body.scrollTop = scrollY;
-                
-                // 4. 결과 확인
-                const finalScrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                const success = Math.abs(finalScrollY - scrollY) < 50; // 50px 오차 허용
-                
-                console.log('🎯 앵커 복원 결과:', success ? '성공' : '실패', '최종위치:', finalScrollY);
-                return success;
-                
-            } catch(e) {
-                console.error('🎯 앵커 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // ♾️ **무한 스크롤 복원 스크립트**
-    private func generateInfiniteScrollRestoreScript(_ infiniteState: InfiniteScrollState) -> String {
-        return """
-        (function() {
-            try {
-                console.log('♾️ 무한 스크롤 복원 시작');
-                
-                // 1. 스크롤 컨테이너 찾기
-                const containerSelector = '\(infiniteState.scrollContainerSelector ?? "")';
-                let container = null;
-                
-                if (containerSelector) {
-                    container = document.querySelector(containerSelector);
-                }
-                
-                if (!container) {
-                    // 일반적인 무한 스크롤 컨테이너 찾기
-                    const commonSelectors = [
-                        '[data-infinite-scroll]', '.infinite-scroll', '.infinite-container',
-                        '[data-scroll-container]', '.scroll-container', '.feed-container',
-                        '[data-virtualized]', '.virtualized', 'main', '[role="main"]'
-                    ];
-                    
-                    for (const sel of commonSelectors) {
-                        container = document.querySelector(sel);
-                        if (container) break;
-                    }
-                }
-                
-                if (!container) {
-                    console.log('⚠️ 무한 스크롤 컨테이너를 찾을 수 없음');
-                    return false;
-                }
-                
-                // 2. 현재 아이템 수 확인
-                const currentItems = container.children.length;
-                const targetItems = \(infiniteState.loadedItems);
-                
-                console.log('♾️ 현재 아이템:', currentItems, '목표 아이템:', targetItems);
-                
-                // 3. 마지막 보이는 아이템 찾기
-                let targetElement = null;
-                if ('\(infiniteState.lastVisibleItemId ?? "")') {
-                    targetElement = document.getElementById('\(infiniteState.lastVisibleItemId!)');
-                    if (targetElement) {
-                        console.log('✅ 목표 아이템 발견:', '\(infiniteState.lastVisibleItemId!)');
-                        
-                        // 해당 아이템으로 스크롤
-                        targetElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-                        return true;
-                    }
-                }
-                
-                // 4. 아이템 수 기반 추정 스크롤
-                if (currentItems >= targetItems * 0.8) { // 80% 이상 로드된 경우
-                    const estimatedIndex = Math.min(targetItems - 1, currentItems - 1);
-                    if (estimatedIndex > 0 && estimatedIndex < currentItems) {
-                        const targetChild = container.children[estimatedIndex];
-                        if (targetChild) {
-                            console.log('♾️ 추정 위치로 스크롤:', estimatedIndex);
-                            targetChild.scrollIntoView({ behavior: 'auto', block: 'start' });
-                            return true;
-                        }
-                    }
-                }
-                
-                // 5. 전체 높이 기반 추정
-                const estimatedHeight = \(infiniteState.estimatedTotalHeight);
-                if (estimatedHeight > 0) {
-                    const currentHeight = container.scrollHeight || document.body.scrollHeight;
-                    const scrollRatio = Math.min(1.0, estimatedHeight / currentHeight);
-                    const targetScroll = currentHeight * scrollRatio;
-                    
-                    console.log('♾️ 높이 기반 스크롤:', targetScroll);
-                    window.scrollTo(0, targetScroll);
-                    return true;
-                }
-                
-                console.log('⚠️ 무한 스크롤 복원 방법을 찾을 수 없음');
-                return false;
-                
-            } catch(e) {
-                console.error('♾️ 무한 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // 📦 **컨테이너 스크롤 복원 스크립트 (광고 제외)**
-    private func generateAdvancedContainerScrollScript(_ elements: [[String: Any]]) -> String {
+    // 컨테이너 스크롤 복원 스크립트 생성
+    private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
         (function() {
             try {
                 const elements = \(elementsJSON);
                 let restored = 0;
-                
-                // 광고 선택자 패턴 (제외 대상)
-                const adPatterns = [
-                    '[id*="ad"]', '[class*="ad"]', '[data-ad]',
-                    '[id*="banner"]', '[class*="banner"]',
-                    '[id*="sponsor"]', '[class*="sponsor"]',
-                    '.advertisement', '.ads', '.advert',
-                    'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
-                    '[data-google-ad]', '[data-ad-client]'
-                ];
-                
-                function isAdElement(element) {
-                    // 광고 관련 선택자나 속성 확인
-                    for (const pattern of adPatterns) {
-                        try {
-                            if (element.matches && element.matches(pattern)) {
-                                return true;
-                            }
-                        } catch(e) {}
-                    }
-                    
-                    // 클래스명이나 ID에 광고 관련 키워드 포함 확인
-                    const className = element.className || '';
-                    const id = element.id || '';
-                    const combinedText = (className + ' ' + id).toLowerCase();
-                    
-                    const adKeywords = ['ad', 'banner', 'sponsor', 'promo', 'commercial'];
-                    return adKeywords.some(keyword => combinedText.includes(keyword));
-                }
                 
                 for (const item of elements) {
                     if (!item.selector) continue;
@@ -589,23 +348,10 @@ struct BFCacheSnapshot: Codable {
                         const elements = document.querySelectorAll(sel);
                         if (elements.length > 0) {
                             elements.forEach(el => {
-                                // 광고 요소 제외
-                                if (isAdElement(el)) {
-                                    console.log('📦 광고 요소 제외:', sel);
-                                    return;
-                                }
-                                
                                 if (el && typeof el.scrollTop === 'number') {
-                                    // 스크롤 값이 의미있는 경우만 적용
-                                    const targetTop = item.top || 0;
-                                    const targetLeft = item.left || 0;
-                                    
-                                    if (targetTop > 10 || targetLeft > 10) { // 10px 이상만 의미있다고 간주
-                                        el.scrollTop = targetTop;
-                                        el.scrollLeft = targetLeft;
-                                        restored++;
-                                        console.log('📦 컨테이너 스크롤 복원:', sel, targetTop, targetLeft);
-                                    }
+                                    el.scrollTop = item.top || 0;
+                                    el.scrollLeft = item.left || 0;
+                                    restored++;
                                 }
                             });
                             break; // 성공하면 다음 selector 시도 안함
@@ -613,68 +359,10 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('📦 컨테이너 스크롤 복원:', restored, '개');
+                console.log('컨테이너 스크롤 복원:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('📦 컨테이너 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // ✅ **최종 확인 스크립트**
-    private func generateFinalVerificationScript() -> String {
-        return """
-        (function() {
-            try {
-                // 1. 메인 스크롤 확인 및 보정
-                const targetY = \(self.scrollPosition.y);
-                const currentY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                
-                if (Math.abs(currentY - targetY) > 20) {
-                    console.log('✅ 최종 보정 - 메인 스크롤 조정:', currentY, '→', targetY);
-                    window.scrollTo(\(self.scrollPosition.x), targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.body.scrollTop = targetY;
-                }
-                
-                // 2. 페이지 로딩 완료 확인
-                if (document.readyState !== 'complete') {
-                    console.log('⚠️ 문서 로딩 미완료');
-                    return false;
-                }
-                
-                // 3. 이미지 로딩 확인 (주요 이미지만)
-                const images = document.querySelectorAll('img[src]:not([data-ad]):not([class*="ad"])');
-                let loadedImages = 0;
-                let totalImages = 0;
-                
-                images.forEach(img => {
-                    // 뷰포트 근처의 이미지만 확인 (성능상 이유)
-                    const rect = img.getBoundingClientRect();
-                    if (rect.top < window.innerHeight + 500 && rect.bottom > -500) {
-                        totalImages++;
-                        if (img.complete && img.naturalHeight > 0) {
-                            loadedImages++;
-                        }
-                    }
-                });
-                
-                const imageLoadRatio = totalImages > 0 ? loadedImages / totalImages : 1;
-                console.log('✅ 이미지 로딩 상태:', loadedImages, '/', totalImages, '비율:', imageLoadRatio);
-                
-                // 4. 최종 스크롤 위치 검증
-                const finalY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop;
-                const scrollSuccess = Math.abs(finalY - targetY) < 30; // 30px 오차 허용
-                
-                const overallSuccess = scrollSuccess && imageLoadRatio > 0.7; // 70% 이상 이미지 로드
-                
-                console.log('✅ 최종 검증 결과:', overallSuccess, '스크롤:', scrollSuccess, '이미지:', imageLoadRatio);
-                return overallSuccess;
-                
-            } catch(e) {
-                console.error('✅ 최종 검증 실패:', e);
+                console.error('컨테이너 스크롤 복원 실패:', e);
                 return false;
             }
         })()
@@ -707,10 +395,10 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🖼️ iframe 스크롤 복원:', restored, '개');
+                console.log('iframe 스크롤 복원:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('🖼️ iframe 스크롤 복원 실패:', e);
+                console.error('iframe 스크롤 복원 실패:', e);
                 return false;
             }
         })()
@@ -729,7 +417,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - 🎯 **간소화된 BFCache 전환 시스템**
+// MARK: - 🎯 **강화된 BFCache 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -742,7 +430,7 @@ final class BFCacheTransitionSystem: NSObject {
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **단일 직렬화 큐 시스템**
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
     private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
@@ -831,11 +519,9 @@ final class BFCacheTransitionSystem: NSObject {
     enum CaptureType {
         case immediate  // 현재 페이지 (높은 우선순위)
         case background // 과거 페이지 (일반 우선순위)
-        case leaving    // 떠나는 페이지 (최고 우선순위)
-        case arrival    // 도착한 페이지
     }
     
-    // MARK: - 🔧 **간소화된 캡처 시스템**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -845,139 +531,187 @@ final class BFCacheTransitionSystem: NSObject {
         let requestedAt: Date = Date()
     }
     
+    // 중복 방지를 위한 진행 중인 캡처 추적
+    private var pendingCaptures: Set<UUID> = []
+    
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
             dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
         }
         
-        let task = CaptureTask(
-            pageRecord: pageRecord, 
-            tabID: tabID, 
-            type: type, 
-            webView: webView
-        )
+        let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
-        // 메인 스레드에서 직접 처리
-        if Thread.isMainThread {
-            performDirectCapture(task)
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.performDirectCapture(task)
-            }
+        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
+        serialQueue.async { [weak self] in
+            self?.performAtomicCapture(task)
         }
     }
     
-    private func performDirectCapture(_ task: CaptureTask) {
+    private func performAtomicCapture(_ task: CaptureTask) {
+        let pageID = task.pageRecord.id
+        
+        // 중복 캡처 방지 (진행 중인 것만)
+        guard !pendingCaptures.contains(pageID) else {
+            dbg("⏸️ 중복 캡처 방지: \(task.pageRecord.title)")
+            return
+        }
+        
         guard let webView = task.webView else {
             dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
             return
         }
         
-        dbg("🎯 직접 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        // 진행 중 표시
+        pendingCaptures.insert(pageID)
+        dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
-        let captureResult = performAdvancedCapture(
+        // 메인 스레드에서 웹뷰 상태 확인
+        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+            // 웹뷰가 준비되었는지 확인
+            guard webView.window != nil, !webView.bounds.isEmpty else {
+                self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
+                return nil
+            }
+            
+            return CaptureData(
+                scrollPosition: webView.scrollView.contentOffset,
+                bounds: webView.bounds,
+                isLoading: webView.isLoading
+            )
+        }
+        
+        guard let data = captureData else {
+            pendingCaptures.remove(pageID)
+            return
+        }
+        
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
+        let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
-            webView: webView
+            webView: webView,
+            captureData: data,
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 캡처 완료 후 저장 (백그라운드에서)
+        // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
-            storeInMemory(captureResult.snapshot, for: task.pageRecord.id)
+            storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        dbg("✅ 직접 캡처 완료: \(task.pageRecord.title)")
+        // 진행 중 해제
+        pendingCaptures.remove(pageID)
+        dbg("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
-    // 🛡️ **간소화된 고급 캡처 로직 - 타임아웃 대폭 단축**
-    private func performAdvancedCapture(pageRecord: PageRecord, webView: WKWebView) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    private struct CaptureData {
+        let scrollPosition: CGPoint
+        let bounds: CGRect
+        let isLoading: Bool
+    }
+    
+    // 🔧 **실패 복구 기능 추가된 캡처**
+    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
+        for attempt in 0...retryCount {
+            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
+            
+            // 성공하거나 마지막 시도면 결과 반환
+            if result.snapshot.captureStatus != .failed || attempt == retryCount {
+                if attempt > 0 {
+                    dbg("🔄 재시도 후 캡처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                }
+                return result
+            }
+            
+            // 재시도 전 잠시 대기
+            dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
+        }
+        
+        // 여기까지 오면 모든 시도 실패
+        return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, timestamp: Date(), captureStatus: .failed, version: 1), nil)
+    }
+    
+    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
-        var anchorPosition: BFCacheSnapshot.AnchorBasedPosition? = nil
-        var infiniteScrollState: BFCacheSnapshot.InfiniteScrollState? = nil
-        
-        // **1단계: 비주얼 스냅샷**
-        let config = WKSnapshotConfiguration()
-        config.rect = webView.bounds
-        config.afterScreenUpdates = true
-        
         let semaphore = DispatchSemaphore(value: 0)
         
-        webView.takeSnapshot(with: config) { image, error in
-            if let error = error {
-                self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
-                visualSnapshot = self.renderWebViewToImage(webView)
-            } else {
-                visualSnapshot = image
+        // 1. 비주얼 스냅샷 (메인 스레드)
+        DispatchQueue.main.sync {
+            let config = WKSnapshotConfiguration()
+            config.rect = captureData.bounds
+            config.afterScreenUpdates = false
+            
+            webView.takeSnapshot(with: config) { image, error in
+                if let error = error {
+                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    // Fallback: layer 렌더링
+                    visualSnapshot = self.renderWebViewToImage(webView)
+                } else {
+                    visualSnapshot = image
+                }
+                semaphore.signal()
             }
-            semaphore.signal()
         }
         
-        // 🚀 타임아웃 대폭 단축: 2.0초 → 0.5초
-        let result = semaphore.wait(timeout: .now() + 0.5)
+        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
+        let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
-            dbg("⏰ 스냅샷 캐처 타임아웃: \(pageRecord.title)")
+            dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // **2단계: DOM 캡처**
+        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
         let domSemaphore = DispatchSemaphore(value: 0)
-        let domScript = """
-        (function() {
-            try {
-                if (document.readyState !== 'complete') return null;
-                
-                // 눌린 상태/활성 상태 모두 제거
-                document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
-                    el.classList.remove(...Array.from(el.classList).filter(c => 
-                        c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
-                    ));
-                });
-                
-                // input focus 제거
-                document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
-                    el.blur();
-                });
-                
-                const html = document.documentElement.outerHTML;
-                return html.length > 100000 ? html.substring(0, 100000) : html;
-            } catch(e) { return null; }
-        })()
-        """
-        
-        webView.evaluateJavaScript(domScript) { result, error in
-            domSnapshot = result as? String
-            domSemaphore.signal()
-        }
-        // 🚀 타임아웃 단축: 1.0초 → 0.3초
-        _ = domSemaphore.wait(timeout: .now() + 0.3)
-        
-        // **3단계: 고급 JS 상태 캡처**
-        let jsSemaphore = DispatchSemaphore(value: 0)
-        let jsScript = generateAdvancedStateScript()
-        
-        webView.evaluateJavaScript(jsScript) { result, error in
-            if let data = result as? [String: Any] {
-                jsState = data
-                
-                // 앵커 정보 추출
-                if let anchorData = data["anchor"] as? [String: Any] {
-                    anchorPosition = self.parseAnchorPosition(anchorData)
-                }
-                
-                // 무한 스크롤 정보 추출
-                if let infiniteData = data["infiniteScroll"] as? [String: Any] {
-                    infiniteScrollState = self.parseInfiniteScrollState(infiniteData)
-                }
+        DispatchQueue.main.sync {
+            let domScript = """
+            (function() {
+                try {
+                    if (document.readyState !== 'complete') return null;
+                    
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
+                        el.classList.remove(...Array.from(el.classList).filter(c => 
+                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
+                        ));
+                    });
+                    
+                    // input focus 제거
+                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
+                        el.blur();
+                    });
+                    
+                    const html = document.documentElement.outerHTML;
+                    return html.length > 100000 ? html.substring(0, 100000) : html;
+                } catch(e) { return null; }
+            })()
+            """
+            
+            webView.evaluateJavaScript(domScript) { result, error in
+                domSnapshot = result as? String
+                domSemaphore.signal()
             }
-            jsSemaphore.signal()
         }
-        // 🚀 타임아웃 단축: 1.5초 → 0.5초
-        _ = jsSemaphore.wait(timeout: .now() + 0.5)
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
+        
+        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
+        let jsSemaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.sync {
+            let jsScript = generateEnhancedScrollCaptureScript()
+            
+            webView.evaluateJavaScript(jsScript) { result, error in
+                if let data = result as? [String: Any] {
+                    jsState = data
+                }
+                jsSemaphore.signal()
+            }
+        }
+        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1001,199 +735,44 @@ final class BFCacheTransitionSystem: NSObject {
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
-            scrollPosition: webView.scrollView.contentOffset,
+            scrollPosition: captureData.scrollPosition,
             jsState: jsState,
             timestamp: Date(),
-            webViewSnapshotPath: nil,
+            webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version,
-            anchorBasedPosition: anchorPosition,
-            infiniteScrollState: infiniteScrollState
+            version: version
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **고급 상태 캡처 JavaScript 생성**
-    private func generateAdvancedStateScript() -> String {
+    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
+    private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             try {
-                // 🎯 **1. 앵커 기반 위치 정보 생성**
-                function generateAnchorBasedPosition() {
-                    const viewportTop = window.scrollY || document.documentElement.scrollTop;
-                    const viewportBottom = viewportTop + window.innerHeight;
-                    const viewportCenter = viewportTop + (window.innerHeight / 2);
-                    
-                    // 뷰포트 중앙 근처의 의미있는 요소 찾기
-                    const candidateSelectors = [
-                        'article', 'section', '[data-id]', '[id]', 'h1', 'h2', 'h3',
-                        '.post', '.item', '.card', '.content-item', '.article-item',
-                        'p', '.paragraph', '.text-content'
-                    ];
-                    
-                    let bestAnchor = null;
-                    let bestDistance = Infinity;
-                    
-                    for (const selector of candidateSelectors) {
-                        const elements = document.querySelectorAll(selector);
-                        elements.forEach((el, index) => {
-                            const rect = el.getBoundingClientRect();
-                            const elementTop = viewportTop + rect.top;
-                            const elementCenter = elementTop + (rect.height / 2);
-                            
-                            // 뷰포트 내에 있거나 근처에 있는 요소만 고려
-                            if (elementTop < viewportBottom + 200 && elementTop + rect.height > viewportTop - 200) {
-                                const distance = Math.abs(elementCenter - viewportCenter);
-                                
-                                if (distance < bestDistance && rect.height > 20 && rect.width > 20) {
-                                    bestDistance = distance;
-                                    bestAnchor = {
-                                        element: el,
-                                        selector: selector,
-                                        index: index,
-                                        rect: rect,
-                                        elementTop: elementTop
-                                    };
-                                }
-                            }
-                        });
-                    }
-                    
-                    if (bestAnchor) {
-                        const offsetFromAnchor = {
-                            x: window.scrollX - bestAnchor.rect.left,
-                            y: viewportTop - bestAnchor.elementTop
-                        };
-                        
-                        return {
-                            anchorSelector: bestAnchor.selector,
-                            anchorId: bestAnchor.element.id || null,
-                            offsetFromAnchor: offsetFromAnchor,
-                            anchorBounds: {
-                                x: bestAnchor.rect.left,
-                                y: bestAnchor.rect.top,
-                                width: bestAnchor.rect.width,
-                                height: bestAnchor.rect.height
-                            },
-                            anchorText: (bestAnchor.element.textContent || '').slice(0, 100),
-                            anchorIndex: bestAnchor.index
-                        };
-                    }
-                    
-                    return null;
-                }
-                
-                // ♾️ **2. 무한 스크롤 상태 감지**
-                function detectInfiniteScrollState() {
-                    // 무한 스크롤 컨테이너 감지
-                    const infiniteScrollSelectors = [
-                        '[data-infinite-scroll]', '.infinite-scroll', '.infinite-container',
-                        '[data-scroll-container]', '.scroll-container', '.feed-container',
-                        '[data-virtualized]', '.virtualized', '.feed', '.timeline',
-                        'main', '[role="main"]'
-                    ];
-                    
-                    let container = null;
-                    let containerSelector = null;
-                    
-                    for (const selector of infiniteScrollSelectors) {
-                        container = document.querySelector(selector);
-                        if (container && container.children.length > 10) { // 10개 이상 아이템이 있어야 무한 스크롤로 간주
-                            containerSelector = selector;
-                            break;
-                        }
-                    }
-                    
-                    if (!container) {
-                        return null;
-                    }
-                    
-                    // 아이템 분석
-                    const children = Array.from(container.children);
-                    const totalItems = children.length;
-                    
-                    // 현재 뷰포트 내 마지막 보이는 아이템 찾기
-                    const viewportBottom = window.scrollY + window.innerHeight;
-                    let lastVisibleItem = null;
-                    
-                    for (let i = children.length - 1; i >= 0; i--) {
-                        const child = children[i];
-                        const rect = child.getBoundingClientRect();
-                        const itemTop = window.scrollY + rect.top;
-                        
-                        if (itemTop < viewportBottom) {
-                            lastVisibleItem = child;
-                            break;
-                        }
-                    }
-                    
-                    // 더 많은 콘텐츠가 있는지 확인
-                    const hasMoreContent = document.querySelector('.loading, .load-more, [data-loading]') !== null ||
-                                          container.scrollHeight > container.clientHeight * 1.5;
-                    
-                    return {
-                        totalItems: totalItems,
-                        loadedItems: totalItems,
-                        currentPageNumber: null, // TODO: 페이지 번호 감지 로직
-                        lastVisibleItemId: lastVisibleItem ? lastVisibleItem.id : null,
-                        scrollContainerSelector: containerSelector,
-                        hasMoreContent: hasMoreContent,
-                        estimatedTotalHeight: container.scrollHeight || document.body.scrollHeight
-                    };
-                }
-                
-                // 🔍 **3. 기존 스크롤 감지 시스템 (광고 제외 강화)**
+                // 🔍 **1단계: 범용 스크롤 요소 스캔**
                 function findAllScrollableElements() {
                     const scrollables = [];
-                    const maxElements = 50;
+                    const maxElements = 50; // 성능 고려 제한
                     
-                    // 광고 패턴 강화
-                    const adPatterns = [
-                        '[id*="ad"]', '[class*="ad"]', '[data-ad]',
-                        '[id*="banner"]', '[class*="banner"]',
-                        '[id*="sponsor"]', '[class*="sponsor"]',
-                        '.advertisement', '.ads', '.advert',
-                        'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
-                        '[data-google-ad]', '[data-ad-client]',
-                        '.google-ad', '.adsense', '[class*="adsense"]'
-                    ];
-                    
-                    function isAdElement(element) {
-                        for (const pattern of adPatterns) {
-                            try {
-                                if (element.matches && element.matches(pattern)) {
-                                    return true;
-                                }
-                            } catch(e) {}
-                        }
-                        
-                        const className = element.className || '';
-                        const id = element.id || '';
-                        const combinedText = (className + ' ' + id).toLowerCase();
-                        
-                        const adKeywords = ['ad', 'banner', 'sponsor', 'promo', 'commercial', 'adsense'];
-                        return adKeywords.some(keyword => combinedText.includes(keyword));
-                    }
-                    
+                    // 1) 명시적 overflow 스타일을 가진 요소들
                     const explicitScrollables = document.querySelectorAll('*');
                     let count = 0;
                     
                     for (const el of explicitScrollables) {
                         if (count >= maxElements) break;
                         
-                        // 광고 요소 제외
-                        if (isAdElement(el)) continue;
-                        
                         const style = window.getComputedStyle(el);
                         const overflowY = style.overflowY;
                         const overflowX = style.overflowX;
                         
+                        // 스크롤 가능한 요소 판별
                         if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                             (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                             
-                            // 의미있는 스크롤 위치만 저장 (5px 이상)
-                            if (el.scrollTop > 5 || el.scrollLeft > 5) {
+                            // 현재 스크롤 위치가 0이 아닌 경우만 저장
+                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
                                 const selector = generateBestSelector(el);
                                 if (selector) {
                                     scrollables.push({
@@ -1204,8 +783,7 @@ final class BFCacheTransitionSystem: NSObject {
                                         maxLeft: el.scrollWidth - el.clientWidth,
                                         id: el.id || '',
                                         className: el.className || '',
-                                        tagName: el.tagName.toLowerCase(),
-                                        isImportant: el.scrollTop > 50 || el.scrollLeft > 50 // 중요도 플래그
+                                        tagName: el.tagName.toLowerCase()
                                     });
                                     count++;
                                 }
@@ -1213,22 +791,54 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
+                    // 2) 일반적인 스크롤 컨테이너들
+                    const commonScrollContainers = [
+                        '.scroll-container', '.scrollable', '.content', '.main', '.body',
+                        '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll'
+                    ];
+                    
+                    for (const selector of commonScrollContainers) {
+                        if (count >= maxElements) break;
+                        
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (count >= maxElements) break;
+                            
+                            if ((el.scrollTop > 0 || el.scrollLeft > 0) && 
+                                !scrollables.some(s => s.selector === generateBestSelector(el))) {
+                                
+                                scrollables.push({
+                                    selector: generateBestSelector(el) || selector,
+                                    top: el.scrollTop,
+                                    left: el.scrollLeft,
+                                    maxTop: el.scrollHeight - el.clientHeight,
+                                    maxLeft: el.scrollWidth - el.clientWidth,
+                                    id: el.id || '',
+                                    className: el.className || '',
+                                    tagName: el.tagName.toLowerCase()
+                                });
+                                count++;
+                            }
+                        }
+                    }
+                    
                     return scrollables;
                 }
                 
-                // iframe 감지 (기존 로직 유지)
+                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만)**
                 function detectIframeScrolls() {
                     const iframes = [];
                     const iframeElements = document.querySelectorAll('iframe');
                     
                     for (const iframe of iframeElements) {
                         try {
+                            // Same-origin 체크
                             const contentWindow = iframe.contentWindow;
                             if (contentWindow && contentWindow.location) {
                                 const scrollX = contentWindow.scrollX || 0;
                                 const scrollY = contentWindow.scrollY || 0;
                                 
-                                if (scrollX > 5 || scrollY > 5) { // 5px 이상만 의미있다고 간주
+                                if (scrollX > 0 || scrollY > 0) {
                                     iframes.push({
                                         selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
                                         scrollX: scrollX,
@@ -1241,20 +851,51 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         } catch(e) {
                             // Cross-origin iframe은 접근 불가 - 무시
+                            console.log('Cross-origin iframe 스킵:', iframe.src);
                         }
                     }
                     
                     return iframes;
                 }
                 
-                // 최적의 selector 생성 (기존 로직 유지)
+                // 📏 **3단계: 동적 높이 요소 감지**
+                function detectDynamicElements() {
+                    const dynamics = [];
+                    
+                    // 일반적인 동적 콘텐츠 컨테이너들
+                    const dynamicSelectors = [
+                        '[data-infinite]', '[data-lazy]', '.infinite-scroll',
+                        '.lazy-load', '.dynamic-content', '.feed', '.timeline',
+                        '[data-scroll-container]', '.virtualized'
+                    ];
+                    
+                    for (const selector of dynamicSelectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                                dynamics.push({
+                                    selector: generateBestSelector(el) || selector,
+                                    top: el.scrollTop,
+                                    left: el.scrollLeft,
+                                    type: 'dynamic'
+                                });
+                            }
+                        }
+                    }
+                    
+                    return dynamics;
+                }
+                
+                // 최적의 selector 생성
                 function generateBestSelector(element) {
                     if (!element || element.nodeType !== 1) return null;
                     
+                    // 1순위: ID가 있으면 ID 사용
                     if (element.id) {
                         return `#${element.id}`;
                     }
                     
+                    // 2순위: 고유한 클래스 조합
                     if (element.className) {
                         const classes = element.className.trim().split(/\\s+/);
                         const uniqueClasses = classes.filter(cls => {
@@ -1266,6 +907,7 @@ final class BFCacheTransitionSystem: NSObject {
                             return `.${uniqueClasses[0]}`;
                         }
                         
+                        // 클래스 조합으로 고유성 확보
                         if (classes.length > 0) {
                             const classSelector = `.${classes.join('.')}`;
                             if (document.querySelectorAll(classSelector).length === 1) {
@@ -1274,9 +916,11 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
+                    // 3순위: 태그명 + 속성
                     const tag = element.tagName.toLowerCase();
                     const attributes = [];
                     
+                    // data 속성 우선
                     for (const attr of element.attributes) {
                         if (attr.name.startsWith('data-')) {
                             attributes.push(`[${attr.name}="${attr.value}"]`);
@@ -1290,6 +934,7 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
+                    // 4순위: nth-child 사용
                     let parent = element.parentElement;
                     if (parent) {
                         const siblings = Array.from(parent.children);
@@ -1299,24 +944,23 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
+                    // 최후: 태그명만
                     return tag;
                 }
                 
                 // 🔍 **메인 실행**
-                const anchorPosition = generateAnchorBasedPosition();
-                const infiniteScrollState = detectInfiniteScrollState();
                 const scrollableElements = findAllScrollableElements();
                 const iframeScrolls = detectIframeScrolls();
+                const dynamicElements = detectDynamicElements();
                 
-                console.log(`🔍 고급 상태 캡처: 앵커 ${anchorPosition ? '✅' : '❌'}, 무한스크롤 ${infiniteScrollState ? '✅' : '❌'}, 스크롤요소 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                console.log(`🔍 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개, 동적 ${dynamicElements.length}개`);
                 
                 return {
-                    anchor: anchorPosition,
-                    infiniteScroll: infiniteScrollState,
                     scroll: { 
                         x: window.scrollX, 
                         y: window.scrollY,
-                        elements: scrollableElements
+                        elements: scrollableElements,
+                        dynamics: dynamicElements
                     },
                     iframes: iframeScrolls,
                     href: window.location.href,
@@ -1329,77 +973,26 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 };
             } catch(e) { 
-                console.error('고급 상태 캡처 실패:', e);
+                console.error('스크롤 감지 실패:', e);
                 return {
-                    anchor: null,
-                    infiniteScroll: null,
                     scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
                     iframes: [],
                     href: window.location.href,
-                    title: document.title,
-                    error: e.message
+                    title: document.title
                 };
             }
         })()
         """
     }
     
-    // 🎯 **앵커 위치 정보 파싱**
-    private func parseAnchorPosition(_ data: [String: Any]) -> BFCacheSnapshot.AnchorBasedPosition? {
-        guard let selector = data["anchorSelector"] as? String,
-              let offsetData = data["offsetFromAnchor"] as? [String: Any],
-              let offsetX = offsetData["x"] as? Double,
-              let offsetY = offsetData["y"] as? Double,
-              let boundsData = data["anchorBounds"] as? [String: Any],
-              let boundsX = boundsData["x"] as? Double,
-              let boundsY = boundsData["y"] as? Double,
-              let boundsWidth = boundsData["width"] as? Double,
-              let boundsHeight = boundsData["height"] as? Double,
-              let anchorIndex = data["anchorIndex"] as? Int else {
-            return nil
-        }
-        
-        return BFCacheSnapshot.AnchorBasedPosition(
-            anchorSelector: selector,
-            anchorId: data["anchorId"] as? String,
-            offsetFromAnchor: CGPoint(x: offsetX, y: offsetY),
-            anchorBounds: CGRect(x: boundsX, y: boundsY, width: boundsWidth, height: boundsHeight),
-            anchorText: data["anchorText"] as? String,
-            anchorIndex: anchorIndex
-        )
-    }
-    
-    // ♾️ **무한 스크롤 상태 파싱**
-    private func parseInfiniteScrollState(_ data: [String: Any]) -> BFCacheSnapshot.InfiniteScrollState? {
-        guard let totalItems = data["totalItems"] as? Int,
-              let loadedItems = data["loadedItems"] as? Int,
-              let hasMoreContent = data["hasMoreContent"] as? Bool,
-              let estimatedTotalHeight = data["estimatedTotalHeight"] as? Double else {
-            return nil
-        }
-        
-        return BFCacheSnapshot.InfiniteScrollState(
-            totalItems: totalItems,
-            loadedItems: loadedItems,
-            currentPageNumber: data["currentPageNumber"] as? Int,
-            lastVisibleItemId: data["lastVisibleItemId"] as? String,
-            scrollContainerSelector: data["scrollContainerSelector"] as? String,
-            hasMoreContent: hasMoreContent,
-            estimatedTotalHeight: estimatedTotalHeight
-        )
-    }
-    
-    // **안전한 이미지 렌더링**
     private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
-        guard !webView.bounds.isEmpty else { return nil }
-        
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
     }
     
-    // MARK: - 💾 **디스크 저장 시스템**
+    // MARK: - 💾 **개선된 디스크 저장 시스템**
     
     private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
@@ -1424,6 +1017,7 @@ final class BFCacheTransitionSystem: NSObject {
                         self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
                     } catch {
                         self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
+                        // 저장 실패해도 계속 진행
                     }
                 }
             }
@@ -1435,7 +1029,7 @@ final class BFCacheTransitionSystem: NSObject {
                     try stateData.write(to: statePath)
                     self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
-                    self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
+                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
@@ -1492,6 +1086,7 @@ final class BFCacheTransitionSystem: NSObject {
             let contents = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil)
             let pageDirs = contents.filter { $0.lastPathComponent.hasPrefix(pagePrefix) }
                 .sorted { url1, url2 in
+                    // 버전 번호 추출하여 정렬
                     let v1 = Int(url1.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     let v2 = Int(url2.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     return v1 > v2  // 최신 버전부터
@@ -1509,7 +1104,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **디스크 캐시 로딩**
+    // MARK: - 💾 **개선된 디스크 캐시 로딩**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
@@ -1574,7 +1169,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **스냅샷 조회 시스템**
+    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
@@ -1602,7 +1197,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // MARK: - hasCache 메서드
+    // MARK: - 🔧 **수정: hasCache 메서드 추가**
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1624,7 +1219,7 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
-    // MARK: - 🧹 **캐시 정리**
+    // MARK: - 🧹 **개선된 캐시 정리**
     
     // 탭 닫을 때만 호출 (무제한 캐시 정책)
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
@@ -1679,7 +1274,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🛡️ **제스처 시스템**
+    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1727,7 +1322,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 전환 중이면 새 제스처 무시
+            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
             guard activeTransitions[tabID] == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
@@ -1738,20 +1333,20 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 혹시 남아있는 기존 전환 강제 정리
+                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
                 if let existing = activeTransitions[tabID] {
                     existing.previewContainer?.removeFromSuperview()
                     activeTransitions.removeValue(forKey: tabID)
                     dbg("🛡️ 기존 전환 강제 정리")
                 }
                 
-                // 떠나는 페이지 캡처
+                // 현재 페이지 즉시 캡처 (높은 우선순위)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
-                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+                    captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
                 }
                 
-                // 현재 웹뷰 스냅샷 캡처 후 전환 시작
-                captureSafeCurrentSnapshot(webView: webView) { [weak self] snapshot in
+                // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
+                captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
                     self?.beginGestureTransitionWithSnapshot(
                         tabID: tabID,
                         webView: webView,
@@ -1785,33 +1380,25 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - **제스처용 스냅샷 캡처**
+    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
     
-    private func captureSafeCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
-        // 메인 스레드에서만 실행
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async {
-                self.captureSafeCurrentSnapshot(webView: webView, completion: completion)
-            }
-            return
-        }
-        
+    private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
         captureConfig.rect = webView.bounds
-        captureConfig.afterScreenUpdates = true
+        captureConfig.afterScreenUpdates = false
         
         webView.takeSnapshot(with: captureConfig) { image, error in
             if let error = error {
-                self.dbg("📸 제스처 스냅샷 실패: \(error.localizedDescription)")
-                let fallbackImage = self.renderWebViewToImage(webView)
-                completion(fallbackImage)
+                self.dbg("📸 현재 페이지 스냅샷 실패: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    let fallbackImage = self.renderWebViewToImage(webView)
+                    completion(fallbackImage)
+                }
             } else {
                 completion(image)
             }
         }
     }
-    
-    // MARK: - **제스처/전환 로직**
     
     private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
         let initialTransform = webView.transform
@@ -2014,7 +1601,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // **적응형 타이밍으로 미리보기 컨테이너 타이밍 수정**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -2041,7 +1628,7 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 적응형 타이밍으로 네비게이션 수행
+                // 🎬 **적응형 타이밍으로 네비게이션 수행**
                 self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
             }
         )
@@ -2079,12 +1666,12 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 🚀 안전장치 타임아웃 단축: 1.0초 → 0.5초  
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (0.5초 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
             }
         }
     }
@@ -2132,6 +1719,7 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
     }
+    
 
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
@@ -2169,9 +1757,9 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 떠나는 페이지 캡처
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goBack()
@@ -2185,9 +1773,9 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
-        // 떠나는 페이지 캡처
+        // 현재 페이지 즉시 캡처 (높은 우선순위)
         if let currentRecord = stateModel.dataModel.currentPageRecord {
-            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
+            captureSnapshot(pageRecord: currentRecord, webView: webView, type: .immediate, tabID: tabID)
         }
         
         stateModel.goForward()
@@ -2266,7 +1854,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 간소화된 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2291,25 +1879,26 @@ extension BFCacheTransitionSystem {
     }
 }
 
-// MARK: - **간소화된 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출**
+// MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
 extension BFCacheTransitionSystem {
 
-    /// 사용자가 링크/폼으로 떠나기 직전 현재 페이지를 저장
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        captureSnapshot(pageRecord: rec, webView: webView, type: .leaving, tabID: tabID)
+        // 즉시 캡처 (최고 우선순위)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
         dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 페이지 로드 완료 후 자동 캐시
+    /// 📸 **페이지 로드 완료 후 자동 캐시 강화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 도착 후 캡처
-        captureSnapshot(pageRecord: rec, webView: webView, type: .arrival, tabID: tabID)
+        // 현재 페이지 캡처 (백그라운드 우선순위)
+        captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
         dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
         // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
@@ -2338,13 +1927,5 @@ extension BFCacheTransitionSystem {
                 }
             }
         }
-    }
-    
-    /// SPA 완료 후 캡처
-    func storeSPACompletedSnapshot(webView: WKWebView, stateModel: WebViewStateModel, record: PageRecord) {
-        guard let tabID = stateModel.tabID else { return }
-        
-        captureSnapshot(pageRecord: record, webView: webView, type: .arrival, tabID: tabID)
-        dbg("📸 SPA 완료 후 스냅샷 캡처: \(record.title)")
     }
 }
