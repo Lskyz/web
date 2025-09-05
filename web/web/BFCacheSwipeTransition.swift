@@ -1135,11 +1135,11 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🔧 **렌더링 완료 대기가 포함된 캡처**
+    // 🔧 **렌더링 완료 대기가 포함된 캡처 (UI 안전)**
     private func performRenderingCompleteCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0, stabilizationInfo: BFCacheSnapshot.StabilizationInfo?) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            // 📍 **1단계: 렌더링 완료 대기**
+            // 📍 **1단계: 렌더링 완료 대기 (이미 메인 스레드에서 실행 중)**
             if !waitForRenderingComplete(webView: webView, timeout: 2.0) {
                 dbg("⏰ 렌더링 완료 대기 타임아웃 (시도: \(attempt + 1))")
             }
