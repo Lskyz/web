@@ -11,8 +11,7 @@
 //  🔧 범용 URL 정규화 적용 - 트래킹만 제거, 의미 파라미터 보존
 //  🎯 **BFCache 통합 - 스와이프 제스처 처리 제거**
 //  📱 **모바일 리디렉트 중복 방지 - www->m 리디렉트 처리**
-//  🔧 **BFCache 도착시 스냅샷 우선순위 수정 + 완전한 메서드 호출**
-
+//  🎯 **캡처 타이밍 최적화** - 떠나기 전 우선, 도착 후 지연 (동적 렌더링 대기)
 //
 
 import Foundation
@@ -745,65 +744,65 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 // 🔍 검색 엔진 감지
                 if (host.includes('google.com') && (path.includes('/search') || urlObj.searchParams.has('q'))) {
-                    pattern = 'google_search';
+                    pattern = 'google_search_spa';
                 } else if (host.includes('bing.com') && (path.includes('/search') || urlObj.searchParams.has('q'))) {
-                    pattern = 'bing_search';
+                    pattern = 'bing_search_spa';
                 } else if (host.includes('yahoo.com') && (path.includes('/search') || urlObj.searchParams.has('p'))) {
-                    pattern = 'yahoo_search';
+                    pattern = 'yahoo_search_spa';
                 }
                 // 숫자형 단일 경로
                 else if (path.match(/^\\/\\d+$/)) {
-                    pattern = '1level_numeric';
+                    pattern = '1level_numeric_spa';
                 } else if (path.match(/^\\/[^/]+\\/\\d+$/)) {
-                    pattern = '2level_numeric';
+                    pattern = '2level_numeric_spa';
                 } else if (path.match(/^\\/[^/]+\\/[^/]+\\/\\d+$/)) {
-                    pattern = '3level_numeric';
+                    pattern = '3level_numeric_spa';
                 }
 
                 // 파라미터 기반
                 else if (path.match(/[?&]no=\\d+/)) {
-                    pattern = 'param_no_numeric';
+                    pattern = 'param_no_numeric_spa';
                 } else if (path.match(/[?&]id=[^&]+&no=\\d+/)) {
-                    pattern = 'param_id_no_numeric';
+                    pattern = 'param_id_no_numeric_spa';
                 } else if (path.match(/[?&]wr_id=\\d+/)) {
-                    pattern = 'param_wrid_numeric';
+                    pattern = 'param_wrid_numeric_spa';
                 } else if (path.match(/[?&]id=[^&]+&page=\\d+/)) {
-                    pattern = 'param_id_page_numeric';
+                    pattern = 'param_id_page_numeric_spa';
                 } else if (path.match(/[?&]bo_table=[^&]+&wr_id=\\d+/)) {
-                    pattern = 'param_botable_wrid';
+                    pattern = 'param_botable_wrid_spa';
                 }
 
                 // php/html 파일명
                 else if (path.match(/\\/[^/]+\\.php[?#]?/)) {
-                    pattern = 'file_php';
+                    pattern = 'file_php_spa';
                 } else if (path.match(/\\/[^/]+\\.html[?#]?/)) {
-                    pattern = 'file_html';
+                    pattern = 'file_html_spa';
                 }
 
                 // 해시 라우팅
                 else if (path.match(/#\\/[^/]+$/)) {
-                    pattern = 'hash_1level';
+                    pattern = 'hash_1level_spa';
                 } else if (path.match(/#\\/[^/]+\\/\\d+$/)) {
-                    pattern = 'hash_2level_numeric';
+                    pattern = 'hash_2level_numeric_spa';
                 } else if (path.match(/#\\/[^/]+\\?[^=]+=/)) {
-                    pattern = 'hash_query';
+                    pattern = 'hash_query_spa';
                 }
 
                 // 쿼리스트링 범용
                 else if (path.match(/\\?[^=]+=[^&]+$/)) {
-                    pattern = 'query_single';
+                    pattern = 'query_single_spa';
                 } else if (path.match(/\\?[^=]+=[^&]+&[^=]+=[^&]+/)) {
-                    pattern = 'query_multi';
+                    pattern = 'query_multi_spa';
                 }
 
                 // 혼합 숫자+문자
                 else if (path.match(/\\/\\d+\\/[^/]+\\/[^/]+/)) {
-                    pattern = 'numeric_first_mixed';
+                    pattern = 'numeric_first_mixed_spa';
                 }
 
                 // 루트
                 else if (path === '/' || path === '') {
-                    pattern = 'root';
+                    pattern = 'root_spa';
                 }
 
                 return `${host}_${pattern}`;
@@ -1326,38 +1325,38 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     // MARK: - 🚫 **네이티브 시스템 감지 및 차단**
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-    // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
-    switch navigationAction.navigationType {
-    case .linkActivated, .formSubmitted, .formResubmitted:
-        dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
-        
-        // 🎯 **BFCache 캡처 추가 - 페이지 이동 전 현재 페이지 저장**
-        if let stateModel = stateModel {
-            BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
-                webView: webView,
-                stateModel: stateModel
-            )
-            dbg("📸 사용자 클릭 - 현재 페이지 BFCache 캡처")
-        }
-        
-    case .backForward:
-        dbg("🚫 네이티브 뒤로/앞으로 차단")
-        // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
-        if let url = navigationAction.request.url {
-            if let existingIndex = findPageIndex(for: url) {
-                dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
-                _ = enqueueRestore(to: existingIndex)
-            } else {
-                dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+        // 사용자 클릭 감지만 하고, 네이티브 뒤로가기는 완전 차단
+        switch navigationAction.navigationType {
+        case .linkActivated, .formSubmitted, .formResubmitted:
+            dbg("👆 사용자 클릭 감지: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            
+            // 🎯 **떠나기 전 캡처 우선순위 강화** - 사용자 액션 감지 시 즉시 고품질 캡처
+            if let stateModel = stateModel {
+                BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
+                    webView: webView,
+                    stateModel: stateModel
+                )
+                dbg("📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)")
             }
+            
+        case .backForward:
+            dbg("🚫 네이티브 뒤로/앞으로 차단")
+            // 🎯 **네이티브 히스토리 네비게이션을 차단 (큐 시스템 사용)**
+            if let url = navigationAction.request.url {
+                if let existingIndex = findPageIndex(for: url) {
+                    dbg("🚫 네이티브 백포워드 차단 - 큐에 추가: \(existingIndex)")
+                    _ = enqueueRestore(to: existingIndex)
+                } else {
+                    dbg("🚫 네이티브 백포워드 차단 - 해당 URL 없음: \(url.absoluteString)")
+                }
+            }
+            decisionHandler(.cancel)
+            return
+        default:
+            break
         }
-        decisionHandler(.cancel)
-        return
-    default:
-        break
-    }
 
-    decisionHandler(.allow)
+        decisionHandler(.allow)
     }
 
     // MARK: - WKNavigationDelegate (enum 기반 복원 분기 적용)
@@ -1375,72 +1374,74 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    stateModel?.handleLoadingFinish()
-    let title = webView.title ?? webView.url?.host ?? "제목 없음"
+        stateModel?.handleLoadingFinish()
+        let title = webView.title ?? webView.url?.host ?? "제목 없음"
 
-    if let finalURL = webView.url {
-        // 🎯 **핵심: didFinish enum 기반 분기 처리**
-        switch restoreState {
-        case .sessionRestoring:
-            // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
-            updatePageTitle(for: finalURL, title: title)
-            finishSessionRestore()
-            dbg("🔄 세션 복원 완료: '\(title)'")
-
-        case .queueRestoring(_):
-            // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
-
-            if let expectedNormalized = expectedNormalizedURL {
-                let isDesktopMode = stateModel?.isDesktopMode ?? false
-                let actualNormalized = PageRecord.normalizeURL(finalURL, isDesktopMode: isDesktopMode)
-
-                if expectedNormalized == actualNormalized {
-                    // URL이 예상과 일치 - 제목만 업데이트
-                    updatePageTitle(for: finalURL, title: title)
-                    dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
-                } else {
-                    // URL이 예상과 다름 - 현재 항목 치환
-                    replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
-                    dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
-                }
-            } else {
-                // 예상 URL이 없으면 제목만 업데이트
+        if let finalURL = webView.url {
+            // 🎯 **핵심: didFinish enum 기반 분기 처리**
+            switch restoreState {
+            case .sessionRestoring:
+                // ✅ **세션 복원 중**: URL 기반으로 안전하게 업데이트
                 updatePageTitle(for: finalURL, title: title)
-                dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
-            }
+                finishSessionRestore()
+                dbg("🔄 세션 복원 완료: '\(title)'")
 
-            // 📸 현재 레코드 업데이트
-            if let currentRecord = currentPageRecord {
-                var mutableRecord = currentRecord
-                mutableRecord.updateAccess()
-                pageHistory[currentPageIndex] = mutableRecord
-            }
+            case .queueRestoring(_):
+                // ✅ **큐 기반 복원 중**: 절대 addNewPage 호출 안함
 
-            // 큐 기반 복원 완료
-            finishCurrentRestore()
+                if let expectedNormalized = expectedNormalizedURL {
+                    let isDesktopMode = stateModel?.isDesktopMode ?? false
+                    let actualNormalized = PageRecord.normalizeURL(finalURL, isDesktopMode: isDesktopMode)
 
-        case .idle, .completed, .failed, .preparing:
-            // ✅ **일반적인 새 탐색**: 기존 로직대로 새 페이지 추가
-            addNewPage(url: finalURL, title: title)
-            stateModel?.syncCurrentURL(finalURL)
-            dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
-            
-            // 🔧 **수정: 완전한 도착시 스냅샷 메서드 호출**
-            // 기존 단순한 captureSnapshot 대신 더 완전한 메서드 사용
-            if let stateModel = stateModel {
-                BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(
-                    webView: webView,
-                    stateModel: stateModel
-                )
-                dbg("📸 페이지 로드 완료 - 완전한 도착시 스냅샷 호출")
+                    if expectedNormalized == actualNormalized {
+                        // URL이 예상과 일치 - 제목만 업데이트
+                        updatePageTitle(for: finalURL, title: title)
+                        dbg("🤫 큐 복원 완료 - 제목만 업데이트: '\(title)'")
+                    } else {
+                        // URL이 예상과 다름 - 현재 항목 치환
+                        replaceCurrentPage(url: finalURL, title: title, siteType: "redirected")
+                        dbg("🤫 큐 복원 중 URL변경 - 현재 항목 치환: '\(title)'")
+                    }
+                } else {
+                    // 예상 URL이 없으면 제목만 업데이트
+                    updatePageTitle(for: finalURL, title: title)
+                    dbg("🤫 큐 복원 완료 - 예상 URL 없음, 제목만 업데이트: '\(title)'")
+                }
+
+                // 📸 현재 레코드 업데이트
+                if let currentRecord = currentPageRecord {
+                    var mutableRecord = currentRecord
+                    mutableRecord.updateAccess()
+                    pageHistory[currentPageIndex] = mutableRecord
+                }
+
+                // 큐 기반 복원 완료
+                finishCurrentRestore()
+
+            case .idle, .completed, .failed, .preparing:
+                // ✅ **일반적인 새 탐색**: 모든 페이지 처리 완료 후 도착 캡처 예약
+                
+                // 1. 먼저 페이지 처리 완료
+                addNewPage(url: finalURL, title: title)
+                stateModel?.syncCurrentURL(finalURL)
+                dbg("🆕 페이지 기록: '\(title)' (총 \(pageHistory.count)개)")
+                
+                // 2. 🎯 **모든 페이지 처리 완료 후 도착 캡처 지연 실행**
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    if let stateModel = self?.stateModel {
+                        BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(
+                            webView: webView,
+                            stateModel: stateModel
+                        )
+                        self?.dbg("📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기")
+                    }
+                }
             }
         }
+
+        stateModel?.triggerNavigationFinished()
+        dbg("✅ 네비게이션 완료")
     }
-
-    stateModel?.triggerNavigationFinished()
-    dbg("✅ 네비게이션 완료")
-}
-
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         stateModel?.handleLoadingError()
