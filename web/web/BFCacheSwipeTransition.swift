@@ -17,7 +17,7 @@
 //  🎯 **동적 렌더링 완료 대기** - SPA/동적 사이트 최적화
 //  📸 **캡처 타이밍 최적화** - 떠나기 전 우선, 도착 후 지연
 //  🛡️ **견고한 제스처 처리** - 먹통 방지 + 강제 정리
-//  ✨ **그림자 제거로 가장자리 잔상 해결** - 깔끔한 플랫 전환
+//  ✨ **잔상 제거 패치** - 그림자 제거 + 스크림 + 픽셀 정렬로 깔끔한 전환
 //
 
 import UIKit
@@ -549,8 +549,28 @@ final class BFCacheTransitionSystem: NSObject {
     private let transitionAccessQueue = DispatchQueue(label: "bfcache.transition", attributes: .concurrent)
     
     // MARK: - ✨ **픽셀 정렬 유틸리티** (서브픽셀 시접 제거)
+    @inline(__always)
     private func pixelAlign(_ v: CGFloat, scale: CGFloat = UIScreen.main.scale) -> CGFloat {
         return (v * scale).rounded() / scale
+    }
+    
+    // MARK: - ✨ **가장자리 스크림(얇은 그라디언트) 생성**
+    private func makeScrimView(height: CGFloat) -> UIView {
+        let w: CGFloat = 20
+        let v = UIView(frame: CGRect(x: 0, y: 0, width: w, height: height))
+        v.isUserInteractionEnabled = false
+        v.isOpaque = false
+
+        let g = CAGradientLayer()
+        g.frame = v.bounds
+        g.startPoint = CGPoint(x: 0, y: 0.5)
+        g.endPoint   = CGPoint(x: 1, y: 0.5)
+        g.colors = [
+            UIColor.black.withAlphaComponent(0.18).cgColor,
+            UIColor.black.withAlphaComponent(0.0).cgColor
+        ]
+        v.layer.addSublayer(g)
+        return v
     }
     
     // 🛡️ **견고한 전환 컨텍스트 (강제 정리 타이머 포함)**
@@ -1486,7 +1506,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("✨ 깔끔한 BFCache 제스처 설정 완료 (그림자 제거)")
+        dbg("✨ 깔끔한 BFCache 제스처 설정 완료")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -1638,114 +1658,122 @@ final class BFCacheTransitionSystem: NSObject {
         )
         
         setTransition(context, for: tabID)
-        dbg("🎬 깔끔한 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기") (그림자 없음)")
+        dbg("🎬 깔끔한 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
         guard let context = getTransition(for: tabID),
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { 
+              let container = context.previewContainer else { 
             dbg("⚠️ 전환 컨텍스트 없음 - 진행 업데이트 스킵")
             return 
         }
         
         let screenWidth = webView.bounds.width
-        let currentWebView = previewContainer.viewWithTag(1001)
-        let targetPreview = previewContainer.viewWithTag(1002)
+        let currentView = container.viewWithTag(1001)
+        let targetView = container.viewWithTag(1002)
+        let scrim = container.viewWithTag(1003)
         
-        // ✨ **픽셀 정렬 적용으로 서브픽셀 시접 제거**
+        // ✅ **픽셀 정렬 적용으로 서브픽셀 시접 제거**
         if isLeftEdge {
             let moveDistance = pixelAlign(max(0, min(screenWidth, translation)))
-            currentWebView?.frame.origin.x = moveDistance
-            targetPreview?.frame.origin.x = pixelAlign(-screenWidth + moveDistance)
+            currentView?.frame.origin.x = moveDistance
+            targetView?.frame.origin.x = pixelAlign(-screenWidth + moveDistance)
+            
+            // ✅ **스크림 위치 동기화**
+            if let s = scrim {
+                s.isHidden = moveDistance <= 0
+                s.frame.origin.x = pixelAlign(moveDistance - s.bounds.width)
+            }
         } else {
             let moveDistance = pixelAlign(max(-screenWidth, min(0, translation)))
-            currentWebView?.frame.origin.x = moveDistance
-            targetPreview?.frame.origin.x = pixelAlign(screenWidth + moveDistance)
+            currentView?.frame.origin.x = moveDistance
+            targetView?.frame.origin.x = pixelAlign(screenWidth + moveDistance)
+            
+            // ✅ **스크림 위치 동기화**
+            if let s = scrim {
+                s.isHidden = moveDistance >= 0
+                s.frame.origin.x = pixelAlign(screenWidth + moveDistance - s.bounds.width)
+            }
         }
-        
-        // ✨ **그림자 효과 완전 제거 - 깔끔한 전환**
-        // (기존 shadowOpacity 설정 코드 모두 제거됨)
     }
     
     private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage? = nil) -> UIView {
         let container = UIView(frame: webView.bounds)
         container.backgroundColor = .systemBackground
+        container.isOpaque = true                // ✅ 블렌딩 최소화
         container.clipsToBounds = true
-        container.isOpaque = true // ✨ 블렌딩 최소화
-        
-        // ✨ **현재 웹뷰 스냅샷 - 깔끔한 설정**
+
+        // ✅ **현재 페이지 스냅샷 - 깔끔한 설정**
         let currentView: UIView
         if let snapshot = currentSnapshot {
-            let imageView = UIImageView(image: snapshot)
-            imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
-            imageView.clipsToBounds = true
-            imageView.isOpaque = true // ✨ 블렌딩 최소화
-            currentView = imageView
+            let iv = UIImageView(image: snapshot)
+            iv.contentMode = .scaleToFill       // ✅ AspectFill → Fill (경계 시접 방지)
+            iv.clipsToBounds = true
+            iv.isOpaque = true
+            currentView = iv
+        } else if let fallback = renderWebViewToImage(webView) {
+            let iv = UIImageView(image: fallback)
+            iv.contentMode = .scaleToFill
+            iv.clipsToBounds = true
+            iv.isOpaque = true
+            currentView = iv
         } else {
-            if let fallbackImage = renderWebViewToImage(webView) {
-                let imageView = UIImageView(image: fallbackImage)
-                imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
-                imageView.clipsToBounds = true
-                imageView.isOpaque = true // ✨ 블렌딩 최소화
-                currentView = imageView
-            } else {
-                currentView = UIView(frame: webView.bounds)
-                currentView.backgroundColor = .systemBackground
-                currentView.isOpaque = true
-            }
+            let v = UIView(frame: webView.bounds)
+            v.backgroundColor = .systemBackground
+            v.isOpaque = true
+            currentView = v
         }
-        
+
         currentView.frame = webView.bounds
         currentView.tag = 1001
-        
-        // ✨ **그림자 효과 완전 제거**
+
+        // ❌ 레이어 그림자 제거 (잔상 원인)
         currentView.layer.shadowOpacity = 0
         currentView.layer.shadowOffset = .zero
-        currentView.layer.shadowRadius = 0
-        currentView.layer.shadowPath = nil
-        
+        currentView.layer.shadowRadius  = 0
+        currentView.layer.shadowPath    = nil
+
         container.addSubview(currentView)
-        
-        // 타겟 페이지 미리보기
-        let targetIndex = direction == .back ?
-            stateModel.dataModel.currentPageIndex - 1 :
-            stateModel.dataModel.currentPageIndex + 1
-        
+
+        // 타겟 미리보기
+        let targetIndex = (direction == .back)
+            ? stateModel.dataModel.currentPageIndex - 1
+            : stateModel.dataModel.currentPageIndex + 1
+
         var targetView: UIView
-        
         if targetIndex >= 0, targetIndex < stateModel.dataModel.pageHistory.count {
             let targetRecord = stateModel.dataModel.pageHistory[targetIndex]
-            
-            if let snapshot = retrieveSnapshot(for: targetRecord.id),
-               let targetImage = snapshot.loadImage() {
-                let imageView = UIImageView(image: targetImage)
-                imageView.contentMode = .scaleToFill // ✨ AspectFill → Fill (시접 이슈 방지)
-                imageView.clipsToBounds = true
-                imageView.isOpaque = true // ✨ 블렌딩 최소화
-                targetView = imageView
+            if let snap = retrieveSnapshot(for: targetRecord.id),
+               let img  = snap.loadImage() {
+                let iv = UIImageView(image: img)
+                iv.contentMode = .scaleToFill
+                iv.clipsToBounds = true
+                iv.isOpaque = true
+                targetView = iv
                 dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
             } else {
                 targetView = createInfoCard(for: targetRecord, in: webView.bounds)
                 dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
             }
         } else {
-            targetView = UIView()
-            targetView.backgroundColor = .systemBackground
-            targetView.isOpaque = true
+            let v = UIView(frame: webView.bounds)
+            v.backgroundColor = .systemBackground
+            v.isOpaque = true
+            targetView = v
         }
-        
+
         targetView.frame = webView.bounds
         targetView.tag = 1002
-        
-        // ✨ **픽셀 정렬 적용**
-        if direction == .back {
-            targetView.frame.origin.x = pixelAlign(-webView.bounds.width)
-        } else {
-            targetView.frame.origin.x = pixelAlign(webView.bounds.width)
-        }
-        
+        targetView.frame.origin.x = (direction == .back) ? -webView.bounds.width : webView.bounds.width
         container.insertSubview(targetView, at: 0)
+
+        // ✅ 스크림(경계 음영) 추가 — 그림자 대체
+        let scrim = makeScrimView(height: webView.bounds.height)
+        scrim.tag = 1003
+        scrim.isHidden = true
+        container.addSubview(scrim)
+
         webView.addSubview(container)
         return container
     }
@@ -1753,15 +1781,15 @@ final class BFCacheTransitionSystem: NSObject {
     private func createInfoCard(for record: PageRecord, in bounds: CGRect) -> UIView {
         let card = UIView(frame: bounds)
         card.backgroundColor = .systemBackground
-        card.isOpaque = true // ✨ 블렌딩 최소화
+        card.isOpaque = true // ✅ 블렌딩 최소화
         
         let contentView = UIView()
         contentView.translatesAutoresizingMaskIntoConstraints = false
         contentView.backgroundColor = .secondarySystemBackground
         contentView.layer.cornerRadius = 12
-        contentView.isOpaque = true // ✨ 블렌딩 최소화
+        contentView.isOpaque = true // ✅ 블렌딩 최소화
         
-        // ✨ **그림자 제거 - 깔끔한 카드**
+        // ✅ **그림자 제거 - 깔끔한 카드**
         contentView.layer.shadowOpacity = 0
         contentView.layer.shadowOffset = .zero
         contentView.layer.shadowRadius = 0
@@ -1834,36 +1862,34 @@ final class BFCacheTransitionSystem: NSObject {
     private func completeGestureTransition(tabID: UUID) {
         guard let context = getTransition(for: tabID),
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { 
+              let container = context.previewContainer,
+              let currentView = container.viewWithTag(1001),
+              let targetView  = container.viewWithTag(1002) else { 
             dbg("⚠️ 완료할 전환 컨텍스트 없음")
             return 
         }
         
         let screenWidth = webView.bounds.width
-        let currentView = previewContainer.viewWithTag(1001)
-        let targetView = previewContainer.viewWithTag(1002)
         
-        UIView.animate(
-            withDuration: 0.3,
-            delay: 0,
-            usingSpringWithDamping: 0.8,
-            initialSpringVelocity: 0.5,
-            options: [.curveEaseOut],
-            animations: {
-                if context.direction == .back {
-                    currentView?.frame.origin.x = self.pixelAlign(screenWidth)
-                    targetView?.frame.origin.x = 0
-                } else {
-                    currentView?.frame.origin.x = self.pixelAlign(-screenWidth)
-                    targetView?.frame.origin.x = 0
-                }
-                // ✨ **그림자 효과 제거로 깔끔한 애니메이션**
-            },
-            completion: { [weak self] _ in
-                // 🎬 **적응형 타이밍으로 네비게이션 수행**
-                self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
+        UIView.animate(withDuration: 0.3,
+                       delay: 0,
+                       usingSpringWithDamping: 0.8,
+                       initialSpringVelocity: 0.5,
+                       options: [.curveEaseOut],
+                       animations: {
+            if context.direction == .back {
+                currentView.frame.origin.x = screenWidth
+                targetView.frame.origin.x  = 0
+            } else {
+                currentView.frame.origin.x = -screenWidth
+                targetView.frame.origin.x  = 0
             }
-        )
+        }, completion: { [weak self] _ in
+            // ✅ 경계 스크림 제거
+            container.viewWithTag(1003)?.removeFromSuperview()
+            // 이후 BFCache 복원/정리 로직은 그대로
+            self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: container)
+        })
     }
     
     // 🔄 **적응형 타이밍을 적용한 네비게이션 수행**
@@ -1975,8 +2001,6 @@ final class BFCacheTransitionSystem: NSObject {
                 } else {
                     targetView?.frame.origin.x = self.pixelAlign(screenWidth)
                 }
-                
-                // ✨ **그림자 효과 제거로 깔끔한 취소 애니메이션**
             },
             completion: { [weak self] _ in
                 context.cleanup()
@@ -2075,10 +2099,8 @@ final class BFCacheTransitionSystem: NSObject {
 // MARK: - UIGestureRecognizerDelegate
 extension BFCacheTransitionSystem: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // ✨ **스크롤뷰와의 동시 인식 해제 - 가장자리 시접 깔끔하게**
-        if otherGestureRecognizer.view is UIScrollView { 
-            return false 
-        }
+        // ✅ 웹뷰 내부 스크롤과 동시 인식 금지 (수평 드리프트 제거)
+        if otherGestureRecognizer.view is UIScrollView { return false }
         return false
     }
 }
@@ -2094,7 +2116,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 깔끔한 BFCache 시스템 설치 완료 (그림자 제거)")
+        TabPersistenceManager.debugMessages.append("✅ 깔끔한 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
