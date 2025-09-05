@@ -18,6 +18,7 @@
 //  🔧 **최종보정 로그 수정** - 4단계 보정 강제 실행 보장
 //  🧵 **제스처 스레드 리팩토링** - 메인 스레드 동기화 강화, 먹통 방지
 //  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결
+//  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //
 
 import UIKit
@@ -1981,7 +1982,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타임아웃 제거 - 제스처 먹통 해결**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
@@ -2014,7 +2015,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🔄 **적응형 타이밍을 적용한 네비게이션 수행**
+    // 🔄 **적응형 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
     private func performNavigationWithAdaptiveTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
@@ -2046,14 +2047,9 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 🛡️ **안전장치: 최대 1.5초 후 강제 정리** (🌐 동적 사이트 고려해 1초 → 1.5초)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if self?.getActiveTransition(for: context.tabID) != nil {
-                previewContainer.removeFromSuperview()
-                self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (1.5초 타임아웃)")
-            }
-        }
+        // 🎬 **타임아웃 제거 - 제스처 먹통 해결**
+        // 기존의 1.5초 강제 정리 타임아웃 코드 완전 제거
+        dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
     // 🔄 **적응형 BFCache 복원 + 타이밍 학습** 
@@ -2248,7 +2244,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (타임아웃 제거)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
