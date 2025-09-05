@@ -13,7 +13,8 @@
 //  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
-//  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
+//  🎯 **통합 복원 시스템** - 단일 JavaScript 실행으로 최적화
+//  📍 **앵커 기반 스크롤 보정** - 광고/동적 콘텐츠 대응
 //
 
 import UIKit
@@ -81,11 +82,23 @@ struct SiteTimingProfile: Codable {
     }
 }
 
+// MARK: - 📍 앵커 기반 스크롤 정보 (광고 보정용)
+struct ScrollAnchor: Codable {
+    let elementId: String?
+    let elementClass: String?
+    let elementTag: String
+    let textSnippet: String?  // 요소의 텍스트 일부
+    let offsetFromTop: CGFloat  // 앵커로부터 스크롤 위치까지 거리
+    let viewportPercentage: CGFloat  // 뷰포트 내 상대 위치 (0.0~1.0)
+    let elementRect: CGRect  // 요소의 원래 위치/크기
+}
+
 // MARK: - 📸 BFCache 페이지 스냅샷
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
     let scrollPosition: CGPoint
+    var scrollAnchors: [ScrollAnchor]?  // 📍 앵커 기반 스크롤 정보
     var jsState: [String: Any]?
     let timestamp: Date
     var webViewSnapshotPath: String?
@@ -104,6 +117,7 @@ struct BFCacheSnapshot: Codable {
         case pageRecord
         case domSnapshot
         case scrollPosition
+        case scrollAnchors
         case jsState
         case timestamp
         case webViewSnapshotPath
@@ -117,6 +131,7 @@ struct BFCacheSnapshot: Codable {
         pageRecord = try container.decode(PageRecord.self, forKey: .pageRecord)
         domSnapshot = try container.decodeIfPresent(String.self, forKey: .domSnapshot)
         scrollPosition = try container.decode(CGPoint.self, forKey: .scrollPosition)
+        scrollAnchors = try container.decodeIfPresent([ScrollAnchor].self, forKey: .scrollAnchors)
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -134,6 +149,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(pageRecord, forKey: .pageRecord)
         try container.encodeIfPresent(domSnapshot, forKey: .domSnapshot)
         try container.encode(scrollPosition, forKey: .scrollPosition)
+        try container.encodeIfPresent(scrollAnchors, forKey: .scrollAnchors)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -148,10 +164,11 @@ struct BFCacheSnapshot: Codable {
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, scrollAnchors: [ScrollAnchor]? = nil, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
+        self.scrollAnchors = scrollAnchors
         self.jsState = jsState
         self.timestamp = timestamp
         self.webViewSnapshotPath = webViewSnapshotPath
@@ -167,7 +184,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
+    // 🎯 **통합 복원 메서드 - 앵커 기반 광고 보정**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -188,221 +205,257 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
+        TabPersistenceManager.debugMessages.append("📍 앵커 기반 통합 복원 시작")
         
-        // 적응형 타이밍으로 다단계 복원 실행
-        DispatchQueue.main.async {
-            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
+        // 적응형 타이밍으로 통합 복원 실행
+        let waitTime = siteProfile?.getAdaptiveWaitTime(step: 1) ?? 0.3
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+            self.performIntegratedRestore(to: webView, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 다단계 복원 시스템**
-    private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
-        var stepResults: [Bool] = []
-        var currentStep = 0
+    // 🎯 **핵심: 통합 복원 시스템 - 단일 JavaScript 실행**
+    private func performIntegratedRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         let startTime = Date()
         
-        // 사이트별 적응형 타이밍 계산
-        let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
+        // 통합 복원 스크립트 생성
+        let restoreScript = generateIntegratedRestoreScript()
         
-        var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
-        
-        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
-        restoreSteps.append((1, { stepCompletion in
-            let targetPos = self.scrollPosition
-            TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
+        webView.evaluateJavaScript(restoreScript) { [weak self] result, error in
+            let duration = Date().timeIntervalSince(startTime)
             
-            // 네이티브 스크롤뷰 즉시 설정
-            webView.scrollView.setContentOffset(targetPos, animated: false)
-            
-            // JavaScript 메인 스크롤 복원
-            let mainScrollJS = """
-            (function() {
-                try {
-                    window.scrollTo(\(targetPos.x), \(targetPos.y));
-                    document.documentElement.scrollTop = \(targetPos.y);
-                    document.body.scrollTop = \(targetPos.y);
-                    return true;
-                } catch(e) { return false; }
-            })()
-            """
-            
-            webView.evaluateJavaScript(mainScrollJS) { result, _ in
-                let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
-                stepCompletion(success)
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("❌ 통합 복원 실패: \(error.localizedDescription)")
+                completion(false)
+                return
             }
-        }))
-        
-        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
-        if let jsState = self.jsState,
-           let scrollData = jsState["scroll"] as? [String: Any],
-           let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 1)
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            // 결과 파싱
+            if let resultDict = result as? [String: Any] {
+                let mainSuccess = resultDict["mainScroll"] as? Bool ?? false
+                let anchorsRestored = resultDict["anchorsRestored"] as? Int ?? 0
+                let containersRestored = resultDict["containersRestored"] as? Int ?? 0
+                let iframesRestored = resultDict["iframesRestored"] as? Int ?? 0
+                let finalY = resultDict["finalScrollY"] as? Double ?? 0
+                let correctionApplied = resultDict["correctionApplied"] as? Bool ?? false
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateContainerScrollScript(elements)
-                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        }
-        
-        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
-        if let jsState = self.jsState,
-           let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
-            
-            restoreSteps.append((3, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 2)
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append(
+                    "✅ 통합 복원 완료: " +
+                    "메인=\(mainSuccess ? "✓" : "✗"), " +
+                    "앵커=\(anchorsRestored), " +
+                    "컨테이너=\(containersRestored), " +
+                    "iframe=\(iframesRestored), " +
+                    "최종Y=\(Int(finalY)), " +
+                    "보정=\(correctionApplied ? "적용" : "미적용"), " +
+                    "소요=\(String(format: "%.3f", duration))초"
+                )
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
-                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        }
-        
-        // **4단계: 최종 확인 및 보정**
-        restoreSteps.append((4, { stepCompletion in
-            let waitTime = profile.getAdaptiveWaitTime(step: 3)
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                let finalVerifyJS = """
-                (function() {
-                    try {
-                        // 최종 메인 스크롤 확인 및 보정
-                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
-                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
-                        }
-                        return window.scrollY >= \(self.scrollPosition.y - 20);
-                    } catch(e) { return false; }
-                })()
-                """
-                
-                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
-                    stepCompletion(success)
-                }
-            }
-        }))
-        
-        // 단계별 실행
-        func executeNextStep() {
-            if currentStep < restoreSteps.count {
-                let stepInfo = restoreSteps[currentStep]
-                currentStep += 1
-                
-                stepInfo.action { success in
-                    stepResults.append(success)
-                    executeNextStep()
-                }
+                completion(mainSuccess || anchorsRestored > 0)
             } else {
-                // 모든 단계 완료
-                let duration = Date().timeIntervalSince(startTime)
-                let successCount = stepResults.filter { $0 }.count
-                let totalSteps = stepResults.count
-                let overallSuccess = successCount > totalSteps / 2
-                
-                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                completion(overallSuccess)
+                TabPersistenceManager.debugMessages.append("⚠️ 복원 결과 파싱 실패")
+                completion(false)
             }
         }
-        
-        executeNextStep()
     }
     
-    // 컨테이너 스크롤 복원 스크립트 생성
-    private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
-        let elementsJSON = convertToJSONString(elements) ?? "[]"
+    // 📍 **통합 복원 JavaScript 생성 - 앵커 기반 보정 포함**
+    private func generateIntegratedRestoreScript() -> String {
+        let anchorsJSON = convertAnchorsToJSON(scrollAnchors ?? [])
+        let elementsJSON = convertToJSONString(jsState?["scroll"] as? [String: Any]?["elements"] ?? [])
+        let iframesJSON = convertToJSONString(jsState?["iframes"] ?? [])
+        
         return """
         (function() {
+            const result = {
+                mainScroll: false,
+                anchorsRestored: 0,
+                containersRestored: 0,
+                iframesRestored: 0,
+                finalScrollY: 0,
+                correctionApplied: false
+            };
+            
             try {
-                const elements = \(elementsJSON);
-                let restored = 0;
+                console.log('📍 통합 복원 시작');
                 
+                // 1️⃣ 앵커 기반 스크롤 복원 (광고 보정)
+                const anchors = \(anchorsJSON);
+                let bestAnchor = null;
+                let bestScore = 0;
+                
+                for (const anchor of anchors) {
+                    let element = null;
+                    
+                    // ID로 찾기
+                    if (anchor.elementId) {
+                        element = document.getElementById(anchor.elementId);
+                    }
+                    
+                    // Class로 찾기
+                    if (!element && anchor.elementClass) {
+                        const candidates = document.getElementsByClassName(anchor.elementClass);
+                        // 텍스트 매칭으로 정확한 요소 찾기
+                        if (anchor.textSnippet) {
+                            for (const cand of candidates) {
+                                if (cand.textContent && cand.textContent.includes(anchor.textSnippet)) {
+                                    element = cand;
+                                    break;
+                                }
+                            }
+                        } else {
+                            element = candidates[0];
+                        }
+                    }
+                    
+                    // Tag로 찾기
+                    if (!element && anchor.elementTag) {
+                        const candidates = document.getElementsByTagName(anchor.elementTag);
+                        if (anchor.textSnippet) {
+                            for (const cand of candidates) {
+                                if (cand.textContent && cand.textContent.includes(anchor.textSnippet)) {
+                                    element = cand;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (element) {
+                        const rect = element.getBoundingClientRect();
+                        const pageY = rect.top + window.scrollY;
+                        
+                        // 앵커 스코어 계산 (뷰포트 중앙에 가까울수록 높은 점수)
+                        const viewportCenter = window.innerHeight / 2;
+                        const distanceFromCenter = Math.abs((rect.top + rect.height/2) - viewportCenter);
+                        const score = 1000 - distanceFromCenter;
+                        
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestAnchor = {
+                                element: element,
+                                originalOffset: anchor.offsetFromTop,
+                                currentY: pageY,
+                                viewportPercentage: anchor.viewportPercentage
+                            };
+                        }
+                    }
+                }
+                
+                // 앵커 기반 스크롤 위치 계산 및 적용
+                let targetScrollY = \(scrollPosition.y);
+                
+                if (bestAnchor) {
+                    // 광고 등으로 인한 높이 변화 보정
+                    const correctedY = bestAnchor.currentY - bestAnchor.originalOffset;
+                    const difference = Math.abs(correctedY - targetScrollY);
+                    
+                    // 차이가 100px 이상이면 보정 적용
+                    if (difference > 100) {
+                        console.log('📍 광고 보정 적용: 차이=' + difference + 'px');
+                        targetScrollY = correctedY;
+                        result.correctionApplied = true;
+                    }
+                    result.anchorsRestored++;
+                }
+                
+                // 2️⃣ 메인 스크롤 복원
+                window.scrollTo({
+                    top: targetScrollY,
+                    left: \(scrollPosition.x),
+                    behavior: 'instant'
+                });
+                
+                // 강제 적용
+                document.documentElement.scrollTop = targetScrollY;
+                document.body.scrollTop = targetScrollY;
+                
+                result.mainScroll = true;
+                result.finalScrollY = window.scrollY;
+                
+                // 3️⃣ 컨테이너 스크롤 복원
+                const elements = \(elementsJSON);
                 for (const item of elements) {
                     if (!item.selector) continue;
                     
-                    // 다양한 selector 시도
                     const selectors = [
                         item.selector,
-                        item.selector.replace(/\\[\\d+\\]/g, ''), // 인덱스 제거
+                        item.selector.replace(/\\[\\d+\\]/g, ''),
                         item.className ? '.' + item.className : null,
                         item.id ? '#' + item.id : null
                     ].filter(s => s);
                     
                     for (const sel of selectors) {
-                        const elements = document.querySelectorAll(sel);
-                        if (elements.length > 0) {
-                            elements.forEach(el => {
-                                if (el && typeof el.scrollTop === 'number') {
-                                    el.scrollTop = item.top || 0;
-                                    el.scrollLeft = item.left || 0;
-                                    restored++;
-                                }
-                            });
-                            break; // 성공하면 다음 selector 시도 안함
+                        try {
+                            const els = document.querySelectorAll(sel);
+                            if (els.length > 0) {
+                                els.forEach(el => {
+                                    if (el && typeof el.scrollTop === 'number') {
+                                        el.scrollTop = item.top || 0;
+                                        el.scrollLeft = item.left || 0;
+                                        result.containersRestored++;
+                                    }
+                                });
+                                break;
+                            }
+                        } catch(e) {
+                            console.error('컨테이너 복원 실패:', sel, e);
                         }
                     }
                 }
                 
-                console.log('컨테이너 스크롤 복원:', restored, '개');
-                return restored > 0;
+                // 4️⃣ iframe 스크롤 복원
+                const iframes = \(iframesJSON);
+                for (const iframeInfo of iframes) {
+                    try {
+                        const iframe = document.querySelector(iframeInfo.selector);
+                        if (iframe && iframe.contentWindow) {
+                            try {
+                                iframe.contentWindow.scrollTo(
+                                    iframeInfo.scrollX || 0,
+                                    iframeInfo.scrollY || 0
+                                );
+                                result.iframesRestored++;
+                            } catch(e) {
+                                // Cross-origin iframe 무시
+                            }
+                        }
+                    } catch(e) {
+                        console.error('iframe 복원 실패:', e);
+                    }
+                }
+                
+                // 5️⃣ 최종 검증 및 미세 조정
+                setTimeout(() => {
+                    const currentY = window.scrollY;
+                    const targetY = targetScrollY;
+                    
+                    if (Math.abs(currentY - targetY) > 50) {
+                        console.log('📍 최종 보정: ' + currentY + ' → ' + targetY);
+                        window.scrollTo(0, targetY);
+                    }
+                }, 100);
+                
             } catch(e) {
-                console.error('컨테이너 스크롤 복원 실패:', e);
-                return false;
+                console.error('통합 복원 실패:', e);
             }
+            
+            return result;
         })()
         """
     }
     
-    // iframe 스크롤 복원 스크립트 생성
-    private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
-        let iframeJSON = convertToJSONString(iframeData) ?? "[]"
-        return """
-        (function() {
-            try {
-                const iframes = \(iframeJSON);
-                let restored = 0;
-                
-                for (const iframeInfo of iframes) {
-                    const iframe = document.querySelector(iframeInfo.selector);
-                    if (iframe && iframe.contentWindow) {
-                        try {
-                            // Same-origin인 경우에만 접근 가능
-                            iframe.contentWindow.scrollTo(
-                                iframeInfo.scrollX || 0,
-                                iframeInfo.scrollY || 0
-                            );
-                            restored++;
-                        } catch(e) {
-                            // Cross-origin iframe은 무시
-                            console.log('Cross-origin iframe 스킵:', iframeInfo.selector);
-                        }
-                    }
-                }
-                
-                console.log('iframe 스크롤 복원:', restored, '개');
-                return restored > 0;
-            } catch(e) {
-                console.error('iframe 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
+    // 앵커 배열을 JSON 문자열로 변환
+    private func convertAnchorsToJSON(_ anchors: [ScrollAnchor]) -> String {
+        guard !anchors.isEmpty else { return "[]" }
+        
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(anchors)
+            return String(data: data, encoding: .utf8) ?? "[]"
+        } catch {
+            return "[]"
+        }
     }
     
     // 안전한 JSON 변환 유틸리티
@@ -521,7 +574,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (앵커 기반 스크롤 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -628,7 +681,7 @@ final class BFCacheTransitionSystem: NSObject {
             
             // 재시도 전 잠시 대기
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
+            Thread.sleep(forTimeInterval: 0.1) // 안정성을 위한 대기
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -639,6 +692,7 @@ final class BFCacheTransitionSystem: NSObject {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
+        var scrollAnchors: [ScrollAnchor]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
         // 1. 비주얼 스냅샷 (메인 스레드)
@@ -659,14 +713,14 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 적절한 타임아웃 (2초 → 2.5초로 약간 여유)
+        // 적절한 타임아웃
         let result = semaphore.wait(timeout: .now() + 2.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
+        // 2. DOM 캡처 - 눌린 상태 제거
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -674,7 +728,7 @@ final class BFCacheTransitionSystem: NSObject {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
-                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    // 눌린 상태/활성 상태 모두 제거
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
                         el.classList.remove(...Array.from(el.classList).filter(c => 
                             c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
@@ -697,9 +751,44 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
+        _ = domSemaphore.wait(timeout: .now() + 1.0)
         
-        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
+        // 3. 📍 **앵커 기반 스크롤 정보 캡처 (광고 보정용)**
+        let anchorSemaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.sync {
+            let anchorScript = generateAnchorCaptureScript()
+            
+            webView.evaluateJavaScript(anchorScript) { result, error in
+                if let data = result as? [[String: Any]] {
+                    scrollAnchors = data.compactMap { dict in
+                        guard let tag = dict["tag"] as? String,
+                              let offsetFromTop = dict["offsetFromTop"] as? Double,
+                              let viewportPercentage = dict["viewportPercentage"] as? Double,
+                              let rectDict = dict["rect"] as? [String: Double],
+                              let x = rectDict["x"],
+                              let y = rectDict["y"],
+                              let width = rectDict["width"],
+                              let height = rectDict["height"] else {
+                            return nil
+                        }
+                        
+                        return ScrollAnchor(
+                            elementId: dict["id"] as? String,
+                            elementClass: dict["class"] as? String,
+                            elementTag: tag,
+                            textSnippet: dict["textSnippet"] as? String,
+                            offsetFromTop: CGFloat(offsetFromTop),
+                            viewportPercentage: CGFloat(viewportPercentage),
+                            elementRect: CGRect(x: x, y: y, width: width, height: height)
+                        )
+                    }
+                }
+                anchorSemaphore.signal()
+            }
+        }
+        _ = anchorSemaphore.wait(timeout: .now() + 1.0)
+        
+        // 4. JS 상태 캡처 (스크롤 컨테이너 등)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -711,11 +800,11 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
+        _ = jsSemaphore.wait(timeout: .now() + 1.5)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
+        if visualSnapshot != nil && domSnapshot != nil && jsState != nil && scrollAnchors != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
@@ -736,6 +825,7 @@ final class BFCacheTransitionSystem: NSObject {
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
             scrollPosition: captureData.scrollPosition,
+            scrollAnchors: scrollAnchors,
             jsState: jsState,
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
@@ -746,17 +836,108 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
+    // 📍 **앵커 캡처 스크립트 생성 (광고 보정용)**
+    private func generateAnchorCaptureScript() -> String {
+        return """
+        (function() {
+            try {
+                const scrollY = window.scrollY;
+                const viewportHeight = window.innerHeight;
+                const anchors = [];
+                
+                // 뷰포트 내의 주요 콘텐츠 요소들을 앵커로 선택
+                const contentSelectors = [
+                    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',  // 헤딩
+                    'article', 'section',  // 시맨틱 요소
+                    '.post', '.article', '.content',  // 일반적인 클래스
+                    '[id]',  // ID가 있는 모든 요소
+                    'p:nth-of-type(n+3)',  // 3번째 이후 단락
+                    'img[alt]',  // 대체 텍스트가 있는 이미지
+                    '.comment', '.reply',  // 댓글 요소
+                ];
+                
+                const candidates = [];
+                for (const selector of contentSelectors) {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            const rect = el.getBoundingClientRect();
+                            const pageY = rect.top + scrollY;
+                            
+                            // 뷰포트 근처 요소만 선택 (위아래 500px 범위)
+                            if (pageY >= scrollY - 500 && pageY <= scrollY + viewportHeight + 500) {
+                                // 광고 요소 필터링
+                                const classNames = el.className || '';
+                                const id = el.id || '';
+                                if (classNames.includes('ad') || classNames.includes('banner') ||
+                                    id.includes('ad') || id.includes('banner') ||
+                                    el.tagName === 'INS' || el.tagName === 'IFRAME') {
+                                    continue;  // 광고 스킵
+                                }
+                                
+                                candidates.push({
+                                    element: el,
+                                    rect: rect,
+                                    pageY: pageY,
+                                    score: Math.abs(rect.top - viewportHeight/2)  // 중앙에 가까울수록 낮은 점수
+                                });
+                            }
+                        }
+                    } catch(e) {
+                        // Selector 오류 무시
+                    }
+                }
+                
+                // 상위 5개 앵커만 선택
+                candidates.sort((a, b) => a.score - b.score);
+                const topCandidates = candidates.slice(0, 5);
+                
+                for (const cand of topCandidates) {
+                    const el = cand.element;
+                    const rect = cand.rect;
+                    
+                    // 텍스트 스니펫 추출 (처음 50자)
+                    let textSnippet = el.textContent || '';
+                    textSnippet = textSnippet.trim().substring(0, 50);
+                    
+                    anchors.push({
+                        id: el.id || null,
+                        class: el.className || null,
+                        tag: el.tagName.toLowerCase(),
+                        textSnippet: textSnippet || null,
+                        offsetFromTop: cand.pageY - scrollY,
+                        viewportPercentage: rect.top / viewportHeight,
+                        rect: {
+                            x: rect.left,
+                            y: rect.top,
+                            width: rect.width,
+                            height: rect.height
+                        }
+                    });
+                }
+                
+                console.log('📍 앵커 캡처: ' + anchors.length + '개');
+                return anchors;
+                
+            } catch(e) {
+                console.error('앵커 캡처 실패:', e);
+                return [];
+            }
+        })()
+        """
+    }
+    
+    // 🔍 **범용 스크롤 캡처 스크립트**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             try {
-                // 🔍 **1단계: 범용 스크롤 요소 스캔**
+                // 🔍 **범용 스크롤 요소 스캔**
                 function findAllScrollableElements() {
                     const scrollables = [];
                     const maxElements = 50; // 성능 고려 제한
                     
-                    // 1) 명시적 overflow 스타일을 가진 요소들
+                    // 명시적 overflow 스타일을 가진 요소들
                     const explicitScrollables = document.querySelectorAll('*');
                     let count = 0;
                     
@@ -791,48 +972,16 @@ final class BFCacheTransitionSystem: NSObject {
                         }
                     }
                     
-                    // 2) 일반적인 스크롤 컨테이너들
-                    const commonScrollContainers = [
-                        '.scroll-container', '.scrollable', '.content', '.main', '.body',
-                        '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll'
-                    ];
-                    
-                    for (const selector of commonScrollContainers) {
-                        if (count >= maxElements) break;
-                        
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            if (count >= maxElements) break;
-                            
-                            if ((el.scrollTop > 0 || el.scrollLeft > 0) && 
-                                !scrollables.some(s => s.selector === generateBestSelector(el))) {
-                                
-                                scrollables.push({
-                                    selector: generateBestSelector(el) || selector,
-                                    top: el.scrollTop,
-                                    left: el.scrollLeft,
-                                    maxTop: el.scrollHeight - el.clientHeight,
-                                    maxLeft: el.scrollWidth - el.clientWidth,
-                                    id: el.id || '',
-                                    className: el.className || '',
-                                    tagName: el.tagName.toLowerCase()
-                                });
-                                count++;
-                            }
-                        }
-                    }
-                    
                     return scrollables;
                 }
                 
-                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만)**
+                // 🖼️ **iframe 스크롤 감지**
                 function detectIframeScrolls() {
                     const iframes = [];
                     const iframeElements = document.querySelectorAll('iframe');
                     
                     for (const iframe of iframeElements) {
                         try {
-                            // Same-origin 체크
                             const contentWindow = iframe.contentWindow;
                             if (contentWindow && contentWindow.location) {
                                 const scrollX = contentWindow.scrollX || 0;
@@ -840,7 +989,7 @@ final class BFCacheTransitionSystem: NSObject {
                                 
                                 if (scrollX > 0 || scrollY > 0) {
                                     iframes.push({
-                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
+                                        selector: generateBestSelector(iframe) || \`iframe[src*="\${iframe.src.split('/').pop()}"]\`,
                                         scrollX: scrollX,
                                         scrollY: scrollY,
                                         src: iframe.src || '',
@@ -850,127 +999,65 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                         } catch(e) {
-                            // Cross-origin iframe은 접근 불가 - 무시
-                            console.log('Cross-origin iframe 스킵:', iframe.src);
+                            // Cross-origin iframe은 접근 불가
                         }
                     }
                     
                     return iframes;
                 }
                 
-                // 📏 **3단계: 동적 높이 요소 감지**
-                function detectDynamicElements() {
-                    const dynamics = [];
-                    
-                    // 일반적인 동적 콘텐츠 컨테이너들
-                    const dynamicSelectors = [
-                        '[data-infinite]', '[data-lazy]', '.infinite-scroll',
-                        '.lazy-load', '.dynamic-content', '.feed', '.timeline',
-                        '[data-scroll-container]', '.virtualized'
-                    ];
-                    
-                    for (const selector of dynamicSelectors) {
-                        const elements = document.querySelectorAll(selector);
-                        for (const el of elements) {
-                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
-                                dynamics.push({
-                                    selector: generateBestSelector(el) || selector,
-                                    top: el.scrollTop,
-                                    left: el.scrollLeft,
-                                    type: 'dynamic'
-                                });
-                            }
-                        }
-                    }
-                    
-                    return dynamics;
-                }
-                
                 // 최적의 selector 생성
                 function generateBestSelector(element) {
                     if (!element || element.nodeType !== 1) return null;
                     
-                    // 1순위: ID가 있으면 ID 사용
+                    // ID가 있으면 ID 사용
                     if (element.id) {
-                        return `#${element.id}`;
+                        return '#' + element.id;
                     }
                     
-                    // 2순위: 고유한 클래스 조합
+                    // 고유한 클래스 조합
                     if (element.className) {
                         const classes = element.className.trim().split(/\\s+/);
                         const uniqueClasses = classes.filter(cls => {
-                            const elements = document.querySelectorAll(`.${cls}`);
+                            const elements = document.querySelectorAll('.' + cls);
                             return elements.length === 1 && elements[0] === element;
                         });
                         
                         if (uniqueClasses.length > 0) {
-                            return `.${uniqueClasses[0]}`;
-                        }
-                        
-                        // 클래스 조합으로 고유성 확보
-                        if (classes.length > 0) {
-                            const classSelector = `.${classes.join('.')}`;
-                            if (document.querySelectorAll(classSelector).length === 1) {
-                                return classSelector;
-                            }
+                            return '.' + uniqueClasses[0];
                         }
                     }
                     
-                    // 3순위: 태그명 + 속성
-                    const tag = element.tagName.toLowerCase();
-                    const attributes = [];
-                    
-                    // data 속성 우선
-                    for (const attr of element.attributes) {
-                        if (attr.name.startsWith('data-')) {
-                            attributes.push(`[${attr.name}="${attr.value}"]`);
-                        }
-                    }
-                    
-                    if (attributes.length > 0) {
-                        const attrSelector = tag + attributes.join('');
-                        if (document.querySelectorAll(attrSelector).length === 1) {
-                            return attrSelector;
-                        }
-                    }
-                    
-                    // 4순위: nth-child 사용
+                    // nth-child 사용
                     let parent = element.parentElement;
                     if (parent) {
                         const siblings = Array.from(parent.children);
                         const index = siblings.indexOf(element);
                         if (index !== -1) {
-                            return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
+                            const tag = element.tagName.toLowerCase();
+                            return parent.tagName.toLowerCase() + ' > ' + tag + ':nth-child(' + (index + 1) + ')';
                         }
                     }
                     
-                    // 최후: 태그명만
-                    return tag;
+                    return element.tagName.toLowerCase();
                 }
                 
-                // 🔍 **메인 실행**
+                // 메인 실행
                 const scrollableElements = findAllScrollableElements();
                 const iframeScrolls = detectIframeScrolls();
-                const dynamicElements = detectDynamicElements();
                 
-                console.log(`🔍 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개, 동적 ${dynamicElements.length}개`);
+                console.log('🔍 스크롤 요소: ' + scrollableElements.length + '개, iframe: ' + iframeScrolls.length + '개');
                 
                 return {
                     scroll: { 
                         x: window.scrollX, 
                         y: window.scrollY,
-                        elements: scrollableElements,
-                        dynamics: dynamicElements
+                        elements: scrollableElements
                     },
                     iframes: iframeScrolls,
                     href: window.location.href,
                     title: document.title,
-                    timestamp: Date.now(),
-                    userAgent: navigator.userAgent,
-                    viewport: {
-                        width: window.innerWidth,
-                        height: window.innerHeight
-                    }
+                    timestamp: Date.now()
                 };
             } catch(e) { 
                 console.error('스크롤 감지 실패:', e);
@@ -1197,7 +1284,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // MARK: - 🔧 **수정: hasCache 메서드 추가**
+    // MARK: - 🔧 **hasCache 메서드**
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1274,7 +1361,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
+    // MARK: - 🎯 **제스처 시스템 (연속 제스처 먹통 방지 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1322,7 +1409,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
+            // 🛡️ **핵심: 전환 중이면 새 제스처 무시**
             guard activeTransitions[tabID] == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
@@ -1333,7 +1420,7 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
+                // 🛡️ **혹시 남아있는 기존 전환 강제 정리**
                 if let existing = activeTransitions[tabID] {
                     existing.previewContainer?.removeFromSuperview()
                     activeTransitions.removeValue(forKey: tabID)
@@ -1380,7 +1467,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
+    // MARK: - 🎯 **제스처/전환 로직**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -1601,7 +1688,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
+    // 🎬 **미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
               let webView = context.webView,
@@ -1628,7 +1715,7 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 🎬 **적응형 타이밍으로 네비게이션 수행**
+                // 적응형 타이밍으로 네비게이션 수행
                 self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
             }
         )
@@ -1666,7 +1753,7 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
+        // 🛡️ **안전장치: 최대 1초 후 강제 정리**
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
