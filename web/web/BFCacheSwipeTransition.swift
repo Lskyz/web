@@ -4,6 +4,7 @@
 //  ✅ 안정화 대기 로직 제거
 //  🛡️ 웹뷰 상태 검증 로직 제거
 //  ⚡ 직접 캡처 방식으로 단순화
+//  🚀 **타임아웃 최적화 - 로딩 속도 개선**
 //
 
 import UIKit
@@ -34,7 +35,7 @@ private class WeakGestureContext {
 struct SiteTimingProfile: Codable {
     let hostname: String
     var loadingSamples: [TimeInterval] = []
-    var averageLoadingTime: TimeInterval = 0.5
+    var averageLoadingTime: TimeInterval = 0.2  // 🚀 기본값 단축: 0.5초 → 0.2초
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
@@ -62,11 +63,11 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 적응형 대기 시간 계산
+    // 🚀 적응형 대기 시간 계산 - 전체적으로 단축
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = averageLoadingTime
-        let stepMultiplier = Double(step) * 0.1
-        let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
+        let baseTime = min(averageLoadingTime, 0.3)  // 🚀 최대 0.3초로 제한
+        let stepMultiplier = Double(step) * 0.05     // 🚀 단계별 증가량 단축: 0.1 → 0.05
+        let successFactor = successRate > 0.8 ? 0.6 : 0.8  // 🚀 성공률 높으면 더 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
 }
@@ -890,7 +891,7 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("✅ 직접 캡처 완료: \(task.pageRecord.title)")
     }
     
-    // 🛡️ **간소화된 고급 캡처 로직**
+    // 🛡️ **간소화된 고급 캡처 로직 - 타임아웃 대폭 단축**
     private func performAdvancedCapture(pageRecord: PageRecord, webView: WKWebView) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         var visualSnapshot: UIImage? = nil
@@ -916,7 +917,8 @@ final class BFCacheTransitionSystem: NSObject {
             semaphore.signal()
         }
         
-        let result = semaphore.wait(timeout: .now() + 2.0)
+        // 🚀 타임아웃 대폭 단축: 2.0초 → 0.5초
+        let result = semaphore.wait(timeout: .now() + 0.5)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캐처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
@@ -951,7 +953,8 @@ final class BFCacheTransitionSystem: NSObject {
             domSnapshot = result as? String
             domSemaphore.signal()
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0)
+        // 🚀 타임아웃 단축: 1.0초 → 0.3초
+        _ = domSemaphore.wait(timeout: .now() + 0.3)
         
         // **3단계: 고급 JS 상태 캡처**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -973,7 +976,8 @@ final class BFCacheTransitionSystem: NSObject {
             }
             jsSemaphore.signal()
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.5)
+        // 🚀 타임아웃 단축: 1.5초 → 0.5초
+        _ = jsSemaphore.wait(timeout: .now() + 0.5)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -2075,12 +2079,12 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // 안전장치: 최대 1초 후 강제 정리
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        // 🚀 안전장치 타임아웃 단축: 1.0초 → 0.5초  
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (0.5초 타임아웃)")
             }
         }
     }
