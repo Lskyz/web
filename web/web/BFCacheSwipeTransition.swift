@@ -948,14 +948,13 @@ final class BFCacheTransitionSystem: NSObject {
             return false
         }
         
-        // 🛡️ **렌더링 상태 확인**
-        guard !webView.isLoading else {
-            dbg("⚠️ 스냅샷 주의: 웹뷰 로딩 중")
-            // 로딩 중이어도 스냅샷은 시도 (로딩 상태도 캡처할 수 있음)
-        }
-        
-        return true
-    }
+// 🛡️ **렌더링 상태 확인**
+if webView.isLoading {
+    dbg("⚠️ 스냅샷 주의: 웹뷰 로딩 중")
+    // 로딩 중이어도 스냅샷은 시도 (로딩 상태도 캡처할 수 있음)
+}
+
+return true
     
     // MARK: - 🔧 **핵심 개선: 렌더링 완료 대기 + 안정화 캡처 시스템**
     
