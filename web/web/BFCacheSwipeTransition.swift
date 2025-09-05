@@ -222,7 +222,7 @@ struct BFCacheSnapshot: Codable {
         // 통합 복원 스크립트 생성
         let restoreScript = generateIntegratedRestoreScript()
         
-        webView.evaluateJavaScript(restoreScript) { [weak self] result, error in
+        webView.evaluateJavaScript(restoreScript) { result, error in
             let duration = Date().timeIntervalSince(startTime)
             
             if let error = error {
@@ -262,8 +262,11 @@ struct BFCacheSnapshot: Codable {
     // 📍 **통합 복원 JavaScript 생성 - 앵커 기반 보정 포함**
     private func generateIntegratedRestoreScript() -> String {
         let anchorsJSON = convertAnchorsToJSON(scrollAnchors ?? [])
-        let elementsJSON = convertToJSONString(jsState?["scroll"] as? [String: Any]?["elements"] ?? [])
-        let iframesJSON = convertToJSONString(jsState?["iframes"] ?? [])
+        // 수정된 부분: 배열 타입 문법 수정
+        let scrollData = jsState?["scroll"] as? [String: Any]
+        let elements = scrollData?["elements"] ?? []
+        let elementsJSON = convertToJSONString(elements) ?? "[]"
+        let iframesJSON = convertToJSONString(jsState?["iframes"] ?? []) ?? "[]"
         
         return """
         (function() {
@@ -988,8 +991,15 @@ final class BFCacheTransitionSystem: NSObject {
                                 const scrollY = contentWindow.scrollY || 0;
                                 
                                 if (scrollX > 0 || scrollY > 0) {
+                                    // 수정된 부분: 백틱 제거 및 문자열 연결 수정
+                                    let selector = generateBestSelector(iframe);
+                                    if (!selector && iframe.src) {
+                                        const srcPart = iframe.src.split('/').pop() || '';
+                                        selector = 'iframe[src*="' + srcPart + '"]';
+                                    }
+                                    
                                     iframes.push({
-                                        selector: generateBestSelector(iframe) || \`iframe[src*="\${iframe.src.split('/').pop()}"]\`,
+                                        selector: selector || 'iframe',
                                         scrollX: scrollX,
                                         scrollY: scrollY,
                                         src: iframe.src || '',
