@@ -14,7 +14,6 @@
 //  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
 //  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
-//  📢 **광고 보정 시스템** - 동적 광고 변화 감안한 스크롤 위치 보정
 //
 
 import UIKit
@@ -82,30 +81,7 @@ struct SiteTimingProfile: Codable {
     }
 }
 
-// MARK: - 📢 **광고 보정 시스템**
-struct AdCompensationData: Codable {
-    let adElements: [AdElementInfo]
-    let contentMarkers: [ContentMarker]
-    let pageHeight: CGFloat
-    let viewportHeight: CGFloat
-    let captureTime: Date
-    
-    struct AdElementInfo: Codable {
-        let selector: String
-        let rect: CGRect
-        let isVisible: Bool
-        let adType: String // "banner", "inline", "sticky", "popup"
-    }
-    
-    struct ContentMarker: Codable {
-        let selector: String
-        let offsetFromTop: CGFloat
-        let text: String // 텍스트 일부로 식별
-        let elementType: String
-    }
-}
-
-// MARK: - 📸 BFCache 페이지 스냅샷 (광고 보정 데이터 추가)
+// MARK: - 📸 BFCache 페이지 스냅샷
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -115,9 +91,6 @@ struct BFCacheSnapshot: Codable {
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
     let version: Int
-    
-    // 📢 **광고 보정 데이터 추가**
-    var adCompensation: AdCompensationData?
     
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
@@ -136,7 +109,6 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
-        case adCompensation
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -155,7 +127,6 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
-        adCompensation = try container.decodeIfPresent(AdCompensationData.self, forKey: .adCompensation)
     }
     
     func encode(to encoder: Encoder) throws {
@@ -174,11 +145,10 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
-        try container.encodeIfPresent(adCompensation, forKey: .adCompensation)
     }
     
     // 직접 초기화용 init
-    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1, adCompensation: AdCompensationData? = nil) {
+    init(pageRecord: PageRecord, domSnapshot: String? = nil, scrollPosition: CGPoint, jsState: [String: Any]? = nil, timestamp: Date, webViewSnapshotPath: String? = nil, captureStatus: CaptureStatus = .partial, version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -187,7 +157,6 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
-        self.adCompensation = adCompensation
     }
     
     // 이미지 로드 메서드
@@ -198,7 +167,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **다단계 복원 메서드 - 광고 보정 적용**
+    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -207,11 +176,10 @@ struct BFCacheSnapshot: Codable {
             return
             
         case .visualOnly:
-            // 📢 **광고 보정된 스크롤 복원**
+            // 스크롤만 즉시 복원
             DispatchQueue.main.async {
-                let compensatedPosition = self.calculateCompensatedScrollPosition(webView: webView)
-                webView.scrollView.setContentOffset(compensatedPosition, animated: false)
-                TabPersistenceManager.debugMessages.append("📢 광고 보정된 스크롤 즉시 복원")
+                webView.scrollView.setContentOffset(self.scrollPosition, animated: false)
+                TabPersistenceManager.debugMessages.append("BFCache 스크롤만 즉시 복원")
                 completion(true)
             }
             return
@@ -220,136 +188,16 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("📢 광고 보정 적용된 다단계 복원 시작")
+        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
         
         // 적응형 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
-            self.performMultiStepRestoreWithAdCompensation(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 📢 **광고 보정된 스크롤 위치 계산**
-    private func calculateCompensatedScrollPosition(webView: WKWebView) -> CGPoint {
-        // 기본 위치에서 시작
-        var compensatedY = scrollPosition.y
-        
-        // 광고 보정 데이터가 있으면 보정 적용
-        if let adData = adCompensation {
-            let currentPageHeight = webView.scrollView.contentSize.height
-            let originalPageHeight = adData.pageHeight
-            
-            // 페이지 높이 변화 비율 계산
-            let heightRatio = currentPageHeight / originalPageHeight
-            
-            if abs(heightRatio - 1.0) > 0.1 { // 10% 이상 변화시 보정
-                TabPersistenceManager.debugMessages.append("📢 페이지 높이 변화 감지: \(String(format: "%.1f", originalPageHeight)) → \(String(format: "%.1f", currentPageHeight)) (비율: \(String(format: "%.2f", heightRatio)))")
-                
-                // 콘텐츠 마커 기반 보정
-                compensatedY = calculateContentBasedPosition(
-                    webView: webView,
-                    originalY: scrollPosition.y,
-                    adData: adData,
-                    heightRatio: heightRatio
-                )
-            }
-            
-            // 광고 영역 높이 변화 보정
-            compensatedY = compensateForAdHeightChanges(
-                webView: webView,
-                originalY: compensatedY,
-                adData: adData
-            )
-        }
-        
-        // 경계값 검증
-        let maxY = max(0, webView.scrollView.contentSize.height - webView.scrollView.bounds.height)
-        compensatedY = max(0, min(compensatedY, maxY))
-        
-        return CGPoint(x: scrollPosition.x, y: compensatedY)
-    }
-    
-    // 📢 **콘텐츠 마커 기반 위치 계산**
-    private func calculateContentBasedPosition(webView: WKWebView, originalY: CGFloat, adData: AdCompensationData, heightRatio: CGFloat) -> CGFloat {
-        // JavaScript로 콘텐츠 마커 위치 확인
-        let semaphore = DispatchSemaphore(value: 0)
-        var compensatedY = originalY
-        
-        let markerCheckScript = generateContentMarkerScript(adData.contentMarkers)
-        
-        webView.evaluateJavaScript(markerCheckScript) { result, error in
-            defer { semaphore.signal() }
-            
-            if let markerPositions = result as? [[String: Any]] {
-                // 원래 스크롤 위치 주변의 마커 찾기
-                compensatedY = self.findBestMarkerMatch(
-                    originalY: originalY,
-                    originalMarkers: adData.contentMarkers,
-                    currentMarkers: markerPositions
-                )
-                TabPersistenceManager.debugMessages.append("📢 콘텐츠 마커 기반 보정: \(String(format: "%.1f", originalY)) → \(String(format: "%.1f", compensatedY))")
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 1.0)
-        return compensatedY
-    }
-    
-    // 📢 **광고 높이 변화 보정**
-    private func compensateForAdHeightChanges(webView: WKWebView, originalY: CGFloat, adData: AdCompensationData) -> CGFloat {
-        let semaphore = DispatchSemaphore(value: 0)
-        var compensatedY = originalY
-        
-        let adCheckScript = generateAdCompensationScript(adData.adElements)
-        
-        webView.evaluateJavaScript(adCheckScript) { result, error in
-            defer { semaphore.signal() }
-            
-            if let adChanges = result as? [String: Any],
-               let heightDiff = adChanges["totalHeightDiff"] as? Double {
-                
-                // 광고 영역이 스크롤 위치보다 위에 있으면 보정 적용
-                if let aboveScrollAds = adChanges["adsAboveScroll"] as? Double {
-                    compensatedY += CGFloat(aboveScrollAds)
-                    TabPersistenceManager.debugMessages.append("📢 광고 높이 변화 보정: +\(String(format: "%.1f", aboveScrollAds))px")
-                }
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .now() + 0.8)
-        return compensatedY
-    }
-    
-    // 📢 **마커 매칭 로직**
-    private func findBestMarkerMatch(originalY: CGFloat, originalMarkers: [AdCompensationData.ContentMarker], currentMarkers: [[String: Any]]) -> CGFloat {
-        var bestMatch: CGFloat = originalY
-        var bestScore: Double = 0
-        
-        for originalMarker in originalMarkers {
-            for currentMarker in currentMarkers {
-                if let selector = currentMarker["selector"] as? String,
-                   let currentOffset = currentMarker["offsetFromTop"] as? Double,
-                   let text = currentMarker["text"] as? String {
-                    
-                    // 선택자와 텍스트 매칭 점수 계산
-                    let selectorMatch = selector == originalMarker.selector ? 1.0 : 0.0
-                    let textMatch = text.contains(originalMarker.text) || originalMarker.text.contains(text) ? 0.8 : 0.0
-                    let score = selectorMatch + textMatch
-                    
-                    if score > bestScore && score > 0.5 {
-                        bestScore = score
-                        // 마커의 위치 변화를 기반으로 스크롤 위치 조정
-                        let markerDiff = CGFloat(currentOffset) - originalMarker.offsetFromTop
-                        bestMatch = originalY + markerDiff
-                    }
-                }
-            }
-        }
-        
-        return bestMatch
-    }
-    
-    // 🔄 **핵심: 광고 보정 적용된 다단계 복원 시스템**
-    private func performMultiStepRestoreWithAdCompensation(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+    // 🔄 **핵심: 다단계 복원 시스템**
+    private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
@@ -359,21 +207,21 @@ struct BFCacheSnapshot: Codable {
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        // **1단계: 광고 보정된 메인 스크롤 복원 (즉시)**
+        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
         restoreSteps.append((1, { stepCompletion in
-            let compensatedPos = self.calculateCompensatedScrollPosition(webView: webView)
-            TabPersistenceManager.debugMessages.append("📢 1단계: 광고 보정된 메인 스크롤 복원")
+            let targetPos = self.scrollPosition
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
             
             // 네이티브 스크롤뷰 즉시 설정
-            webView.scrollView.setContentOffset(compensatedPos, animated: false)
+            webView.scrollView.setContentOffset(targetPos, animated: false)
             
             // JavaScript 메인 스크롤 복원
             let mainScrollJS = """
             (function() {
                 try {
-                    window.scrollTo(\(compensatedPos.x), \(compensatedPos.y));
-                    document.documentElement.scrollTop = \(compensatedPos.y);
-                    document.body.scrollTop = \(compensatedPos.y);
+                    window.scrollTo(\(targetPos.x), \(targetPos.y));
+                    document.documentElement.scrollTop = \(targetPos.y);
+                    document.body.scrollTop = \(targetPos.y);
                     return true;
                 } catch(e) { return false; }
             })()
@@ -381,7 +229,7 @@ struct BFCacheSnapshot: Codable {
             
             webView.evaluateJavaScript(mainScrollJS) { result, _ in
                 let success = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("📢 1단계 완료: \(success ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
                 stepCompletion(success)
             }
         }))
@@ -393,13 +241,13 @@ struct BFCacheSnapshot: Codable {
             
             restoreSteps.append((2, { stepCompletion in
                 let waitTime = profile.getAdaptiveWaitTime(step: 1)
-                TabPersistenceManager.debugMessages.append("📢 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let containerScrollJS = self.generateContainerScrollScript(elements)
                     webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("📢 2단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
@@ -412,54 +260,40 @@ struct BFCacheSnapshot: Codable {
             
             restoreSteps.append((3, { stepCompletion in
                 let waitTime = profile.getAdaptiveWaitTime(step: 2)
-                TabPersistenceManager.debugMessages.append("📢 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let iframeScrollJS = self.generateIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("📢 3단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         }
         
-        // **4단계: 광고 영역 안정화 대기 및 최종 보정**
+        // **4단계: 최종 확인 및 보정**
         restoreSteps.append((4, { stepCompletion in
-            let waitTime = profile.getAdaptiveWaitTime(step: 3) + 0.2 // 광고 로딩 추가 대기
-            TabPersistenceManager.debugMessages.append("📢 4단계: 광고 안정화 및 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            let waitTime = profile.getAdaptiveWaitTime(step: 3)
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                // 최종 광고 보정 적용
-                let finalCompensatedPos = self.calculateCompensatedScrollPosition(webView: webView)
-                
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        // 광고 영역 안정화 확인
-                        const adElements = document.querySelectorAll('[class*="ad"], [id*="ad"], [data-ad], .advertisement, .sponsored');
-                        let stableAds = 0;
-                        adElements.forEach(ad => {
-                            if (ad.offsetHeight > 0 && ad.offsetWidth > 0) {
-                                stableAds++;
-                            }
-                        });
-                        
-                        // 최종 보정된 위치로 스크롤
-                        if (Math.abs(window.scrollY - \(finalCompensatedPos.y)) > 15) {
-                            window.scrollTo(\(finalCompensatedPos.x), \(finalCompensatedPos.y));
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
                         }
-                        
-                        console.log('📢 광고 안정화:', stableAds, '개 광고 감지');
-                        return window.scrollY >= \(finalCompensatedPos.y - 25);
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
                     } catch(e) { return false; }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("📢 4단계 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
@@ -482,101 +316,12 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("📢 광고 보정 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
                 completion(overallSuccess)
             }
         }
         
         executeNextStep()
-    }
-    
-    // 📢 **콘텐츠 마커 확인 스크립트 생성**
-    private func generateContentMarkerScript(_ markers: [AdCompensationData.ContentMarker]) -> String {
-        let markersJSON = convertToJSONString(markers.map { [
-            "selector": $0.selector,
-            "text": $0.text,
-            "elementType": $0.elementType
-        ] }) ?? "[]"
-        
-        return """
-        (function() {
-            try {
-                const markers = \(markersJSON);
-                const results = [];
-                
-                for (const marker of markers) {
-                    const elements = document.querySelectorAll(marker.selector);
-                    for (const el of elements) {
-                        if (el.textContent && el.textContent.includes(marker.text)) {
-                            const rect = el.getBoundingClientRect();
-                            results.push({
-                                selector: marker.selector,
-                                offsetFromTop: window.scrollY + rect.top,
-                                text: el.textContent.substring(0, 100),
-                                elementType: el.tagName.toLowerCase()
-                            });
-                            break; // 첫 번째 매칭만
-                        }
-                    }
-                }
-                
-                return results;
-            } catch(e) {
-                console.error('콘텐츠 마커 확인 실패:', e);
-                return [];
-            }
-        })()
-        """
-    }
-    
-    // 📢 **광고 보정 스크립트 생성**
-    private func generateAdCompensationScript(_ adElements: [AdCompensationData.AdElementInfo]) -> String {
-        let adElementsJSON = convertToJSONString(adElements.map { [
-            "selector": $0.selector,
-            "originalHeight": $0.rect.height,
-            "originalTop": $0.rect.origin.y,
-            "adType": $0.adType
-        ] }) ?? "[]"
-        
-        return """
-        (function() {
-            try {
-                const originalAds = \(adElementsJSON);
-                let totalHeightDiff = 0;
-                let adsAboveScroll = 0;
-                const currentScrollY = window.scrollY;
-                
-                for (const adInfo of originalAds) {
-                    const elements = document.querySelectorAll(adInfo.selector);
-                    for (const ad of elements) {
-                        const currentRect = ad.getBoundingClientRect();
-                        const currentTop = window.scrollY + currentRect.top;
-                        const heightDiff = currentRect.height - adInfo.originalHeight;
-                        
-                        totalHeightDiff += heightDiff;
-                        
-                        // 스크롤 위치보다 위에 있는 광고의 높이 변화만 누적
-                        if (currentTop < currentScrollY) {
-                            adsAboveScroll += heightDiff;
-                        }
-                        
-                        console.log('📢 광고 변화:', adInfo.selector, 
-                                   'Height:', adInfo.originalHeight, '→', currentRect.height,
-                                   'Diff:', heightDiff);
-                        break; // 첫 번째 매칭만
-                    }
-                }
-                
-                return {
-                    totalHeightDiff: totalHeightDiff,
-                    adsAboveScroll: adsAboveScroll
-                };
-            } catch(e) {
-                console.error('광고 보정 확인 실패:', e);
-                return { totalHeightDiff: 0, adsAboveScroll: 0 };
-            }
-        })()
-        """
     }
     
     // 컨테이너 스크롤 복원 스크립트 생성
@@ -776,7 +521,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (광고 보정 시스템 통합)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -799,12 +544,11 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
-            self?.performAtomicCaptureWithAdCompensation(task)
+            self?.performAtomicCapture(task)
         }
     }
     
-    // 📢 **광고 보정 데이터를 포함한 원자적 캡처**
-    private func performAtomicCaptureWithAdCompensation(_ task: CaptureTask) {
+    private func performAtomicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
         // 중복 캡처 방지 (진행 중인 것만)
@@ -820,7 +564,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("📢 광고 보정 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -833,8 +577,7 @@ final class BFCacheTransitionSystem: NSObject {
             return CaptureData(
                 scrollPosition: webView.scrollView.contentOffset,
                 bounds: webView.bounds,
-                isLoading: webView.isLoading,
-                contentSize: webView.scrollView.contentSize
+                isLoading: webView.isLoading
             )
         }
         
@@ -843,72 +586,59 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 📢 **광고 보정 데이터 수집 (지연 캡처 적용)**
-        let adCompensationDelay: TimeInterval = task.type == .immediate ? 0.5 : 1.0 // 즉시 캡처는 0.5초, 백그라운드는 1초 대기
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
+        let captureResult = performRobustCapture(
+            pageRecord: task.pageRecord,
+            webView: webView,
+            captureData: data,
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
+        )
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + adCompensationDelay) { [weak self] in
-            guard let self = self else {
-                self?.pendingCaptures.remove(pageID)
-                return
-            }
-            
-            // 광고 안정화 후 캡처 수행
-            let captureResult = self.performRobustCaptureWithAdData(
-                pageRecord: task.pageRecord,
-                webView: webView,
-                captureData: data,
-                retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
-            )
-            
-            // 캡처 완료 후 저장
-            if let tabID = task.tabID {
-                self.saveToDisk(snapshot: captureResult, tabID: tabID)
-            } else {
-                self.storeInMemory(captureResult.snapshot, for: pageID)
-            }
-            
-            // 진행 중 해제
-            self.pendingCaptures.remove(pageID)
-            self.dbg("📢 광고 보정 캡처 완료: \(task.pageRecord.title)")
+        // 캡처 완료 후 저장
+        if let tabID = task.tabID {
+            saveToDisk(snapshot: captureResult, tabID: tabID)
+        } else {
+            storeInMemory(captureResult.snapshot, for: pageID)
         }
+        
+        // 진행 중 해제
+        pendingCaptures.remove(pageID)
+        dbg("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
         let scrollPosition: CGPoint
         let bounds: CGRect
         let isLoading: Bool
-        let contentSize: CGSize
     }
     
-    // 📢 **광고 보정 데이터를 포함한 실패 복구 캡처**
-    private func performRobustCaptureWithAdData(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🔧 **실패 복구 기능 추가된 캡처**
+    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            let result = attemptCaptureWithAdCompensation(pageRecord: pageRecord, webView: webView, captureData: captureData)
+            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
             
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    dbg("🔄 재시도 후 광고 보정 캡처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    dbg("🔄 재시도 후 캡처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
                 }
                 return result
             }
             
             // 재시도 전 잠시 대기
-            dbg("⏳ 광고 보정 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.1) // 광고 로딩 대기 시간 추가
+            dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            Thread.sleep(forTimeInterval: 0.08) // ⚡ 0.05초 → 0.08초 (안정성)
         }
         
         // 여기까지 오면 모든 시도 실패
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    // 📢 **광고 보정 데이터를 포함한 캡처 시도**
-    private func attemptCaptureWithAdCompensation(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
-        var adCompensationData: AdCompensationData? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
         // 1. 비주얼 스냅샷 (메인 스레드)
@@ -967,23 +697,9 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 0.8)
+        _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
-        // 3. 📢 **광고 보정 데이터 수집**
-        let adSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let adScript = generateAdCompensationCaptureScript()
-            
-            webView.evaluateJavaScript(adScript) { result, error in
-                if let adData = result as? [String: Any] {
-                    adCompensationData = self.parseAdCompensationData(adData, captureData: captureData)
-                }
-                adSemaphore.signal()
-            }
-        }
-        _ = adSemaphore.wait(timeout: .now() + 1.0)
-        
-        // 4. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
+        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -995,11 +711,11 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 1.2)
+        _ = jsSemaphore.wait(timeout: .now() + 1.2) // 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if visualSnapshot != nil && domSnapshot != nil && jsState != nil && adCompensationData != nil {
+        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
@@ -1024,189 +740,10 @@ final class BFCacheTransitionSystem: NSObject {
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version,
-            adCompensation: adCompensationData
+            version: version
         )
         
         return (snapshot, visualSnapshot)
-    }
-    
-    // 📢 **광고 보정 데이터 수집 스크립트 생성**
-    private func generateAdCompensationCaptureScript() -> String {
-        return """
-        (function() {
-            try {
-                const adElements = [];
-                const contentMarkers = [];
-                
-                // 📢 **1. 광고 요소 감지 (포괄적 선택자)**
-                const adSelectors = [
-                    '[class*="ad"]:not([class*="add"]):not([class*="address"])',
-                    '[id*="ad"]:not([id*="add"]):not([id*="address"])',
-                    '[data-ad]', '[data-advertisement]', '[data-google-av-metadata]',
-                    '.advertisement', '.sponsored', '.promoted', '.banner',
-                    '.adsystem', '.adsbygoogle', '.ad-container', '.ad-wrapper',
-                    'iframe[src*="googlesyndication"]', 'iframe[src*="doubleclick"]',
-                    'ins.adsbygoogle', '[class*="dfp"]', '[id*="dfp"]'
-                ];
-                
-                const foundAds = new Set();
-                for (const selector of adSelectors) {
-                    try {
-                        const elements = document.querySelectorAll(selector);
-                        elements.forEach(el => {
-                            if (el.offsetWidth > 0 && el.offsetHeight > 0 && !foundAds.has(el)) {
-                                foundAds.add(el);
-                                const rect = el.getBoundingClientRect();
-                                const offsetTop = window.scrollY + rect.top;
-                                
-                                // 광고 타입 분류
-                                let adType = 'inline';
-                                if (rect.width >= window.innerWidth * 0.8) adType = 'banner';
-                                else if (el.style.position === 'fixed' || el.style.position === 'sticky') adType = 'sticky';
-                                else if (rect.top < 0 || rect.bottom > window.innerHeight) adType = 'offscreen';
-                                
-                                adElements.push({
-                                    selector: generateUniqueSelector(el),
-                                    rect: {
-                                        x: rect.left,
-                                        y: offsetTop,
-                                        width: rect.width,
-                                        height: rect.height
-                                    },
-                                    isVisible: rect.top >= 0 && rect.bottom <= window.innerHeight,
-                                    adType: adType
-                                });
-                            }
-                        });
-                    } catch(e) {
-                        console.warn('광고 요소 감지 실패:', selector, e);
-                    }
-                }
-                
-                // 📢 **2. 콘텐츠 마커 수집 (스크롤 위치 기준점)**
-                const markerSelectors = [
-                    'h1', 'h2', 'h3', 'article', 'section', 'main',
-                    '[role="main"]', '[role="article"]', '.content', '.post',
-                    '.article-content', '.news-content', '.blog-content'
-                ];
-                
-                for (const selector of markerSelectors) {
-                    try {
-                        const elements = document.querySelectorAll(selector);
-                        Array.from(elements).slice(0, 10).forEach(el => { // 최대 10개만
-                            if (el.textContent && el.textContent.trim().length > 20) {
-                                const rect = el.getBoundingClientRect();
-                                const offsetTop = window.scrollY + rect.top;
-                                
-                                contentMarkers.push({
-                                    selector: generateUniqueSelector(el),
-                                    offsetFromTop: offsetTop,
-                                    text: el.textContent.trim().substring(0, 100),
-                                    elementType: el.tagName.toLowerCase()
-                                });
-                            }
-                        });
-                    } catch(e) {
-                        console.warn('콘텐츠 마커 수집 실패:', selector, e);
-                    }
-                }
-                
-                // 📢 **3. 고유 선택자 생성 함수**
-                function generateUniqueSelector(element) {
-                    if (element.id) return `#${element.id}`;
-                    
-                    if (element.className) {
-                        const classes = element.className.trim().split(/\\s+/);
-                        const uniqueClass = classes.find(cls => {
-                            return document.querySelectorAll(`.${cls}`).length === 1;
-                        });
-                        if (uniqueClass) return `.${uniqueClass}`;
-                    }
-                    
-                    // 부모 기준 nth-child
-                    const parent = element.parentElement;
-                    if (parent) {
-                        const siblings = Array.from(parent.children);
-                        const index = siblings.indexOf(element);
-                        return `${element.tagName.toLowerCase()}:nth-child(${index + 1})`;
-                    }
-                    
-                    return element.tagName.toLowerCase();
-                }
-                
-                console.log(`📢 광고 보정 데이터 수집: 광고 ${adElements.length}개, 마커 ${contentMarkers.length}개`);
-                
-                return {
-                    adElements: adElements,
-                    contentMarkers: contentMarkers,
-                    pageHeight: Math.max(
-                        document.body.scrollHeight,
-                        document.documentElement.scrollHeight
-                    ),
-                    viewportHeight: window.innerHeight,
-                    captureTime: Date.now()
-                };
-            } catch(e) {
-                console.error('광고 보정 데이터 수집 실패:', e);
-                return null;
-            }
-        })()
-        """
-    }
-    
-    // 📢 **광고 보정 데이터 파싱**
-    private func parseAdCompensationData(_ data: [String: Any], captureData: CaptureData) -> AdCompensationData? {
-        guard let adElementsArray = data["adElements"] as? [[String: Any]],
-              let contentMarkersArray = data["contentMarkers"] as? [[String: Any]],
-              let pageHeight = data["pageHeight"] as? Double,
-              let viewportHeight = data["viewportHeight"] as? Double else {
-            return nil
-        }
-        
-        let adElements = adElementsArray.compactMap { adData -> AdCompensationData.AdElementInfo? in
-            guard let selector = adData["selector"] as? String,
-                  let rectData = adData["rect"] as? [String: Any],
-                  let x = rectData["x"] as? Double,
-                  let y = rectData["y"] as? Double,
-                  let width = rectData["width"] as? Double,
-                  let height = rectData["height"] as? Double,
-                  let isVisible = adData["isVisible"] as? Bool,
-                  let adType = adData["adType"] as? String else {
-                return nil
-            }
-            
-            return AdCompensationData.AdElementInfo(
-                selector: selector,
-                rect: CGRect(x: x, y: y, width: width, height: height),
-                isVisible: isVisible,
-                adType: adType
-            )
-        }
-        
-        let contentMarkers = contentMarkersArray.compactMap { markerData -> AdCompensationData.ContentMarker? in
-            guard let selector = markerData["selector"] as? String,
-                  let offsetFromTop = markerData["offsetFromTop"] as? Double,
-                  let text = markerData["text"] as? String,
-                  let elementType = markerData["elementType"] as? String else {
-                return nil
-            }
-            
-            return AdCompensationData.ContentMarker(
-                selector: selector,
-                offsetFromTop: CGFloat(offsetFromTop),
-                text: text,
-                elementType: elementType
-            )
-        }
-        
-        return AdCompensationData(
-            adElements: adElements,
-            contentMarkers: contentMarkers,
-            pageHeight: CGFloat(pageHeight),
-            viewportHeight: CGFloat(viewportHeight),
-            captureTime: Date()
-        )
     }
     
     // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
@@ -1762,7 +1299,7 @@ final class BFCacheTransitionSystem: NSObject {
             objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
         
-        dbg("📢 광고 보정 BFCache 제스처 설정 완료")
+        dbg("BFCache 제스처 설정 완료")
     }
     
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
@@ -2119,27 +1656,27 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 📢 **광고 보정 적용된 적응형 BFCache 복원 + 타이밍 학습**
+        // 🔄 **적응형 BFCache 복원 + 타이밍 학습**
         tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("📢 미리보기 정리 완료 - 광고 보정 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
             }
         }
         
-        // 🛡️ **안전장치: 최대 1.2초 후 강제 정리** (광고 대기 시간 고려)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+        // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             if self?.activeTransitions[context.tabID] != nil {
                 previewContainer.removeFromSuperview()
                 self?.activeTransitions.removeValue(forKey: context.tabID)
-                self?.dbg("🛡️ 미리보기 강제 정리 (1.2초 타임아웃)")
+                self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
             }
         }
     }
     
-    // 📢 **광고 보정 적용된 적응형 BFCache 복원 + 타이밍 학습** 
+    // 🔄 **적응형 BFCache 복원 + 타이밍 학습** 
     private func tryAdaptiveBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, navigationStartTime: Date, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
@@ -2152,7 +1689,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 광고 보정 적용된 적응형 복원
+            // BFCache 히트 - 적응형 복원
             snapshot.restore(to: webView, siteProfile: siteProfile) { [weak self] success in
                 // 로딩 시간 기록
                 let loadingDuration = Date().timeIntervalSince(navigationStartTime)
@@ -2161,9 +1698,9 @@ final class BFCacheTransitionSystem: NSObject {
                 self?.updateSiteProfile(siteProfile)
                 
                 if success {
-                    self?.dbg("📢 광고 보정 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
+                    self?.dbg("✅ 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
                 } else {
-                    self?.dbg("⚠️ 광고 보정 적응형 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 적응형 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -2175,8 +1712,8 @@ final class BFCacheTransitionSystem: NSObject {
             siteProfile.recordRestoreAttempt(success: false)
             updateSiteProfile(siteProfile)
             
-            // 기본 대기 시간 적용 (광고 로딩 고려하여 조금 더 길게)
-            let waitTime = siteProfile.getAdaptiveWaitTime(step: 1) + 0.3
+            // 기본 대기 시간 적용
+            let waitTime = siteProfile.getAdaptiveWaitTime(step: 1)
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 completion(false)
             }
@@ -2271,18 +1808,6 @@ final class BFCacheTransitionSystem: NSObject {
             if (event.persisted) {
                 console.log('🔄 BFCache 페이지 복원');
                 
-                // 📢 **광고 영역 안정화 확인**
-                setTimeout(() => {
-                    const adElements = document.querySelectorAll('[class*="ad"], [id*="ad"], [data-ad], .advertisement, .sponsored');
-                    let loadedAds = 0;
-                    adElements.forEach(ad => {
-                        if (ad.offsetHeight > 0 && ad.offsetWidth > 0) {
-                            loadedAds++;
-                        }
-                    });
-                    console.log('📢 BFCache 복원 시 광고 상태:', loadedAds, '개 로드됨');
-                }, 200);
-                
                 // 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
                     window.location.pathname.includes('/timeline') ||
@@ -2300,49 +1825,6 @@ final class BFCacheTransitionSystem: NSObject {
                 console.log('📸 BFCache 페이지 저장');
             }
         });
-        
-        // 📢 **광고 로딩 감지 시스템**
-        (function() {
-            const adObserver = new MutationObserver((mutations) => {
-                let hasAdChanges = false;
-                mutations.forEach(mutation => {
-                    if (mutation.type === 'childList') {
-                        const addedNodes = Array.from(mutation.addedNodes);
-                        hasAdChanges = addedNodes.some(node => {
-                            if (node.nodeType === 1) { // Element node
-                                const el = node;
-                                return el.matches && (
-                                    el.matches('[class*="ad"]') ||
-                                    el.matches('[id*="ad"]') ||
-                                    el.matches('.advertisement') ||
-                                    el.matches('.sponsored') ||
-                                    el.matches('ins.adsbygoogle')
-                                );
-                            }
-                            return false;
-                        });
-                    }
-                });
-                
-                if (hasAdChanges) {
-                    console.log('📢 광고 요소 변화 감지');
-                    // 스크롤 위치 재조정이 필요할 수 있음을 알림
-                    window.dispatchEvent(new CustomEvent('adLayoutChange', {
-                        detail: { timestamp: Date.now() }
-                    }));
-                }
-            });
-            
-            // 주요 광고 컨테이너 관찰
-            const adContainers = document.querySelectorAll('body, main, [role="main"], .content');
-            adContainers.forEach(container => {
-                adObserver.observe(container, {
-                    childList: true,
-                    subtree: true,
-                    attributes: false
-                });
-            });
-        })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
@@ -2372,7 +1854,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("📢 광고 보정 강화된 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2407,18 +1889,17 @@ extension BFCacheTransitionSystem {
         
         // 즉시 캡처 (최고 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
-        dbg("📢 떠나기 스냅샷 캡처 시작 (광고 보정): \(rec.title)")
+        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 📢 **페이지 로드 완료 후 광고 안정화 대기 후 캐시 강화**
+    /// 📸 **페이지 로드 완료 후 자동 캐시 강화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 📢 **광고 안정화를 위한 지연 시간 증가 (0.3초 → 0.8초)**
-        // 현재 페이지 캡처 (백그라운드 우선순위, 광고 로딩 대기)
+        // 현재 페이지 캡처 (백그라운드 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
-        dbg("📢 도착 스냅샷 캡처 시작 (광고 안정화 대기): \(rec.title)")
+        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
         // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
         if stateModel.dataModel.currentPageIndex > 0 {
@@ -2442,7 +1923,7 @@ extension BFCacheTransitionSystem {
                     
                     // 디스크에 메타데이터만 저장
                     saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
-                    dbg("📢 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
                 }
             }
         }
