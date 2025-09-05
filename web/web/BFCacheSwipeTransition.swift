@@ -16,6 +16,7 @@
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //  🌐 **동적 사이트 특화 개선** - 디시인사이드, 네이버 카페 최적화
 //  🔧 **최종보정 로그 수정** - 4단계 보정 강제 실행 보장
+//  🧵 **제스처 스레드 리팩토링** - 메인 스레드 동기화 강화, 먹통 방지
 //
 
 import UIKit
@@ -29,16 +30,41 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 약한 참조 제스처 컨텍스트 (순환 참조 방지)
-private class WeakGestureContext {
+// MARK: - 🧵 **개선된 제스처 컨텍스트 (먹통 방지)**
+private class GestureContext {
     let tabID: UUID
+    let gestureID: UUID = UUID()
     weak var webView: WKWebView?
     weak var stateModel: WebViewStateModel?
+    private var isValid: Bool = true
+    private let validationQueue = DispatchQueue(label: "gesture.validation", attributes: .concurrent)
     
     init(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
         self.tabID = tabID
         self.webView = webView
         self.stateModel = stateModel
+        TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 생성: \(String(gestureID.uuidString.prefix(8)))")
+    }
+    
+    func validateAndExecute<T>(_ operation: () -> T?) -> T? {
+        return validationQueue.sync {
+            guard isValid else {
+                TabPersistenceManager.debugMessages.append("🧵 무효한 컨텍스트 - 작업 취소: \(String(gestureID.uuidString.prefix(8)))")
+                return nil
+            }
+            return operation()
+        }
+    }
+    
+    func invalidate() {
+        validationQueue.async(flags: .barrier) {
+            self.isValid = false
+            TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 무효화: \(String(self.gestureID.uuidString.prefix(8)))")
+        }
+    }
+    
+    deinit {
+        TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 해제: \(String(gestureID.uuidString.prefix(8)))")
     }
 }
 
@@ -590,8 +616,50 @@ final class BFCacheTransitionSystem: NSObject {
         return tabDirectory(for: tabID).appendingPathComponent("Page_\(pageID.uuidString)_v\(version)", isDirectory: true)
     }
     
-    // MARK: - 전환 상태
-    private var activeTransitions: [UUID: TransitionContext] = [:]
+    // MARK: - 🧵 **제스처 전환 상태 (리팩토링된 스레드 안전 관리)**
+    private let gestureQueue = DispatchQueue(label: "gesture.management", attributes: .concurrent)
+    private var _activeTransitions: [UUID: TransitionContext] = [:]
+    private var _gestureContexts: [UUID: GestureContext] = [:]  // 🧵 제스처 컨텍스트 관리
+    
+    // 🧵 **스레드 안전 activeTransitions 접근**
+    private var activeTransitions: [UUID: TransitionContext] {
+        get { gestureQueue.sync { _activeTransitions } }
+    }
+    
+    private func setActiveTransition(_ context: TransitionContext, for tabID: UUID) {
+        gestureQueue.async(flags: .barrier) {
+            self._activeTransitions[tabID] = context
+        }
+    }
+    
+    private func removeActiveTransition(for tabID: UUID) {
+        gestureQueue.async(flags: .barrier) {
+            self._activeTransitions.removeValue(forKey: tabID)
+        }
+    }
+    
+    private func getActiveTransition(for tabID: UUID) -> TransitionContext? {
+        return gestureQueue.sync { _activeTransitions[tabID] }
+    }
+    
+    // 🧵 **제스처 컨텍스트 관리**
+    private func setGestureContext(_ context: GestureContext, for key: UUID) {
+        gestureQueue.async(flags: .barrier) {
+            self._gestureContexts[key] = context
+        }
+    }
+    
+    private func removeGestureContext(for key: UUID) {
+        gestureQueue.async(flags: .barrier) {
+            if let context = self._gestureContexts.removeValue(forKey: key) {
+                context.invalidate()
+            }
+        }
+    }
+    
+    private func getGestureContext(for key: UUID) -> GestureContext? {
+        return gestureQueue.sync { _gestureContexts[key] }
+    }
     
     // 전환 컨텍스트
     private struct TransitionContext {
@@ -1372,6 +1440,10 @@ final class BFCacheTransitionSystem: NSObject {
     
     // 탭 닫을 때만 호출 (무제한 캐시 정책)
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
+        // 🧵 제스처 컨텍스트 정리
+        removeGestureContext(for: tabID)
+        removeActiveTransition(for: tabID)
+        
         // 메모리에서 제거 (스레드 안전)
         cacheAccessQueue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
@@ -1423,42 +1495,115 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
+    // MARK: - 🧵 **리팩토링된 제스처 시스템 (먹통 방지)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
         webView.allowsBackForwardNavigationGestures = false
         
+        guard let tabID = stateModel.tabID else {
+            dbg("🧵 탭 ID 없음 - 제스처 설정 스킵")
+            return
+        }
+        
+        // 🧵 **기존 제스처 정리 (중복 방지)**
+        cleanupExistingGestures(for: webView, tabID: tabID)
+        
+        // 🧵 **새로운 제스처 컨텍스트 생성**
+        let gestureContext = GestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
+        setGestureContext(gestureContext, for: tabID)
+        
+        // 🧵 **메인 스레드에서 제스처 생성 및 설정**
+        DispatchQueue.main.async { [weak self] in
+            self?.createAndAttachGestures(webView: webView, tabID: tabID)
+        }
+        
+        dbg("🧵 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    // 🧵 **기존 제스처 정리**
+    private func cleanupExistingGestures(for webView: WKWebView, tabID: UUID) {
+        // 기존 제스처 컨텍스트 무효화
+        removeGestureContext(for: tabID)
+        
+        // 웹뷰에서 기존 BFCache 제스처 제거
+        webView.gestureRecognizers?.forEach { gesture in
+            if let edgeGesture = gesture as? UIScreenEdgePanGestureRecognizer,
+               edgeGesture.edges == .left || edgeGesture.edges == .right {
+                webView.removeGestureRecognizer(gesture)
+                dbg("🧵 기존 제스처 제거: \(edgeGesture.edges)")
+            }
+        }
+    }
+    
+    // 🧵 **제스처 생성 및 연결**
+    private func createAndAttachGestures(webView: WKWebView, tabID: UUID) {
         // 왼쪽 엣지 - 뒤로가기
         let leftEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
         leftEdge.edges = .left
         leftEdge.delegate = self
-        webView.addGestureRecognizer(leftEdge)
         
         // 오른쪽 엣지 - 앞으로가기  
         let rightEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleGesture(_:)))
         rightEdge.edges = .right
         rightEdge.delegate = self
+        
+        // 🧵 **제스처에 탭 ID 연결 (컨텍스트 검색용)**
+        objc_setAssociatedObject(leftEdge, "bfcache_tab_id", tabID.uuidString, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        objc_setAssociatedObject(rightEdge, "bfcache_tab_id", tabID.uuidString, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        
+        webView.addGestureRecognizer(leftEdge)
         webView.addGestureRecognizer(rightEdge)
         
-        // 약한 참조 컨텍스트 생성 및 연결 (순환 참조 방지)
-        if let tabID = stateModel.tabID {
-            let ctx = WeakGestureContext(tabID: tabID, webView: webView, stateModel: stateModel)
-            objc_setAssociatedObject(leftEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-            objc_setAssociatedObject(rightEdge, "bfcache_ctx", ctx, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
-        
-        dbg("BFCache 제스처 설정 완료")
+        dbg("🧵 제스처 연결 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
+    // 🧵 **리팩토링된 제스처 핸들러 (메인 스레드 최적화)**
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        // 약한 참조 컨텍스트 조회 (순환 참조 방지)
-        guard let ctx = objc_getAssociatedObject(gesture, "bfcache_ctx") as? WeakGestureContext,
-              let stateModel = ctx.stateModel else { return }
-        let webView = ctx.webView ?? (gesture.view as? WKWebView)
-        guard let webView else { return }
+        // 🧵 **메인 스레드 확인 및 강제 이동**
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleGesture(gesture)
+            }
+            return
+        }
         
-        let tabID = ctx.tabID
+        // 🧵 **제스처에서 탭 ID 조회**
+        guard let tabIDString = objc_getAssociatedObject(gesture, "bfcache_tab_id") as? String,
+              let tabID = UUID(uuidString: tabIDString) else {
+            dbg("🧵 제스처에서 탭 ID 조회 실패")
+            gesture.state = .cancelled
+            return
+        }
+        
+        // 🧵 **컨텍스트 유효성 검사 및 조회**
+        guard let context = getGestureContext(for: tabID) else {
+            dbg("🧵 제스처 컨텍스트 없음 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
+            gesture.state = .cancelled
+            return
+        }
+        
+        // 🧵 **컨텍스트 내에서 안전하게 실행**
+        context.validateAndExecute { [weak self] in
+            guard let self = self,
+                  let webView = context.webView,
+                  let stateModel = context.stateModel else {
+                dbg("🧵 컨텍스트 무효 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
+                gesture.state = .cancelled
+                return nil
+            }
+            
+            return self.processGestureState(
+                gesture: gesture,
+                tabID: tabID,
+                webView: webView,
+                stateModel: stateModel
+            )
+        }
+    }
+    
+    // 🧵 **제스처 상태 처리 (핵심 로직은 그대로 유지)**
+    private func processGestureState(gesture: UIScreenEdgePanGestureRecognizer, tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
         let translation = gesture.translation(in: gesture.view)
         let velocity = gesture.velocity(in: gesture.view)
         let isLeftEdge = (gesture.edges == .left)
@@ -1471,8 +1616,8 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
-            guard activeTransitions[tabID] == nil else { 
+            // 🛡️ **전환 중이면 새 제스처 무시**
+            guard getActiveTransition(for: tabID) == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
                 return 
@@ -1482,10 +1627,10 @@ final class BFCacheTransitionSystem: NSObject {
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
-                if let existing = activeTransitions[tabID] {
+                // 🛡️ **기존 전환 강제 정리**
+                if let existing = getActiveTransition(for: tabID) {
                     existing.previewContainer?.removeFromSuperview()
-                    activeTransitions.removeValue(forKey: tabID)
+                    removeActiveTransition(for: tabID)
                     dbg("🛡️ 기존 전환 강제 정리")
                 }
                 
@@ -1496,13 +1641,15 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
                 captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
-                    self?.beginGestureTransitionWithSnapshot(
-                        tabID: tabID,
-                        webView: webView,
-                        stateModel: stateModel,
-                        direction: direction,
-                        currentSnapshot: snapshot
-                    )
+                    DispatchQueue.main.async {
+                        self?.beginGestureTransitionWithSnapshot(
+                            tabID: tabID,
+                            webView: webView,
+                            stateModel: stateModel,
+                            direction: direction,
+                            currentSnapshot: snapshot
+                        )
+                    }
                 }
             } else {
                 gesture.state = .cancelled
@@ -1569,13 +1716,13 @@ final class BFCacheTransitionSystem: NSObject {
             previewContainer: previewContainer,
             currentSnapshot: currentSnapshot
         )
-        activeTransitions[tabID] = context
+        setActiveTransition(context, for: tabID)
         
         dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
               let previewContainer = context.previewContainer else { return }
         
@@ -1752,7 +1899,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
     private func completeGestureTransition(tabID: UUID) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
               let previewContainer = context.previewContainer else { return }
         
@@ -1788,7 +1935,7 @@ final class BFCacheTransitionSystem: NSObject {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
-            activeTransitions.removeValue(forKey: context.tabID)
+            removeActiveTransition(for: context.tabID)
             return
         }
         
@@ -1810,16 +1957,16 @@ final class BFCacheTransitionSystem: NSObject {
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.removeActiveTransition(for: context.tabID)
                 self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
             }
         }
         
         // 🛡️ **안전장치: 최대 1.5초 후 강제 정리** (🌐 동적 사이트 고려해 1초 → 1.5초)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if self?.activeTransitions[context.tabID] != nil {
+            if self?.getActiveTransition(for: context.tabID) != nil {
                 previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
+                self?.removeActiveTransition(for: context.tabID)
                 self?.dbg("🛡️ 미리보기 강제 정리 (1.5초 타임아웃)")
             }
         }
@@ -1871,7 +2018,7 @@ final class BFCacheTransitionSystem: NSObject {
     
 
     private func cancelGestureTransition(tabID: UUID) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
               let previewContainer = context.previewContainer else { return }
         
@@ -1894,7 +2041,7 @@ final class BFCacheTransitionSystem: NSObject {
             },
             completion: { _ in
                 previewContainer.removeFromSuperview()
-                self.activeTransitions.removeValue(forKey: tabID)
+                self.removeActiveTransition(for: tabID)
             }
         )
     }
@@ -2017,11 +2164,19 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🌐 강화된 BFCache 시스템 설치 완료 (동적 사이트 최적화)")
+        TabPersistenceManager.debugMessages.append("✅ 🧵 강화된 BFCache 시스템 설치 완료 (제스처 스레드 리팩토링)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
     static func uninstall(from webView: WKWebView) {
+        // 🧵 제스처 해제
+        if let tabIDString = webView.gestureRecognizers?.compactMap({ gesture in
+            objc_getAssociatedObject(gesture, "bfcache_tab_id") as? String
+        }).first, let tabID = UUID(uuidString: tabIDString) {
+            shared.removeGestureContext(for: tabID)
+            shared.removeActiveTransition(for: tabID)
+        }
+        
         // 제스처 제거
         webView.gestureRecognizers?.forEach { gesture in
             if gesture is UIScreenEdgePanGestureRecognizer {
@@ -2029,7 +2184,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧵 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
