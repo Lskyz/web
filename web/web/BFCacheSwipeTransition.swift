@@ -16,6 +16,7 @@
 //  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //  🎯 **동적 렌더링 완료 대기** - SPA/동적 사이트 최적화
 //  📸 **캡처 타이밍 최적화** - 떠나기 전 우선, 도착 후 지연
+//  🛡️ **견고한 제스처 처리** - 먹통 방지 + 강제 정리
 //
 
 import UIKit
@@ -542,11 +543,12 @@ final class BFCacheTransitionSystem: NSObject {
         return tabDirectory(for: tabID).appendingPathComponent("Page_\(pageID.uuidString)_v\(version)", isDirectory: true)
     }
     
-    // MARK: - 전환 상태
+    // MARK: - 🛡️ **견고한 전환 상태 관리**
     private var activeTransitions: [UUID: TransitionContext] = [:]
+    private let transitionAccessQueue = DispatchQueue(label: "bfcache.transition", attributes: .concurrent)
     
-    // 전환 컨텍스트
-    private struct TransitionContext {
+    // 🛡️ **견고한 전환 컨텍스트 (강제 정리 타이머 포함)**
+    private class TransitionContext {
         let tabID: UUID
         weak var webView: WKWebView?
         weak var stateModel: WebViewStateModel?
@@ -555,6 +557,43 @@ final class BFCacheTransitionSystem: NSObject {
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
         var currentSnapshot: UIImage?
+        var createdAt: Date = Date()
+        var cleanupTimer: Timer?
+        
+        init(tabID: UUID, webView: WKWebView?, stateModel: WebViewStateModel?, isGesture: Bool, direction: NavigationDirection, initialTransform: CGAffineTransform, previewContainer: UIView?, currentSnapshot: UIImage?) {
+            self.tabID = tabID
+            self.webView = webView
+            self.stateModel = stateModel
+            self.isGesture = isGesture
+            self.direction = direction
+            self.initialTransform = initialTransform
+            self.previewContainer = previewContainer
+            self.currentSnapshot = currentSnapshot
+            
+            // 🛡️ **자동 정리 타이머 (안전장치) - 5초 후 강제 정리**
+            self.cleanupTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+                self?.forceCleanup()
+            }
+        }
+        
+        func forceCleanup() {
+            DispatchQueue.main.async { [weak self] in
+                self?.previewContainer?.removeFromSuperview()
+                self?.cleanupTimer?.invalidate()
+                self?.cleanupTimer = nil
+                TabPersistenceManager.debugMessages.append("🛡️ 전환 컨텍스트 강제 정리 (타이머)")
+            }
+        }
+        
+        func cleanup() {
+            cleanupTimer?.invalidate()
+            cleanupTimer = nil
+            previewContainer?.removeFromSuperview()
+        }
+        
+        deinit {
+            cleanupTimer?.invalidate()
+        }
     }
     
     enum NavigationDirection {
@@ -566,6 +605,28 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
         case leaving    // 🆕 떠나기 전 캡처 (최고 우선순위)
         case arrival    // 🆕 도착 후 캡처 (지연된 캡처)
+    }
+    
+    // MARK: - 🛡️ **견고한 전환 상태 접근자**
+    
+    private func getTransition(for tabID: UUID) -> TransitionContext? {
+        return transitionAccessQueue.sync { activeTransitions[tabID] }
+    }
+    
+    private func setTransition(_ context: TransitionContext?, for tabID: UUID) {
+        transitionAccessQueue.async(flags: .barrier) {
+            if let context = context {
+                self.activeTransitions[tabID] = context
+            } else {
+                self.activeTransitions.removeValue(forKey: tabID)
+            }
+        }
+    }
+    
+    private func removeTransition(for tabID: UUID) -> TransitionContext? {
+        return transitionAccessQueue.sync(flags: .barrier) {
+            return activeTransitions.removeValue(forKey: tabID)
+        }
     }
     
     // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
@@ -1394,7 +1455,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템 (🛡️ 연속 제스처 먹통 방지 적용)**
+    // MARK: - 🛡️ **견고한 제스처 시스템 (먹통 방지 + 강제 정리 적용)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -1435,31 +1496,24 @@ final class BFCacheTransitionSystem: NSObject {
         let isLeftEdge = (gesture.edges == .left)
         let width = gesture.view?.bounds.width ?? 1
         
-        // 수직 슬롭/부호 반대 방지
+        // 🛡️ **개선된 조건 검사 - 더 관대하게 적용**
         let absX = abs(translation.x), absY = abs(translation.y)
-        let horizontalEnough = absX > 8 && absX > absY
-        let signOK = isLeftEdge ? (translation.x >= 0) : (translation.x <= 0)
+        let horizontalEnough = absX > 5 && absX > absY * 0.7 // 완화된 조건
+        let signOK = isLeftEdge ? (translation.x >= -10) : (translation.x <= 10) // 약간의 여유
         
         switch gesture.state {
         case .began:
             // 🛡️ **핵심 1: 전환 중이면 새 제스처 무시**
-            guard activeTransitions[tabID] == nil else { 
+            if let existingTransition = getTransition(for: tabID) {
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
-                return 
+                return
             }
             
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
             let canNavigate = isLeftEdge ? stateModel.canGoBack : stateModel.canGoForward
             
             if canNavigate {
-                // 🛡️ **핵심 3: 혹시 남아있는 기존 전환 강제 정리**
-                if let existing = activeTransitions[tabID] {
-                    existing.previewContainer?.removeFromSuperview()
-                    activeTransitions.removeValue(forKey: tabID)
-                    dbg("🛡️ 기존 전환 강제 정리")
-                }
-                
                 // 현재 페이지 즉시 캡처 (최고 우선순위 - leaving 타입)
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
                     captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID)
@@ -1467,40 +1521,69 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
                 captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
-                    self?.beginGestureTransitionWithSnapshot(
-                        tabID: tabID,
-                        webView: webView,
-                        stateModel: stateModel,
-                        direction: direction,
-                        currentSnapshot: snapshot
-                    )
+                    DispatchQueue.main.async {
+                        self?.beginGestureTransitionWithSnapshot(
+                            tabID: tabID,
+                            webView: webView,
+                            stateModel: stateModel,
+                            direction: direction,
+                            currentSnapshot: snapshot
+                        )
+                    }
                 }
             } else {
                 gesture.state = .cancelled
             }
             
         case .changed:
-            guard horizontalEnough && signOK else { return }
-            updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
+            // 🛡️ **개선된 조건 검사**: 전환이 이미 시작된 경우 더 관대하게 처리
+            let activeTransition = getTransition(for: tabID)
+            if activeTransition != nil {
+                // 전환이 이미 시작된 경우 더 관대한 조건 적용
+                if absX > 1 { // 최소한의 움직임만 요구
+                    updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
+                }
+            } else {
+                // 전환이 시작되지 않은 경우 원래 조건 적용
+                if horizontalEnough && signOK {
+                    updateGestureProgress(tabID: tabID, translation: translation.x, isLeftEdge: isLeftEdge)
+                } else {
+                    // 🛡️ **개선**: 조건이 맞지 않아도 바로 cancel하지 않고 기다림
+                    dbg("🛡️ 제스처 조건 대기 중: absX=\(String(format: "%.1f", absX)), absY=\(String(format: "%.1f", absY))")
+                }
+            }
             
         case .ended:
-            let progress = min(1.0, absX / width)
-            let shouldComplete = progress > 0.3 || abs(velocity.x) > 800
-            if shouldComplete {
-                completeGestureTransition(tabID: tabID)
+            // 🛡️ **견고한 종료 처리**
+            let activeTransition = getTransition(for: tabID)
+            if activeTransition != nil {
+                let progress = min(1.0, absX / width)
+                let shouldComplete = progress > 0.25 || abs(velocity.x) > 600 // 완화된 조건
+                
+                if shouldComplete {
+                    completeGestureTransition(tabID: tabID)
+                } else {
+                    cancelGestureTransition(tabID: tabID)
+                }
             } else {
-                cancelGestureTransition(tabID: tabID)
+                // 전환이 시작되지 않았으면 그냥 무시
+                dbg("🛡️ 전환 시작되지 않음 - 제스처 종료")
             }
             
         case .cancelled, .failed:
-            cancelGestureTransition(tabID: tabID)
+            // 🛡️ **견고한 취소 처리**
+            if getTransition(for: tabID) != nil {
+                cancelGestureTransition(tabID: tabID)
+            } else {
+                dbg("🛡️ 취소할 전환 없음")
+            }
             
         default:
             break
         }
     }
     
-    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
+    // MARK: - 🛡️ **견고한 제스처 전환 로직**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -1521,6 +1604,13 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
+        // 🛡️ **이중 체크**: 이미 전환이 있으면 정리 후 새로 시작
+        if let existing = getTransition(for: tabID) {
+            existing.cleanup()
+            removeTransition(for: tabID)
+            dbg("🛡️ 기존 전환 정리 후 새 전환 시작")
+        }
+        
         let initialTransform = webView.transform
         
         let previewContainer = createPreviewContainer(
@@ -1540,15 +1630,18 @@ final class BFCacheTransitionSystem: NSObject {
             previewContainer: previewContainer,
             currentSnapshot: currentSnapshot
         )
-        activeTransitions[tabID] = context
         
-        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        setTransition(context, for: tabID)
+        dbg("🎬 견고한 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getTransition(for: tabID),
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { return }
+              let previewContainer = context.previewContainer else { 
+            dbg("⚠️ 전환 컨텍스트 없음 - 진행 업데이트 스킵")
+            return 
+        }
         
         let screenWidth = webView.bounds.width
         let currentWebView = previewContainer.viewWithTag(1001)
@@ -1721,11 +1814,14 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **핵심 개선: 미리보기 컨테이너 타이밍 수정 - 적응형 타이밍 적용**
+    // 🎬 **견고한 미리보기 컨테이너 완료 처리**
     private func completeGestureTransition(tabID: UUID) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getTransition(for: tabID),
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { return }
+              let previewContainer = context.previewContainer else { 
+            dbg("⚠️ 완료할 전환 컨텍스트 없음")
+            return 
+        }
         
         let screenWidth = webView.bounds.width
         let currentView = previewContainer.viewWithTag(1001)
@@ -1758,8 +1854,8 @@ final class BFCacheTransitionSystem: NSObject {
     private func performNavigationWithAdaptiveTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
-            previewContainer.removeFromSuperview()
-            activeTransitions.removeValue(forKey: context.tabID)
+            context.cleanup()
+            removeTransition(for: context.tabID)
             return
         }
         
@@ -1780,17 +1876,17 @@ final class BFCacheTransitionSystem: NSObject {
         tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
+                context.cleanup()
+                self?.removeTransition(for: context.tabID)
                 self?.dbg("🎬 미리보기 정리 완료 - BFCache \(success ? "성공" : "실패")")
             }
         }
         
         // 🛡️ **안전장치: 최대 1초 후 강제 정리** (적응형 타이밍으로 조금 더 여유)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            if self?.activeTransitions[context.tabID] != nil {
-                previewContainer.removeFromSuperview()
-                self?.activeTransitions.removeValue(forKey: context.tabID)
+            if self?.getTransition(for: context.tabID) != nil {
+                context.cleanup()
+                self?.removeTransition(for: context.tabID)
                 self?.dbg("🛡️ 미리보기 강제 정리 (1초 타임아웃)")
             }
         }
@@ -1840,11 +1936,14 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-
+    // 🛡️ **견고한 취소 처리**
     private func cancelGestureTransition(tabID: UUID) {
-        guard let context = activeTransitions[tabID],
+        guard let context = getTransition(for: tabID),
               let webView = context.webView,
-              let previewContainer = context.previewContainer else { return }
+              let previewContainer = context.previewContainer else { 
+            dbg("⚠️ 취소할 전환 컨텍스트 없음")
+            return 
+        }
         
         let screenWidth = webView.bounds.width
         let currentView = previewContainer.viewWithTag(1001)
@@ -1863,9 +1962,10 @@ final class BFCacheTransitionSystem: NSObject {
                 
                 currentView?.layer.shadowOpacity = 0.3
             },
-            completion: { _ in
-                previewContainer.removeFromSuperview()
-                self.activeTransitions.removeValue(forKey: tabID)
+            completion: { [weak self] _ in
+                context.cleanup()
+                self?.removeTransition(for: tabID)
+                self?.dbg("🛡️ 제스처 취소 완료")
             }
         )
     }
@@ -1974,11 +2074,19 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 견고한 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
     static func uninstall(from webView: WKWebView) {
+        // 🛡️ **모든 활성 전환 강제 정리**
+        for tabID in shared.activeTransitions.keys {
+            if let context = shared.removeTransition(for: tabID) {
+                context.cleanup()
+                shared.dbg("🛡️ 웹뷰 해제 시 전환 컨텍스트 강제 정리: \(tabID)")
+            }
+        }
+        
         // 제스처 제거
         webView.gestureRecognizers?.forEach { gesture in
             if gesture is UIScreenEdgePanGestureRecognizer {
@@ -1986,7 +2094,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🧹 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🧹 견고한 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
