@@ -19,7 +19,7 @@
 //  🧵 **제스처 스레드 리팩토링** - 메인 스레드 동기화 강화, 먹통 방지
 //  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
-//  🕒 **보수적 대기시간 단축** - 안정성 유지하며 약간 최적화
+//  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //
 
 import UIKit
@@ -75,7 +75,7 @@ private class GestureContext {
 struct SiteTimingProfile: Codable {
     let hostname: String
     var loadingSamples: [TimeInterval] = []
-    var averageLoadingTime: TimeInterval = 0.35  // 🕒 0.5초 → 0.35초
+    var averageLoadingTime: TimeInterval = 0.5
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
@@ -103,10 +103,10 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 🕒 **보수적 적응형 대기 시간 계산**
+    // 🌐 **개선된 적응형 대기 시간 계산** - 동적 사이트 최소 보장
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = max(averageLoadingTime, 0.35) // 🕒 최소 0.35초 보장
-        let stepMultiplier = Double(step) * 0.12 // 🕒 0.15 → 0.12초로 보수적 단축
+        let baseTime = max(averageLoadingTime, 0.5) // 🌐 최소 0.5초 보장 (동적 사이트 고려)
+        let stepMultiplier = Double(step) * 0.15 // 🌐 0.1 → 0.15초로 증가 (더 안정적)
         let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
@@ -293,9 +293,9 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🔧 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스크롤 확인 및 즉시 보정 (40ms 후) - 즉시 복원 검증**
+        // **1단계: 스크롤 확인 및 즉시 보정 (50ms 후) - 즉시 복원 검증**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.04 // 🕒 50ms → 40ms
+            let verifyDelay: TimeInterval = 0.05 // 50ms 대기
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
@@ -343,7 +343,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime = max(0.08, profile.getAdaptiveWaitTime(step: 1)) // 🕒 최소 100ms → 80ms
+                let waitTime = max(0.1, profile.getAdaptiveWaitTime(step: 1)) // 최소 100ms
                 TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -386,7 +386,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime = max(0.24, profile.getAdaptiveWaitTime(step: 3)) // 🕒 최소 300ms → 240ms
+            let waitTime = max(0.3, profile.getAdaptiveWaitTime(step: 3)) // 최소 300ms 최종 대기
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -619,6 +619,43 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
             return nil
         }
+    }
+}
+
+// MARK: - 📸 **네비게이션 이벤트 감지 시스템 - 모든 네비게이션에서 떠나기 전 캡처**
+extension BFCacheTransitionSystem {
+    
+    /// CustomWebView에서 네비게이션 이벤트 구독
+    static func registerNavigationObserver(for webView: WKWebView, stateModel: WebViewStateModel) {
+        guard let tabID = stateModel.tabID else { return }
+        
+        // KVO로 URL 변경 감지
+        let urlObserver = webView.observe(\.url, options: [.old, .new]) { [weak webView] observedWebView, change in
+            guard let webView = webView,
+                  let oldURL = change.oldValue as? URL,
+                  let newURL = change.newValue as? URL,
+                  oldURL != newURL else { return }
+            
+            // 📸 **URL이 바뀌는 순간 이전 페이지 캡처**
+            if let currentRecord = stateModel.dataModel.currentPageRecord {
+                shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
+                shared.dbg("📸 URL 변경 감지 - 떠나기 전 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
+            }
+        }
+        
+        // 옵저버를 webView에 연결하여 생명주기 관리
+        objc_setAssociatedObject(webView, "bfcache_url_observer", urlObserver, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        
+        shared.dbg("📸 포괄적 네비게이션 감지 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+    
+    /// CustomWebView 해제 시 옵저버 정리
+    static func unregisterNavigationObserver(for webView: WKWebView) {
+        if let observer = objc_getAssociatedObject(webView, "bfcache_url_observer") as? NSKeyValueObservation {
+            observer.invalidate()
+            objc_setAssociatedObject(webView, "bfcache_url_observer", nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+        shared.dbg("📸 네비게이션 감지 해제 완료")
     }
 }
 
@@ -900,7 +937,7 @@ final class BFCacheTransitionSystem: NSObject {
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
-        // 1. 비주얼 스냅샷 (메인 스레드) - 타임아웃 그대로 유지
+        // 1. 비주얼 스냅샷 (메인 스레드)
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
@@ -918,14 +955,14 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        // ⚡ 적절한 타임아웃 (3초 그대로 유지 - 캡처는 백그라운드)
+        // ⚡ 적절한 타임아웃 (2.5초 → 3초로 동적 사이트 고려)
         let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
             dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 타임아웃 그대로 유지
+        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -956,7 +993,7 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0) // DOM 캡처 타임아웃 그대로 유지
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // 🌐 0.8초 → 1.0초 (안정성)
         
         // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -970,7 +1007,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.0) // JS 캡처 타임아웃 그대로 유지
+        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🌐 더 복잡한 스크립트이므로 여유시간 증가
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1018,13 +1055,13 @@ final class BFCacheTransitionSystem: NSObject {
                         timeout = setTimeout(() => {
                             observer.disconnect();
                             callback();
-                        }, 160); // 🕒 200ms → 160ms로 보수적 단축
+                        }, 200); // 200ms 동안 DOM 변경 없으면 완료
                     });
                     observer.observe(document.body, { childList: true, subtree: true });
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, 2500); // 🕒 3초 → 2.5초로 보수적 단축
+                    }, 3000); // 최대 3초 대기
                 }
 
                 function captureScrollData() {
@@ -1603,6 +1640,9 @@ final class BFCacheTransitionSystem: NSObject {
         DispatchQueue.main.async { [weak self] in
             self?.createAndAttachGestures(webView: webView, tabID: tabID)
         }
+        
+        // 📸 **포괄적 네비게이션 감지 등록**
+        Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
         dbg("🧵 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
@@ -2242,10 +2282,10 @@ extension BFCacheTransitionSystem {
         // BFCache 스크립트 설치
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         
-        // 제스처 설치
+        // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🕒 보수적 대기시간 단축 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (포괄적 캐시 추가)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2258,6 +2298,9 @@ extension BFCacheTransitionSystem {
             shared.removeActiveTransition(for: tabID)
         }
         
+        // 📸 **네비게이션 감지 해제**
+        unregisterNavigationObserver(for: webView)
+        
         // 제스처 제거
         webView.gestureRecognizers?.forEach { gesture in
             if gesture is UIScreenEdgePanGestureRecognizer {
@@ -2265,7 +2308,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🕒 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("⚡ BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
