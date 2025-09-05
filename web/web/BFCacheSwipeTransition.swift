@@ -46,7 +46,7 @@ private class GestureContext {
         TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 생성: \(String(gestureID.uuidString.prefix(8)))")
     }
     
-    func validateAndExecute<T>(_ operation: () -> T?) -> T? {
+    func validateAndExecute(_ operation: () -> Void) {
         return validationQueue.sync {
             guard isValid else {
                 TabPersistenceManager.debugMessages.append("🧵 무효한 컨텍스트 - 작업 취소: \(String(gestureID.uuidString.prefix(8)))")
