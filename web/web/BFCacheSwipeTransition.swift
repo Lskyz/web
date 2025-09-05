@@ -1,9 +1,19 @@
 //
 //  BFCacheSwipeTransition.swift
 //  🎯 **강화된 BFCache 전환 시스템**
-//  ♾️ **랜드마크+반복패턴 기반 무한스크롤 복원** - 정확한 위치 추적
-//  🏗️ **방법 5: 랜드마크 기반** - 헤더/네비/제목 등 고정 요소 기준
-//  🔄 **방법 4: 반복패턴 기반** - 리스트 아이템 패턴 인식
+//  ✅ 직렬화 큐로 레이스 컨디션 완전 제거
+//  🔄 원자적 연산으로 데이터 일관성 보장
+//  📸 실패 복구 메커니즘 추가
+//  ♾️ 무제한 영구 캐싱 (탭별 관리)
+//  💾 스마트 메모리 관리 
+//  🔧 **StateModel과 완벽 동기화**
+//  🔧 **스냅샷 미스 수정 - 자동 캐시 강화**
+//  🎬 **미리보기 컨테이너 타이밍 개선** - 복원 완료 후 제거
+//  ⚡ **균형 잡힌 전환 속도 최적화 - 깜빡임 방지**
+//  🛡️ **빠른 연속 제스처 먹통 방지** - 전환 중 차단 + 강제 정리
+//  🚫 **폼데이터/눌린상태 저장 제거** - 부작용 해결
+//  🔍 **범용 스크롤 감지 강화** - iframe, 커스텀 컨테이너 지원
+//  🔄 **다단계 복원 시스템** - 적응형 타이밍 학습
 //
 
 import UIKit
@@ -157,7 +167,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **다단계 복원 메서드 - 랜드마크+패턴 기반**
+    // ⚡ **다단계 복원 메서드 - 적응형 타이밍 적용**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         // 캡처 상태에 따른 복원 전략
         switch captureStatus {
@@ -178,240 +188,217 @@ struct BFCacheSnapshot: Codable {
             break
         }
         
-        TabPersistenceManager.debugMessages.append("BFCache 랜드마크+패턴 기반 복원 시작")
+        TabPersistenceManager.debugMessages.append("BFCache 다단계 복원 시작 (적응형)")
         
-        // 랜드마크+패턴 기반 복원 실행
+        // 적응형 타이밍으로 다단계 복원 실행
         DispatchQueue.main.async {
-            self.performLandmarkPatternRestore(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performMultiStepRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
-    // 🔄 **핵심: 랜드마크+패턴 기반 복원 시스템**
-    private func performLandmarkPatternRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+    // 🔄 **핵심: 다단계 복원 시스템**
+    private func performMultiStepRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+        var stepResults: [Bool] = []
+        var currentStep = 0
         let startTime = Date()
         
         // 사이트별 적응형 타이밍 계산
         let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
         
-        // **1단계: 즉시 기본 스크롤 복원 (0ms)**
-        webView.scrollView.setContentOffset(scrollPosition, animated: false)
-        TabPersistenceManager.debugMessages.append("🔄 1단계: 기본 스크롤 즉시 복원")
+        var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        // **2단계: 랜드마크 기반 정밀 복원 (적응형 대기)**
-        let waitTime1 = profile.getAdaptiveWaitTime(step: 1)
-        DispatchQueue.main.asyncAfter(deadline: .now() + waitTime1) {
-            let landmarkRestoreJS = self.generateLandmarkRestoreScript()
-            webView.evaluateJavaScript(landmarkRestoreJS) { result, _ in
-                let landmarkSuccess = (result as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("🏗️ 2단계 랜드마크 복원: \(landmarkSuccess ? "성공" : "실패")")
-                
-                // **3단계: 반복 패턴 기반 보정 (추가 대기)**
-                let waitTime2 = profile.getAdaptiveWaitTime(step: 2)
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime2) {
-                    let patternRestoreJS = self.generatePatternRestoreScript()
-                    webView.evaluateJavaScript(patternRestoreJS) { result, _ in
-                        let patternSuccess = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🔄 3단계 패턴 복원: \(patternSuccess ? "성공" : "실패")")
-                        
-                        // **4단계: 최종 검증 및 보정**
-                        let waitTime3 = profile.getAdaptiveWaitTime(step: 3)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + waitTime3) {
-                            let verifyJS = self.generateFinalVerificationScript()
-                            webView.evaluateJavaScript(verifyJS) { result, _ in
-                                let finalSuccess = (result as? Bool) ?? false
-                                
-                                let duration = Date().timeIntervalSince(startTime)
-                                let overallSuccess = landmarkSuccess || patternSuccess || finalSuccess
-                                
-                                TabPersistenceManager.debugMessages.append("🔄 랜드마크+패턴 복원 완료: \(overallSuccess ? "성공" : "실패"), 소요시간: \(String(format: "%.2f", duration))초")
-                                completion(overallSuccess)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // 🏗️ **방법 5: 랜드마크 기반 복원 스크립트**
-    private func generateLandmarkRestoreScript() -> String {
-        guard let jsState = self.jsState,
-              let landmarks = jsState["landmarks"] as? [[String: Any]] else {
-            return "false" // 랜드마크 데이터가 없으면 false 반환
-        }
-        
-        let landmarksJSON = convertToJSONString(landmarks) ?? "[]"
-        return """
-        (function() {
-            try {
-                const landmarks = \(landmarksJSON);
-                
-                console.log('🏗️ 랜드마크 기반 복원 시작:', landmarks.length, '개');
-                
-                // 랜드마크 우선순위: 고정적이고 안정적인 요소들 우선
-                const priorityOrder = ['header', 'nav', '[role="banner"]', '[role="navigation"]', 'h1', 'h2', 'main', '[role="main"]'];
-                
-                for (const priority of priorityOrder) {
-                    const matchingLandmarks = landmarks.filter(l => l.selector === priority);
-                    
-                    for (const landmark of matchingLandmarks) {
-                        const elements = document.querySelectorAll(landmark.selector);
-                        
-                        for (const el of elements) {
-                            // 텍스트가 있으면 텍스트로 매칭, 없으면 ID/클래스로 매칭
-                            let isMatch = false;
-                            
-                            if (landmark.text && landmark.text.length > 5) {
-                                const currentText = el.textContent?.substring(0, 100) || '';
-                                isMatch = currentText === landmark.text;
-                            } else {
-                                // 텍스트 매칭 실패시 속성으로 매칭
-                                isMatch = (landmark.id && el.id === landmark.id) ||
-                                         (landmark.className && el.className === landmark.className);
-                            }
-                            
-                            if (isMatch) {
-                                const rect = el.getBoundingClientRect();
-                                const currentTop = rect.top + window.scrollY;
-                                
-                                // 저장된 위치와 현재 위치의 차이 계산
-                                const offsetDiff = currentTop - landmark.offsetTop;
-                                
-                                // 현재 스크롤 위치를 차이만큼 보정
-                                const currentScroll = window.scrollY;
-                                const targetScroll = currentScroll + offsetDiff;
-                                
-                                if (Math.abs(offsetDiff) > 10) { // 10px 이상 차이날 때만 보정
-                                    window.scrollTo(0, Math.max(0, targetScroll));
-                                    console.log('🏗️ 랜드마크 복원 성공:', landmark.selector, '오프셋:', offsetDiff);
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                console.log('🏗️ 랜드마크 매칭 실패');
-                return false;
-                
-            } catch(e) {
-                console.error('🏗️ 랜드마크 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // 🔄 **방법 4: 반복 패턴 기반 복원 스크립트**
-    private func generatePatternRestoreScript() -> String {
-        guard let jsState = self.jsState,
-              let patterns = jsState["repeatingPatterns"] as? [String: Any] else {
-            return "false" // 패턴 데이터가 없으면 false 반환
-        }
-        
-        let patternsJSON = convertToJSONString(patterns) ?? "{}"
-        return """
-        (function() {
-            try {
-                const savedPatterns = \(patternsJSON);
-                
-                console.log('🔄 반복 패턴 기반 복원 시작:', Object.keys(savedPatterns).length, '개 패턴');
-                
-                for (const [className, savedItems] of Object.entries(savedPatterns)) {
-                    if (!savedItems || savedItems.length < 3) continue; // 3개 미만은 패턴으로 인정 안함
-                    
-                    // 현재 페이지에서 같은 클래스명 요소들 찾기
-                    const currentElements = document.querySelectorAll('.' + className.split(' ')[0]);
-                    
-                    if (currentElements.length < 3) continue; // 현재도 3개 미만이면 스킵
-                    
-                    console.log('🔄 패턴 매칭:', className, '저장된:', savedItems.length, '현재:', currentElements.length);
-                    
-                    // **전략 1: 비율 기반 복원** (가장 안정적)
-                    if (savedItems.length > 0 && currentElements.length > 0) {
-                        // 저장 시점의 중간 아이템 찾기
-                        const savedMiddleIndex = Math.floor(savedItems.length / 2);
-                        const savedMiddleItem = savedItems[savedMiddleIndex];
-                        
-                        // 현재의 비례 위치 계산
-                        const currentMiddleIndex = Math.floor((currentElements.length * savedMiddleIndex) / savedItems.length);
-                        
-                        if (currentMiddleIndex < currentElements.length) {
-                            const targetElement = currentElements[currentMiddleIndex];
-                            const rect = targetElement.getBoundingClientRect();
-                            
-                            // 화면 중앙에 해당 아이템이 오도록 스크롤
-                            const targetY = rect.top + window.scrollY - (window.innerHeight / 2);
-                            window.scrollTo(0, Math.max(0, targetY));
-                            
-                            console.log('🔄 비율 기반 패턴 복원 성공:', className, '인덱스:', currentMiddleIndex);
-                            return true;
-                        }
-                    }
-                    
-                    // **전략 2: 텍스트 매칭** (정확도 높음)
-                    for (let i = 0; i < Math.min(savedItems.length, 5); i++) { // 처음 5개만 시도
-                        const savedItem = savedItems[i];
-                        if (!savedItem.text || savedItem.text.length < 10) continue;
-                        
-                        for (const currentEl of currentElements) {
-                            const currentText = currentEl.textContent?.trim().substring(0, 50) || '';
-                            
-                            // 텍스트 부분 매칭 (40% 이상 일치)
-                            const similarity = calculateTextSimilarity(currentText, savedItem.text);
-                            if (similarity > 0.4) {
-                                const rect = currentEl.getBoundingClientRect();
-                                const targetY = rect.top + window.scrollY - (window.innerHeight / 3);
-                                window.scrollTo(0, Math.max(0, targetY));
-                                
-                                console.log('🔄 텍스트 매칭 패턴 복원 성공:', className, '유사도:', similarity);
-                                return true;
-                            }
-                        }
-                    }
-                }
-                
-                console.log('🔄 패턴 매칭 실패');
-                return false;
-                
-            } catch(e) {
-                console.error('🔄 패턴 복원 실패:', e);
-                return false;
-            }
+        // **1단계: 메인 윈도우 스크롤 즉시 복원 (0ms)**
+        restoreSteps.append((1, { stepCompletion in
+            let targetPos = self.scrollPosition
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 메인 스크롤 복원 (즉시)")
             
-            // 텍스트 유사도 계산 (간단한 Jaccard 유사도)
-            function calculateTextSimilarity(text1, text2) {
-                const words1 = new Set(text1.toLowerCase().split(/\\s+/));
-                const words2 = new Set(text2.toLowerCase().split(/\\s+/));
+            // 네이티브 스크롤뷰 즉시 설정
+            webView.scrollView.setContentOffset(targetPos, animated: false)
+            
+            // JavaScript 메인 스크롤 복원
+            let mainScrollJS = """
+            (function() {
+                try {
+                    window.scrollTo(\(targetPos.x), \(targetPos.y));
+                    document.documentElement.scrollTop = \(targetPos.y);
+                    document.body.scrollTop = \(targetPos.y);
+                    return true;
+                } catch(e) { return false; }
+            })()
+            """
+            
+            webView.evaluateJavaScript(mainScrollJS) { result, _ in
+                let success = (result as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패")")
+                stepCompletion(success)
+            }
+        }))
+        
+        // **2단계: 주요 컨테이너 스크롤 복원 (적응형 대기)**
+        if let jsState = self.jsState,
+           let scrollData = jsState["scroll"] as? [String: Any],
+           let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
+            
+            restoreSteps.append((2, { stepCompletion in
+                let waitTime = profile.getAdaptiveWaitTime(step: 1)
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
-                const intersection = new Set([...words1].filter(word => words2.has(word)));
-                const union = new Set([...words1, ...words2]);
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                    let containerScrollJS = self.generateContainerScrollScript(elements)
+                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
+                        let success = (result as? Bool) ?? false
+                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
+                        stepCompletion(success)
+                    }
+                }
+            }))
+        }
+        
+        // **3단계: iframe 스크롤 복원 (더 긴 대기)**
+        if let jsState = self.jsState,
+           let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
+            
+            restoreSteps.append((3, { stepCompletion in
+                let waitTime = profile.getAdaptiveWaitTime(step: 2)
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
-                return union.size > 0 ? intersection.size / union.size : 0;
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
+                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
+                        let success = (result as? Bool) ?? false
+                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
+                        stepCompletion(success)
+                    }
+                }
+            }))
+        }
+        
+        // **4단계: 최종 확인 및 보정**
+        restoreSteps.append((4, { stepCompletion in
+            let waitTime = profile.getAdaptiveWaitTime(step: 3)
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                let finalVerifyJS = """
+                (function() {
+                    try {
+                        // 최종 메인 스크롤 확인 및 보정
+                        if (Math.abs(window.scrollY - \(self.scrollPosition.y)) > 10) {
+                            window.scrollTo(\(self.scrollPosition.x), \(self.scrollPosition.y));
+                        }
+                        return window.scrollY >= \(self.scrollPosition.y - 20);
+                    } catch(e) { return false; }
+                })()
+                """
+                
+                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
+                    let success = (result as? Bool) ?? false
+                    TabPersistenceManager.debugMessages.append("🔄 4단계 완료: \(success ? "성공" : "실패")")
+                    stepCompletion(success)
+                }
+            }
+        }))
+        
+        // 단계별 실행
+        func executeNextStep() {
+            if currentStep < restoreSteps.count {
+                let stepInfo = restoreSteps[currentStep]
+                currentStep += 1
+                
+                stepInfo.action { success in
+                    stepResults.append(success)
+                    executeNextStep()
+                }
+            } else {
+                // 모든 단계 완료
+                let duration = Date().timeIntervalSince(startTime)
+                let successCount = stepResults.filter { $0 }.count
+                let totalSteps = stepResults.count
+                let overallSuccess = successCount > totalSteps / 2
+                
+                TabPersistenceManager.debugMessages.append("🔄 다단계 복원 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                completion(overallSuccess)
+            }
+        }
+        
+        executeNextStep()
+    }
+    
+    // 컨테이너 스크롤 복원 스크립트 생성
+    private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
+        let elementsJSON = convertToJSONString(elements) ?? "[]"
+        return """
+        (function() {
+            try {
+                const elements = \(elementsJSON);
+                let restored = 0;
+                
+                for (const item of elements) {
+                    if (!item.selector) continue;
+                    
+                    // 다양한 selector 시도
+                    const selectors = [
+                        item.selector,
+                        item.selector.replace(/\\[\\d+\\]/g, ''), // 인덱스 제거
+                        item.className ? '.' + item.className : null,
+                        item.id ? '#' + item.id : null
+                    ].filter(s => s);
+                    
+                    for (const sel of selectors) {
+                        const elements = document.querySelectorAll(sel);
+                        if (elements.length > 0) {
+                            elements.forEach(el => {
+                                if (el && typeof el.scrollTop === 'number') {
+                                    el.scrollTop = item.top || 0;
+                                    el.scrollLeft = item.left || 0;
+                                    restored++;
+                                }
+                            });
+                            break; // 성공하면 다음 selector 시도 안함
+                        }
+                    }
+                }
+                
+                console.log('컨테이너 스크롤 복원:', restored, '개');
+                return restored > 0;
+            } catch(e) {
+                console.error('컨테이너 스크롤 복원 실패:', e);
+                return false;
             }
         })()
         """
     }
     
-    // 🔍 **최종 검증 스크립트**
-    private func generateFinalVerificationScript() -> String {
+    // iframe 스크롤 복원 스크립트 생성
+    private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
+        let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
         (function() {
             try {
-                const targetY = \(scrollPosition.y);
-                const currentY = window.scrollY;
-                const diff = Math.abs(currentY - targetY);
+                const iframes = \(iframeJSON);
+                let restored = 0;
                 
-                // 50px 이상 차이나면 기본 위치로 보정
-                if (diff > 50) {
-                    window.scrollTo(0, targetY);
-                    console.log('🔍 최종 보정 실행:', currentY, '->', targetY);
+                for (const iframeInfo of iframes) {
+                    const iframe = document.querySelector(iframeInfo.selector);
+                    if (iframe && iframe.contentWindow) {
+                        try {
+                            // Same-origin인 경우에만 접근 가능
+                            iframe.contentWindow.scrollTo(
+                                iframeInfo.scrollX || 0,
+                                iframeInfo.scrollY || 0
+                            );
+                            restored++;
+                        } catch(e) {
+                            // Cross-origin iframe은 무시
+                            console.log('Cross-origin iframe 스킵:', iframeInfo.selector);
+                        }
+                    }
                 }
                 
-                return diff <= 50; // 50px 이내면 성공으로 간주
-                
+                console.log('iframe 스크롤 복원:', restored, '개');
+                return restored > 0;
             } catch(e) {
-                console.error('🔍 최종 검증 실패:', e);
+                console.error('iframe 스크롤 복원 실패:', e);
                 return false;
             }
         })()
@@ -443,7 +430,7 @@ final class BFCacheTransitionSystem: NSObject {
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **핵심 개선: 직렬화 큐 시스템**
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
     private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
@@ -534,7 +521,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (랜드마크+패턴 감지)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -577,7 +564,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 랜드마크+패턴 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🎯 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -616,7 +603,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ 랜드마크+패턴 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -712,10 +699,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 0.8) // ⚡ 0.5초 → 0.8초 (안정성)
         
-        // 3. 🏗️🔄 **랜드마크+패턴 JS 상태 캡처**
+        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지**
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateLandmarkPatternCaptureScript()
+            let jsScript = generateEnhancedScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -759,121 +746,69 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🏗️🔄 **핵심: 랜드마크+패턴 캡처 JavaScript 생성**
-    private func generateLandmarkPatternCaptureScript() -> String {
+    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성**
+    private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             try {
-                // 🏗️ **방법 5: 랜드마크 캡처**
-                function captureLandmarks() {
-                    const landmarks = [];
-                    
-                    // 중요한 랜드마크 요소들 (우선순위 순서)
-                    const landmarkSelectors = [
-                        'header', 'nav', 'main', 'footer', 'aside',
-                        '[role="banner"]', '[role="navigation"]', '[role="main"]',
-                        '[role="contentinfo"]', '[role="complementary"]',
-                        'h1', 'h2', 'h3' // 주요 제목들
-                    ];
-                    
-                    landmarkSelectors.forEach(selector => {
-                        const elements = document.querySelectorAll(selector);
-                        elements.forEach(el => {
-                            const rect = el.getBoundingClientRect();
-                            const absoluteTop = rect.top + window.scrollY;
-                            
-                            // 화면에 보이거나 상단에 있는 중요 요소들만
-                            if (absoluteTop >= 0 && rect.height > 10) {
-                                landmarks.push({
-                                    selector: selector,
-                                    offsetTop: absoluteTop,
-                                    text: el.textContent?.substring(0, 100) || '',
-                                    id: el.id || '',
-                                    className: el.className || '',
-                                    tagName: el.tagName.toLowerCase(),
-                                    height: rect.height,
-                                    width: rect.width
-                                });
-                            }
-                        });
-                    });
-                    
-                    // 위치순으로 정렬
-                    return landmarks.sort((a, b) => a.offsetTop - b.offsetTop).slice(0, 20); // 최대 20개
-                }
-                
-                // 🔄 **방법 4: 반복 패턴 캡처**
-                function captureRepeatingPatterns() {
-                    const patterns = {};
-                    const viewport = {
-                        top: window.scrollY,
-                        bottom: window.scrollY + window.innerHeight * 2 // 화면 2배 높이까지 스캔
-                    };
-                    
-                    // 모든 클래스를 가진 요소들 스캔
-                    const elements = document.querySelectorAll('[class]');
-                    elements.forEach(el => {
-                        const rect = el.getBoundingClientRect();
-                        const absoluteTop = rect.top + window.scrollY;
-                        
-                        // 뷰포트 확장 영역 내의 요소들
-                        if (absoluteTop >= viewport.top - 500 && absoluteTop <= viewport.bottom) {
-                            const classNames = el.className.trim().split(/\\s+/);
-                            
-                            // 각 클래스별로 그룹화
-                            classNames.forEach(className => {
-                                if (className && rect.height > 20 && rect.width > 20) { // 의미있는 크기
-                                    if (!patterns[className]) {
-                                        patterns[className] = [];
-                                    }
-                                    patterns[className].push({
-                                        offsetTop: absoluteTop,
-                                        height: rect.height,
-                                        width: rect.width,
-                                        text: el.textContent?.substring(0, 50) || '',
-                                        tagName: el.tagName.toLowerCase(),
-                                        id: el.id || '',
-                                        index: patterns[className].length // 순서 저장
-                                    });
-                                }
-                            });
-                        }
-                    });
-                    
-                    // 3개 이상 반복되는 패턴만 저장 (리스트 아이템으로 추정)
-                    const repeatingPatterns = {};
-                    Object.keys(patterns).forEach(className => {
-                        if (patterns[className].length >= 3) {
-                            // 위치순으로 정렬
-                            patterns[className].sort((a, b) => a.offsetTop - b.offsetTop);
-                            repeatingPatterns[className] = patterns[className].slice(0, 50); // 최대 50개
-                        }
-                    });
-                    
-                    return repeatingPatterns;
-                }
-                
-                // 🔍 **기본 스크롤 요소 감지** (기존 유지)
-                function findScrollableElements() {
+                // 🔍 **1단계: 범용 스크롤 요소 스캔**
+                function findAllScrollableElements() {
                     const scrollables = [];
-                    const maxElements = 20;
+                    const maxElements = 50; // 성능 고려 제한
                     
-                    const allElements = document.querySelectorAll('*');
+                    // 1) 명시적 overflow 스타일을 가진 요소들
+                    const explicitScrollables = document.querySelectorAll('*');
                     let count = 0;
                     
-                    for (const el of allElements) {
+                    for (const el of explicitScrollables) {
                         if (count >= maxElements) break;
                         
                         const style = window.getComputedStyle(el);
                         const overflowY = style.overflowY;
                         const overflowX = style.overflowX;
                         
-                        if ((overflowY === 'auto' || overflowY === 'scroll' || 
-                             overflowX === 'auto' || overflowX === 'scroll') &&
+                        // 스크롤 가능한 요소 판별
+                        if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                             (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                             
+                            // 현재 스크롤 위치가 0이 아닌 경우만 저장
                             if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                                const selector = generateBestSelector(el);
+                                if (selector) {
+                                    scrollables.push({
+                                        selector: selector,
+                                        top: el.scrollTop,
+                                        left: el.scrollLeft,
+                                        maxTop: el.scrollHeight - el.clientHeight,
+                                        maxLeft: el.scrollWidth - el.clientWidth,
+                                        id: el.id || '',
+                                        className: el.className || '',
+                                        tagName: el.tagName.toLowerCase()
+                                    });
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 2) 일반적인 스크롤 컨테이너들
+                    const commonScrollContainers = [
+                        '.scroll-container', '.scrollable', '.content', '.main', '.body',
+                        '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll'
+                    ];
+                    
+                    for (const selector of commonScrollContainers) {
+                        if (count >= maxElements) break;
+                        
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (count >= maxElements) break;
+                            
+                            if ((el.scrollTop > 0 || el.scrollLeft > 0) && 
+                                !scrollables.some(s => s.selector === generateBestSelector(el))) {
+                                
                                 scrollables.push({
+                                    selector: generateBestSelector(el) || selector,
                                     top: el.scrollTop,
                                     left: el.scrollLeft,
                                     maxTop: el.scrollHeight - el.clientHeight,
@@ -890,45 +825,158 @@ final class BFCacheTransitionSystem: NSObject {
                     return scrollables;
                 }
                 
-                // 🔍 **메인 실행**
-                const landmarks = captureLandmarks();
-                const repeatingPatterns = captureRepeatingPatterns();
-                const scrollableElements = findScrollableElements();
+                // 🖼️ **2단계: iframe 스크롤 감지 (Same-Origin만)**
+                function detectIframeScrolls() {
+                    const iframes = [];
+                    const iframeElements = document.querySelectorAll('iframe');
+                    
+                    for (const iframe of iframeElements) {
+                        try {
+                            // Same-origin 체크
+                            const contentWindow = iframe.contentWindow;
+                            if (contentWindow && contentWindow.location) {
+                                const scrollX = contentWindow.scrollX || 0;
+                                const scrollY = contentWindow.scrollY || 0;
+                                
+                                if (scrollX > 0 || scrollY > 0) {
+                                    iframes.push({
+                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
+                                        scrollX: scrollX,
+                                        scrollY: scrollY,
+                                        src: iframe.src || '',
+                                        id: iframe.id || '',
+                                        className: iframe.className || ''
+                                    });
+                                }
+                            }
+                        } catch(e) {
+                            // Cross-origin iframe은 접근 불가 - 무시
+                            console.log('Cross-origin iframe 스킵:', iframe.src);
+                        }
+                    }
+                    
+                    return iframes;
+                }
                 
-                console.log(`🏗️🔄 랜드마크+패턴 캡처 완료:
-                - 랜드마크: ${landmarks.length}개
-                - 반복 패턴: ${Object.keys(repeatingPatterns).length}개 클래스
-                - 스크롤 요소: ${scrollableElements.length}개`);
+                // 📏 **3단계: 동적 높이 요소 감지**
+                function detectDynamicElements() {
+                    const dynamics = [];
+                    
+                    // 일반적인 동적 콘텐츠 컨테이너들
+                    const dynamicSelectors = [
+                        '[data-infinite]', '[data-lazy]', '.infinite-scroll',
+                        '.lazy-load', '.dynamic-content', '.feed', '.timeline',
+                        '[data-scroll-container]', '.virtualized'
+                    ];
+                    
+                    for (const selector of dynamicSelectors) {
+                        const elements = document.querySelectorAll(selector);
+                        for (const el of elements) {
+                            if (el.scrollTop > 0 || el.scrollLeft > 0) {
+                                dynamics.push({
+                                    selector: generateBestSelector(el) || selector,
+                                    top: el.scrollTop,
+                                    left: el.scrollLeft,
+                                    type: 'dynamic'
+                                });
+                            }
+                        }
+                    }
+                    
+                    return dynamics;
+                }
+                
+                // 최적의 selector 생성
+                function generateBestSelector(element) {
+                    if (!element || element.nodeType !== 1) return null;
+                    
+                    // 1순위: ID가 있으면 ID 사용
+                    if (element.id) {
+                        return `#${element.id}`;
+                    }
+                    
+                    // 2순위: 고유한 클래스 조합
+                    if (element.className) {
+                        const classes = element.className.trim().split(/\\s+/);
+                        const uniqueClasses = classes.filter(cls => {
+                            const elements = document.querySelectorAll(`.${cls}`);
+                            return elements.length === 1 && elements[0] === element;
+                        });
+                        
+                        if (uniqueClasses.length > 0) {
+                            return `.${uniqueClasses[0]}`;
+                        }
+                        
+                        // 클래스 조합으로 고유성 확보
+                        if (classes.length > 0) {
+                            const classSelector = `.${classes.join('.')}`;
+                            if (document.querySelectorAll(classSelector).length === 1) {
+                                return classSelector;
+                            }
+                        }
+                    }
+                    
+                    // 3순위: 태그명 + 속성
+                    const tag = element.tagName.toLowerCase();
+                    const attributes = [];
+                    
+                    // data 속성 우선
+                    for (const attr of element.attributes) {
+                        if (attr.name.startsWith('data-')) {
+                            attributes.push(`[${attr.name}="${attr.value}"]`);
+                        }
+                    }
+                    
+                    if (attributes.length > 0) {
+                        const attrSelector = tag + attributes.join('');
+                        if (document.querySelectorAll(attrSelector).length === 1) {
+                            return attrSelector;
+                        }
+                    }
+                    
+                    // 4순위: nth-child 사용
+                    let parent = element.parentElement;
+                    if (parent) {
+                        const siblings = Array.from(parent.children);
+                        const index = siblings.indexOf(element);
+                        if (index !== -1) {
+                            return `${parent.tagName.toLowerCase()} > ${tag}:nth-child(${index + 1})`;
+                        }
+                    }
+                    
+                    // 최후: 태그명만
+                    return tag;
+                }
+                
+                // 🔍 **메인 실행**
+                const scrollableElements = findAllScrollableElements();
+                const iframeScrolls = detectIframeScrolls();
+                const dynamicElements = detectDynamicElements();
+                
+                console.log(`🔍 스크롤 요소 감지: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개, 동적 ${dynamicElements.length}개`);
                 
                 return {
-                    // 기본 스크롤 정보
                     scroll: { 
                         x: window.scrollX, 
                         y: window.scrollY,
-                        elements: scrollableElements
+                        elements: scrollableElements,
+                        dynamics: dynamicElements
                     },
-                    
-                    // 🏗️ **랜드마크 데이터**
-                    landmarks: landmarks,
-                    
-                    // 🔄 **반복 패턴 데이터**
-                    repeatingPatterns: repeatingPatterns,
-                    
-                    // 메타데이터
+                    iframes: iframeScrolls,
                     href: window.location.href,
                     title: document.title,
                     timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
                     viewport: {
                         width: window.innerWidth,
                         height: window.innerHeight
                     }
                 };
             } catch(e) { 
-                console.error('🏗️🔄 랜드마크+패턴 캡처 실패:', e);
+                console.error('스크롤 감지 실패:', e);
                 return {
                     scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
-                    landmarks: [],
-                    repeatingPatterns: {},
+                    iframes: [],
                     href: window.location.href,
                     title: document.title
                 };
@@ -1806,7 +1854,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 랜드마크+패턴 기반 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
