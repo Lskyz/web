@@ -955,7 +955,7 @@ if webView.isLoading {
 }
 
 return true
-    
+    }
     // MARK: - 🔧 **핵심 개선: 렌더링 완료 대기 + 안정화 캡처 시스템**
     
     private struct CaptureTask {
