@@ -1,12 +1,10 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **강화된 BFCache 전환 시스템 - 스냅샷 캡처 대폭 개선**
-//  ✅ 렌더링 완료 대기 시스템 강화
-//  🎯 동적 콘텐츠 안정화 대기 로직 추가
-//  📍 정확한 스크롤 위치 캡처 (앵커 기반 + 광고 제외)
-//  🔄 무한 스크롤 상태 감지 및 복원
-//  ⏱️ SPA 완료 후 캡처 타이밍 개선
-//  🧭 DOM 변화 감지 및 안정화 대기
+//  🎯 **강화된 BFCache 전환 시스템 - 스냅샷 안전접근 수정**
+//  ✅ 모든 스냅샷 작업 메인 스레드 보장
+//  🛡️ 웹뷰 상태 검증 강화
+//  🔒 스냅샷 요청 직렬화
+//  ⚡ 안전한 에러 처리 추가
 //
 
 import UIKit
@@ -768,6 +766,9 @@ final class BFCacheTransitionSystem: NSObject {
     private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
+    // 🛡️ **안전접근: 스냅샷 직렬화 큐 (메인 스레드만)**
+    private let snapshotQueue = DispatchQueue.main
+    
     // MARK: - 💾 스레드 안전 캐시 시스템
     private let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
     private var _memoryCache: [UUID: BFCacheSnapshot] = [:]
@@ -779,6 +780,9 @@ final class BFCacheTransitionSystem: NSObject {
     
     // 🆕 **동적 콘텐츠 안정화 추적**
     private var _stabilizationTrackers: [UUID: StabilizationTracker] = [:]
+    
+    // 🛡️ **스냅샷 안전성: 진행 중인 스냅샷 추적**
+    private var _activeSnapshotRequests: Set<UUID> = []
     
     // 스레드 안전 액세서
     private var memoryCache: [UUID: BFCacheSnapshot] {
@@ -804,6 +808,23 @@ final class BFCacheTransitionSystem: NSObject {
     private func setDiskIndex(_ path: String, for pageID: UUID) {
         cacheAccessQueue.async(flags: .barrier) {
             self._diskCacheIndex[pageID] = path
+        }
+    }
+    
+    // 🛡️ **스냅샷 안전성: 중복 요청 방지**
+    private func isSnapshotInProgress(for pageID: UUID) -> Bool {
+        return cacheAccessQueue.sync { _activeSnapshotRequests.contains(pageID) }
+    }
+    
+    private func markSnapshotInProgress(for pageID: UUID) {
+        cacheAccessQueue.async(flags: .barrier) {
+            self._activeSnapshotRequests.insert(pageID)
+        }
+    }
+    
+    private func markSnapshotCompleted(for pageID: UUID) {
+        cacheAccessQueue.async(flags: .barrier) {
+            self._activeSnapshotRequests.remove(pageID)
         }
     }
     
@@ -902,6 +923,40 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
+    // MARK: - 🛡️ **스냅샷 안전접근: 웹뷰 상태 검증 강화**
+    
+    private func validateWebViewForSnapshot(_ webView: WKWebView) -> Bool {
+        // 🛡️ **메인 스레드 확인**
+        guard Thread.isMainThread else {
+            dbg("❌ 스냅샷 실패: 메인 스레드가 아님")
+            return false
+        }
+        
+        // 🛡️ **웹뷰 기본 상태 확인**
+        guard webView.window != nil else {
+            dbg("❌ 스냅샷 실패: 웹뷰가 윈도우에 없음")
+            return false
+        }
+        
+        guard !webView.bounds.isEmpty else {
+            dbg("❌ 스냅샷 실패: 웹뷰 bounds가 비어있음")
+            return false
+        }
+        
+        guard webView.superview != nil else {
+            dbg("❌ 스냅샷 실패: 웹뷰가 뷰 계층에 없음")
+            return false
+        }
+        
+        // 🛡️ **렌더링 상태 확인**
+        guard !webView.isLoading else {
+            dbg("⚠️ 스냅샷 주의: 웹뷰 로딩 중")
+            // 로딩 중이어도 스냅샷은 시도 (로딩 상태도 캡처할 수 있음)
+        }
+        
+        return true
+    }
+    
     // MARK: - 🔧 **핵심 개선: 렌더링 완료 대기 + 안정화 캡처 시스템**
     
     private struct CaptureTask {
@@ -913,12 +968,17 @@ final class BFCacheTransitionSystem: NSObject {
         let waitForStabilization: Bool
     }
     
-    // 중복 방지를 위한 진행 중인 캡처 추적
-    private var pendingCaptures: Set<UUID> = []
-    
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil, waitForStabilization: Bool = false) {
         guard let webView = webView else {
             dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
+            return
+        }
+        
+        let pageID = pageRecord.id
+        
+        // 🛡️ **중복 스냅샷 방지**
+        if isSnapshotInProgress(for: pageID) {
+            dbg("⏸️ 중복 스냅샷 방지: \(pageRecord.title)")
             return
         }
         
@@ -930,36 +990,43 @@ final class BFCacheTransitionSystem: NSObject {
             waitForStabilization: waitForStabilization
         )
         
-        // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
-            self?.performAdvancedCapture(task)
+        // 🛡️ **메인 스레드에서 직접 처리 (직렬화)**
+        if Thread.isMainThread {
+            performSafeCapture(task)
+        } else {
+            snapshotQueue.async { [weak self] in
+                self?.performSafeCapture(task)
+            }
         }
     }
     
-    private func performAdvancedCapture(_ task: CaptureTask) {
+    private func performSafeCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
-        // 중복 캡처 방지 (진행 중인 것만)
-        guard !pendingCaptures.contains(pageID) else {
-            dbg("⏸️ 중복 캡처 방지: \(task.pageRecord.title)")
-            return
-        }
+        // 🛡️ **스냅샷 진행 중으로 마킹**
+        markSnapshotInProgress(for: pageID)
         
         guard let webView = task.webView else {
             dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
+            markSnapshotCompleted(for: pageID)
             return
         }
         
-        // 진행 중 표시
-        pendingCaptures.insert(pageID)
-        dbg("🎯 고급 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        // 🛡️ **웹뷰 상태 검증**
+        guard validateWebViewForSnapshot(webView) else {
+            dbg("❌ 웹뷰 상태 검증 실패 - 캡처 취소: \(task.pageRecord.title)")
+            markSnapshotCompleted(for: pageID)
+            return
+        }
+        
+        dbg("🎯 안전한 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         if task.waitForStabilization {
             // 🆕 **안정화 대기 후 캡처**
             waitForStabilizationThenCapture(task)
         } else {
             // **즉시 캡처 (기존 로직 강화)**
-            performImmediateAdvancedCapture(task)
+            performImmediateSafeCapture(task)
         }
     }
     
@@ -976,39 +1043,47 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("⏳ 동적 콘텐츠 안정화 대기 시작: \(task.pageRecord.title)")
         
         // 안정화 확인 스크립트 실행
-        DispatchQueue.main.async {
-            self.checkStabilizationLoop(task, tracker: tracker, attempt: 0)
-        }
+        checkStabilizationLoop(task, tracker: tracker, attempt: 0)
     }
     
     private func checkStabilizationLoop(_ task: CaptureTask, tracker: StabilizationTracker, attempt: Int) {
         guard let webView = task.webView, attempt < 20 else { // 최대 10초 대기 (0.5초 * 20)
             dbg("⏰ 안정화 대기 타임아웃: \(task.pageRecord.title)")
-            performImmediateAdvancedCapture(task, stabilizationInfo: tracker.stabilizationInfo)
+            performImmediateSafeCapture(task, stabilizationInfo: tracker.stabilizationInfo)
+            return
+        }
+        
+        // 🛡️ **웹뷰 상태 재검증**
+        guard validateWebViewForSnapshot(webView) else {
+            dbg("❌ 안정화 중 웹뷰 상태 변경 - 캡처 취소: \(task.pageRecord.title)")
+            markSnapshotCompleted(for: task.pageRecord.id)
             return
         }
         
         let stabilizationCheckJS = generateStabilizationCheckScript()
         
         webView.evaluateJavaScript(stabilizationCheckJS) { [weak self] result, error in
-            if let data = result as? [String: Any],
-               let contentHash = data["contentHash"] as? String,
-               let isStable = data["isStable"] as? Bool {
-                
-                tracker.recordDOMChange(contentHash)
-                
-                if tracker.isStable || isStable {
-                    self?.dbg("✅ 콘텐츠 안정화 완료: \(task.pageRecord.title) (시도: \(attempt + 1))")
-                    self?.performImmediateAdvancedCapture(task, stabilizationInfo: tracker.stabilizationInfo)
-                } else {
-                    // 0.5초 후 재시도
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.checkStabilizationLoop(task, tracker: tracker, attempt: attempt + 1)
+            // 🛡️ **메인 스레드에서 처리**
+            DispatchQueue.main.async {
+                if let data = result as? [String: Any],
+                   let contentHash = data["contentHash"] as? String,
+                   let isStable = data["isStable"] as? Bool {
+                    
+                    tracker.recordDOMChange(contentHash)
+                    
+                    if tracker.isStable || isStable {
+                        self?.dbg("✅ 콘텐츠 안정화 완료: \(task.pageRecord.title) (시도: \(attempt + 1))")
+                        self?.performImmediateSafeCapture(task, stabilizationInfo: tracker.stabilizationInfo)
+                    } else {
+                        // 0.5초 후 재시도
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self?.checkStabilizationLoop(task, tracker: tracker, attempt: attempt + 1)
+                        }
                     }
+                } else {
+                    self?.dbg("⚠️ 안정화 확인 실패, 즉시 캡처: \(task.pageRecord.title)")
+                    self?.performImmediateSafeCapture(task, stabilizationInfo: tracker.stabilizationInfo)
                 }
-            } else {
-                self?.dbg("⚠️ 안정화 확인 실패, 즉시 캡처: \(task.pageRecord.title)")
-                self?.performImmediateAdvancedCapture(task, stabilizationInfo: tracker.stabilizationInfo)
             }
         }
     }
@@ -1075,58 +1150,55 @@ final class BFCacheTransitionSystem: NSObject {
         """
     }
     
-    // 🔧 **강화된 즉시 캡처 로직**
-    private func performImmediateAdvancedCapture(_ task: CaptureTask, stabilizationInfo: BFCacheSnapshot.StabilizationInfo? = nil) {
+    // 🛡️ **강화된 즉시 캡처 로직 - 완전한 메인 스레드 보장**
+    private func performImmediateSafeCapture(_ task: CaptureTask, stabilizationInfo: BFCacheSnapshot.StabilizationInfo? = nil) {
+        // 🛡️ **메인 스레드 보장**
+        assert(Thread.isMainThread, "스냅샷 캡처는 반드시 메인 스레드에서 수행되어야 합니다")
+        
         guard let webView = task.webView else {
-            pendingCaptures.remove(task.pageRecord.id)
+            markSnapshotCompleted(for: task.pageRecord.id)
             return
         }
         
-        // 메인 스레드에서 웹뷰 상태 확인
-        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
-            // 웹뷰가 준비되었는지 확인
-            guard webView.window != nil, !webView.bounds.isEmpty else {
-                self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
-                return nil
-            }
-            
-            return CaptureData(
-                scrollPosition: webView.scrollView.contentOffset,
-                bounds: webView.bounds,
-                isLoading: webView.isLoading
-            )
-        }
-        
-        guard let data = captureData else {
-            pendingCaptures.remove(task.pageRecord.id)
+        // 🛡️ **웹뷰 상태 최종 검증**
+        guard validateWebViewForSnapshot(webView) else {
+            dbg("❌ 최종 웹뷰 검증 실패 - 캡처 취소: \(task.pageRecord.title)")
+            markSnapshotCompleted(for: task.pageRecord.id)
             return
         }
+        
+        // 🛡️ **캡처 데이터 수집**
+        let captureData = CaptureData(
+            scrollPosition: webView.scrollView.contentOffset,
+            bounds: webView.bounds,
+            isLoading: webView.isLoading
+        )
         
         // 🔧 **개선된 캡처 로직 - 렌더링 완료 대기 추가**
         let captureResult = performRenderingCompleteCapture(
             pageRecord: task.pageRecord,
             webView: webView,
-            captureData: data,
+            captureData: captureData,
             retryCount: task.type == .immediate || task.type == .leaving ? 2 : 0,  // 중요한 캡처는 재시도
             stabilizationInfo: stabilizationInfo
         )
         
-        // 캡처 완료 후 저장
+        // 캡처 완료 후 저장 (백그라운드에서)
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
             storeInMemory(captureResult.snapshot, for: task.pageRecord.id)
         }
         
-        // 진행 중 해제
-        pendingCaptures.remove(task.pageRecord.id)
+        // 🛡️ **진행 중 해제**
+        markSnapshotCompleted(for: task.pageRecord.id)
         
         // 안정화 추적기 제거
         cacheAccessQueue.async(flags: .barrier) {
             self._stabilizationTrackers.removeValue(forKey: task.pageRecord.id)
         }
         
-        dbg("✅ 고급 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 안전한 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1135,16 +1207,25 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🔧 **렌더링 완료 대기가 포함된 캡처 (UI 안전)**
+    // 🛡️ **렌더링 완료 대기가 포함된 캡처 (완전한 메인 스레드)**
     private func performRenderingCompleteCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0, stabilizationInfo: BFCacheSnapshot.StabilizationInfo?) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
+        // 🛡️ **메인 스레드 보장**
+        assert(Thread.isMainThread, "렌더링 캡처는 반드시 메인 스레드에서 수행되어야 합니다")
+        
         for attempt in 0...retryCount {
-            // 📍 **1단계: 렌더링 완료 대기 (이미 메인 스레드에서 실행 중)**
+            // 📍 **1단계: 렌더링 완료 대기**
             if !waitForRenderingComplete(webView: webView, timeout: 2.0) {
                 dbg("⏰ 렌더링 완료 대기 타임아웃 (시도: \(attempt + 1))")
             }
             
-            let result = attemptAdvancedCapture(
+            // 🛡️ **웹뷰 상태 재검증**
+            guard validateWebViewForSnapshot(webView) else {
+                dbg("❌ 렌더링 대기 후 웹뷰 상태 변경: \(pageRecord.title)")
+                break
+            }
+            
+            let result = attemptSafeAdvancedCapture(
                 pageRecord: pageRecord, 
                 webView: webView, 
                 captureData: captureData,
@@ -1168,162 +1249,164 @@ final class BFCacheTransitionSystem: NSObject {
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    // 📍 **렌더링 완료 대기 함수**
+    // 📍 **렌더링 완료 대기 함수 - 메인 스레드에서만 실행**
     private func waitForRenderingComplete(webView: WKWebView, timeout: TimeInterval) -> Bool {
+        // 🛡️ **메인 스레드 확인**
+        assert(Thread.isMainThread, "렌더링 완료 대기는 메인 스레드에서만 수행")
+        
         let semaphore = DispatchSemaphore(value: 0)
         var renderingComplete = false
         
-        DispatchQueue.main.async {
-            let renderingCheckJS = """
-            (function() {
-                // 1. 기본 로딩 상태 확인
-                if (document.readyState !== 'complete') {
-                    return false;
-                }
-                
-                // 2. 이미지 로딩 확인 (뷰포트 내 + 근처)
-                const images = document.querySelectorAll('img[src]');
-                let pendingImages = 0;
-                
-                images.forEach(img => {
-                    const rect = img.getBoundingClientRect();
-                    // 뷰포트 + 500px 범위 내 이미지만 확인
-                    if (rect.top < window.innerHeight + 500 && rect.bottom > -500) {
-                        if (!img.complete || img.naturalHeight === 0) {
-                            pendingImages++;
-                        }
-                    }
-                });
-                
-                // 3. 스타일시트 로딩 확인
-                const stylesheets = document.querySelectorAll('link[rel="stylesheet"]');
-                let pendingStylesheets = 0;
-                
-                stylesheets.forEach(link => {
-                    if (link.sheet === null) {
-                        pendingStylesheets++;
-                    }
-                });
-                
-                // 4. 주요 콘텐츠 영역 존재 확인
-                const mainContent = document.querySelector('main, [role="main"], article, .content, #content') || document.body;
-                const hasContent = mainContent && mainContent.children.length > 0;
-                
-                const isComplete = pendingImages === 0 && pendingStylesheets === 0 && hasContent;
-                
-                return {
-                    complete: isComplete,
-                    pendingImages: pendingImages,
-                    pendingStylesheets: pendingStylesheets,
-                    hasContent: hasContent
-                };
-            })()
-            """
-            
-            webView.evaluateJavaScript(renderingCheckJS) { result, error in
-                if let data = result as? [String: Any],
-                   let complete = data["complete"] as? Bool {
-                    renderingComplete = complete
-                } else {
-                    renderingComplete = false // 스크립트 실행 실패시 false
-                }
-                semaphore.signal()
+        let renderingCheckJS = """
+        (function() {
+            // 1. 기본 로딩 상태 확인
+            if (document.readyState !== 'complete') {
+                return false;
             }
+            
+            // 2. 이미지 로딩 확인 (뷰포트 내 + 근처)
+            const images = document.querySelectorAll('img[src]');
+            let pendingImages = 0;
+            
+            images.forEach(img => {
+                const rect = img.getBoundingClientRect();
+                // 뷰포트 + 500px 범위 내 이미지만 확인
+                if (rect.top < window.innerHeight + 500 && rect.bottom > -500) {
+                    if (!img.complete || img.naturalHeight === 0) {
+                        pendingImages++;
+                    }
+                }
+            });
+            
+            // 3. 스타일시트 로딩 확인
+            const stylesheets = document.querySelectorAll('link[rel="stylesheet"]');
+            let pendingStylesheets = 0;
+            
+            stylesheets.forEach(link => {
+                if (link.sheet === null) {
+                    pendingStylesheets++;
+                }
+            });
+            
+            // 4. 주요 콘텐츠 영역 존재 확인
+            const mainContent = document.querySelector('main, [role="main"], article, .content, #content') || document.body;
+            const hasContent = mainContent && mainContent.children.length > 0;
+            
+            const isComplete = pendingImages === 0 && pendingStylesheets === 0 && hasContent;
+            
+            return {
+                complete: isComplete,
+                pendingImages: pendingImages,
+                pendingStylesheets: pendingStylesheets,
+                hasContent: hasContent
+            };
+        })()
+        """
+        
+        webView.evaluateJavaScript(renderingCheckJS) { result, error in
+            if let data = result as? [String: Any],
+               let complete = data["complete"] as? Bool {
+                renderingComplete = complete
+            } else {
+                renderingComplete = false // 스크립트 실행 실패시 false
+            }
+            semaphore.signal()
         }
         
         let result = semaphore.wait(timeout: .now() + timeout)
         return result == .success && renderingComplete
     }
     
-    // 🔧 **고급 캡처 로직 (앵커 기반 + 무한 스크롤 + 안정화 정보 포함)**
-    private func attemptAdvancedCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, stabilizationInfo: BFCacheSnapshot.StabilizationInfo?) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🛡️ **안전한 고급 캡처 로직 (완전한 메인 스레드)**
+    private func attemptSafeAdvancedCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, stabilizationInfo: BFCacheSnapshot.StabilizationInfo?) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+        
+        // 🛡️ **메인 스레드 보장**
+        assert(Thread.isMainThread, "고급 캡처는 반드시 메인 스레드에서 수행")
+        
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
         var anchorPosition: BFCacheSnapshot.AnchorBasedPosition? = nil
         var infiniteScrollState: BFCacheSnapshot.InfiniteScrollState? = nil
         
+        // 🛡️ **1단계: 비주얼 스냅샷 (동기식 - 안전함)**
+        let config = WKSnapshotConfiguration()
+        config.rect = captureData.bounds
+        config.afterScreenUpdates = true // 렌더링 업데이트 후 캡처
+        
         let semaphore = DispatchSemaphore(value: 0)
         
-        // 1. 비주얼 스냅샷 (메인 스레드)
-        DispatchQueue.main.sync {
-            let config = WKSnapshotConfiguration()
-            config.rect = captureData.bounds
-            config.afterScreenUpdates = true // 렌더링 업데이트 후 캡처
-            
-            webView.takeSnapshot(with: config) { image, error in
-                if let error = error {
-                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
-                    // Fallback: layer 렌더링
+        webView.takeSnapshot(with: config) { image, error in
+            if let error = error {
+                self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                // Fallback: layer 렌더링 (메인 스레드에서만 안전)
+                DispatchQueue.main.async {
                     visualSnapshot = self.renderWebViewToImage(webView)
-                } else {
-                    visualSnapshot = image
+                    semaphore.signal()
                 }
+            } else {
+                visualSnapshot = image
                 semaphore.signal()
             }
         }
         
-        // ⚡ 적절한 타임아웃
+        // ⚡ 적절한 타임아웃 (메인 스레드 블록킹 최소화)
         let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
-            dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
+            dbg("⏰ 스냅샷 캐처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚫 **눌린 상태 제거하는 스크립트 추가**
+        // 🛡️ **2단계: DOM 캡처 - 동기식**
         let domSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let domScript = """
-            (function() {
-                try {
-                    if (document.readyState !== 'complete') return null;
-                    
-                    // 🚫 **눌린 상태/활성 상태 모두 제거**
-                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
-                        el.classList.remove(...Array.from(el.classList).filter(c => 
-                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
-                        ));
-                    });
-                    
-                    // input focus 제거
-                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
-                        el.blur();
-                    });
-                    
-                    const html = document.documentElement.outerHTML;
-                    return html.length > 100000 ? html.substring(0, 100000) : html;
-                } catch(e) { return null; }
-            })()
-            """
-            
-            webView.evaluateJavaScript(domScript) { result, error in
-                domSnapshot = result as? String
-                domSemaphore.signal()
-            }
+        let domScript = """
+        (function() {
+            try {
+                if (document.readyState !== 'complete') return null;
+                
+                // 🚫 **눌린 상태/활성 상태 모두 제거**
+                document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
+                    el.classList.remove(...Array.from(el.classList).filter(c => 
+                        c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
+                    ));
+                });
+                
+                // input focus 제거
+                document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
+                    el.blur();
+                });
+                
+                const html = document.documentElement.outerHTML;
+                return html.length > 100000 ? html.substring(0, 100000) : html;
+            } catch(e) { return null; }
+        })()
+        """
+        
+        webView.evaluateJavaScript(domScript) { result, error in
+            domSnapshot = result as? String
+            domSemaphore.signal()
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0)
         
-        // 3. 🎯 **고급 JS 상태 캡처 - 앵커/무한스크롤/스크롤 통합**
+        // 🛡️ **3단계: 고급 JS 상태 캡처 - 동기식**
         let jsSemaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.main.sync {
-            let jsScript = generateAdvancedStateScript()
-            
-            webView.evaluateJavaScript(jsScript) { result, error in
-                if let data = result as? [String: Any] {
-                    jsState = data
-                    
-                    // 앵커 정보 추출
-                    if let anchorData = data["anchor"] as? [String: Any] {
-                        anchorPosition = self.parseAnchorPosition(anchorData)
-                    }
-                    
-                    // 무한 스크롤 정보 추출
-                    if let infiniteData = data["infiniteScroll"] as? [String: Any] {
-                        infiniteScrollState = self.parseInfiniteScrollState(infiniteData)
-                    }
+        let jsScript = generateAdvancedStateScript()
+        
+        webView.evaluateJavaScript(jsScript) { result, error in
+            if let data = result as? [String: Any] {
+                jsState = data
+                
+                // 앵커 정보 추출
+                if let anchorData = data["anchor"] as? [String: Any] {
+                    anchorPosition = self.parseAnchorPosition(anchorData)
                 }
-                jsSemaphore.signal()
+                
+                // 무한 스크롤 정보 추출
+                if let infiniteData = data["infiniteScroll"] as? [String: Any] {
+                    infiniteScrollState = self.parseInfiniteScrollState(infiniteData)
+                }
             }
+            jsSemaphore.signal()
         }
         _ = jsSemaphore.wait(timeout: .now() + 1.5) // 복잡한 스크립트이므로 여유시간 증가
         
@@ -1738,7 +1821,13 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
+    // 🛡️ **안전한 이미지 렌더링 (메인 스레드만)**
     private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
+        // 🛡️ **메인 스레드 확인**
+        assert(Thread.isMainThread, "이미지 렌더링은 메인 스레드에서만 수행")
+        
+        guard !webView.bounds.isEmpty else { return nil }
+        
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
@@ -1781,7 +1870,7 @@ final class BFCacheTransitionSystem: NSObject {
                     try stateData.write(to: statePath)
                     self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
-                    self.dbg("❌ 상태 저장 실패: \(error.localizedDescription)")
+                    self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
@@ -1982,6 +2071,7 @@ final class BFCacheTransitionSystem: NSObject {
                 self._diskCacheIndex.removeValue(forKey: pageID)
                 self._cacheVersion.removeValue(forKey: pageID)
                 self._stabilizationTrackers.removeValue(forKey: pageID)
+                self._activeSnapshotRequests.remove(pageID)
             }
         }
         
@@ -2022,11 +2112,14 @@ final class BFCacheTransitionSystem: NSObject {
                 self._memoryCache.removeValue(forKey: item.key)
             }
             
+            // 🛡️ **메모리 경고 시 진행 중인 스냅샷도 일부 정리**
+            self._activeSnapshotRequests.removeAll()
+            
             self.dbg("⚠️ 메모리 경고 - 메모리 캐시 정리: \(beforeCount) → \(self._memoryCache.count)")
         }
     }
     
-    // MARK: - 🎯 **제스처 시스템** (기존 로직 유지)
+    // MARK: - 🛡️ **안전한 제스처 시스템** (기존 로직 유지 + 스냅샷 안전성 강화)
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -2097,8 +2190,8 @@ final class BFCacheTransitionSystem: NSObject {
                     captureSnapshot(pageRecord: currentRecord, webView: webView, type: .leaving, tabID: tabID, waitForStabilization: false)
                 }
                 
-                // 현재 웹뷰 스냅샷을 먼저 캡처한 후 전환 시작
-                captureCurrentSnapshot(webView: webView) { [weak self] snapshot in
+                // 🛡️ **안전한 현재 웹뷰 스냅샷 캡처 후 전환 시작**
+                captureSafeCurrentSnapshot(webView: webView) { [weak self] snapshot in
                     self?.beginGestureTransitionWithSnapshot(
                         tabID: tabID,
                         webView: webView,
@@ -2132,25 +2225,41 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **나머지 제스처/전환 로직** (기존 유지 + 캡처 개선)
+    // MARK: - 🛡️ **안전한 스냅샷 캡처 (제스처용)**
     
-    private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
+    private func captureSafeCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
+        // 🛡️ **메인 스레드에서만 실행**
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                self.captureSafeCurrentSnapshot(webView: webView, completion: completion)
+            }
+            return
+        }
+        
+        // 🛡️ **웹뷰 상태 검증**
+        guard validateWebViewForSnapshot(webView) else {
+            dbg("❌ 제스처용 스냅샷 - 웹뷰 상태 불량")
+            completion(nil)
+            return
+        }
+        
         let captureConfig = WKSnapshotConfiguration()
         captureConfig.rect = webView.bounds
         captureConfig.afterScreenUpdates = true  // 렌더링 업데이트 후 캡처
         
         webView.takeSnapshot(with: captureConfig) { image, error in
             if let error = error {
-                self.dbg("📸 현재 페이지 스냅샷 실패: \(error.localizedDescription)")
-                DispatchQueue.main.async {
-                    let fallbackImage = self.renderWebViewToImage(webView)
-                    completion(fallbackImage)
-                }
+                self.dbg("📸 제스처 스냅샷 실패: \(error.localizedDescription)")
+                // Fallback: 메인 스레드에서 layer 렌더링
+                let fallbackImage = self.renderWebViewToImage(webView)
+                completion(fallbackImage)
             } else {
                 completion(image)
             }
         }
     }
+    
+    // MARK: - 🎯 **나머지 제스처/전환 로직** (기존 유지 + 캡처 개선)
     
     private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
         let initialTransform = webView.transform
@@ -2471,7 +2580,6 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
     }
-    
 
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = activeTransitions[tabID],
