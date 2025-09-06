@@ -6,6 +6,7 @@
 //  📁 **저장소**: Library/Caches/BFCache 경로로 변경
 //  🔄 **복원**: DOM 앵커 → 진행형 로딩 보정 → iframe 복원 순서
 //  ⚡ **성능**: 단계별 시도 횟수 제한, 오차 허용치 관리
+//  🐛 **수정**: 동적 사이트 스크롤 복원 강화 - 지연 재시도 + 검증 시스템
 //
 
 import UIKit
@@ -215,23 +216,20 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🔄 **개선된 복원 메서드 (DOM 앵커 → 진행형 로딩 보정 → iframe 복원)**
+    // 🔄 **개선된 복원 메서드 (동적 사이트 스크롤 복원 강화)**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🔄 설계서 기반 복원 시작 - 상태: \(captureStatus.rawValue)")
-        
-        // ⚡ **1단계: 즉시 네이티브 스크롤 복원**
-        performImmediateScrollRestore(to: webView)
         
         // 🔧 **상태별 복원 전략**
         switch captureStatus {
         case .failed:
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 기본 스크롤만 복원")
-            completion(true)
+            performBasicScrollRestoreWithRetry(to: webView, completion: completion)
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 비주얼 전용 - 기본 복원")
-            performBasicRestore(to: webView, completion: completion)
+            TabPersistenceManager.debugMessages.append("🖼️ 비주얼 전용 - 강화된 스크롤 복원")
+            performEnhancedScrollRestore(to: webView, completion: completion)
             
         case .partial, .complete:
             TabPersistenceManager.debugMessages.append("🎯 고급 복원 - DOM 앵커 + 진행형 로딩 보정")
@@ -239,37 +237,201 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // ⚡ **즉시 네이티브 스크롤 복원**
+    // 🐛 **신규: 기본 스크롤 복원 + 재시도 시스템**
+    private func performBasicScrollRestoreWithRetry(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let targetPos = self.scrollPosition
+        
+        // 동적 사이트를 위한 다단계 복원 시스템
+        performScrollRestoreWithVerification(to: webView, targetPosition: targetPos, attempts: 0, maxAttempts: 5) { success in
+            completion(success)
+        }
+    }
+    
+    // 🐛 **신규: 강화된 스크롤 복원 (비주얼 전용)**
+    private func performEnhancedScrollRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        let targetPos = self.scrollPosition
+        
+        // 즉시 첫 번째 시도
+        performImmediateScrollRestore(to: webView)
+        
+        // DOM 준비 상태 확인 후 정밀 복원
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.performScrollRestoreWithVerification(to: webView, targetPosition: targetPos, attempts: 0, maxAttempts: 6) { success in
+                completion(success)
+            }
+        }
+    }
+    
+    // 🐛 **신규: 스크롤 복원 + 검증 시스템**
+    private func performScrollRestoreWithVerification(to webView: WKWebView, targetPosition: CGPoint, attempts: Int, maxAttempts: Int, completion: @escaping (Bool) -> Void) {
+        
+        guard attempts < maxAttempts else {
+            TabPersistenceManager.debugMessages.append("⚠️ 스크롤 복원 최대 시도 횟수 도달: \(maxAttempts)")
+            completion(false)
+            return
+        }
+        
+        // 네이티브 스크롤 설정 (강제)
+        webView.scrollView.setContentOffset(targetPosition, animated: false)
+        webView.scrollView.contentOffset = targetPosition
+        
+        // JavaScript 스크롤 복원 (동적 대기 포함)
+        let enhancedScrollJS = """
+        (function() {
+            return new Promise((resolve) => {
+                const targetX = \(targetPosition.x);
+                const targetY = \(targetPosition.y);
+                const tolerance = 30; // 허용 오차 확대
+                let attempts = 0;
+                const maxAttempts = 3;
+                
+                console.log('🔄 동적 스크롤 복원 시도 \(attempts + 1)/\(maxAttempts): 목표 (' + targetX + ', ' + targetY + ')');
+                
+                function tryScrollRestore() {
+                    // 1. 기본 스크롤 복원
+                    window.scrollTo(targetX, targetY);
+                    document.documentElement.scrollTop = targetY;
+                    document.documentElement.scrollLeft = targetX;
+                    document.body.scrollTop = targetY;
+                    document.body.scrollLeft = targetX;
+                    
+                    // 2. 스크롤 가능한 컨테이너도 확인
+                    const scrollableElements = document.querySelectorAll('[style*="overflow"], .scroll-container, .scrollable');
+                    scrollableElements.forEach(el => {
+                        if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
+                            el.scrollTop = targetY;
+                            el.scrollLeft = targetX;
+                        }
+                    });
+                    
+                    // 3. 즉시 검증
+                    setTimeout(() => {
+                        const currentX = window.scrollX || window.pageXOffset || 0;
+                        const currentY = window.scrollY || window.pageYOffset || 0;
+                        const deltaX = Math.abs(currentX - targetX);
+                        const deltaY = Math.abs(currentY - targetY);
+                        
+                        console.log('🔍 스크롤 검증: 현재 (' + currentX + ', ' + currentY + '), 차이 (' + deltaX + ', ' + deltaY + ')');
+                        
+                        if (deltaX <= tolerance && deltaY <= tolerance) {
+                            console.log('✅ 스크롤 복원 성공');
+                            resolve({ success: true, currentX: currentX, currentY: currentY });
+                        } else {
+                            attempts++;
+                            if (attempts < maxAttempts) {
+                                console.log('⏳ 스크롤 재시도 (' + (attempts + 1) + '/' + maxAttempts + ')');
+                                setTimeout(tryScrollRestore, 200 * attempts); // 점진적 지연
+                            } else {
+                                console.log('⚠️ 스크롤 복원 실패 - 최대 시도 횟수 도달');
+                                resolve({ success: false, currentX: currentX, currentY: currentY });
+                            }
+                        }
+                    }, 100);
+                }
+                
+                // DOM 준비 상태 확인 후 시작
+                if (document.readyState === 'complete') {
+                    tryScrollRestore();
+                } else {
+                    document.addEventListener('DOMContentLoaded', tryScrollRestore);
+                }
+            });
+        })()
+        """
+        
+        webView.evaluateJavaScript(enhancedScrollJS) { [weak self] result, error in
+            guard let self = self else { 
+                completion(false)
+                return 
+            }
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("❌ JavaScript 스크롤 복원 실패: \(error.localizedDescription)")
+                
+                // 재시도
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.performScrollRestoreWithVerification(to: webView, targetPosition: targetPosition, attempts: attempts + 1, maxAttempts: maxAttempts, completion: completion)
+                }
+                return
+            }
+            
+            if let resultDict = result as? [String: Any],
+               let success = resultDict["success"] as? Bool,
+               let currentX = resultDict["currentX"] as? Double,
+               let currentY = resultDict["currentY"] as? Double {
+                
+                TabPersistenceManager.debugMessages.append("🔍 스크롤 복원 결과: \(success ? "성공" : "실패") - 목표(\(targetPosition.x), \(targetPosition.y)) → 현재(\(currentX), \(currentY))")
+                
+                if success {
+                    completion(true)
+                } else {
+                    // 실패 시 재시도
+                    let delay = TimeInterval(0.4 + Double(attempts) * 0.2) // 점진적 지연 증가
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        self.performScrollRestoreWithVerification(to: webView, targetPosition: targetPosition, attempts: attempts + 1, maxAttempts: maxAttempts, completion: completion)
+                    }
+                }
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ JavaScript 스크롤 결과 파싱 실패")
+                // 재시도
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    self.performScrollRestoreWithVerification(to: webView, targetPosition: targetPosition, attempts: attempts + 1, maxAttempts: maxAttempts, completion: completion)
+                }
+            }
+        }
+    }
+    
+    // ⚡ **개선된 즉시 네이티브 스크롤 복원**
     private func performImmediateScrollRestore(to webView: WKWebView) {
         let targetPos = self.scrollPosition
+        
+        // 1. 네이티브 스크롤뷰 설정 (강제)
         webView.scrollView.setContentOffset(targetPos, animated: false)
         webView.scrollView.contentOffset = targetPos
         
+        // 2. 추가 네이티브 설정 (iOS 버전별 대응)
+        if #available(iOS 14.0, *) {
+            webView.scrollView.contentOffset = targetPos
+        }
+        
+        // 3. 기본 JavaScript 스크롤 (즉시)
         let basicScrollJS = """
-        window.scrollTo(\(targetPos.x), \(targetPos.y));
-        document.documentElement.scrollTop = \(targetPos.y);
-        document.body.scrollTop = \(targetPos.y);
+        try {
+            window.scrollTo(\(targetPos.x), \(targetPos.y));
+            document.documentElement.scrollTop = \(targetPos.y);
+            document.body.scrollTop = \(targetPos.y);
+            document.documentElement.scrollLeft = \(targetPos.x);
+            document.body.scrollLeft = \(targetPos.x);
+            console.log('⚡ 즉시 스크롤 복원 실행: (\(targetPos.x), \(targetPos.y))');
+        } catch(e) {
+            console.error('⚡ 즉시 스크롤 복원 실패:', e);
+        }
         """
         
-        webView.evaluateJavaScript(basicScrollJS) { _, _ in
-            TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원: (\(targetPos.x), \(targetPos.y))")
+        webView.evaluateJavaScript(basicScrollJS) { _, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("❌ 즉시 스크롤 JavaScript 실패: \(error.localizedDescription)")
+            } else {
+                TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원: (\(targetPos.x), \(targetPos.y))")
+            }
         }
     }
     
-    // 🖼️ **기본 복원 (비주얼 전용)**
+    // 🖼️ **기본 복원 (비주얼 전용) - 수정됨**
     private func performBasicRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.performFinalVerification(to: webView, completion: completion)
-        }
+        performEnhancedScrollRestore(to: webView, completion: completion)
     }
     
-    // 🎯 **고급 복원 (DOM 앵커 + 진행형 로딩)**
+    // 🎯 **고급 복원 (DOM 앵커 + 진행형 로딩) - 스크롤 복원 강화**
     private func performAdvancedRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         let restoreSteps: [(name: String, action: (@escaping (Bool) -> Void) -> Void)] = [
+            ("즉시 스크롤 복원", { stepCompletion in
+                self.performEnhancedScrollRestore(to: webView, completion: stepCompletion)
+            }),
             ("DOM 앵커 복원", { stepCompletion in
                 self.performDOManchorRestore(to: webView, completion: stepCompletion)
             }),
@@ -279,8 +441,8 @@ struct BFCacheSnapshot: Codable {
             ("iframe 복원", { stepCompletion in
                 self.performIframeRestore(to: webView, completion: stepCompletion)
             }),
-            ("최종 검증", { stepCompletion in
-                self.performFinalVerification(to: webView, completion: stepCompletion)
+            ("최종 스크롤 검증", { stepCompletion in
+                self.performFinalScrollVerification(to: webView, completion: stepCompletion)
             })
         ]
         
@@ -548,38 +710,61 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // ✅ **최종 검증**
-    private func performFinalVerification(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // ✅ **최종 스크롤 검증 - 강화됨**
+    private func performFinalScrollVerification(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         let finalVerifyJS = """
         (function() {
-            try {
-                const targetX = \(scrollPosition.x);
-                const targetY = \(scrollPosition.y);
-                const currentX = window.scrollX || window.pageXOffset || 0;
-                const currentY = window.scrollY || window.pageYOffset || 0;
-                const tolerance = 20; // 20px 허용 오차
-                
-                const isWithinTolerance = Math.abs(currentX - targetX) <= tolerance && 
-                                        Math.abs(currentY - targetY) <= tolerance;
-                
-                console.log('✅ 최종 검증:', {
-                    target: [targetX, targetY],
-                    current: [currentX, currentY],
-                    tolerance: tolerance,
-                    success: isWithinTolerance
-                });
-                
-                // 허용 오차 밖이면 한 번 더 보정
-                if (!isWithinTolerance) {
-                    window.scrollTo(targetX, targetY);
-                    console.log('✅ 최종 보정 실행');
+            return new Promise((resolve) => {
+                try {
+                    const targetX = \(scrollPosition.x);
+                    const targetY = \(scrollPosition.y);
+                    let attempts = 0;
+                    const maxAttempts = 3;
+                    const tolerance = 25; // 허용 오차
+                    
+                    function verifyAndCorrect() {
+                        const currentX = window.scrollX || window.pageXOffset || 0;
+                        const currentY = window.scrollY || window.pageYOffset || 0;
+                        const deltaX = Math.abs(currentX - targetX);
+                        const deltaY = Math.abs(currentY - targetY);
+                        
+                        console.log('✅ 최종 검증 시도 ' + (attempts + 1) + '/' + maxAttempts + ':', {
+                            target: [targetX, targetY],
+                            current: [currentX, currentY],
+                            delta: [deltaX, deltaY],
+                            tolerance: tolerance
+                        });
+                        
+                        const isWithinTolerance = deltaX <= tolerance && deltaY <= tolerance;
+                        
+                        if (isWithinTolerance) {
+                            console.log('✅ 최종 검증 성공');
+                            resolve(true);
+                        } else {
+                            attempts++;
+                            if (attempts < maxAttempts) {
+                                // 재보정 시도
+                                window.scrollTo(targetX, targetY);
+                                document.documentElement.scrollTop = targetY;
+                                document.body.scrollTop = targetY;
+                                console.log('🔧 최종 보정 시도 ' + attempts);
+                                
+                                setTimeout(verifyAndCorrect, 300);
+                            } else {
+                                console.log('⚠️ 최종 검증 실패 - 허용 오차 초과');
+                                resolve(false);
+                            }
+                        }
+                    }
+                    
+                    // 초기 대기 후 검증 시작
+                    setTimeout(verifyAndCorrect, 200);
+                    
+                } catch(e) {
+                    console.error('✅ 최종 검증 에러:', e);
+                    resolve(false);
                 }
-                
-                return isWithinTolerance;
-            } catch(e) {
-                console.error('✅ 최종 검증 에러:', e);
-                return false;
-            }
+            });
         })()
         """
         
