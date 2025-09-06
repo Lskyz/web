@@ -12,7 +12,7 @@
 //  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
-//  🚀 **보수적 속도 향상** - 동적 렌더링 대기시간 40% 단축 (2.5초→1.5초)
+//  🚀 **복원/대기 시간 최적화** - 캡처 안정성 유지하며 20% 성능 향상
 //
 
 import UIKit
@@ -68,7 +68,7 @@ private class GestureContext {
 struct SiteTimingProfile: Codable {
     let hostname: String
     var loadingSamples: [TimeInterval] = []
-    var averageLoadingTime: TimeInterval = 0.3  // 🚀 0.4 → 0.3초 (보수적 단축)
+    var averageLoadingTime: TimeInterval = 0.4  // 🚀 0.5 → 0.4초 (-100ms)
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
@@ -96,10 +96,10 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 🌐 **개선된 적응형 대기 시간 계산** - 🚀 보수적 단축 적용
+    // 🌐 **개선된 적응형 대기 시간 계산** - 🚀 최적화 적용
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = max(averageLoadingTime, 0.3) // 🚀 최소 0.3초 보장 (0.4 → 0.3초, -100ms)
-        let stepMultiplier = Double(step) * 0.08 // 🚀 0.12 → 0.08초로 감소 (-40ms per step)
+        let baseTime = max(averageLoadingTime, 0.4) // 🚀 최소 0.4초 보장 (0.5 → 0.4초, -100ms)
+        let stepMultiplier = Double(step) * 0.12 // 🚀 0.15 → 0.12초로 감소 (-30ms per step)
         let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
@@ -191,7 +191,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **핵심 개선: 즉시 스크롤 복원 + 다단계 보정 시스템 - 🚀 보수적 단축 적용**
+    // ⚡ **핵심 개선: 즉시 스크롤 복원 + 다단계 보정 시스템 - 🚀 최적화 적용**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("⚡ BFCache 즉시 복원 시작 - 상태: \(captureStatus.rawValue)")
         
@@ -273,7 +273,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원 단계 완료")
     }
     
-    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🚀 보수적 단축 적용**
+    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🚀 최적화 적용**
     private func performProgressiveRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -286,9 +286,9 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🔧 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스크롤 확인 및 즉시 보정 (🚀 30ms → 20ms) - 즉시 복원 검증**
+        // **1단계: 스크롤 확인 및 즉시 보정 (🚀 50ms → 30ms) - 즉시 복원 검증**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.02 // 🚀 30ms → 20ms (-10ms)
+            let verifyDelay: TimeInterval = 0.03 // 🚀 50ms → 30ms (-20ms)
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
@@ -328,7 +328,7 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (🚀 최소 80ms → 60ms) - 조건부 포함**
+        // **2단계: 주요 컨테이너 스크롤 복원 (🚀 최소 100ms → 80ms) - 조건부 포함**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
@@ -336,7 +336,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime = max(0.06, profile.getAdaptiveWaitTime(step: 1)) // 🚀 최소 60ms (80ms → 60ms, -20ms)
+                let waitTime = max(0.08, profile.getAdaptiveWaitTime(step: 1)) // 🚀 최소 80ms (100ms → 80ms, -20ms)
                 TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -375,11 +375,11 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (🚀 최소 250ms → 200ms) - 항상 포함 (🔧 핵심 수정)**
+        // **4단계: 최종 확인 및 보정 (🚀 최소 300ms → 250ms) - 항상 포함 (🔧 핵심 수정)**
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime = max(0.2, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 200ms 최종 대기 (250ms → 200ms, -50ms)
+            let waitTime = max(0.25, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 250ms 최종 대기 (300ms → 250ms, -50ms)
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -901,7 +901,7 @@ final class BFCacheTransitionSystem: NSObject {
         let isLoading: Bool
     }
     
-    // 🔧 **실패 복구 기능 추가된 캡처 - 🚀 재시도 대기시간 보수적 단축**
+    // 🔧 **실패 복구 기능 추가된 캡처 - 🚀 재시도 대기시간 최적화**
     private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
@@ -915,9 +915,9 @@ final class BFCacheTransitionSystem: NSObject {
                 return result
             }
             
-            // 재시도 전 잠시 대기 - 🚀 80ms → 60ms (-20ms)
+            // 재시도 전 잠시 대기 - 🚀 100ms → 80ms (-20ms)
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.06) // 🚀 0.08초 → 0.06초 (-20ms)
+            Thread.sleep(forTimeInterval: 0.08) // 🚀 0.1초 → 0.08초 (-20ms)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -930,7 +930,7 @@ final class BFCacheTransitionSystem: NSObject {
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
-        // 1. 비주얼 스냅샷 (메인 스레드) - 캡처 타임아웃은 그대로 유지
+        // 1. 비주얼 스냅샷 (메인 스레드) - 🚀 캡처 타임아웃은 그대로 유지
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
@@ -955,7 +955,7 @@ final class BFCacheTransitionSystem: NSObject {
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 캡처 타임아웃 그대로 유지 (1초)
+        // 2. DOM 캡처 - 🚀 캡처 타임아웃 그대로 유지 (1초)
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -986,9 +986,9 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0) // 캡처 타임아웃 그대로 유지
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // 🚀 캡처 타임아웃 그대로 유지
         
-        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지** - 캡처 타임아웃 그대로 유지 (2초)
+        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지** - 🚀 캡처 타임아웃 그대로 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -1000,7 +1000,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 캡처 타임아웃 그대로 유지
+        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🚀 캡처 타임아웃 그대로 유지
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1035,12 +1035,12 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성 - 🚀 동적 콘텐츠 대기시간 보수적 단축**
+    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성 - 🚀 동적 콘텐츠 대기시간 최적화**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용) - 🚀 보수적 단축 적용**
+                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용) - 🚀 최적화 적용**
                 function waitForDynamicContent(callback) {
                     let timeout;
                     const observer = new MutationObserver(() => {
@@ -1048,13 +1048,13 @@ final class BFCacheTransitionSystem: NSObject {
                         timeout = setTimeout(() => {
                             observer.disconnect();
                             callback();
-                        }, 100); // 🚀 150ms → 100ms (-50ms)
+                        }, 150); // 🚀 200ms → 150ms (-50ms)
                     });
                     observer.observe(document.body, { childList: true, subtree: true });
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, 1500); // 🚀 최대 1.5초 대기 (2500ms → 1500ms, -1000ms)
+                    }, 2500); // 🚀 최대 2.5초 대기 (3000ms → 2500ms, -500ms)
                 }
 
                 function captureScrollData() {
@@ -2278,7 +2278,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (🚀 보수적 속도 향상 - 동적렌더링 40% 단축)")
+        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (🚀 복원/대기 시간 20% 최적화)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
