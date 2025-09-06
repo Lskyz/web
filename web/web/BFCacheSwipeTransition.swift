@@ -9,7 +9,7 @@
 //  🔧 **StateModel과 완벽 동기화**
 //  🔧 **최종보정 로그 수정** - 4단계 보정 강제 실행 보장
 //  🧵 **제스처 스레드 리팩토링** - 메인 스레드 동기화 강화, 먹통 방지
-//  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결
+//  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결1단
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //  🚀 **복원/대기 시간 최적화** - 캐처 안정성 유지하며 20% 성능 향상
@@ -245,7 +245,7 @@ struct BFCacheSnapshot: Codable {
         
         // **1단계: 스크롤 확인 및 즉시 보정 (🚀 고정 30ms) - 즉시 복원 검증**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.05 // 🚀 고정 30ms
+            let verifyDelay: TimeInterval = 0.01 // 🚀 고정 30ms
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
@@ -293,7 +293,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.08 // 🚀 고정 80ms
+                let waitTime: TimeInterval = 0.07 // 🚀 고정 80ms
                 TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -336,7 +336,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 0.90 // 🚀 고정 250ms 최종 대기
+            let waitTime: TimeInterval = 0.80 // 🚀 고정 250ms 최종 대기
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
