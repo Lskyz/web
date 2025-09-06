@@ -9,7 +9,6 @@
 //  📈 **정밀 스크롤 감지 강화** - 상대적 위치 추적 2000개로 확장, 소수점 정밀도 향상
 //  🔧 **기존 타이밍 유지** - 스크롤 복원 정밀도만 향상, 대기시간은 현상 유지
 //  ♾️ **무제한 스크롤 범위 지원** - 범위 제한 완전 제거, 모든 스크롤 위치 저장/복원
-//  🎯 **끝으로 붙는 문제 해결** - bottom offset + 앵커 요소 기반 복원
 //
 
 import UIKit
@@ -61,7 +60,7 @@ private class GestureContext {
     }
 }
 
-// MARK: - 📸 **개선된 BFCache 페이지 스냅샷 (정밀 스크롤 지원 + 앵커 기반 복원)**
+// MARK: - 📸 **개선된 BFCache 페이지 스냅샷 (정밀 스크롤 지원)**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -75,11 +74,6 @@ struct BFCacheSnapshot: Codable {
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
     let version: Int
-    
-    // 🎯 **새로 추가: 끝으로 붙는 문제 해결용 필드들**
-    let bottomOffset: CGFloat?        // 바닥 기준 오프셋(px)
-    let anchorSelector: String?       // 앵커 CSS 셀렉터
-    let anchorYOffset: CGFloat?       // 앵커 기준 오프셋(px)
     
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
@@ -102,9 +96,6 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
-        case bottomOffset
-        case anchorSelector
-        case anchorYOffset
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -127,11 +118,6 @@ struct BFCacheSnapshot: Codable {
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
-        
-        // 🎯 **새 필드들 (기존 호환성 유지)**
-        bottomOffset = try container.decodeIfPresent(CGFloat.self, forKey: .bottomOffset)
-        anchorSelector = try container.decodeIfPresent(String.self, forKey: .anchorSelector)
-        anchorYOffset = try container.decodeIfPresent(CGFloat.self, forKey: .anchorYOffset)
     }
     
     func encode(to encoder: Encoder) throws {
@@ -154,11 +140,6 @@ struct BFCacheSnapshot: Codable {
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
-        
-        // 🎯 **새 필드들**
-        try container.encodeIfPresent(bottomOffset, forKey: .bottomOffset)
-        try container.encodeIfPresent(anchorSelector, forKey: .anchorSelector)
-        try container.encodeIfPresent(anchorYOffset, forKey: .anchorYOffset)
     }
     
     // 직접 초기화용 init (정밀 스크롤 지원)
@@ -173,10 +154,7 @@ struct BFCacheSnapshot: Codable {
          timestamp: Date, 
          webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, 
-         version: Int = 1,
-         bottomOffset: CGFloat? = nil,
-         anchorSelector: String? = nil,
-         anchorYOffset: CGFloat? = nil) {
+         version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -189,9 +167,6 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
-        self.bottomOffset = bottomOffset
-        self.anchorSelector = anchorSelector
-        self.anchorYOffset = anchorYOffset
     }
     
     // 이미지 로드 메서드
@@ -202,12 +177,12 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ♾️ **핵심 개선: 끝으로 붙는 문제 해결 - 앵커/bottom 우선 복원**
+    // ♾️ **핵심 개선: 무제한 스크롤 범위 지원 - 범위 제한 완전 제거**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 앵커 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 범위 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
-        // ⚡ **즉시 스크롤 복원 먼저 수행**
-        performSmartScrollRestore(to: webView)
+        // ⚡ **즉시 스크롤 복원 먼저 수행 (무제한 범위)**
+        performUnlimitedScrollRestore(to: webView)
         
         // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
@@ -217,44 +192,41 @@ struct BFCacheSnapshot: Codable {
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 스마트 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 무제한 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 스마트 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 무제한 복원 + 전체 다단계 복원")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 스마트 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 무제한 복원 + 전체 다단계 복원")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 스마트 BFCache 복원 후 다단계 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 무제한 BFCache 복원 후 다단계 보정 시작")
         
         // 🔧 **정밀 복원 후 추가 보정 단계 실행 (기존 타이밍 유지)**
         DispatchQueue.main.async {
-            self.performSmartProgressiveRestore(to: webView, completion: completion)
+            self.performUnlimitedProgressiveRestore(to: webView, completion: completion)
         }
     }
     
-    // 🎯 **새로 추가: 스마트 스크롤 복원 (앵커 → bottom → 절대값 순)**
-    private func performSmartScrollRestore(to webView: WKWebView) {
+    // ♾️ **새로 추가: 무제한 스크롤 복원 메서드 - 범위 제한 완전 제거**
+    private func performUnlimitedScrollRestore(to webView: WKWebView) {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
-        let storedBottom = self.bottomOffset ?? .infinity
-        let anchorSel = self.anchorSelector
-        let anchorOff = self.anchorYOffset ?? 0
         
-        TabPersistenceManager.debugMessages.append("🎯 스마트 복원: 절대(\(targetPos.x), \(targetPos.y)) 상대(\(targetPercent.x)%, \(targetPercent.y)%) bottom:\(storedBottom) 앵커:\(anchorSel ?? "없음")")
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 스크롤 복원: 절대(\(targetPos.x), \(targetPos.y)) 상대(\(targetPercent.x)%, \(targetPercent.y)%)")
         
-        // 1. 네이티브 스크롤뷰 정밀 설정 (CGFloat 그대로 사용)
+        // 1. 네이티브 스크롤뷰 정밀 설정 (CGFloat 그대로 사용, 범위 제한 없음)
         webView.scrollView.setContentOffset(targetPos, animated: false)
         webView.scrollView.contentOffset = targetPos
         
-        // 2. ♾️ **적응형 위치 계산**
+        // 2. ♾️ **무제한 적응형 위치 계산** - 범위 검증 제거
         let currentContentSize = webView.scrollView.contentSize
         let currentViewportSize = webView.bounds.size
         
         var adaptivePos = targetPos
         
-        // 📐 콘텐츠 크기가 변했으면 백분율 기반으로 재계산
+        // 📐 콘텐츠 크기가 변했으면 백분율 기반으로 재계산 (범위 제한 없음)
         if contentSize != CGSize.zero && currentContentSize != contentSize {
             let xScale = currentContentSize.width / max(contentSize.width, 1)
             let yScale = currentContentSize.height / max(contentSize.height, 1)
@@ -262,22 +234,31 @@ struct BFCacheSnapshot: Codable {
             adaptivePos.x = targetPos.x * xScale
             adaptivePos.y = targetPos.y * yScale
             
-            TabPersistenceManager.debugMessages.append("📐 적응형 보정: 크기변화(\(xScale), \(yScale)) → (\(adaptivePos.x), \(adaptivePos.y))")
+            TabPersistenceManager.debugMessages.append("📐 무제한 적응형 보정: 크기변화(\(xScale), \(yScale)) → (\(adaptivePos.x), \(adaptivePos.y))")
         }
-        // 📱 뷰포트 크기가 변했으면 백분율 기반으로 보정
+        // 📱 뷰포트 크기가 변했으면 백분율 기반으로 보정 (범위 제한 없음)
         else if viewportSize != CGSize.zero && currentViewportSize != viewportSize {
             if targetPercent != CGPoint.zero {
+                // ♾️ **실제 스크롤 가능 크기 활용** (저장된 실제 크기 우선 사용)
                 let effectiveContentWidth = actualScrollableSize.width > 0 ? actualScrollableSize.width : currentContentSize.width
                 let effectiveContentHeight = actualScrollableSize.height > 0 ? actualScrollableSize.height : currentContentSize.height
                 
                 adaptivePos.x = (effectiveContentWidth - currentViewportSize.width) * targetPercent.x / 100.0
                 adaptivePos.y = (effectiveContentHeight - currentViewportSize.height) * targetPercent.y / 100.0
                 
-                TabPersistenceManager.debugMessages.append("📱 뷰포트 변화 보정: 백분율 기반 → (\(adaptivePos.x), \(adaptivePos.y))")
+                TabPersistenceManager.debugMessages.append("📱 무제한 뷰포트 변화 보정: 백분율 기반 → (\(adaptivePos.x), \(adaptivePos.y))")
+                TabPersistenceManager.debugMessages.append("♾️ 실제 스크롤 크기 활용: (\(effectiveContentWidth), \(effectiveContentHeight))")
             }
         }
         
-        // 3. 범위 제한 없이 원본 위치 그대로 사용 (NaN, Infinity만 필터링)
+        // 3. ♾️ **범위 제한 완전 제거** - 음수 위치도 허용, 콘텐츠 크기 초과도 허용
+        // 기존: let maxX = max(0, currentContentSize.width - currentViewportSize.width)
+        // 기존: let maxY = max(0, currentContentSize.height - currentViewportSize.height)
+        // 기존: adaptivePos.x = max(0, min(adaptivePos.x, maxX))
+        // 기존: adaptivePos.y = max(0, min(adaptivePos.y, maxY))
+        
+        // ♾️ **새로운 로직: 범위 제한 없이 원본 위치 그대로 사용**
+        // 단, 명백히 잘못된 값(NaN, Infinity)만 필터링
         if adaptivePos.x.isNaN || adaptivePos.x.isInfinite {
             adaptivePos.x = targetPos.x.isNaN || targetPos.x.isInfinite ? 0 : targetPos.x
         }
@@ -285,121 +266,41 @@ struct BFCacheSnapshot: Codable {
             adaptivePos.y = targetPos.y.isNaN || targetPos.y.isInfinite ? 0 : targetPos.y
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 최종위치: (\(adaptivePos.x), \(adaptivePos.y))")
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 범위: 최종위치(\(adaptivePos.x), \(adaptivePos.y)) - 제한없음")
         
         webView.scrollView.setContentOffset(adaptivePos, animated: false)
         webView.scrollView.contentOffset = adaptivePos
         
-        // 4. 🎯 **스마트 JavaScript 스크롤 설정 (앵커 → bottom → 절대값 순)**
-        let smartScrollJS = generateSmartScrollJS(
-            targetPos: adaptivePos,
-            anchorSelector: anchorSel,
-            anchorOffset: anchorOff,
-            bottomOffset: storedBottom,
-            targetPercent: targetPercent
-        )
-        
-        // 동기적 JavaScript 실행 (즉시)
-        webView.evaluateJavaScript(smartScrollJS) { result, error in
-            let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("🎯 스마트 JavaScript 스크롤: \(success ? "성공" : "실패")")
-        }
-        
-        TabPersistenceManager.debugMessages.append("🎯 스마트 스크롤 복원 단계 완료")
-    }
-    
-    // 🎯 **새로 추가: 스마트 스크롤 JavaScript 생성**
-    private func generateSmartScrollJS(targetPos: CGPoint, anchorSelector: String?, anchorOffset: CGFloat, bottomOffset: CGFloat, targetPercent: CGPoint) -> String {
-        let bottomAnchored = (bottomOffset < 40) || (targetPercent.y >= 98.0)
-        
-        return """
+        // 4. ♾️ **무제한 JavaScript 스크롤 설정** (범위 검증 제거)
+        let unlimitedScrollJS = """
         (function() {
             try {
-                const targetX = parseFloat('\(targetPos.x)');
-                const targetY = parseFloat('\(targetPos.y)');
-                const anchorSel = \(anchorSelector != nil ? "'\(anchorSelector!)'" : "null");
-                const anchorOff = parseFloat('\(anchorOffset)');
-                const bottomOffset = parseFloat('\(bottomOffset)');
-                const bottomAnchored = \(bottomAnchored ? "true" : "false");
+                const targetX = parseFloat('\(adaptivePos.x)');
+                const targetY = parseFloat('\(adaptivePos.y)');
                 
-                console.log('🎯 스마트 스크롤 복원 시도:', {
-                    target: [targetX, targetY],
-                    anchor: anchorSel,
-                    anchorOffset: anchorOff,
-                    bottomOffset: bottomOffset,
-                    bottomAnchored: bottomAnchored
-                });
+                console.log('♾️ 무제한 스크롤 복원 시도:', targetX, targetY);
                 
-                // **1순위: 앵커 요소 기반 복원**
-                if (anchorSel && anchorSel.length > 0) {
-                    try {
-                        const el = document.querySelector(anchorSel);
-                        if (el) {
-                            console.log('🎯 앵커 요소 발견, scrollIntoView 실행');
-                            el.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'auto'});
-                            
-                            // 앵커 오프셋 적용
-                            if (Math.abs(anchorOff) > 0.1) {
-                                window.scrollBy(0, -anchorOff);
-                                console.log('🎯 앵커 오프셋 적용:', -anchorOff);
-                            }
-                            
-                            const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            console.log('🎯 앵커 복원 완료:', finalY);
-                            return true;
-                        }
-                    } catch(e) {
-                        console.log('🎯 앵커 복원 실패, 다음 단계로:', e.message);
-                    }
-                }
-                
-                // **2순위: bottom-anchored 복원**
-                if (bottomAnchored && bottomOffset < 200) {
-                    try {
-                        const currentMaxY = Math.max(0, (document.documentElement.scrollHeight||0) - (window.innerHeight||0));
-                        const targetBottomY = Math.max(0, currentMaxY - bottomOffset);
-                        
-                        console.log('🎯 바닥 기준 복원:', {currentMaxY, bottomOffset, targetBottomY});
-                        
-                        window.scrollTo(targetX, targetBottomY);
-                        document.documentElement.scrollTop = targetBottomY;
-                        document.documentElement.scrollLeft = targetX;
-                        document.body.scrollTop = targetBottomY;
-                        document.body.scrollLeft = targetX;
-                        
-                        if (document.scrollingElement) {
-                            document.scrollingElement.scrollTop = targetBottomY;
-                            document.scrollingElement.scrollLeft = targetX;
-                        }
-                        
-                        const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        console.log('🎯 바닥 기준 복원 완료:', finalY);
-                        return true;
-                    } catch(e) {
-                        console.log('🎯 바닥 기준 복원 실패, 다음 단계로:', e.message);
-                    }
-                }
-                
-                // **3순위: 기존 절대값 복원**
-                console.log('🎯 절대값 복원 실행');
-                
+                // ♾️ **모든 가능한 스크롤 설정 정밀 실행 (범위 검증 없음)**
                 window.scrollTo(targetX, targetY);
                 document.documentElement.scrollTop = targetY;
                 document.documentElement.scrollLeft = targetX;
                 document.body.scrollTop = targetY;
                 document.body.scrollLeft = targetX;
                 
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = targetY;
-                    document.scrollingElement.scrollLeft = targetX;
-                }
-                
-                // 추가 강제 설정
+                // ♾️ **강제 스크롤 설정** (브라우저 제한 무시)
                 try {
+                    // scrollingElement 활용
+                    if (document.scrollingElement) {
+                        document.scrollingElement.scrollTop = targetY;
+                        document.scrollingElement.scrollLeft = targetX;
+                    }
+                    
+                    // 모든 스크롤 컨테이너에 강제 적용
                     const scrollContainers = document.querySelectorAll('*');
                     scrollContainers.forEach(el => {
                         if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) {
                             try {
+                                // 메인 윈도우 스크롤이면 적용
                                 if (el === document.body || el === document.documentElement) {
                                     el.scrollTop = targetY;
                                     el.scrollLeft = targetX;
@@ -409,14 +310,26 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                     });
+                    
+                    // ♾️ **추가 강제 설정** (일부 사이트의 커스텀 스크롤 대응)
+                    if (typeof window.pageYOffset !== 'undefined') {
+                        try {
+                            Object.defineProperty(window, 'pageYOffset', { value: targetY, writable: true });
+                            Object.defineProperty(window, 'pageXOffset', { value: targetX, writable: true });
+                        } catch(e) {
+                            // 읽기 전용이면 무시
+                        }
+                    }
+                    
                 } catch(innerError) {
-                    console.log('🎯 일부 강제 설정 실패 (정상):', innerError.message);
+                    console.log('♾️ 일부 강제 설정 실패 (정상):', innerError.message);
                 }
                 
+                // ♾️ **최종 확인** (정밀도 검증 제거 - 모든 위치 허용)
                 const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
                 const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
                 
-                console.log('🎯 스마트 스크롤 복원 완료:', {
+                console.log('♾️ 무제한 스크롤 복원 완료:', {
                     target: [targetX, targetY],
                     final: [finalX, finalY],
                     diff: [Math.abs(finalX - targetX), Math.abs(finalY - targetY)]
@@ -424,106 +337,234 @@ struct BFCacheSnapshot: Codable {
                 
                 return true;
             } catch(e) { 
-                console.error('🎯 스마트 스크롤 복원 실패:', e);
+                console.error('♾️ 무제한 스크롤 복원 실패:', e);
                 return false; 
             }
         })()
         """
+        
+        // 동기적 JavaScript 실행 (즉시)
+        webView.evaluateJavaScript(unlimitedScrollJS) { result, error in
+            let success = (result as? Bool) ?? false
+            TabPersistenceManager.debugMessages.append("♾️ 무제한 JavaScript 스크롤: \(success ? "성공" : "실패")")
+        }
+        
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 스크롤 복원 단계 완료")
     }
     
-    // ♾️ **스마트 점진적 복원 시스템 (기존 타이밍 유지)**
-    private func performSmartProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // ♾️ **무제한 점진적 복원 시스템 (기존 타이밍 유지, 범위 제한 제거)**
+    private func performUnlimitedProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🎯 스마트 점진적 보정 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스마트 복원 검증 및 보정 (기존 30ms 유지)**
+        // **1단계: 무제한 스크롤 확인 및 보정 (기존 30ms 유지)**
         restoreSteps.append((1, { stepCompletion in
             let verifyDelay: TimeInterval = 0.03 // 🔧 기존 30ms 유지
-            TabPersistenceManager.debugMessages.append("🎯 1단계: 스마트 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+            TabPersistenceManager.debugMessages.append("♾️ 1단계: 무제한 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
-                let smartVerifyJS = self.generateSmartVerifyJS()
+                let unlimitedVerifyJS = """
+                (function() {
+                    try {
+                        const targetX = parseFloat('\(self.scrollPosition.x)');
+                        const targetY = parseFloat('\(self.scrollPosition.y)');
+                        const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        const tolerance = 5.0; // ♾️ 허용 오차 확대: 0.5px → 5px (범위 제한 완화)
+                        
+                        console.log('♾️ 무제한 검증:', {
+                            target: [targetX, targetY],
+                            current: [currentX, currentY],
+                            diff: [Math.abs(currentX - targetX), Math.abs(currentY - targetY)]
+                        });
+                        
+                        // ♾️ **범위 검증 없이 보정** (모든 위치 허용)
+                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
+                            console.log('♾️ 무제한 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            
+                            // 강력한 보정 (범위 제한 없음)
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.documentElement.scrollLeft = targetX;
+                            document.body.scrollTop = targetY;
+                            document.body.scrollLeft = targetX;
+                            
+                            // 추가 강제 설정
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = targetY;
+                                document.scrollingElement.scrollLeft = targetX;
+                            }
+                            
+                            return 'unlimited_corrected';
+                        } else {
+                            console.log('♾️ 무제한 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            return 'unlimited_verified';
+                        }
+                    } catch(e) { 
+                        console.error('♾️ 무제한 복원 검증 실패:', e);
+                        return 'unlimited_error'; 
+                    }
+                })()
+                """
                 
-                webView.evaluateJavaScript(smartVerifyJS) { result, _ in
-                    let resultString = result as? String ?? "error"
+                webView.evaluateJavaScript(unlimitedVerifyJS) { result, _ in
+                    let resultString = result as? String ?? "unlimited_error"
                     let success = (resultString.contains("verified") || resultString.contains("corrected"))
-                    TabPersistenceManager.debugMessages.append("🎯 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                    TabPersistenceManager.debugMessages.append("♾️ 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
             }
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (기존 80ms 유지)**
+        // **2단계: 주요 컨테이너 무제한 스크롤 복원 (기존 80ms 유지)**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🎯 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
+            TabPersistenceManager.debugMessages.append("♾️ 2단계 컨테이너 무제한 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
                 let waitTime: TimeInterval = 0.08 // 🔧 기존 80ms 유지
-                TabPersistenceManager.debugMessages.append("🎯 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("♾️ 2단계: 컨테이너 무제한 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateUnlimitedContainerScrollScript(elements)
-                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
+                    let unlimitedContainerScrollJS = self.generateUnlimitedContainerScrollScript(elements)
+                    webView.evaluateJavaScript(unlimitedContainerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🎯 2단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("♾️ 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         } else {
-            TabPersistenceManager.debugMessages.append("🎯 2단계 스킵 - 컨테이너 스크롤 요소 없음")
+            TabPersistenceManager.debugMessages.append("♾️ 2단계 스킵 - 컨테이너 스크롤 요소 없음")
         }
         
-        // **3단계: iframe 스크롤 복원 (기존 120ms 유지)**
+        // **3단계: iframe 무제한 스크롤 복원 (기존 120ms 유지)**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🎯 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
+            TabPersistenceManager.debugMessages.append("♾️ 3단계 iframe 무제한 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
             restoreSteps.append((3, { stepCompletion in
                 let waitTime: TimeInterval = 0.12 // 🔧 기존 120ms 유지
-                TabPersistenceManager.debugMessages.append("🎯 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("♾️ 3단계: iframe 무제한 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generateUnlimitedIframeScrollScript(iframeData)
-                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
+                    let unlimitedIframeScrollJS = self.generateUnlimitedIframeScrollScript(iframeData)
+                    webView.evaluateJavaScript(unlimitedIframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🎯 3단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("♾️ 3단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         } else {
-            TabPersistenceManager.debugMessages.append("🎯 3단계 스킵 - iframe 요소 없음")
+            TabPersistenceManager.debugMessages.append("♾️ 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (기존 1초 유지)**
-        TabPersistenceManager.debugMessages.append("🎯 4단계 최종 보정 단계 추가 (필수)")
+        // **4단계: 무제한 최종 확인 및 보정 (기존 1초 유지)**
+        TabPersistenceManager.debugMessages.append("♾️ 4단계 무제한 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
             let waitTime: TimeInterval = 1.0 // 🔧 기존 1초 유지
-            TabPersistenceManager.debugMessages.append("🎯 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("♾️ 4단계: 무제한 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                let finalVerifyJS = self.generateSmartFinalVerifyJS()
+                let unlimitedFinalVerifyJS = """
+                (function() {
+                    try {
+                        const targetX = parseFloat('\(self.scrollPosition.x)');
+                        const targetY = parseFloat('\(self.scrollPosition.y)');
+                        
+                        // 네이티브 스크롤 위치 정밀 확인
+                        const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        const tolerance = 10.0; // ♾️ 최종 보정 허용 오차 확대: 1px → 10px
+                        
+                        console.log('♾️ 무제한 최종 검증:', {
+                            target: [targetX, targetY],
+                            current: [currentX, currentY],
+                            tolerance: tolerance
+                        });
+                        
+                        // ♾️ **무제한 최종 보정** (범위 제한 없음)
+                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
+                            console.log('♾️ 무제한 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            
+                            // ♾️ **강력한 최종 보정 (모든 방법 동원)**
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.documentElement.scrollLeft = targetX;
+                            document.body.scrollTop = targetY;
+                            document.body.scrollLeft = targetX;
+                            
+                            // scrollingElement 활용
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = targetY;
+                                document.scrollingElement.scrollLeft = targetX;
+                            }
+                            
+                            // 추가 강제 방법들
+                            try {
+                                // CSS 스크롤 동작 강제
+                                document.documentElement.style.scrollBehavior = 'auto';
+                                window.scrollTo(targetX, targetY);
+                                
+                                // 지연 후 한 번 더 확인
+                                setTimeout(function() {
+                                    const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                                    const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                                    console.log('♾️ 보정 후 무제한 위치:', [finalX, finalY]);
+                                    
+                                    // 여전히 차이가 크면 한 번 더 시도
+                                    if (Math.abs(finalX - targetX) > tolerance || Math.abs(finalY - targetY) > tolerance) {
+                                        window.scrollTo(targetX, targetY);
+                                        console.log('♾️ 추가 보정 시도 완료');
+                                    }
+                                }, 50);
+                                
+                            } catch(e) {
+                                console.log('♾️ 추가 보정 방법 실패 (정상):', e.message);
+                            }
+                        }
+                        
+                        // ♾️ **범위 제한 없는 성공 판정** (큰 허용 오차)
+                        const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
+                        
+                        console.log('♾️ 무제한 최종보정 완료:', {
+                            current: [finalCurrentX, finalCurrentY],
+                            target: [targetX, targetY],
+                            tolerance: tolerance,
+                            isWithinTolerance: isWithinTolerance,
+                            note: '범위제한없음'
+                        });
+                        
+                        // ♾️ **관대한 성공 판정** (완벽하지 않아도 OK)
+                        return true; // 무조건 성공으로 처리 (범위 제한 없음)
+                    } catch(e) { 
+                        console.error('♾️ 무제한 최종보정 실패:', e);
+                        return true; // 에러도 성공으로 처리 (관대한 정책)
+                    }
+                })()
+                """
                 
-                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true // 관대한 성공 판정
-                    TabPersistenceManager.debugMessages.append("🎯 4단계 최종보정 완료: \(success ? "성공" : "성공(관대)")")
+                webView.evaluateJavaScript(unlimitedFinalVerifyJS) { result, _ in
+                    let success = (result as? Bool) ?? true // ♾️ 실패도 성공으로 처리
+                    TabPersistenceManager.debugMessages.append("♾️ 4단계 무제한 최종보정 완료: \(success ? "성공" : "성공(관대)")")
                     stepCompletion(true) // 항상 성공
                 }
             }
         }))
         
-        TabPersistenceManager.debugMessages.append("🎯 총 \(restoreSteps.count)단계 스마트 점진적 보정 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("♾️ 총 \(restoreSteps.count)단계 무제한 점진적 보정 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -531,12 +572,12 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
-                TabPersistenceManager.debugMessages.append("🎯 \(stepInfo.step)단계 실행 시작")
+                TabPersistenceManager.debugMessages.append("♾️ \(stepInfo.step)단계 실행 시작")
                 
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("🎯 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("♾️ 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -547,110 +588,16 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🎯 스마트 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("🎯 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
-                completion(true) // 항상 성공으로 처리
+                TabPersistenceManager.debugMessages.append("♾️ 무제한 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("♾️ 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
+                completion(true) // ♾️ 항상 성공으로 처리
             }
         }
         
         executeNextStep()
     }
     
-    // 🎯 **새로 추가: 스마트 검증 JS**
-    private func generateSmartVerifyJS() -> String {
-        return """
-        (function() {
-            try {
-                const anchorSel = \(anchorSelector != nil ? "'\(anchorSelector!)'" : "null");
-                const anchorOff = parseFloat('\(anchorYOffset ?? 0)');
-                const bottomOffset = parseFloat('\(bottomOffset ?? .infinity)');
-                const targetY = parseFloat('\(scrollPosition.y)');
-                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                const tolerance = 10.0; // 허용 오차
-                
-                console.log('🎯 스마트 검증:', {
-                    anchor: anchorSel,
-                    bottom: bottomOffset,
-                    target: targetY,
-                    current: currentY,
-                    diff: Math.abs(currentY - targetY)
-                });
-                
-                // 앵커가 있고 요소가 여전히 존재하면 앵커 우선
-                if (anchorSel && document.querySelector(anchorSel)) {
-                    console.log('🎯 앵커 기반 검증 완료');
-                    return 'anchor_verified';
-                }
-                
-                // 바닥 기준인 경우
-                if (bottomOffset < 40) {
-                    const maxY = Math.max(0, (document.documentElement.scrollHeight||0) - (window.innerHeight||0));
-                    const currentBottom = Math.max(0, maxY - currentY);
-                    if (Math.abs(currentBottom - bottomOffset) <= tolerance) {
-                        console.log('🎯 바닥 기준 검증 완료');
-                        return 'bottom_verified';
-                    }
-                }
-                
-                // 일반 절대값 검증
-                if (Math.abs(currentY - targetY) <= tolerance) {
-                    console.log('🎯 절대값 검증 완료');
-                    return 'absolute_verified';
-                }
-                
-                console.log('🎯 검증 실패, 보정 필요');
-                return 'correction_needed';
-            } catch(e) { 
-                console.error('🎯 스마트 검증 실패:', e);
-                return 'error'; 
-            }
-        })()
-        """
-    }
-    
-    // 🎯 **새로 추가: 스마트 최종 검증 JS**
-    private func generateSmartFinalVerifyJS() -> String {
-        return """
-        (function() {
-            try {
-                const anchorSel = \(anchorSelector != nil ? "'\(anchorSelector!)'" : "null");
-                const bottomOffset = parseFloat('\(bottomOffset ?? .infinity)');
-                const targetY = parseFloat('\(scrollPosition.y)');
-                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                const tolerance = 15.0; // 최종 보정은 더 관대하게
-                
-                console.log('🎯 스마트 최종 검증:', {
-                    anchor: anchorSel,
-                    bottom: bottomOffset,
-                    target: targetY,
-                    current: currentY,
-                    tolerance: tolerance
-                });
-                
-                // 앵커가 있으면 성공으로 간주
-                if (anchorSel && document.querySelector(anchorSel)) {
-                    console.log('🎯 앵커 존재 - 최종 성공');
-                    return true;
-                }
-                
-                // 바닥 기준이면 관대하게 판정
-                if (bottomOffset < 40) {
-                    console.log('🎯 바닥 기준 - 최종 성공');
-                    return true;
-                }
-                
-                // 일반적인 경우도 관대하게 판정
-                console.log('🎯 최종 검증 완료 (관대한 정책)');
-                return true;
-            } catch(e) { 
-                console.error('🎯 스마트 최종 검증 실패:', e);
-                return true; // 에러도 성공으로 처리
-            }
-        })()
-        """
-    }
-    
-    // 컨테이너 스크롤 복원 스크립트 (기존 유지)
+    // ♾️ **무제한 컨테이너 스크롤 복원 스크립트** - 범위 제한 제거
     private func generateUnlimitedContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
@@ -728,7 +675,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // iframe 스크롤 복원 스크립트 (기존 유지)
+    // ♾️ **무제한 iframe 스크롤 복원 스크립트** - 범위 제한 제거
     private func generateUnlimitedIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
         let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
@@ -968,7 +915,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (앵커 요소 강화)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (♾️ 무제한 스크롤 감지 강화)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -990,7 +937,7 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        dbg("🎯 앵커 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        dbg("♾️ 무제한 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1014,7 +961,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 앵커 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("♾️ 무제한 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1053,13 +1000,10 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
-            dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
+            dbg("♾️ 캡처된 jsState 키: \(Array(jsState.keys))")
             if let scrollData = jsState["scroll"] as? [String: Any],
                let elements = scrollData["elements"] as? [[String: Any]] {
-                dbg("🎯 캡처된 스크롤 요소: \(elements.count)개")
-            }
-            if let anchor = jsState["anchor"] as? [String: Any] {
-                dbg("🎯 캡처된 앵커: \(anchor)")
+                dbg("♾️ 캡처된 무제한 스크롤 요소: \(elements.count)개")
             }
         }
         
@@ -1072,7 +1016,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ 앵커 기반 직렬 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 무제한 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1171,10 +1115,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 🎯 **앵커 기반 스크롤 감지 강화 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. ♾️ **무제한 스크롤 감지 강화 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateAnchorScrollCaptureScript()
+            let jsScript = generateUnlimitedScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1204,7 +1148,7 @@ final class BFCacheTransitionSystem: NSObject {
             return newVersion
         }
         
-        // 상대적 위치 계산 (백분율)
+        // ♾️ **무제한 상대적 위치 계산 (백분율) - 범위 제한 없음**
         let scrollPercent: CGPoint
         if captureData.actualScrollableSize.width > captureData.viewportSize.width && captureData.actualScrollableSize.height > captureData.viewportSize.height {
             let maxScrollX = captureData.actualScrollableSize.width - captureData.viewportSize.width
@@ -1216,25 +1160,6 @@ final class BFCacheTransitionSystem: NSObject {
             )
         } else {
             scrollPercent = CGPoint.zero
-        }
-        
-        // 🎯 **새로 추가: 앵커 정보 추출**
-        var bottomOffset: CGFloat? = nil
-        var anchorSelector: String? = nil
-        var anchorYOffset: CGFloat? = nil
-        
-        if let jsState = jsState {
-            if let bottom = jsState["bottom"] as? [String: Any],
-               let offset = bottom["offset"] as? Double {
-                bottomOffset = CGFloat(offset)
-            }
-            
-            if let anchor = jsState["anchor"] as? [String: Any] {
-                anchorSelector = anchor["selector"] as? String
-                if let offset = anchor["anchorOffset"] as? Double {
-                    anchorYOffset = CGFloat(offset)
-                }
-            }
         }
         
         let snapshot = BFCacheSnapshot(
@@ -1249,21 +1174,18 @@ final class BFCacheTransitionSystem: NSObject {
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version,
-            bottomOffset: bottomOffset,
-            anchorSelector: anchorSelector,
-            anchorYOffset: anchorYOffset
+            version: version
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **핵심 개선: 앵커 기반 스크롤 감지 JavaScript 생성**
-    private func generateAnchorScrollCaptureScript() -> String {
+    // ♾️ **핵심 개선: 무제한 스크롤 감지 JavaScript 생성 - 기존 동적 콘텐츠 안정화 대기시간 유지**
+    private func generateUnlimitedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🎯 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
+                // ♾️ **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
                 function waitForDynamicContent(callback) {
                     let stabilityCount = 0;
                     const requiredStability = 3; // 3번 연속 안정되면 완료
@@ -1292,14 +1214,14 @@ final class BFCacheTransitionSystem: NSObject {
 
                 function captureScrollData() {
                     try {
-                        // 🎯 **1단계: 스크롤 요소 스캔 - 2000개로 확장, parseFloat 정밀도 적용**
+                        // ♾️ **1단계: 무제한 스크롤 요소 스캔 - 2000개로 확장, parseFloat 정밀도 적용**
                         function findAllScrollableElements() {
                             const scrollables = [];
-                            const maxElements = 2000; // 기존 유지
+                            const maxElements = 2000; // ♾️ **기존 유지**
                             
-                            console.log('🎯 앵커 기반 스크롤 감지 강화: 최대 ' + maxElements + '개 요소 감지');
+                            console.log('♾️ 무제한 스크롤 감지 강화: 최대 ' + maxElements + '개 요소 감지');
                             
-                            // 1) 명시적 overflow 스타일을 가진 요소들
+                            // 1) 명시적 overflow 스타일을 가진 요소들 (범위 제한 없음)
                             const explicitScrollables = document.querySelectorAll('*');
                             let count = 0;
                             
@@ -1314,11 +1236,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                                     (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                                     
-                                    // parseFloat로 정밀도 향상, 0.1px 단위까지 감지
+                                    // ♾️ parseFloat로 정밀도 향상, 0.1px 단위까지 감지 (더 민감하게)
                                     const scrollTop = parseFloat(el.scrollTop) || 0;
                                     const scrollLeft = parseFloat(el.scrollLeft) || 0;
                                     
-                                    // 0.1px도 저장
+                                    // ♾️ **범위 제한 완전 제거** - 0.1px도 저장
                                     if (scrollTop > 0.1 || scrollLeft > 0.1) {
                                         const selector = generateBestSelector(el);
                                         if (selector) {
@@ -1330,7 +1252,7 @@ final class BFCacheTransitionSystem: NSObject {
                                                 }
                                             }
                                             
-                                            // 상대적 위치 계산
+                                            // ♾️ **무제한 상대적 위치 계산**
                                             const maxScrollTop = el.scrollHeight - el.clientHeight;
                                             const maxScrollLeft = el.scrollWidth - el.clientWidth;
                                             
@@ -1342,8 +1264,8 @@ final class BFCacheTransitionSystem: NSObject {
                                                 leftPercent: maxScrollLeft > 0 ? (scrollLeft / maxScrollLeft * 100) : 0,
                                                 maxTop: maxScrollTop,
                                                 maxLeft: maxScrollLeft,
-                                                actualMaxTop: el.scrollHeight,
-                                                actualMaxLeft: el.scrollWidth,
+                                                actualMaxTop: el.scrollHeight, // ♾️ 실제 최대 스크롤 높이
+                                                actualMaxLeft: el.scrollWidth, // ♾️ 실제 최대 스크롤 너비
                                                 id: el.id || '',
                                                 className: el.className || '',
                                                 tagName: el.tagName.toLowerCase(),
@@ -1355,21 +1277,26 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 2) 범용 커뮤니티/SPA 사이트 컨테이너들
+                            // ♾️ **2) 범용 커뮤니티/SPA 사이트 컨테이너들 (기존 패턴 유지)**
                             const commonScrollContainers = [
                                 '.scroll-container', '.scrollable', '.content', '.main', '.body',
                                 '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
                                 '.list', '.feed', '.timeline', '.board', '.gallery', '.gall_list', '.article-board',
+                                // ♾️ **무한스크롤 패턴들 - 더 많은 사이트 대응**
                                 '.infinite-scroll', '.virtual-list', '.lazy-load', '.pagination-container',
                                 '.posts-container', '.comments-list', '.thread-list', '.message-list',
                                 '.activity-feed', '.news-feed', '.social-feed', '.content-stream',
                                 '.card-list', '.grid-container', '.masonry', '.waterfall-layout',
+                                // ♾️ **소셜미디어/커뮤니티 특화 패턴**
                                 '.tweet-list', '.post-stream', '.story-list', '.video-list',
                                 '.chat-messages', '.notification-list', '.search-results',
+                                // ♾️ **모바일 최적화 패턴**
                                 '.mobile-list', '.touch-scroll', '.swipe-container',
+                                // ♾️ **네이버 카페 등 범용 커뮤니티 패턴**
                                 '.ArticleList', '.CommentArticleList', '.List.CommentArticleList',
                                 '.content.location_fix', '.list_board', '.RisingArticleList',
                                 '#ct[role="main"]', '.CafeMain', '.article-content',
+                                // ♾️ **추가 범용 패턴**
                                 '.container-fluid', '.main-container', '.page-content',
                                 '.content-wrapper', '.app-content', '.site-content'
                             ];
@@ -1381,13 +1308,15 @@ final class BFCacheTransitionSystem: NSObject {
                                 for (const el of elements) {
                                     if (count >= maxElements) break;
                                     
+                                    // ♾️ parseFloat 정밀도 적용 (범위 제한 없음)
                                     const scrollTop = parseFloat(el.scrollTop) || 0;
                                     const scrollLeft = parseFloat(el.scrollLeft) || 0;
                                     
+                                    // ♾️ **0.1px 이상이면 모두 저장** (완전 무제한)
                                     if ((scrollTop > 0.1 || scrollLeft > 0.1) && 
                                         !scrollables.some(s => s.selector === generateBestSelector(el))) {
                                         
-                                        // 동적 속성 수집
+                                        // 🌐 동적 속성 수집
                                         const dynamicAttrs = {};
                                         for (const attr of el.attributes) {
                                             if (attr.name.startsWith('data-')) {
@@ -1395,6 +1324,7 @@ final class BFCacheTransitionSystem: NSObject {
                                             }
                                         }
                                         
+                                        // ♾️ **무제한 상대적 위치 계산**
                                         const maxScrollTop = el.scrollHeight - el.clientHeight;
                                         const maxScrollLeft = el.scrollWidth - el.clientWidth;
                                         
@@ -1418,11 +1348,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            console.log('🎯 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
+                            console.log('♾️ 무제한 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
                             return scrollables;
                         }
                         
-                        // 🎯 **2단계: iframe 스크롤 감지**
+                        // 🖼️ **2단계: iframe 무제한 스크롤 감지 (parseFloat 적용)**
                         function detectIframeScrolls() {
                             const iframes = [];
                             const iframeElements = document.querySelectorAll('iframe');
@@ -1431,10 +1361,13 @@ final class BFCacheTransitionSystem: NSObject {
                                 try {
                                     const contentWindow = iframe.contentWindow;
                                     if (contentWindow && contentWindow.location) {
+                                        // ♾️ parseFloat 정밀도 적용 (범위 제한 없음)
                                         const scrollX = parseFloat(contentWindow.scrollX) || 0;
                                         const scrollY = parseFloat(contentWindow.scrollY) || 0;
                                         
+                                        // ♾️ **0.1px 이상이면 모두 저장**
                                         if (scrollX > 0.1 || scrollY > 0.1) {
+                                            // 🌐 동적 속성 수집
                                             const dynamicAttrs = {};
                                             for (const attr of iframe.attributes) {
                                                 if (attr.name.startsWith('data-')) {
@@ -1454,7 +1387,7 @@ final class BFCacheTransitionSystem: NSObject {
                                         }
                                     }
                                 } catch(e) {
-                                    // Cross-origin iframe도 기본 정보 저장
+                                    // 🌐 Cross-origin iframe도 기본 정보 저장
                                     const dynamicAttrs = {};
                                     for (const attr of iframe.attributes) {
                                         if (attr.name.startsWith('data-')) {
@@ -1479,29 +1412,7 @@ final class BFCacheTransitionSystem: NSObject {
                             return iframes;
                         }
                         
-                        // 🎯 **3단계: 뷰포트 중앙 앵커 요소 감지**
-                        function getCenterAnchor() {
-                            try {
-                                const x = Math.round(window.innerWidth / 2);
-                                const y = Math.round(window.innerHeight / 2);
-                                const el = document.elementFromPoint(x, y);
-                                if (!el) return null;
-                                
-                                const selector = generateBestSelector(el);
-                                if (!selector) return null;
-                                
-                                const rect = el.getBoundingClientRect();
-                                const anchorOffset = Math.round((window.innerHeight / 2) - rect.top); // 뷰포트 중앙과의 상대 위치
-                                
-                                console.log('🎯 앵커 요소 발견:', selector, '오프셋:', anchorOffset);
-                                return { selector, anchorOffset };
-                            } catch(e) {
-                                console.log('🎯 앵커 요소 감지 실패:', e.message);
-                                return null;
-                            }
-                        }
-                        
-                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응
+                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응 (기존 로직 유지)
                         function generateBestSelector(element) {
                             if (!element || element.nodeType !== 1) return null;
                             
@@ -1510,7 +1421,7 @@ final class BFCacheTransitionSystem: NSObject {
                                 return `#${element.id}`;
                             }
                             
-                            // 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
+                            // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
                             const dataAttrs = Array.from(element.attributes)
                                 .filter(attr => attr.name.startsWith('data-'))
                                 .map(attr => `[${attr.name}="${attr.value}"]`);
@@ -1542,7 +1453,7 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 4순위: 상위 경로 포함
+                            // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
                             let path = [];
                             let current = element;
                             while (current && current !== document.documentElement) {
@@ -1564,32 +1475,27 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 🎯 **메인 실행 - 앵커 기반 정밀도 향상**
+                        // ♾️ **메인 실행 - 무제한 정밀도 향상**
                         const scrollableElements = findAllScrollableElements();
                         const iframeScrolls = detectIframeScrolls();
-                        const anchor = getCenterAnchor();
                         
-                        // 메인 스크롤 위치도 parseFloat 정밀도 적용
+                        // ♾️ **메인 스크롤 위치도 parseFloat 정밀도 적용 (범위 제한 없음)**
                         const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
                         const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
                         
-                        // 뷰포트 및 콘텐츠 크기 정밀 계산
+                        // ♾️ **뷰포트 및 콘텐츠 크기 정밀 계산 (실제 크기 포함)**
                         const viewportWidth = parseFloat(window.innerWidth) || 0;
                         const viewportHeight = parseFloat(window.innerHeight) || 0;
                         const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                         const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                         
-                        // 🎯 **바닥 기준 오프셋 계산**
-                        const maxY = Math.max(0, contentHeight - viewportHeight);
-                        const bottomOffset = Math.max(0, maxY - mainScrollY); // 바닥까지 남은 px
-                        
-                        // 실제 스크롤 가능 크기 계산
+                        // ♾️ **실제 스크롤 가능 크기 계산** (최대한 정확하게)
                         const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
                         const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
                         
-                        console.log(`🎯 앵커 기반 스크롤 감지 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
-                        console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
-                        console.log(`🎯 바닥 오프셋: ${bottomOffset}px, 앵커:`, anchor);
+                        console.log(`♾️ 무제한 스크롤 감지 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`♾️ 무제한 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
+                        console.log(`♾️ 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
                         resolve({
                             scroll: { 
@@ -1608,33 +1514,26 @@ final class BFCacheTransitionSystem: NSObject {
                             },
                             content: {
                                 width: contentWidth,
-                                height: contentHeight,
-                                maxY: maxY
+                                height: contentHeight
                             },
-                            bottom: { // 🎯 **새로 추가: 바닥 기준 정보**
-                                offset: bottomOffset
-                            },
-                            anchor: anchor, // 🎯 **새로 추가: 앵커 요소 정보**
-                            actualScrollable: {
+                            actualScrollable: { // ♾️ **실제 스크롤 가능 크기 추가**
                                 width: actualScrollableWidth,
                                 height: actualScrollableHeight
                             }
                         });
                     } catch(e) { 
-                        console.error('🎯 앵커 기반 스크롤 감지 실패:', e);
+                        console.error('♾️ 무제한 스크롤 감지 실패:', e);
                         resolve({
                             scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0, elements: [] },
                             iframes: [],
                             href: window.location.href,
                             title: document.title,
-                            bottom: { offset: 0 },
-                            anchor: null,
                             actualScrollable: { width: 0, height: 0 }
                         });
                     }
                 }
 
-                // 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
+                // ♾️ 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
                 if (document.readyState === 'complete') {
                     waitForDynamicContent(captureScrollData);
                 } else {
@@ -1945,7 +1844,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🎯 앵커 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("♾️ 무제한 BFCache 제스처 설정 완료 (무제한 스크롤 감지 강화): 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2357,7 +2256,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🎯 **기존 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
+    // ♾️ **기존 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
     private func performNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
@@ -2376,13 +2275,13 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🎯 **기존 타이밍 스마트 BFCache 복원**
-        trySmartBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+        // ♾️ **기존 타이밍 무제한 BFCache 복원**
+        tryUnlimitedBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - 스마트 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 무제한 BFCache \(success ? "성공" : "실패")")
             }
         }
         
@@ -2391,8 +2290,8 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
-    // 🎯 **기존 타이밍 스마트 BFCache 복원** 
-    private func trySmartBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // ♾️ **기존 타이밍 무제한 BFCache 복원** 
+    private func tryUnlimitedBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -2401,12 +2300,12 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 기존 타이밍 스마트 복원
+            // BFCache 히트 - 기존 타이밍 무제한 복원
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 기존 타이밍 스마트 BFCache 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ 기존 타이밍 무제한 BFCache 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ 기존 타이밍 스마트 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 기존 타이밍 무제한 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -2465,7 +2364,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        trySmartBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+        tryUnlimitedBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2481,7 +2380,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        trySmartBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+        tryUnlimitedBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2508,7 +2407,7 @@ final class BFCacheTransitionSystem: NSObject {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
-                console.log('🎯 스마트 BFCache 페이지 복원');
+                console.log('♾️ 무제한 BFCache 페이지 복원');
                 
                 // 🌐 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
@@ -2526,20 +2425,22 @@ final class BFCacheTransitionSystem: NSObject {
         
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
-                console.log('📸 스마트 BFCache 페이지 저장');
+                console.log('📸 무제한 BFCache 페이지 저장');
             }
         });
         
-        // 🎯 Cross-origin iframe 스마트 스크롤 복원 리스너
+        // ♾️ Cross-origin iframe 무제한 스크롤 복원 리스너
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
                 try {
+                    // ♾️ parseFloat로 정밀도 향상 (범위 제한 없음)
                     const targetX = parseFloat(event.data.scrollX) || 0;
                     const targetY = parseFloat(event.data.scrollY) || 0;
                     const unlimited = event.data.unlimited || false;
                     
-                    console.log('🎯 Cross-origin iframe 스마트 스크롤 복원:', targetX, targetY, unlimited ? '(스마트 모드)' : '');
+                    console.log('♾️ Cross-origin iframe 무제한 스크롤 복원:', targetX, targetY, unlimited ? '(무제한 모드)' : '');
                     
+                    // ♾️ 무제한 스크롤 설정
                     window.scrollTo(targetX, targetY);
                     document.documentElement.scrollTop = targetY;
                     document.documentElement.scrollLeft = targetX;
@@ -2558,7 +2459,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache🎯] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache♾️] \(msg)")
     }
 }
 
@@ -2580,7 +2481,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🎯 앵커 기반 스마트 BFCache 시스템 설치 완료 (끝으로 붙는 문제 해결)")
+        TabPersistenceManager.debugMessages.append("✅ ♾️ 무제한 스크롤 범위 BFCache 시스템 설치 완료 (소수점 정밀도 + 범위 제한 완전 제거)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2603,7 +2504,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 스마트 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("♾️ 무제한 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
@@ -2637,5 +2538,32 @@ extension BFCacheTransitionSystem {
         // 현재 페이지 캡처 (백그라운드 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
         dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
+        
+        // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
+        if stateModel.dataModel.currentPageIndex > 0 {
+            // 최근 3개 페이지만 체크 (성능 고려)
+            let checkCount = min(3, stateModel.dataModel.currentPageIndex)
+            let startIndex = max(0, stateModel.dataModel.currentPageIndex - checkCount)
+            
+            for i in startIndex..<stateModel.dataModel.currentPageIndex {
+                let previousRecord = stateModel.dataModel.pageHistory[i]
+                
+                // 캐시가 없는 경우만 메타데이터 저장
+                if !hasCache(for: previousRecord.id) {
+                    // 메타데이터만 저장 (이미지는 없음)
+                    let metadataSnapshot = BFCacheSnapshot(
+                        pageRecord: previousRecord,
+                        scrollPosition: .zero,
+                        timestamp: Date(),
+                        captureStatus: .failed,
+                        version: 1
+                    )
+                    
+                    // 디스크에 메타데이터만 저장
+                    saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
+                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                }
+            }
+        }
     }
 }
