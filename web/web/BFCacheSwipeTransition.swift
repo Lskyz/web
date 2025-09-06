@@ -12,7 +12,7 @@
 //  ⚡ **즉시 스크롤 복원 개선** - 최상단 갔다가 내려오는 문제 해결
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
-//  🚀 **복원/대기 시간 최적화** - 캡처 안정성 유지하며 20% 성능 향상
+//  🚀 **상한선 기반 즉시 완료** - 고정대기 → 조건만족시 즉시완료, 전체 200ms 상한선
 //
 
 import UIKit
@@ -64,11 +64,11 @@ private class GestureContext {
     }
 }
 
-// MARK: - 🔄 적응형 타이밍 학습 시스템
+// MARK: - 🔄 적응형 타이밍 학습 시스템 (상한선 기준)
 struct SiteTimingProfile: Codable {
     let hostname: String
     var loadingSamples: [TimeInterval] = []
-    var averageLoadingTime: TimeInterval = 0.4  // 🚀 0.5 → 0.4초 (-100ms)
+    var averageLoadingTime: TimeInterval = 0.15  // 🚀 상한선 기준으로 단축
     var successfulRestores: Int = 0
     var totalRestores: Int = 0
     var lastUpdated: Date = Date()
@@ -96,10 +96,10 @@ struct SiteTimingProfile: Codable {
         lastUpdated = Date()
     }
     
-    // 🌐 **개선된 적응형 대기 시간 계산** - 🚀 최적화 적용
+    // 🌐 **상한선 기반 적응형 대기 시간 계산**
     func getAdaptiveWaitTime(step: Int) -> TimeInterval {
-        let baseTime = max(averageLoadingTime, 0.4) // 🚀 최소 0.4초 보장 (0.5 → 0.4초, -100ms)
-        let stepMultiplier = Double(step) * 0.12 // 🚀 0.15 → 0.12초로 감소 (-30ms per step)
+        let baseTime = max(averageLoadingTime, 0.15) // 최소 150ms 보장
+        let stepMultiplier = Double(step) * 0.08 // 단계별 80ms씩 증가
         let successFactor = successRate > 0.8 ? 0.8 : 1.0 // 성공률 높으면 빠르게
         return (baseTime + stepMultiplier) * successFactor
     }
@@ -191,14 +191,14 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **핵심 개선: 즉시 스크롤 복원 + 다단계 보정 시스템 - 🚀 최적화 적용**
+    // ⚡ **핵심 개선: 즉시 스크롤 복원 + 상한선 기반 다단계 보정 시스템**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("⚡ BFCache 즉시 복원 시작 - 상태: \(captureStatus.rawValue)")
         
         // ⚡ **즉시 스크롤 복원 먼저 수행 (깜빡임 방지)**
         performInstantScrollRestore(to: webView)
         
-        // 🔧 **핵심 수정: 모든 상태에서 다단계 복원 시도 (최종보정 보장)**
+        // 🔧 **핵심 수정: 모든 상태에서 상한선 기반 다단계 복원 시도**
         switch captureStatus {
         case .failed:
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 즉시 스크롤만 복원")
@@ -207,20 +207,20 @@ struct BFCacheSnapshot: Codable {
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 즉시 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 즉시 복원 + 상한선 기반 보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 즉시 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 즉시 복원 + 상한선 기반 전체 복원")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 즉시 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 즉시 복원 + 상한선 기반 전체 복원")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 BFCache 즉시 복원 후 다단계 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 BFCache 즉시 복원 후 상한선 기반 다단계 보정 시작")
         
-        // 🔧 **즉시 복원 후 추가 보정 단계 실행**
+        // 🔧 **즉시 복원 후 상한선 기반 추가 보정 단계 실행**
         DispatchQueue.main.async {
-            self.performProgressiveRestore(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performProgressiveRestoreWithMaxTimeout(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
@@ -273,117 +273,118 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원 단계 완료")
     }
     
-    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🚀 최적화 적용**
-    private func performProgressiveRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+    // 🚀 **새로운 상한선 기반 점진적 복원 시스템 - 조건 만족시 즉시 완료**
+    private func performProgressiveRestoreWithMaxTimeout(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
+        let globalTimeout: TimeInterval = 0.2 // 🚀 전체 200ms 상한선
         
         // 사이트별 적응형 타이밍 계산
         let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
         
-        var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
+        var restoreSteps: [(step: Int, maxWaitTime: TimeInterval, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🔧 점진적 보정 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🚀 상한선 기반 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스크롤 확인 및 즉시 보정 (🚀 50ms → 30ms) - 즉시 복원 검증**
-        restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.03 // 🚀 50ms → 30ms (-20ms)
-            TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+        // **1단계: 스크롤 확인 및 즉시 보정 (상한선 30ms)**
+        restoreSteps.append((1, 0.03, { stepCompletion in
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (상한선: 30ms)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
-                let verifyScrollJS = """
+            self.waitForConditionWithTimeout(
+                webView: webView,
+                condition: """
                 (function() {
-                    try {
-                        const targetX = \(self.scrollPosition.x);
-                        const targetY = \(self.scrollPosition.y);
-                        const currentX = window.scrollX || window.pageXOffset || 0;
-                        const currentY = window.scrollY || window.pageYOffset || 0;
-                        const tolerance = 5;
-                        
-                        // 위치가 맞지 않으면 즉시 보정
-                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('⚡ 즉시 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            window.scrollTo(targetX, targetY);
-                            document.documentElement.scrollTop = targetY;
-                            document.body.scrollTop = targetY;
-                            return 'corrected';
-                        } else {
-                            console.log('⚡ 즉시 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            return 'verified';
-                        }
-                    } catch(e) { 
-                        console.error('⚡ 즉시 복원 검증 실패:', e);
-                        return false; 
+                    const targetX = \(self.scrollPosition.x);
+                    const targetY = \(self.scrollPosition.y);
+                    const currentX = window.scrollX || window.pageXOffset || 0;
+                    const currentY = window.scrollY || window.pageYOffset || 0;
+                    const tolerance = 5;
+                    
+                    // 위치가 맞지 않으면 즉시 보정
+                    if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
+                        console.log('⚡ 즉시 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
+                        window.scrollTo(targetX, targetY);
+                        document.documentElement.scrollTop = targetY;
+                        document.body.scrollTop = targetY;
+                        return 'corrected';
+                    } else {
+                        console.log('⚡ 즉시 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
+                        return 'verified';
                     }
                 })()
-                """
-                
-                webView.evaluateJavaScript(verifyScrollJS) { result, _ in
+                """,
+                maxWaitTime: 0.03,
+                completion: { result in
                     let resultString = result as? String ?? "false"
                     let success = (resultString == "verified" || resultString == "corrected")
                     TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
-            }
+            )
         }))
         
-        // **2단계: 주요 컨테이너 스크롤 복원 (🚀 최소 100ms → 80ms) - 조건부 포함**
+        // **2단계: 주요 컨테이너 스크롤 복원 (상한선 80ms) - 조건부 포함**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
             TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime = max(0.08, profile.getAdaptiveWaitTime(step: 1)) // 🚀 최소 80ms (100ms → 80ms, -20ms)
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            restoreSteps.append((2, 0.08, { stepCompletion in
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (상한선: 80ms)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateContainerScrollScript(elements)
-                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
+                let containerScrollJS = self.generateContainerScrollScript(elements)
+                self.waitForConditionWithTimeout(
+                    webView: webView,
+                    condition: containerScrollJS,
+                    maxWaitTime: 0.08,
+                    completion: { result in
                         let success = (result as? Bool) ?? false
                         TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
-                }
+                )
             }))
         } else {
             TabPersistenceManager.debugMessages.append("🔧 2단계 스킵 - 컨테이너 스크롤 요소 없음")
         }
         
-        // **3단계: iframe 스크롤 복원 (적응형 대기) - 조건부 포함**
+        // **3단계: iframe 스크롤 복원 (적응형 상한선) - 조건부 포함**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
             TabPersistenceManager.debugMessages.append("🔧 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
-            restoreSteps.append((3, { stepCompletion in
-                let waitTime = profile.getAdaptiveWaitTime(step: 2)
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            let maxWaitTime = min(0.05, profile.getAdaptiveWaitTime(step: 2)) // 최대 50ms
+            restoreSteps.append((3, maxWaitTime, { stepCompletion in
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (상한선: \(String(format: "%.0f", maxWaitTime * 1000))ms)")
                 
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
-                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
+                let iframeScrollJS = self.generateIframeScrollScript(iframeData)
+                self.waitForConditionWithTimeout(
+                    webView: webView,
+                    condition: iframeScrollJS,
+                    maxWaitTime: maxWaitTime,
+                    completion: { result in
                         let success = (result as? Bool) ?? false
                         TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
-                }
+                )
             }))
         } else {
             TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (🚀 최소 300ms → 250ms) - 항상 포함 (🔧 핵심 수정)**
+        // **4단계: 최종 확인 및 보정 (상한선 87ms) - 항상 포함**
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
-        restoreSteps.append((4, { stepCompletion in
-            let waitTime = max(0.25, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 250ms 최종 대기 (300ms → 250ms, -50ms)
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+        restoreSteps.append((4, 0.087, { stepCompletion in // 🚀 200ms - 30ms - 80ms - 3ms 여유 = 87ms
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (상한선: 87ms)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                let finalVerifyJS = """
+            self.waitForConditionWithTimeout(
+                webView: webView,
+                condition: """
                 (function() {
                     try {
                         const targetX = \(self.scrollPosition.x);
@@ -405,20 +406,31 @@ struct BFCacheSnapshot: Codable {
                             document.body.scrollTop = targetY;
                             document.body.scrollLeft = targetX;
                             
-                            // 한 번 더 확인
-                            setTimeout(function() {
-                                const finalX = window.scrollX || window.pageXOffset || 0;
-                                const finalY = window.scrollY || window.pageYOffset || 0;
-                                console.log('🔧 보정 후 위치:', [finalX, finalY]);
-                            }, 50);
+                            // DOM 안정화 대기
+                            return new Promise(resolve => {
+                                let checkCount = 0;
+                                function checkStability() {
+                                    const finalX = window.scrollX || window.pageXOffset || 0;
+                                    const finalY = window.scrollY || window.pageYOffset || 0;
+                                    const isStable = Math.abs(finalX - targetX) <= tolerance && Math.abs(finalY - targetY) <= tolerance;
+                                    
+                                    if (isStable || checkCount++ > 5) { // 최대 5번 체크
+                                        console.log('🔧 보정 안정화 완료:', [finalX, finalY], 'stable:', isStable);
+                                        resolve(isStable);
+                                    } else {
+                                        requestAnimationFrame(checkStability);
+                                    }
+                                }
+                                checkStability();
+                            });
                         }
                         
-                        // 🌐 동적 사이트 추가 보정
+                        // 이미 정확한 위치
                         const finalCurrentY = window.scrollY || window.pageYOffset || 0;
                         const finalCurrentX = window.scrollX || window.pageXOffset || 0;
                         const isCorrect = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('🔧 동적사이트 최종보정 완료:', {
+                        console.log('🔧 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
@@ -431,48 +443,111 @@ struct BFCacheSnapshot: Codable {
                         return false; 
                     }
                 })()
-                """
-                
-                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
+                """,
+                maxWaitTime: 0.087,
+                completion: { result in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔧 4단계 동적사이트 최종보정 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("🔧 4단계 최종보정 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
-            }
+            )
         }))
         
-        TabPersistenceManager.debugMessages.append("🔧 총 \(restoreSteps.count)단계 점진적 보정 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("🚀 총 \(restoreSteps.count)단계 상한선 기반 점진적 보정 단계 구성 완료")
+        
+        // 🚀 **전체 타임아웃 관리**
+        var isCompleted = false
+        let globalTimeoutTimer = DispatchTimer.schedule(delay: globalTimeout) {
+            if !isCompleted {
+                isCompleted = true
+                let duration = Date().timeIntervalSince(startTime)
+                let successCount = stepResults.filter { $0 }.count
+                let totalSteps = stepResults.count
+                TabPersistenceManager.debugMessages.append("⏰ 전체 상한선 도달 (200ms) - 강제 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                completion(successCount > 0) // 하나라도 성공하면 성공
+            }
+        }
         
         // 단계별 실행
         func executeNextStep() {
+            // 전체 타임아웃 체크
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed >= globalTimeout || isCompleted {
+                if !isCompleted {
+                    isCompleted = true
+                    globalTimeoutTimer.cancel()
+                    TabPersistenceManager.debugMessages.append("⏰ 단계 실행 중 전체 상한선 도달")
+                    completion(stepResults.filter { $0 }.count > 0)
+                }
+                return
+            }
+            
             if currentStep < restoreSteps.count {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
-                TabPersistenceManager.debugMessages.append("🔧 \(stepInfo.step)단계 실행 시작")
+                TabPersistenceManager.debugMessages.append("🚀 \(stepInfo.step)단계 실행 시작 (상한선: \(String(format: "%.0f", stepInfo.maxWaitTime * 1000))ms)")
                 
                 // 🌐 단계별 소요 시간 기록
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("🔧 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("🚀 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
-                    executeNextStep()
+                    
+                    if !isCompleted {
+                        executeNextStep()
+                    }
                 }
             } else {
                 // 모든 단계 완료
-                let duration = Date().timeIntervalSince(startTime)
-                let successCount = stepResults.filter { $0 }.count
-                let totalSteps = stepResults.count
-                let overallSuccess = successCount > totalSteps / 2
-                
-                TabPersistenceManager.debugMessages.append("🔧 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("🔧 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
-                completion(overallSuccess)
+                if !isCompleted {
+                    isCompleted = true
+                    globalTimeoutTimer.cancel()
+                    let duration = Date().timeIntervalSince(startTime)
+                    let successCount = stepResults.filter { $0 }.count
+                    let totalSteps = stepResults.count
+                    let overallSuccess = successCount > totalSteps / 2
+                    
+                    TabPersistenceManager.debugMessages.append("🚀 상한선 기반 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                    TabPersistenceManager.debugMessages.append("🚀 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
+                    completion(overallSuccess)
+                }
             }
         }
         
         executeNextStep()
+    }
+    
+    // 🚀 **새로운 조건부 대기 메서드 - 조건 만족시 즉시 완료**
+    private func waitForConditionWithTimeout(
+        webView: WKWebView,
+        condition: String,
+        maxWaitTime: TimeInterval,
+        completion: @escaping (Any?) -> Void
+    ) {
+        var isCompleted = false
+        let startTime = Date()
+        
+        // 타임아웃 타이머 설정
+        let timeoutTimer = DispatchTimer.schedule(delay: maxWaitTime) {
+            if !isCompleted {
+                isCompleted = true
+                TabPersistenceManager.debugMessages.append("⏰ 조건 대기 상한선 도달: \(String(format: "%.0f", maxWaitTime * 1000))ms")
+                completion(false)
+            }
+        }
+        
+        // JavaScript 조건 체크 및 즉시 완료
+        webView.evaluateJavaScript(condition) { result, error in
+            if !isCompleted {
+                isCompleted = true
+                timeoutTimer.cancel()
+                let elapsed = Date().timeIntervalSince(startTime)
+                TabPersistenceManager.debugMessages.append("✅ 조건 만족 즉시 완료: \(String(format: "%.2f", elapsed * 1000))ms (상한선: \(String(format: "%.0f", maxWaitTime * 1000))ms)")
+                completion(result)
+            }
+        }
     }
     
     // 🌐 **개선된 컨테이너 스크롤 복원 스크립트** - 동적 속성 고려
@@ -612,6 +687,30 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
             return nil
         }
+    }
+}
+
+// MARK: - 🚀 **타이머 유틸리티 (상한선 관리용)**
+private class DispatchTimer {
+    private var timer: DispatchSourceTimer?
+    
+    static func schedule(delay: TimeInterval, execute: @escaping () -> Void) -> DispatchTimer {
+        let dispatchTimer = DispatchTimer()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler(handler: execute)
+        timer.resume()
+        dispatchTimer.timer = timer
+        return dispatchTimer
+    }
+    
+    func cancel() {
+        timer?.cancel()
+        timer = nil
+    }
+    
+    deinit {
+        cancel()
     }
 }
 
@@ -915,9 +1014,9 @@ final class BFCacheTransitionSystem: NSObject {
                 return result
             }
             
-            // 재시도 전 잠시 대기 - 🚀 100ms → 80ms (-20ms)
+            // 재시도 전 잠시 대기 - 🚀 80ms → 60ms (-20ms)
             dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08) // 🚀 0.1초 → 0.08초 (-20ms)
+            Thread.sleep(forTimeInterval: 0.06) // 🚀 0.08초 → 0.06초 (-20ms)
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -930,7 +1029,7 @@ final class BFCacheTransitionSystem: NSObject {
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
-        // 1. 비주얼 스냅샷 (메인 스레드) - 🚀 캡처 타임아웃은 그대로 유지
+        // 1. 비주얼 스냅샷 (메인 스레드) - 캡처 타임아웃은 그대로 유지
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
@@ -955,7 +1054,7 @@ final class BFCacheTransitionSystem: NSObject {
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처 - 🚀 캡처 타임아웃 그대로 유지 (1초)
+        // 2. DOM 캡처 - 캐처 타임아웃 그대로 유지 (1초)
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -986,9 +1085,9 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.0) // 🚀 캡처 타임아웃 그대로 유지
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // 캡처 타임아웃 그대로 유지
         
-        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지** - 🚀 캡처 타임아웃 그대로 유지 (2초)
+        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지** - 캡처 타임아웃 그대로 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -1000,7 +1099,7 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🚀 캡처 타임아웃 그대로 유지
+        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 캡처 타임아웃 그대로 유지
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1048,13 +1147,13 @@ final class BFCacheTransitionSystem: NSObject {
                         timeout = setTimeout(() => {
                             observer.disconnect();
                             callback();
-                        }, 150); // 🚀 200ms → 150ms (-50ms)
+                        }, 100); // 🚀 150ms → 100ms (-50ms)
                     });
                     observer.observe(document.body, { childList: true, subtree: true });
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, 2500); // 🚀 최대 2.5초 대기 (3000ms → 2500ms, -500ms)
+                    }, 2000); // 🚀 최대 2초 대기 (2500ms → 2000ms, -500ms)
                 }
 
                 function captureScrollData() {
@@ -2043,14 +2142,14 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 🎬 **적응형 타이밍으로 네비게이션 수행**
-                self?.performNavigationWithAdaptiveTiming(context: context, previewContainer: previewContainer)
+                // 🎬 **상한선 기반 네비게이션 수행**
+                self?.performNavigationWithMaxTimeout(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // 🔄 **적응형 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
-    private func performNavigationWithAdaptiveTiming(context: TransitionContext, previewContainer: UIView) {
+    // 🚀 **상한선 기반 네비게이션 수행 - 타임아웃 제거**
+    private func performNavigationWithMaxTimeout(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
@@ -2071,8 +2170,8 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🔄 **적응형 BFCache 복원 + 타이밍 학습**
-        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
+        // 🚀 **상한선 기반 BFCache 복원 + 타이밍 학습**
+        tryMaxTimeoutBFCacheRestore(stateModel: stateModel, direction: context.direction, navigationStartTime: navigationStartTime) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
@@ -2086,8 +2185,8 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
-    // 🔄 **적응형 BFCache 복원 + 타이밍 학습** 
-    private func tryAdaptiveBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, navigationStartTime: Date, completion: @escaping (Bool) -> Void) {
+    // 🚀 **상한선 기반 BFCache 복원 + 타이밍 학습** 
+    private func tryMaxTimeoutBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, navigationStartTime: Date, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -2099,7 +2198,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 적응형 복원
+            // BFCache 히트 - 상한선 기반 복원
             snapshot.restore(to: webView, siteProfile: siteProfile) { [weak self] success in
                 // 로딩 시간 기록
                 let loadingDuration = Date().timeIntervalSince(navigationStartTime)
@@ -2108,9 +2207,9 @@ final class BFCacheTransitionSystem: NSObject {
                 self?.updateSiteProfile(siteProfile)
                 
                 if success {
-                    self?.dbg("✅ 적응형 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
+                    self?.dbg("✅ 상한선 기반 BFCache 복원 성공: \(currentRecord.title) (소요: \(String(format: "%.2f", loadingDuration))초)")
                 } else {
-                    self?.dbg("⚠️ 적응형 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 상한선 기반 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -2122,8 +2221,8 @@ final class BFCacheTransitionSystem: NSObject {
             siteProfile.recordRestoreAttempt(success: false)
             updateSiteProfile(siteProfile)
             
-            // 기본 대기 시간 적용
-            let waitTime = siteProfile.getAdaptiveWaitTime(step: 1)
+            // 기본 대기 시간 적용 (상한선 기준)
+            let waitTime = min(0.2, siteProfile.getAdaptiveWaitTime(step: 1)) // 🚀 최대 200ms
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 completion(false)
             }
@@ -2173,7 +2272,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: .back, navigationStartTime: Date()) { _ in
+        tryMaxTimeoutBFCacheRestore(stateModel: stateModel, direction: .back, navigationStartTime: Date()) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2189,7 +2288,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryAdaptiveBFCacheRestore(stateModel: stateModel, direction: .forward, navigationStartTime: Date()) { _ in
+        tryMaxTimeoutBFCacheRestore(stateModel: stateModel, direction: .forward, navigationStartTime: Date()) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2278,7 +2377,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (🚀 복원/대기 시간 20% 최적화)")
+        TabPersistenceManager.debugMessages.append("✅ 🚀 상한선 기반 즉시 완료 BFCache 시스템 설치 완료 (전체 200ms 상한선)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2301,7 +2400,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("⚡ BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🚀 상한선 기반 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
