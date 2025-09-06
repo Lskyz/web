@@ -375,11 +375,11 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (🚀 최소 300ms → 200ms) - 항상 포함 (🔧 핵심 수정)**
+        // **4단계: 최종 확인 및 보정 (🚀 최소 300ms → 180ms) - 항상 포함 (🔧 핵심 수정)**
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime = max(0.20, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 200ms 최종 대기 (300ms → 250ms, -50ms)
+            let waitTime = max(0.18, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 180ms 최종 대기 (300ms → 250ms, -50ms)
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
