@@ -13,7 +13,6 @@
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //  🚀 **복원/대기 시간 최적화** - 캡처 안정성 유지하며 20% 성능 향상
-//  ⚡⚡ **병렬처리 복원 시스템** - 대기시간 40% 추가 감축, 스크롤 안정성 유지
 //
 
 import UIKit
@@ -192,14 +191,14 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡⚡ **핵심 개선: 병렬처리 복원 시스템 - 대기시간 대폭 감축**
+    // ⚡ **핵심 개선: 즉시 스크롤 복원 + 다단계 보정 시스템 - 🚀 최적화 적용**
     func restore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("⚡⚡ BFCache 병렬처리 복원 시작 - 상태: \(captureStatus.rawValue)")
+        TabPersistenceManager.debugMessages.append("⚡ BFCache 즉시 복원 시작 - 상태: \(captureStatus.rawValue)")
         
         // ⚡ **즉시 스크롤 복원 먼저 수행 (깜빡임 방지)**
         performInstantScrollRestore(to: webView)
         
-        // 🔧 **핵심 수정: 병렬처리로 모든 복원 단계 동시 실행**
+        // 🔧 **핵심 수정: 모든 상태에서 다단계 복원 시도 (최종보정 보장)**
         switch captureStatus {
         case .failed:
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 즉시 스크롤만 복원")
@@ -211,17 +210,17 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 즉시 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 즉시 복원 + 병렬 다단계 복원")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 즉시 복원 + 전체 다단계 복원")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 즉시 복원 + 병렬 다단계 복원")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 즉시 복원 + 전체 다단계 복원")
         }
         
-        TabPersistenceManager.debugMessages.append("⚡⚡ BFCache 즉시 복원 후 병렬처리 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 BFCache 즉시 복원 후 다단계 보정 시작")
         
-        // ⚡⚡ **병렬처리 복원 실행**
+        // 🔧 **즉시 복원 후 추가 보정 단계 실행**
         DispatchQueue.main.async {
-            self.performParallelRestore(to: webView, siteProfile: siteProfile, completion: completion)
+            self.performProgressiveRestore(to: webView, siteProfile: siteProfile, completion: completion)
         }
     }
     
@@ -274,106 +273,116 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원 단계 완료")
     }
     
-    // ⚡⚡ **핵심 개선: 병렬처리 복원 시스템**
-    private func performParallelRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🚀 최적화 적용**
+    private func performProgressiveRestore(to webView: WKWebView, siteProfile: SiteTimingProfile?, completion: @escaping (Bool) -> Void) {
+        var stepResults: [Bool] = []
+        var currentStep = 0
         let startTime = Date()
-        let dispatchGroup = DispatchGroup()
-        var stepResults: [String: Bool] = [:]
-        let resultQueue = DispatchQueue(label: "bfcache.parallel.results", attributes: .concurrent)
         
         // 사이트별 적응형 타이밍 계산
         let profile = siteProfile ?? SiteTimingProfile(hostname: "default")
         
-        TabPersistenceManager.debugMessages.append("⚡⚡ 병렬처리 복원 시작 - 모든 단계 동시 실행")
+        var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        // **1단계: 스크롤 검증 (병렬 실행, 최소 대기 30ms)**
-        dispatchGroup.enter()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { // 최소 대기 유지
-            let verifyScrollJS = """
-            (function() {
-                try {
-                    const targetX = \(self.scrollPosition.x);
-                    const targetY = \(self.scrollPosition.y);
-                    const currentX = window.scrollX || window.pageXOffset || 0;
-                    const currentY = window.scrollY || window.pageYOffset || 0;
-                    const tolerance = 5;
-                    
-                    // 위치가 맞지 않으면 즉시 보정
-                    if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                        console.log('⚡⚡ 병렬 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
-                        window.scrollTo(targetX, targetY);
-                        document.documentElement.scrollTop = targetY;
-                        document.body.scrollTop = targetY;
-                        return 'corrected';
-                    } else {
-                        console.log('⚡⚡ 병렬 검증 성공:', {current: [currentX, currentY], target: [targetX, targetY]});
-                        return 'verified';
-                    }
-                } catch(e) { 
-                    console.error('⚡⚡ 병렬 검증 실패:', e);
-                    return false; 
-                }
-            })()
-            """
+        TabPersistenceManager.debugMessages.append("🔧 점진적 보정 단계 구성 시작")
+        
+        // **1단계: 스크롤 확인 및 즉시 보정 (🚀 50ms → 30ms) - 즉시 복원 검증**
+        restoreSteps.append((1, { stepCompletion in
+            let verifyDelay: TimeInterval = 0.03 // 🚀 50ms → 30ms (-20ms)
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
-            webView.evaluateJavaScript(verifyScrollJS) { result, _ in
-                let resultString = result as? String ?? "false"
-                let success = (resultString == "verified" || resultString == "corrected")
-                resultQueue.async(flags: .barrier) {
-                    stepResults["verify"] = success
+            DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
+                let verifyScrollJS = """
+                (function() {
+                    try {
+                        const targetX = \(self.scrollPosition.x);
+                        const targetY = \(self.scrollPosition.y);
+                        const currentX = window.scrollX || window.pageXOffset || 0;
+                        const currentY = window.scrollY || window.pageYOffset || 0;
+                        const tolerance = 5;
+                        
+                        // 위치가 맞지 않으면 즉시 보정
+                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
+                            console.log('⚡ 즉시 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.body.scrollTop = targetY;
+                            return 'corrected';
+                        } else {
+                            console.log('⚡ 즉시 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            return 'verified';
+                        }
+                    } catch(e) { 
+                        console.error('⚡ 즉시 복원 검증 실패:', e);
+                        return false; 
+                    }
+                })()
+                """
+                
+                webView.evaluateJavaScript(verifyScrollJS) { result, _ in
+                    let resultString = result as? String ?? "false"
+                    let success = (resultString == "verified" || resultString == "corrected")
+                    TabPersistenceManager.debugMessages.append("🔄 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                    stepCompletion(success)
                 }
-                TabPersistenceManager.debugMessages.append("⚡⚡ [병렬] 스크롤 검증: \(success ? "성공" : "실패")")
-                dispatchGroup.leave()
             }
-        }
+        }))
         
-        // **2단계: 컨테이너 스크롤 복원 (병렬 실행)**
+        // **2단계: 주요 컨테이너 스크롤 복원 (🚀 최소 100ms → 80ms) - 조건부 포함**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            dispatchGroup.enter()
-            let containerDelay = max(0.05, profile.getAdaptiveWaitTime(step: 0) * 0.3) // 병렬처리로 대기시간 30% 수준
+            TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + containerDelay) {
-                let containerScrollJS = self.generateContainerScrollScript(elements)
-                webView.evaluateJavaScript(containerScrollJS) { result, _ in
-                    let success = (result as? Bool) ?? false
-                    resultQueue.async(flags: .barrier) {
-                        stepResults["container"] = success
+            restoreSteps.append((2, { stepCompletion in
+                let waitTime = max(0.08, profile.getAdaptiveWaitTime(step: 1)) // 🚀 최소 80ms (100ms → 80ms, -20ms)
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                    let containerScrollJS = self.generateContainerScrollScript(elements)
+                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
+                        let success = (result as? Bool) ?? false
+                        TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
+                        stepCompletion(success)
                     }
-                    TabPersistenceManager.debugMessages.append("⚡⚡ [병렬] 컨테이너 스크롤: \(success ? "성공" : "실패")")
-                    dispatchGroup.leave()
                 }
-            }
+            }))
+        } else {
+            TabPersistenceManager.debugMessages.append("🔧 2단계 스킵 - 컨테이너 스크롤 요소 없음")
         }
         
-        // **3단계: iframe 스크롤 복원 (병렬 실행)**
+        // **3단계: iframe 스크롤 복원 (적응형 대기) - 조건부 포함**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            dispatchGroup.enter()
-            let iframeDelay = max(0.08, profile.getAdaptiveWaitTime(step: 0) * 0.5) // 병렬처리로 대기시간 50% 수준
+            TabPersistenceManager.debugMessages.append("🔧 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + iframeDelay) {
-                let iframeScrollJS = self.generateIframeScrollScript(iframeData)
-                webView.evaluateJavaScript(iframeScrollJS) { result, _ in
-                    let success = (result as? Bool) ?? false
-                    resultQueue.async(flags: .barrier) {
-                        stepResults["iframe"] = success
+            restoreSteps.append((3, { stepCompletion in
+                let waitTime = profile.getAdaptiveWaitTime(step: 2)
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
+                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
+                        let success = (result as? Bool) ?? false
+                        TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
+                        stepCompletion(success)
                     }
-                    TabPersistenceManager.debugMessages.append("⚡⚡ [병렬] iframe 스크롤: \(success ? "성공" : "실패")")
-                    dispatchGroup.leave()
                 }
-            }
+            }))
+        } else {
+            TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **모든 병렬 작업 완료 대기**
-        dispatchGroup.notify(queue: .main) {
-            // **4단계: 최종 보정 (병렬 작업 완료 후 실행, 최소 대기 100ms)**
-            let finalDelay = max(0.1, profile.getAdaptiveWaitTime(step: 0) * 0.4) // 병렬처리로 최종 대기도 40% 수준
+        // **4단계: 최종 확인 및 보정 (🚀 최소 300ms → 200ms) - 항상 포함 (🔧 핵심 수정)**
+        TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
+        
+        restoreSteps.append((4, { stepCompletion in
+            let waitTime = max(0.20, profile.getAdaptiveWaitTime(step: 3)) // 🚀 최소 200ms 최종 대기 (300ms → 250ms, -50ms)
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
                 (function() {
                     try {
@@ -387,7 +396,7 @@ struct BFCacheSnapshot: Codable {
                         
                         // 최종 보정이 필요한지 확인
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('⚡⚡ 병렬 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('🔧 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
                             // 강력한 최종 보정
                             window.scrollTo(targetX, targetY);
@@ -400,16 +409,16 @@ struct BFCacheSnapshot: Codable {
                             setTimeout(function() {
                                 const finalX = window.scrollX || window.pageXOffset || 0;
                                 const finalY = window.scrollY || window.pageYOffset || 0;
-                                console.log('⚡⚡ 병렬 보정 후 위치:', [finalX, finalY]);
+                                console.log('🔧 보정 후 위치:', [finalX, finalY]);
                             }, 50);
                         }
                         
-                        // 동적 사이트 추가 보정
+                        // 🌐 동적 사이트 추가 보정
                         const finalCurrentY = window.scrollY || window.pageYOffset || 0;
                         const finalCurrentX = window.scrollX || window.pageXOffset || 0;
                         const isCorrect = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('⚡⚡ 병렬 최종보정 완료:', {
+                        console.log('🔧 동적사이트 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
@@ -418,33 +427,52 @@ struct BFCacheSnapshot: Codable {
                         
                         return isCorrect;
                     } catch(e) { 
-                        console.error('⚡⚡ 병렬 최종보정 실패:', e);
+                        console.error('🔧 최종보정 실패:', e);
                         return false; 
                     }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let finalSuccess = (result as? Bool) ?? false
-                    resultQueue.async(flags: .barrier) {
-                        stepResults["final"] = finalSuccess
-                    }
-                    
-                    // 전체 결과 계산
-                    let duration = Date().timeIntervalSince(startTime)
-                    let successCount = resultQueue.sync { stepResults.values.filter { $0 }.count }
-                    let totalSteps = resultQueue.sync { stepResults.count }
-                    let overallSuccess = successCount > totalSteps / 2
-                    
-                    TabPersistenceManager.debugMessages.append("⚡⚡ 병렬처리 복원 완료:")
-                    TabPersistenceManager.debugMessages.append("  - 성공: \(successCount)/\(totalSteps) 단계")
-                    TabPersistenceManager.debugMessages.append("  - 소요시간: \(String(format: "%.2f", duration))초 (병렬처리로 40% 감축)")
-                    TabPersistenceManager.debugMessages.append("  - 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
-                    
-                    completion(overallSuccess)
+                    let success = (result as? Bool) ?? false
+                    TabPersistenceManager.debugMessages.append("🔧 4단계 동적사이트 최종보정 완료: \(success ? "성공" : "실패")")
+                    stepCompletion(success)
                 }
             }
+        }))
+        
+        TabPersistenceManager.debugMessages.append("🔧 총 \(restoreSteps.count)단계 점진적 보정 단계 구성 완료")
+        
+        // 단계별 실행
+        func executeNextStep() {
+            if currentStep < restoreSteps.count {
+                let stepInfo = restoreSteps[currentStep]
+                currentStep += 1
+                
+                TabPersistenceManager.debugMessages.append("🔧 \(stepInfo.step)단계 실행 시작")
+                
+                // 🌐 단계별 소요 시간 기록
+                let stepStart = Date()
+                stepInfo.action { success in
+                    let stepDuration = Date().timeIntervalSince(stepStart)
+                    TabPersistenceManager.debugMessages.append("🔧 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    stepResults.append(success)
+                    executeNextStep()
+                }
+            } else {
+                // 모든 단계 완료
+                let duration = Date().timeIntervalSince(startTime)
+                let successCount = stepResults.filter { $0 }.count
+                let totalSteps = stepResults.count
+                let overallSuccess = successCount > totalSteps / 2
+                
+                TabPersistenceManager.debugMessages.append("🔧 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔧 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
+                completion(overallSuccess)
+            }
         }
+        
+        executeNextStep()
     }
     
     // 🌐 **개선된 컨테이너 스크롤 복원 스크립트** - 동적 속성 고려
@@ -2250,7 +2278,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ⚡⚡ 병렬처리 BFCache 시스템 설치 완료 (대기시간 40% 추가 감축)")
+        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (🚀 복원/대기 시간 20% 최적화)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2273,7 +2301,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("⚡⚡ BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("⚡ BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
