@@ -15,6 +15,7 @@
 //  🚀 **복원/대기 시간 최적화** - 캐처 안정성 유지하며 20% 성능 향상
 //  🗑️ **적응형 시스템 제거** - 고정 타이밍으로 단순화
 //  📈 **무한스크롤 대응 강화** - 스크롤 요소 감지 제한 대폭 확장 (50개 → 1000개)
+//  🔧 **타이밍 안정화** - 스크롤 복원 1단계 30ms, 렌더링 대기 200ms/3초로 조정
 //
 
 import UIKit
@@ -234,7 +235,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⚡ 즉시 스크롤 복원 단계 완료")
     }
     
-    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🚀 고정 타이밍 적용**
+    // 🔄 **개선된 점진적 복원 시스템 (즉시 복원 후 추가 보정) - 🔧 타이밍 안정화**
     private func performProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -244,9 +245,9 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🔧 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스크롤 확인 및 즉시 보정 (🚀 고정 30ms) - 즉시 복원 검증**
+        // **1단계: 스크롤 확인 및 즉시 보정 (🔧 30ms로 안정화) - 즉시 복원 검증**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.01 // 🚀 고정 30ms
+            let verifyDelay: TimeInterval = 0.03 // 🔧 타이밍 안정화: 10ms → 30ms
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
@@ -981,7 +982,7 @@ final class BFCacheTransitionSystem: NSObject {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용) - 🚀 최적화 적용**
+                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용) - 🔧 타이밍 안정화**
                 function waitForDynamicContent(callback) {
                     let timeout;
                     const observer = new MutationObserver(() => {
@@ -989,13 +990,13 @@ final class BFCacheTransitionSystem: NSObject {
                         timeout = setTimeout(() => {
                             observer.disconnect();
                             callback();
-                        }, 150); // 🚀 200ms → 150ms (-50ms)
+                        }, 200); // 🔧 타이밍 안정화: 150ms → 200ms (+50ms)
                     });
                     observer.observe(document.body, { childList: true, subtree: true });
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, 2500); // 🚀 최대 2.5초 대기 (3000ms → 2500ms, -500ms)
+                    }, 3000); // 🔧 타이밍 안정화: 2500ms → 3000ms (+500ms)
                 }
 
                 function captureScrollData() {
@@ -2239,7 +2240,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 📈 무한스크롤 대응 강화 BFCache 시스템 설치 완료 (1000개 스크롤 요소 감지)")
+        TabPersistenceManager.debugMessages.append("✅ 📈 무한스크롤 대응 강화 BFCache 시스템 설치 완료 (1000개 스크롤 요소 감지, 타이밍 안정화)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
