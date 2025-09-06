@@ -13,6 +13,7 @@
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //  📈 **정밀 스크롤 감지 강화** - 상대적 위치 추적 2000개로 확장, 소수점 정밀도 향상
 //  🔧 **기존 타이밍 유지** - 스크롤 복원 정밀도만 향상, 대기시간은 현상 유지
+//  🔧 **정수 스크롤 + 백분율 계산 수정** - 소수점 제거, 독립적 x/y 백분율 계산
 //
 
 import UIKit
@@ -68,7 +69,7 @@ private class GestureContext {
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
-    let scrollPosition: CGPoint  // ⚡ CGFloat 기반 정밀 스크롤
+    let scrollPosition: CGPoint  // ⚡ 정수로 변환된 정밀 스크롤
     let scrollPositionPercent: CGPoint  // 🔄 상대적 위치 (백분율)
     let contentSize: CGSize  // 📐 콘텐츠 크기 정보
     let viewportSize: CGSize  // 📱 뷰포트 크기 정보
@@ -175,12 +176,12 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // ⚡ **핵심 개선: 정밀 스크롤 복원 + 적응형 위치 보정 - 기존 타이밍 유지**
+    // ⚡ **핵심 개선: 정수 스크롤 복원 + 독립적 백분율 보정 - 기존 타이밍 유지**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("⚡ 정밀 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
+        TabPersistenceManager.debugMessages.append("⚡ 정수 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
-        // ⚡ **즉시 스크롤 복원 먼저 수행 (정밀도 향상)**
-        performPrecisionScrollRestore(to: webView)
+        // ⚡ **즉시 정수 스크롤 복원 먼저 수행**
+        performIntegerScrollRestore(to: webView)
         
         // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
@@ -190,148 +191,159 @@ struct BFCacheSnapshot: Codable {
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 정밀 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 정수 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 정밀 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 정수 복원 + 전체 다단계 복원")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 정밀 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 정수 복원 + 전체 다단계 복원")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 정밀 BFCache 복원 후 다단계 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 정수 BFCache 복원 후 다단계 보정 시작")
         
-        // 🔧 **정밀 복원 후 추가 보정 단계 실행 (기존 타이밍 유지)**
+        // 🔧 **정수 복원 후 추가 보정 단계 실행 (기존 타이밍 유지)**
         DispatchQueue.main.async {
-            self.performPrecisionProgressiveRestore(to: webView, completion: completion)
+            self.performIntegerProgressiveRestore(to: webView, completion: completion)
         }
     }
     
-    // ⚡ **새로 추가: 정밀 스크롤 복원 메서드 - 소수점 + 적응형 보정**
-    private func performPrecisionScrollRestore(to webView: WKWebView) {
-        let targetPos = self.scrollPosition
+    // ⚡ **새로 수정: 정수 스크롤 복원 메서드 + 독립적 백분율 보정**
+    private func performIntegerScrollRestore(to webView: WKWebView) {
+        // 🔧 **정수 변환된 타겟 위치**
+        let targetPos = CGPoint(
+            x: round(self.scrollPosition.x),
+            y: round(self.scrollPosition.y)
+        )
         let targetPercent = self.scrollPositionPercent
         
-        TabPersistenceManager.debugMessages.append("⚡ 정밀 스크롤 복원: 절대(\(targetPos.x), \(targetPos.y)) 상대(\(targetPercent.x)%, \(targetPercent.y)%)")
+        TabPersistenceManager.debugMessages.append("⚡ 정수 스크롤 복원: 절대(\(Int(targetPos.x)), \(Int(targetPos.y))) 상대(\(String(format: "%.1f", targetPercent.x))%, \(String(format: "%.1f", targetPercent.y))%)")
         
-        // 1. 네이티브 스크롤뷰 정밀 설정 (CGFloat 그대로 사용)
+        // 1. 네이티브 스크롤뷰 정수 설정
         webView.scrollView.setContentOffset(targetPos, animated: false)
         webView.scrollView.contentOffset = targetPos
         
-        // 2. ⚡ **적응형 위치 계산** - 콘텐츠 크기 변화 대응
+        // 2. ⚡ **독립적 적응형 위치 계산** - x/y 각각 독립적으로 처리
         let currentContentSize = webView.scrollView.contentSize
         let currentViewportSize = webView.bounds.size
         
         var adaptivePos = targetPos
         
-        // 📐 콘텐츠 크기가 변했으면 백분율 기반으로 재계산
-        if contentSize != CGSize.zero && currentContentSize != contentSize {
+        // 📐 **독립적 백분율 기반 재계산**
+        if targetPercent.x > 0 || targetPercent.y > 0 {
+            // X축 독립적 계산
+            let maxScrollX = max(0, currentContentSize.width - currentViewportSize.width)
+            if maxScrollX > 0 && targetPercent.x > 0 {
+                adaptivePos.x = round(maxScrollX * targetPercent.x / 100.0)
+                TabPersistenceManager.debugMessages.append("📐 X축 백분율 보정: \(String(format: "%.1f", targetPercent.x))% → \(Int(adaptivePos.x))px")
+            }
+            
+            // Y축 독립적 계산
+            let maxScrollY = max(0, currentContentSize.height - currentViewportSize.height)
+            if maxScrollY > 0 && targetPercent.y > 0 {
+                adaptivePos.y = round(maxScrollY * targetPercent.y / 100.0)
+                TabPersistenceManager.debugMessages.append("📐 Y축 백분율 보정: \(String(format: "%.1f", targetPercent.y))% → \(Int(adaptivePos.y))px")
+            }
+        } 
+        // 📱 **콘텐츠 크기 변화 대응** (백분율이 없을 때만)
+        else if contentSize != CGSize.zero && currentContentSize != contentSize {
             let xScale = currentContentSize.width / max(contentSize.width, 1)
             let yScale = currentContentSize.height / max(contentSize.height, 1)
             
-            adaptivePos.x = targetPos.x * xScale
-            adaptivePos.y = targetPos.y * yScale
+            adaptivePos.x = round(targetPos.x * xScale)
+            adaptivePos.y = round(targetPos.y * yScale)
             
-            TabPersistenceManager.debugMessages.append("📐 적응형 보정: 크기변화(\(xScale), \(yScale)) → (\(adaptivePos.x), \(adaptivePos.y))")
-        }
-        // 📱 뷰포트 크기가 변했으면 백분율 기반으로 보정
-        else if viewportSize != CGSize.zero && currentViewportSize != viewportSize {
-            if targetPercent != CGPoint.zero {
-                adaptivePos.x = (currentContentSize.width - currentViewportSize.width) * targetPercent.x / 100.0
-                adaptivePos.y = (currentContentSize.height - currentViewportSize.height) * targetPercent.y / 100.0
-                
-                TabPersistenceManager.debugMessages.append("📱 뷰포트 변화 보정: 백분율 기반 → (\(adaptivePos.x), \(adaptivePos.y))")
-            }
+            TabPersistenceManager.debugMessages.append("📐 크기변화 보정: 스케일(\(String(format: "%.2f", xScale)), \(String(format: "%.2f", yScale))) → (\(Int(adaptivePos.x)), \(Int(adaptivePos.y)))")
         }
         
-        // 3. 범위 검증 및 최종 적용
+        // 3. 범위 검증 및 최종 정수 적용
         let maxX = max(0, currentContentSize.width - currentViewportSize.width)
         let maxY = max(0, currentContentSize.height - currentViewportSize.height)
         
-        adaptivePos.x = max(0, min(adaptivePos.x, maxX))
-        adaptivePos.y = max(0, min(adaptivePos.y, maxY))
+        adaptivePos.x = round(max(0, min(adaptivePos.x, maxX)))
+        adaptivePos.y = round(max(0, min(adaptivePos.y, maxY)))
         
         webView.scrollView.setContentOffset(adaptivePos, animated: false)
         webView.scrollView.contentOffset = adaptivePos
         
-        // 4. 정밀 JavaScript 스크롤 설정 (parseFloat로 정밀도 향상)
-        let precisionScrollJS = """
+        // 4. 정수 JavaScript 스크롤 설정
+        let integerScrollJS = """
         (function() {
             try {
-                const targetX = parseFloat('\(adaptivePos.x)');
-                const targetY = parseFloat('\(adaptivePos.y)');
+                const targetX = \(Int(adaptivePos.x));
+                const targetY = \(Int(adaptivePos.y));
                 
-                // 모든 가능한 스크롤 설정 정밀 실행
+                // 모든 가능한 스크롤 정수 설정
                 window.scrollTo(targetX, targetY);
                 document.documentElement.scrollTop = targetY;
                 document.documentElement.scrollLeft = targetX;
                 document.body.scrollTop = targetY;
                 document.body.scrollLeft = targetX;
                 
-                // 정밀도 검증 및 강제 설정
-                if (Math.abs(window.pageYOffset - targetY) > 0.5) {
+                // 정수 검증 및 강제 설정
+                if (Math.abs(window.pageYOffset - targetY) > 1) {
                     window.pageYOffset = targetY;
                 }
-                if (Math.abs(window.pageXOffset - targetX) > 0.5) {
+                if (Math.abs(window.pageXOffset - targetX) > 1) {
                     window.pageXOffset = targetX;
                 }
                 
-                console.log('⚡ 정밀 스크롤 복원 완료:', window.scrollY, window.scrollX);
+                console.log('⚡ 정수 스크롤 복원 완료:', window.scrollY, window.scrollX);
                 return true;
             } catch(e) { 
-                console.error('⚡ 정밀 스크롤 복원 실패:', e);
+                console.error('⚡ 정수 스크롤 복원 실패:', e);
                 return false; 
             }
         })()
         """
         
         // 동기적 JavaScript 실행 (즉시)
-        webView.evaluateJavaScript(precisionScrollJS) { result, error in
+        webView.evaluateJavaScript(integerScrollJS) { result, error in
             let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("⚡ 정밀 JavaScript 스크롤: \(success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⚡ 정수 JavaScript 스크롤: \(success ? "성공" : "실패")")
         }
         
-        TabPersistenceManager.debugMessages.append("⚡ 정밀 스크롤 복원 단계 완료")
+        TabPersistenceManager.debugMessages.append("⚡ 정수 스크롤 복원 단계 완료")
     }
     
-    // 🔄 **정밀 점진적 복원 시스템 (기존 타이밍 유지, 정밀도만 향상)**
-    private func performPrecisionProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🔄 **정수 점진적 복원 시스템 (기존 타이밍 유지, 정수만 변경)**
+    private func performIntegerProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🔧 정밀 점진적 보정 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🔧 정수 점진적 보정 단계 구성 시작")
         
-        // **1단계: 정밀 스크롤 확인 및 보정 (기존 30ms 유지)**
+        // **1단계: 정수 스크롤 확인 및 보정 (기존 30ms 유지)**
         restoreSteps.append((1, { stepCompletion in
             let verifyDelay: TimeInterval = 0.03 // 🔧 기존 30ms 유지
-            TabPersistenceManager.debugMessages.append("🔄 1단계: 정밀 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+            TabPersistenceManager.debugMessages.append("🔄 1단계: 정수 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
                 let verifyScrollJS = """
                 (function() {
                     try {
-                        const targetX = parseFloat('\(self.scrollPosition.x)');
-                        const targetY = parseFloat('\(self.scrollPosition.y)');
-                        const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 0.5; // ⚡ 정밀도 향상: 5px → 0.5px
+                        const targetX = \(Int(round(self.scrollPosition.x)));
+                        const targetY = \(Int(round(self.scrollPosition.y)));
+                        const currentX = Math.round(window.scrollX || window.pageXOffset || 0);
+                        const currentY = Math.round(window.scrollY || window.pageYOffset || 0);
+                        const tolerance = 2; // ⚡ 정수 허용 오차: 2px
                         
-                        // 위치가 맞지 않으면 정밀 보정
+                        // 위치가 맞지 않으면 정수 보정
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('⚡ 정밀 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('⚡ 정수 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
                             window.scrollTo(targetX, targetY);
                             document.documentElement.scrollTop = targetY;
                             document.body.scrollTop = targetY;
                             return 'corrected';
                         } else {
-                            console.log('⚡ 정밀 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('⚡ 정수 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
                             return 'verified';
                         }
                     } catch(e) { 
-                        console.error('⚡ 정밀 복원 검증 실패:', e);
+                        console.error('⚡ 정수 복원 검증 실패:', e);
                         return false; 
                     }
                 })()
@@ -351,14 +363,14 @@ struct BFCacheSnapshot: Codable {
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 정밀 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
+            TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 정수 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
                 let waitTime: TimeInterval = 0.08 // 🔧 기존 80ms 유지
-                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 정밀 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 정수 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generatePrecisionContainerScrollScript(elements)
+                    let containerScrollJS = self.generateIntegerContainerScrollScript(elements)
                     webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
                         TabPersistenceManager.debugMessages.append("🔄 2단계 완료: \(success ? "성공" : "실패")")
@@ -374,14 +386,14 @@ struct BFCacheSnapshot: Codable {
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🔧 3단계 iframe 정밀 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
+            TabPersistenceManager.debugMessages.append("🔧 3단계 iframe 정수 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
             restoreSteps.append((3, { stepCompletion in
                 let waitTime: TimeInterval = 0.12 // 🔧 기존 120ms 유지
-                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 정밀 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                TabPersistenceManager.debugMessages.append("🔄 3단계: iframe 정수 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generatePrecisionIframeScrollScript(iframeData)
+                    let iframeScrollJS = self.generateIntegerIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
                         TabPersistenceManager.debugMessages.append("🔄 3단계 완료: \(success ? "성공" : "실패")")
@@ -394,29 +406,29 @@ struct BFCacheSnapshot: Codable {
         }
         
         // **4단계: 최종 확인 및 보정 (기존 1초 유지)**
-        TabPersistenceManager.debugMessages.append("🔧 4단계 정밀 최종 보정 단계 추가 (필수)")
+        TabPersistenceManager.debugMessages.append("🔧 4단계 정수 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
             let waitTime: TimeInterval = 1.0 // 🔧 기존 1초 유지
-            TabPersistenceManager.debugMessages.append("🔄 4단계: 정밀 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("🔄 4단계: 정수 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
                 (function() {
                     try {
-                        const targetX = parseFloat('\(self.scrollPosition.x)');
-                        const targetY = parseFloat('\(self.scrollPosition.y)');
+                        const targetX = \(Int(round(self.scrollPosition.x)));
+                        const targetY = \(Int(round(self.scrollPosition.y)));
                         
-                        // 네이티브 스크롤 위치 정밀 확인
-                        const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 1.0; // ⚡ 최종 보정 허용 오차: 1px
+                        // 네이티브 스크롤 위치 정수 확인
+                        const currentX = Math.round(window.scrollX || window.pageXOffset || 0);
+                        const currentY = Math.round(window.scrollY || window.pageYOffset || 0);
+                        const tolerance = 3; // ⚡ 최종 보정 허용 오차: 3px
                         
                         // 최종 보정이 필요한지 확인
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('🔧 정밀 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('🔧 정수 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
-                            // 강력한 최종 보정
+                            // 강력한 최종 정수 보정
                             window.scrollTo(targetX, targetY);
                             document.documentElement.scrollTop = targetY;
                             document.documentElement.scrollLeft = targetX;
@@ -425,18 +437,18 @@ struct BFCacheSnapshot: Codable {
                             
                             // 한 번 더 확인
                             setTimeout(function() {
-                                const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                console.log('🔧 보정 후 정밀 위치:', [finalX, finalY]);
+                                const finalX = Math.round(window.scrollX || window.pageXOffset || 0);
+                                const finalY = Math.round(window.scrollY || window.pageYOffset || 0);
+                                console.log('🔧 보정 후 정수 위치:', [finalX, finalY]);
                             }, 50);
                         }
                         
                         // 🌐 동적 사이트 추가 보정
-                        const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const finalCurrentY = Math.round(window.scrollY || window.pageYOffset || 0);
+                        const finalCurrentX = Math.round(window.scrollX || window.pageXOffset || 0);
                         const isCorrect = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('🔧 동적사이트 정밀 최종보정 완료:', {
+                        console.log('🔧 동적사이트 정수 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
@@ -445,7 +457,7 @@ struct BFCacheSnapshot: Codable {
                         
                         return isCorrect;
                     } catch(e) { 
-                        console.error('🔧 정밀 최종보정 실패:', e);
+                        console.error('🔧 정수 최종보정 실패:', e);
                         return false; 
                     }
                 })()
@@ -453,13 +465,13 @@ struct BFCacheSnapshot: Codable {
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
                     let success = (result as? Bool) ?? false
-                    TabPersistenceManager.debugMessages.append("🔧 4단계 정밀 동적사이트 최종보정 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("🔧 4단계 정수 동적사이트 최종보정 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
         }))
         
-        TabPersistenceManager.debugMessages.append("🔧 총 \(restoreSteps.count)단계 정밀 점진적 보정 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("🔧 총 \(restoreSteps.count)단계 정수 점진적 보정 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -483,7 +495,7 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🔧 정밀 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🔧 정수 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
                 TabPersistenceManager.debugMessages.append("🔧 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
                 completion(overallSuccess)
             }
@@ -492,8 +504,8 @@ struct BFCacheSnapshot: Codable {
         executeNextStep()
     }
     
-    // 🌐 **정밀 컨테이너 스크롤 복원 스크립트** - parseFloat 정밀도 향상
-    private func generatePrecisionContainerScrollScript(_ elements: [[String: Any]]) -> String {
+    // 🌐 **정수 컨테이너 스크롤 복원 스크립트** - Math.round 정수 변환
+    private func generateIntegerContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
         (function() {
@@ -501,7 +513,7 @@ struct BFCacheSnapshot: Codable {
                 const elements = \(elementsJSON);
                 let restored = 0;
                 
-                console.log('🌐 정밀 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
+                console.log('🌐 정수 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
                 
                 for (const item of elements) {
                     if (!item.selector) continue;
@@ -519,9 +531,9 @@ struct BFCacheSnapshot: Codable {
                         if (elements.length > 0) {
                             elements.forEach(el => {
                                 if (el && typeof el.scrollTop === 'number') {
-                                    // ⚡ parseFloat로 정밀도 향상
-                                    const targetTop = parseFloat(item.top || 0);
-                                    const targetLeft = parseFloat(item.left || 0);
+                                    // ⚡ Math.round로 정수 변환
+                                    const targetTop = Math.round(item.top || 0);
+                                    const targetLeft = Math.round(item.left || 0);
                                     
                                     el.scrollTop = targetTop;
                                     el.scrollLeft = targetLeft;
@@ -536,9 +548,11 @@ struct BFCacheSnapshot: Codable {
                                         }
                                     }
                                     
-                                    // ⚡ 정밀도 검증
-                                    if (Math.abs(el.scrollTop - targetTop) > 0.5 || Math.abs(el.scrollLeft - targetLeft) > 0.5) {
-                                        console.log('⚡ 컨테이너 정밀 보정:', sel, {target: [targetLeft, targetTop], actual: [el.scrollLeft, el.scrollTop]});
+                                    // ⚡ 정수 검증
+                                    const actualTop = Math.round(el.scrollTop);
+                                    const actualLeft = Math.round(el.scrollLeft);
+                                    if (Math.abs(actualTop - targetTop) > 2 || Math.abs(actualLeft - targetLeft) > 2) {
+                                        console.log('⚡ 컨테이너 정수 보정:', sel, {target: [targetLeft, targetTop], actual: [actualLeft, actualTop]});
                                     }
                                     
                                     restored++;
@@ -549,18 +563,18 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🌐 정밀 컨테이너 스크롤 복원 완료:', restored, '개');
+                console.log('🌐 정수 컨테이너 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('정밀 컨테이너 스크롤 복원 실패:', e);
+                console.error('정수 컨테이너 스크롤 복원 실패:', e);
                 return false;
             }
         })()
         """
     }
     
-    // 🌐 **정밀 iframe 스크롤 복원 스크립트** - parseFloat 정밀도 향상
-    private func generatePrecisionIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
+    // 🌐 **정수 iframe 스크롤 복원 스크립트** - Math.round 정수 변환
+    private func generateIntegerIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
         let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
         (function() {
@@ -568,30 +582,30 @@ struct BFCacheSnapshot: Codable {
                 const iframes = \(iframeJSON);
                 let restored = 0;
                 
-                console.log('🌐 정밀 iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
+                console.log('🌐 정수 iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
                 
                 for (const iframeInfo of iframes) {
                     const iframe = document.querySelector(iframeInfo.selector);
                     if (iframe && iframe.contentWindow) {
                         try {
-                            // ⚡ parseFloat로 정밀도 향상
-                            const targetX = parseFloat(iframeInfo.scrollX || 0);
-                            const targetY = parseFloat(iframeInfo.scrollY || 0);
+                            // ⚡ Math.round로 정수 변환
+                            const targetX = Math.round(iframeInfo.scrollX || 0);
+                            const targetY = Math.round(iframeInfo.scrollY || 0);
                             
-                            // Same-origin iframe 정밀 복원
+                            // Same-origin iframe 정수 복원
                             iframe.contentWindow.scrollTo(targetX, targetY);
                             restored++;
                             
-                            console.log('⚡ iframe 정밀 복원:', iframeInfo.selector, [targetX, targetY]);
+                            console.log('⚡ iframe 정수 복원:', iframeInfo.selector, [targetX, targetY]);
                         } catch(e) {
                             // 🌐 Cross-origin iframe 처리
                             try {
                                 iframe.contentWindow.postMessage({
                                     type: 'restoreScroll',
-                                    scrollX: parseFloat(iframeInfo.scrollX || 0),
-                                    scrollY: parseFloat(iframeInfo.scrollY || 0)
+                                    scrollX: Math.round(iframeInfo.scrollX || 0),
+                                    scrollY: Math.round(iframeInfo.scrollY || 0)
                                 }, '*');
-                                console.log('🌐 Cross-origin iframe 정밀 스크롤 요청:', iframeInfo.selector);
+                                console.log('🌐 Cross-origin iframe 정수 스크롤 요청:', iframeInfo.selector);
                                 restored++;
                             } catch(crossOriginError) {
                                 console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
@@ -600,10 +614,10 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🌐 정밀 iframe 스크롤 복원 완료:', restored, '개');
+                console.log('🌐 정수 iframe 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('정밀 iframe 스크롤 복원 실패:', e);
+                console.error('정수 iframe 스크롤 복원 실패:', e);
                 return false;
             }
         })()
@@ -788,7 +802,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (📈 정밀 스크롤 감지 강화)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (정수 스크롤 + 독립적 백분율 계산)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -982,10 +996,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 📈 **정밀 스크롤 감지 강화 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. 📈 **정수 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generatePrecisionScrollCaptureScript()
+            let jsScript = generateIntegerScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1015,25 +1029,38 @@ final class BFCacheTransitionSystem: NSObject {
             return newVersion
         }
         
-        // ⚡ **상대적 위치 계산 (백분율)**
+        // ⚡ **수정: 독립적 x/y 백분율 계산 + 정수 변환**
+        let integerScrollPos = CGPoint(
+            x: round(captureData.scrollPosition.x),
+            y: round(captureData.scrollPosition.y)
+        )
+        
         let scrollPercent: CGPoint
-        if captureData.contentSize.width > captureData.viewportSize.width && captureData.contentSize.height > captureData.viewportSize.height {
-            let maxScrollX = captureData.contentSize.width - captureData.viewportSize.width
-            let maxScrollY = captureData.contentSize.height - captureData.viewportSize.height
-            
-            scrollPercent = CGPoint(
-                x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
-                y: maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
-            )
+        // X축 독립적 계산
+        let maxScrollX = max(0, captureData.contentSize.width - captureData.viewportSize.width)
+        let xPercent: CGFloat
+        if maxScrollX > 0 && integerScrollPos.x > 0 {
+            xPercent = (integerScrollPos.x / maxScrollX) * 100.0
         } else {
-            scrollPercent = CGPoint.zero
+            xPercent = 0
         }
+        
+        // Y축 독립적 계산
+        let maxScrollY = max(0, captureData.contentSize.height - captureData.viewportSize.height)
+        let yPercent: CGFloat
+        if maxScrollY > 0 && integerScrollPos.y > 0 {
+            yPercent = (integerScrollPos.y / maxScrollY) * 100.0
+        } else {
+            yPercent = 0
+        }
+        
+        scrollPercent = CGPoint(x: xPercent, y: yPercent)
         
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
-            scrollPosition: captureData.scrollPosition,
-            scrollPositionPercent: scrollPercent,
+            scrollPosition: integerScrollPos,  // ⚡ 정수 변환된 위치
+            scrollPositionPercent: scrollPercent,  // 🔧 독립적 계산된 백분율
             contentSize: captureData.contentSize,
             viewportSize: captureData.viewportSize,
             jsState: jsState,
@@ -1043,11 +1070,13 @@ final class BFCacheTransitionSystem: NSObject {
             version: version
         )
         
+        dbg("⚡ 스크롤 캡처 완료: 정수(\(Int(integerScrollPos.x)), \(Int(integerScrollPos.y))) 백분율(\(String(format: "%.1f", xPercent))%, \(String(format: "%.1f", yPercent))%)")
+        
         return (snapshot, visualSnapshot)
     }
     
-    // 📈 **핵심 개선: 정밀 스크롤 감지 JavaScript 생성 - 기존 동적 콘텐츠 안정화 대기시간 유지**
-    private func generatePrecisionScrollCaptureScript() -> String {
+    // 📈 **핵심 개선: 정수 스크롤 감지 JavaScript 생성 - 기존 동적 콘텐츠 안정화 대기시간 유지**
+    private func generateIntegerScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
@@ -1080,12 +1109,12 @@ final class BFCacheTransitionSystem: NSObject {
 
                 function captureScrollData() {
                     try {
-                        // 📈 **1단계: 정밀 스크롤 요소 스캔 - 2000개로 확장, parseFloat 정밀도 적용**
+                        // 📈 **1단계: 정수 스크롤 요소 스캔 - 2000개로 확장, Math.round 정수 적용**
                         function findAllScrollableElements() {
                             const scrollables = [];
                             const maxElements = 2000; // 📈 **기존 유지**
                             
-                            console.log('📈 정밀 스크롤 감지 강화: 최대 ' + maxElements + '개 요소 감지');
+                            console.log('📈 정수 스크롤 감지 강화: 최대 ' + maxElements + '개 요소 감지');
                             
                             // 1) 명시적 overflow 스타일을 가진 요소들
                             const explicitScrollables = document.querySelectorAll('*');
@@ -1102,11 +1131,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                                     (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                                     
-                                    // ⚡ parseFloat로 정밀도 향상, 0.5px 단위까지 감지
-                                    const scrollTop = parseFloat(el.scrollTop) || 0;
-                                    const scrollLeft = parseFloat(el.scrollLeft) || 0;
+                                    // ⚡ Math.round로 정수 변환, 1px 단위까지 감지
+                                    const scrollTop = Math.round(el.scrollTop) || 0;
+                                    const scrollLeft = Math.round(el.scrollLeft) || 0;
                                     
-                                    if (scrollTop > 0.5 || scrollLeft > 0.5) {
+                                    if (scrollTop > 0 || scrollLeft > 0) {
                                         const selector = generateBestSelector(el);
                                         if (selector) {
                                             // 🌐 동적 콘텐츠 식별을 위한 데이터 속성 저장
@@ -1117,9 +1146,9 @@ final class BFCacheTransitionSystem: NSObject {
                                                 }
                                             }
                                             
-                                            // ⚡ **상대적 위치 계산 추가**
-                                            const maxScrollTop = el.scrollHeight - el.clientHeight;
-                                            const maxScrollLeft = el.scrollWidth - el.clientWidth;
+                                            // ⚡ **독립적 상대적 위치 계산**
+                                            const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                                            const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
                                             
                                             scrollables.push({
                                                 selector: selector,
@@ -1171,11 +1200,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 for (const el of elements) {
                                     if (count >= maxElements) break;
                                     
-                                    // ⚡ parseFloat 정밀도 적용
-                                    const scrollTop = parseFloat(el.scrollTop) || 0;
-                                    const scrollLeft = parseFloat(el.scrollLeft) || 0;
+                                    // ⚡ Math.round 정수 적용
+                                    const scrollTop = Math.round(el.scrollTop) || 0;
+                                    const scrollLeft = Math.round(el.scrollLeft) || 0;
                                     
-                                    if ((scrollTop > 0.5 || scrollLeft > 0.5) && 
+                                    if ((scrollTop > 0 || scrollLeft > 0) && 
                                         !scrollables.some(s => s.selector === generateBestSelector(el))) {
                                         
                                         // 🌐 동적 속성 수집
@@ -1186,9 +1215,9 @@ final class BFCacheTransitionSystem: NSObject {
                                             }
                                         }
                                         
-                                        // ⚡ **상대적 위치 계산**
-                                        const maxScrollTop = el.scrollHeight - el.clientHeight;
-                                        const maxScrollLeft = el.scrollWidth - el.clientWidth;
+                                        // ⚡ **독립적 상대적 위치 계산**
+                                        const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                                        const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
                                         
                                         scrollables.push({
                                             selector: generateBestSelector(el) || selector,
@@ -1208,11 +1237,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            console.log('📈 정밀 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
+                            console.log('📈 정수 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
                             return scrollables;
                         }
                         
-                        // 🖼️ **2단계: iframe 정밀 스크롤 감지 (parseFloat 적용)**
+                        // 🖼️ **2단계: iframe 정수 스크롤 감지 (Math.round 적용)**
                         function detectIframeScrolls() {
                             const iframes = [];
                             const iframeElements = document.querySelectorAll('iframe');
@@ -1221,11 +1250,11 @@ final class BFCacheTransitionSystem: NSObject {
                                 try {
                                     const contentWindow = iframe.contentWindow;
                                     if (contentWindow && contentWindow.location) {
-                                        // ⚡ parseFloat 정밀도 적용
-                                        const scrollX = parseFloat(contentWindow.scrollX) || 0;
-                                        const scrollY = parseFloat(contentWindow.scrollY) || 0;
+                                        // ⚡ Math.round 정수 적용
+                                        const scrollX = Math.round(contentWindow.scrollX) || 0;
+                                        const scrollY = Math.round(contentWindow.scrollY) || 0;
                                         
-                                        if (scrollX > 0.5 || scrollY > 0.5) {
+                                        if (scrollX > 0 || scrollY > 0) {
                                             // 🌐 동적 속성 수집
                                             const dynamicAttrs = {};
                                             for (const attr of iframe.attributes) {
@@ -1334,22 +1363,22 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 📈 **메인 실행 - 정밀도 향상**
+                        // 📈 **메인 실행 - 정수 변환**
                         const scrollableElements = findAllScrollableElements();
                         const iframeScrolls = detectIframeScrolls();
                         
-                        // ⚡ **메인 스크롤 위치도 parseFloat 정밀도 적용**
-                        const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
-                        const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
+                        // ⚡ **메인 스크롤 위치도 Math.round 정수 적용**
+                        const mainScrollX = Math.round(window.scrollX || window.pageXOffset) || 0;
+                        const mainScrollY = Math.round(window.scrollY || window.pageYOffset) || 0;
                         
-                        // ⚡ **뷰포트 및 콘텐츠 크기 정밀 계산**
-                        const viewportWidth = parseFloat(window.innerWidth) || 0;
-                        const viewportHeight = parseFloat(window.innerHeight) || 0;
-                        const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
-                        const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
+                        // ⚡ **뷰포트 및 콘텐츠 크기 정수 계산**
+                        const viewportWidth = Math.round(window.innerWidth) || 0;
+                        const viewportHeight = Math.round(window.innerHeight) || 0;
+                        const contentWidth = Math.round(document.documentElement.scrollWidth) || 0;
+                        const contentHeight = Math.round(document.documentElement.scrollHeight) || 0;
                         
-                        console.log(`📈 정밀 스크롤 감지 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
-                        console.log(`⚡ 정밀 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
+                        console.log(`📈 정수 스크롤 감지 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`⚡ 정수 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
                         
                         resolve({
                             scroll: { 
@@ -1372,9 +1401,9 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         });
                     } catch(e) { 
-                        console.error('📈 정밀 스크롤 감지 실패:', e);
+                        console.error('📈 정수 스크롤 감지 실패:', e);
                         resolve({
-                            scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0, elements: [] },
+                            scroll: { x: Math.round(window.scrollX) || 0, y: Math.round(window.scrollY) || 0, elements: [] },
                             iframes: [],
                             href: window.location.href,
                             title: document.title
@@ -1693,7 +1722,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("📈 정밀 BFCache 제스처 설정 완료 (정밀 스크롤 감지 강화): 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("📈 정수 BFCache 제스처 설정 완료 (정수 스크롤 감지 강화): 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2282,11 +2311,11 @@ final class BFCacheTransitionSystem: NSObject {
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
                 try {
-                    // ⚡ parseFloat로 정밀도 향상
-                    const targetX = parseFloat(event.data.scrollX) || 0;
-                    const targetY = parseFloat(event.data.scrollY) || 0;
+                    // ⚡ Math.round로 정수 변환
+                    const targetX = Math.round(event.data.scrollX) || 0;
+                    const targetY = Math.round(event.data.scrollY) || 0;
                     window.scrollTo(targetX, targetY);
-                    console.log('🌐 Cross-origin iframe 정밀 스크롤 복원:', targetX, targetY);
+                    console.log('🌐 Cross-origin iframe 정수 스크롤 복원:', targetX, targetY);
                 } catch(e) {
                     console.error('Cross-origin iframe 스크롤 복원 실패:', e);
                 }
@@ -2321,7 +2350,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 📈 정밀 스크롤 감지 강화 BFCache 시스템 설치 완료 (소수점 정밀도 + 상대적 위치 기반 복원)")
+        TabPersistenceManager.debugMessages.append("✅ 📈 정수 스크롤 감지 강화 BFCache 시스템 설치 완료 (정수 정밀도 + 독립적 백분율 계산)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
