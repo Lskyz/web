@@ -1,4 +1,4 @@
-//
+1ㄷ//
 //  BFCacheSwipeTransition.swift
 //  🎯 **강화된 BFCache 전환 시스템**
 //  ✅ 직렬화 큐로 레이스 컨디션 완전 제거
@@ -336,7 +336,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 0.80 // 🚀 고정 250ms 최종 대기
+            let waitTime: TimeInterval = 0.70 // 🚀 고정 250ms 최종 대기
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
