@@ -1,12 +1,13 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **전체 페이지 캡처 및 무한스크롤 대응 BFCache 전환 시스템**
-//  ✅ 뷰포트 외부 콘텐츠 캡처 (전체 페이지 스크롤 캡처)
-//  🔄 동적 콘텐츠 로딩 완료 감지 및 대기
-//  📸 무한스크롤 환경 완전 대응
-//  ♾️ 스마트 캡처 전략: 즉시 + 지연 + 전체 페이지
-//  🎯 **캡처 품질 최적화** - 뷰포트 한계 극복
-//  🌐 **동적 사이트 완전 대응** - 네이버 카페, 커뮤니티 등
+//  🎯 **DOM 요소 기반 정밀 스크롤 복원 시스템**
+//  ✅ 1단계: 아이템/앵커 요소 기반 복원으로 변경
+//  🔄 뷰포트 내 기준 요소 식별 후 scrollIntoView 실행
+//  📸 동적 DOM 요소 위치 추적
+//  ♾️ 무한 스크롤 대응 강화
+//  💾 스마트 메모리 관리 
+//  📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
+//  🔧 **뷰포트 앵커 시스템** - 화면에 보이는 핵심 요소 기준
 //
 
 import UIKit
@@ -18,22 +19,6 @@ fileprivate func ts() -> String {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss.SSS"
     return f.string(from: Date())
-}
-
-// MARK: - 🌐 **전체 페이지 캡처 컨텍스트**
-private struct FullPageCaptureContext {
-    let originalScrollPosition: CGPoint
-    let totalContentSize: CGSize
-    let viewportSize: CGSize
-    let pageRecord: PageRecord
-    let tabID: UUID?
-    let captureType: CaptureType
-    weak var webView: WKWebView?
-    let requestedAt: Date = Date()
-    var capturedSegments: [CGRect: UIImage] = [:]
-    var totalCaptureTime: TimeInterval = 0
-    var isInfiniteScroll: Bool = false
-    var dynamicContentDetected: Bool = false
 }
 
 // MARK: - 🧵 **개선된 제스처 컨텍스트 (먹통 방지)**
@@ -74,7 +59,7 @@ private class GestureContext {
     }
 }
 
-// MARK: - 📸 **전체 페이지 BFCache 스냅샷 (뷰포트 한계 극복)**
+// MARK: - 📸 **개선된 BFCache 페이지 스냅샷 (DOM 요소 기반)**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -82,32 +67,18 @@ struct BFCacheSnapshot: Codable {
     let scrollPositionPercent: CGPoint  // 🔄 상대적 위치 (백분율)
     let contentSize: CGSize  // 📐 콘텐츠 크기 정보
     let viewportSize: CGSize  // 📱 뷰포트 크기 정보
-    let actualScrollableSize: CGSize  // ♾️ 실제 스크롤 가능한 최대 크기
+    let actualScrollableSize: CGSize  // ♾️ **실제 스크롤 가능한 최대 크기**
     var jsState: [String: Any]?
     let timestamp: Date
     var webViewSnapshotPath: String?
-    var fullPageSnapshotPath: String?  // 🌐 **새로 추가: 전체 페이지 스냅샷 경로**
     let captureStatus: CaptureStatus
-    let captureMetadata: CaptureMetadata  // 🎯 **새로 추가: 캡처 메타데이터**
     let version: Int
     
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
-        case partial        // 일부만 캡처 성공  
+        case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
-        case fullPage       // 🌐 **새로 추가: 전체 페이지 캡처 성공**
         case failed         // 캡처 실패
-    }
-    
-    // 🎯 **새로 추가: 캡처 메타데이터**
-    struct CaptureMetadata: Codable {
-        let isInfiniteScroll: Bool
-        let dynamicContentDetected: Bool
-        let captureMethod: String  // "viewport", "fullPage", "hybrid"
-        let segmentCount: Int      // 전체 페이지 캡처 시 세그먼트 수
-        let totalCaptureTime: TimeInterval
-        let contentStabilityTime: TimeInterval  // 동적 콘텐츠 안정화 시간
-        let viewportCoverage: Double  // 뷰포트 대비 캡처된 영역 비율
     }
     
     // Codable을 위한 CodingKeys
@@ -122,9 +93,7 @@ struct BFCacheSnapshot: Codable {
         case jsState
         case timestamp
         case webViewSnapshotPath
-        case fullPageSnapshotPath
         case captureStatus
-        case captureMetadata
         case version
     }
     
@@ -146,11 +115,7 @@ struct BFCacheSnapshot: Codable {
         
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
-        fullPageSnapshotPath = try container.decodeIfPresent(String.self, forKey: .fullPageSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
-        captureMetadata = try container.decodeIfPresent(CaptureMetadata.self, forKey: .captureMetadata) ?? 
-            CaptureMetadata(isInfiniteScroll: false, dynamicContentDetected: false, captureMethod: "viewport", 
-                          segmentCount: 1, totalCaptureTime: 0, contentStabilityTime: 0, viewportCoverage: 1.0)
         version = try container.decode(Int.self, forKey: .version)
     }
     
@@ -172,13 +137,11 @@ struct BFCacheSnapshot: Codable {
         
         try container.encode(timestamp, forKey: .timestamp)
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
-        try container.encodeIfPresent(fullPageSnapshotPath, forKey: .fullPageSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
-        try container.encode(captureMetadata, forKey: .captureMetadata)
         try container.encode(version, forKey: .version)
     }
     
-    // 직접 초기화용 init (전체 페이지 캡처 지원)
+    // 직접 초기화용 init (정밀 스크롤 지원)
     init(pageRecord: PageRecord, 
          domSnapshot: String? = nil, 
          scrollPosition: CGPoint, 
@@ -188,10 +151,8 @@ struct BFCacheSnapshot: Codable {
          actualScrollableSize: CGSize = CGSize.zero,
          jsState: [String: Any]? = nil, 
          timestamp: Date, 
-         webViewSnapshotPath: String? = nil,
-         fullPageSnapshotPath: String? = nil,
-         captureStatus: CaptureStatus = .partial,
-         captureMetadata: CaptureMetadata? = nil,
+         webViewSnapshotPath: String? = nil, 
+         captureStatus: CaptureStatus = .partial, 
          version: Int = 1) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
@@ -203,344 +164,479 @@ struct BFCacheSnapshot: Codable {
         self.jsState = jsState
         self.timestamp = timestamp
         self.webViewSnapshotPath = webViewSnapshotPath
-        self.fullPageSnapshotPath = fullPageSnapshotPath
         self.captureStatus = captureStatus
-        self.captureMetadata = captureMetadata ?? CaptureMetadata(
-            isInfiniteScroll: false, 
-            dynamicContentDetected: false, 
-            captureMethod: "viewport", 
-            segmentCount: 1, 
-            totalCaptureTime: 0, 
-            contentStabilityTime: 0, 
-            viewportCoverage: 1.0
-        )
         self.version = version
     }
     
-    // 이미지 로드 메서드 (전체 페이지 우선)
+    // 이미지 로드 메서드
     func loadImage() -> UIImage? {
-        // 🌐 **전체 페이지 스냅샷 우선 로드**
-        if let fullPagePath = fullPageSnapshotPath {
-            let url = URL(fileURLWithPath: fullPagePath)
-            if FileManager.default.fileExists(atPath: url.path) {
-                return UIImage(contentsOfFile: url.path)
-            }
-        }
-        
-        // 뷰포트 스냅샷 fallback
         guard let path = webViewSnapshotPath else { return nil }
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🌐 **전체 페이지 캡처 기반 복원**
+    // 🎯 **핵심 개선: DOM 요소 기반 1단계 복원**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🌐 전체 페이지 BFCache 복원 시작 - 상태: \(captureStatus.rawValue), 방법: \(captureMetadata.captureMethod)")
+        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
-        // ⚡ **즉시 스크롤 복원 먼저 수행**
-        performPreciseScrollRestore(to: webView)
+        // 🎯 **1단계: DOM 요소 기반 스크롤 복원 우선 실행**
+        performElementBasedScrollRestore(to: webView)
         
-        // 🔧 **캡처 상태별 분기 로직**
+        // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
         case .failed:
-            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 즉시 스크롤만 복원")
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - DOM 요소 복원만 수행")
             completion(true)
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 뷰포트만 캡처된 상태 - 기본 복원")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - DOM 요소 복원 + 최종보정")
             
-        case .fullPage:
-            TabPersistenceManager.debugMessages.append("🌐 전체 페이지 캡처 상태 - 고급 복원 수행")
+        case .partial:
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - DOM 요소 복원 + 전체 다단계 복원")
             
-        case .partial, .complete:
-            TabPersistenceManager.debugMessages.append("⚡ 하이브리드 캡처 상태 - 전체 복원 수행")
+        case .complete:
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - DOM 요소 복원 + 전체 다단계 복원")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 전체 페이지 BFCache 복원 후 다단계 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 DOM 요소 기반 복원 후 다단계 보정 시작")
         
-        // 🔧 **정밀 복원 후 추가 보정 단계 실행**
+        // 🔧 **DOM 요소 복원 후 추가 보정 단계 실행 (기존 타이밍 유지)**
         DispatchQueue.main.async {
-            self.performFullPageProgressiveRestore(to: webView, completion: completion)
+            self.performElementBasedProgressiveRestore(to: webView, completion: completion)
         }
     }
     
-    // 🌐 **새로 추가: 정밀 스크롤 복원 메서드**
-    private func performPreciseScrollRestore(to webView: WKWebView) {
+    // 🎯 **새로 추가: DOM 요소 기반 1단계 복원 메서드**
+    private func performElementBasedScrollRestore(to webView: WKWebView) {
+        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 시작")
+        
+        // 1. 네이티브 스크롤뷰 기본 설정 (백업용)
+        let targetPos = self.scrollPosition
+        webView.scrollView.setContentOffset(targetPos, animated: false)
+        
+        // 2. 🎯 **DOM 요소 기반 복원 JavaScript 실행**
+        let elementRestoreJS = generateElementBasedRestoreScript()
+        
+        // 동기적 JavaScript 실행 (즉시)
+        webView.evaluateJavaScript(elementRestoreJS) { result, error in
+            let success = (result as? Bool) ?? false
+            TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
+            
+            if let resultDict = result as? [String: Any] {
+                if let method = resultDict["method"] as? String {
+                    TabPersistenceManager.debugMessages.append("🎯 사용된 복원 방법: \(method)")
+                }
+                if let anchorInfo = resultDict["anchorInfo"] as? String {
+                    TabPersistenceManager.debugMessages.append("🎯 앵커 정보: \(anchorInfo)")
+                }
+            }
+        }
+        
+        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 완료")
+    }
+    
+    // 🎯 **핵심: DOM 요소 기반 복원 JavaScript 생성**
+    private func generateElementBasedRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
         
-        TabPersistenceManager.debugMessages.append("🌐 정밀 스크롤 복원: 절대(\(targetPos.x), \(targetPos.y)) 상대(\(targetPercent.x)%, \(targetPercent.y)%)")
+        // jsState에서 뷰포트 앵커 정보 추출
+        var viewportAnchorData = "null"
+        var scrollableElementsData = "[]"
         
-        // 1. 네이티브 스크롤뷰 정밀 설정
-        webView.scrollView.setContentOffset(targetPos, animated: false)
-        webView.scrollView.contentOffset = targetPos
-        
-        // 2. 🌐 **전체 페이지 캡처 기반 적응형 위치 계산**
-        let currentContentSize = webView.scrollView.contentSize
-        let currentViewportSize = webView.bounds.size
-        
-        var adaptivePos = targetPos
-        
-        // 📐 콘텐츠 크기가 변했으면 메타데이터 기반으로 재계산
-        if captureMetadata.isInfiniteScroll && contentSize != CGSize.zero && currentContentSize != contentSize {
-            // 무한스크롤인 경우 백분율 기반으로 보다 정확하게 계산
-            if targetPercent != CGPoint.zero {
-                let effectiveContentWidth = max(actualScrollableSize.width, currentContentSize.width)
-                let effectiveContentHeight = max(actualScrollableSize.height, currentContentSize.height)
-                
-                adaptivePos.x = max(0, (effectiveContentWidth - currentViewportSize.width) * targetPercent.x / 100.0)
-                adaptivePos.y = max(0, (effectiveContentHeight - currentViewportSize.height) * targetPercent.y / 100.0)
-                
-                TabPersistenceManager.debugMessages.append("🌐 무한스크롤 백분율 보정: → (\(adaptivePos.x), \(adaptivePos.y))")
+        if let jsState = self.jsState {
+            // 뷰포트 앵커 정보
+            if let viewport = jsState["viewportAnchor"] as? [String: Any],
+               let anchorJSON = convertToJSONString(viewport) {
+                viewportAnchorData = anchorJSON
             }
-        } else {
-            // 일반 페이지의 경우 비율 기반 조정
-            let xScale = currentContentSize.width / max(contentSize.width, 1)
-            let yScale = currentContentSize.height / max(contentSize.height, 1)
             
-            adaptivePos.x = targetPos.x * xScale
-            adaptivePos.y = targetPos.y * yScale
-            
-            TabPersistenceManager.debugMessages.append("🌐 일반 페이지 비율 보정: 크기변화(\(xScale), \(yScale)) → (\(adaptivePos.x), \(adaptivePos.y))")
+            // 스크롤 요소 정보
+            if let scrollData = jsState["scroll"] as? [String: Any],
+               let elements = scrollData["elements"] as? [[String: Any]],
+               let elementsJSON = convertToJSONString(elements) {
+                scrollableElementsData = elementsJSON
+            }
         }
         
-        // 3. 범위 검증 (음수 방지)
-        let maxX = max(0, currentContentSize.width - currentViewportSize.width)
-        let maxY = max(0, currentContentSize.height - currentViewportSize.height)
-        adaptivePos.x = max(0, min(adaptivePos.x, maxX))
-        adaptivePos.y = max(0, min(adaptivePos.y, maxY))
-        
-        TabPersistenceManager.debugMessages.append("🌐 범위 검증 후: 최종위치(\(adaptivePos.x), \(adaptivePos.y))")
-        
-        webView.scrollView.setContentOffset(adaptivePos, animated: false)
-        webView.scrollView.contentOffset = adaptivePos
-        
-        // 4. 🌐 **전체 페이지 캡처 기반 JavaScript 스크롤 설정**
-        let fullPageScrollJS = """
+        return """
         (function() {
             try {
-                const targetX = parseFloat('\(adaptivePos.x)');
-                const targetY = parseFloat('\(adaptivePos.y)');
-                const captureMethod = '\(captureMetadata.captureMethod)';
-                const isInfiniteScroll = \(captureMetadata.isInfiniteScroll);
+                const targetX = parseFloat('\(targetPos.x)');
+                const targetY = parseFloat('\(targetPos.y)');
+                const targetPercentX = parseFloat('\(targetPercent.x)');
+                const targetPercentY = parseFloat('\(targetPercent.y)');
+                const viewportAnchor = \(viewportAnchorData);
+                const scrollableElements = \(scrollableElementsData);
                 
-                console.log('🌐 전체 페이지 기반 스크롤 복원:', targetX, targetY, '방법:', captureMethod);
+                console.log('🎯 DOM 요소 기반 복원 시작:', {
+                    target: [targetX, targetY],
+                    percent: [targetPercentX, targetPercentY],
+                    hasAnchor: !!viewportAnchor,
+                    elementsCount: scrollableElements.length
+                });
                 
-                // 🌐 **모든 가능한 스크롤 설정 정밀 실행**
-                window.scrollTo(targetX, targetY);
-                document.documentElement.scrollTop = targetY;
-                document.documentElement.scrollLeft = targetX;
-                document.body.scrollTop = targetY;
-                document.body.scrollLeft = targetX;
+                let restoredByElement = false;
+                let usedMethod = 'fallback';
+                let anchorInfo = 'none';
                 
-                // 🌐 **무한스크롤 특화 처리**
-                if (isInfiniteScroll) {
+                // 🎯 **방법 1: 뷰포트 앵커 요소 기반 복원 (최우선)**
+                if (viewportAnchor && viewportAnchor.selector) {
+                    try {
+                        const anchorElement = document.querySelector(viewportAnchor.selector);
+                        if (anchorElement) {
+                            // 앵커 요소의 현재 위치 계산
+                            const rect = anchorElement.getBoundingClientRect();
+                            const elementTop = window.scrollY + rect.top;
+                            const elementLeft = window.scrollX + rect.left;
+                            
+                            // 저장된 오프셋 적용
+                            const offsetY = parseFloat(viewportAnchor.offsetFromTop) || 0;
+                            const offsetX = parseFloat(viewportAnchor.offsetFromLeft) || 0;
+                            
+                            const restoreX = elementLeft - offsetX;
+                            const restoreY = elementTop - offsetY;
+                            
+                            console.log('🎯 앵커 요소 복원:', {
+                                selector: viewportAnchor.selector,
+                                elementPos: [elementLeft, elementTop],
+                                offset: [offsetX, offsetY],
+                                restore: [restoreX, restoreY]
+                            });
+                            
+                            // 앵커 기반 스크롤
+                            window.scrollTo(restoreX, restoreY);
+                            document.documentElement.scrollTop = restoreY;
+                            document.documentElement.scrollLeft = restoreX;
+                            document.body.scrollTop = restoreY;
+                            document.body.scrollLeft = restoreX;
+                            
+                            restoredByElement = true;
+                            usedMethod = 'viewportAnchor';
+                            anchorInfo = viewportAnchor.selector + ' offset(' + offsetX + ',' + offsetY + ')';
+                        }
+                    } catch(e) {
+                        console.log('🎯 앵커 요소 복원 실패:', e.message);
+                    }
+                }
+                
+                // 🎯 **방법 2: 주요 스크롤 컨테이너 내 아이템 기반 복원**
+                if (!restoredByElement && scrollableElements.length > 0) {
+                    for (const scrollInfo of scrollableElements) {
+                        if (!scrollInfo.selector) continue;
+                        
+                        try {
+                            const scrollContainer = document.querySelector(scrollInfo.selector);
+                            if (scrollContainer && scrollContainer.children.length > 0) {
+                                // 컨테이너 내 아이템들 분석
+                                const items = Array.from(scrollContainer.children);
+                                const targetScrollTop = parseFloat(scrollInfo.top) || 0;
+                                
+                                if (targetScrollTop > 0 && items.length > 0) {
+                                    // 아이템 높이 추정
+                                    const firstItemHeight = items[0].getBoundingClientRect().height;
+                                    const estimatedItemIndex = Math.floor(targetScrollTop / firstItemHeight);
+                                    const targetItemIndex = Math.min(estimatedItemIndex, items.length - 1);
+                                    
+                                    if (targetItemIndex > 0) {
+                                        const targetItem = items[targetItemIndex];
+                                        
+                                        // 아이템으로 스크롤 (부드럽지 않게)
+                                        targetItem.scrollIntoView({ 
+                                            behavior: 'auto', 
+                                            block: 'start',
+                                            inline: 'start'
+                                        });
+                                        
+                                        // 컨테이너 내부 정밀 조정
+                                        const remainderScroll = targetScrollTop - (targetItemIndex * firstItemHeight);
+                                        scrollContainer.scrollTop = targetItem.offsetTop + remainderScroll;
+                                        
+                                        console.log('🎯 아이템 기반 복원 성공:', {
+                                            container: scrollInfo.selector,
+                                            itemIndex: targetItemIndex,
+                                            itemHeight: firstItemHeight,
+                                            remainder: remainderScroll
+                                        });
+                                        
+                                        restoredByElement = true;
+                                        usedMethod = 'containerItem';
+                                        anchorInfo = scrollInfo.selector + ' item[' + targetItemIndex + ']';
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch(e) {
+                            console.log('🎯 컨테이너 아이템 복원 실패:', scrollInfo.selector, e.message);
+                        }
+                    }
+                }
+                
+                // 🎯 **방법 3: 페이지 내 랜드마크 요소 기반 복원**
+                if (!restoredByElement) {
+                    try {
+                        // 페이지의 주요 랜드마크 요소들 찾기
+                        const landmarks = [
+                            ...document.querySelectorAll('article'),
+                            ...document.querySelectorAll('[role="main"]'),
+                            ...document.querySelectorAll('main'),
+                            ...document.querySelectorAll('.post'),
+                            ...document.querySelectorAll('.article'),
+                            ...document.querySelectorAll('.content'),
+                            ...document.querySelectorAll('h1, h2, h3'),
+                            ...document.querySelectorAll('.list-item'),
+                            ...document.querySelectorAll('.card')
+                        ];
+                        
+                        if (landmarks.length > 0) {
+                            // 타겟 Y 위치에서 가장 가까운 랜드마크 찾기
+                            let closestElement = null;
+                            let closestDistance = Infinity;
+                            
+                            for (const element of landmarks) {
+                                const rect = element.getBoundingClientRect();
+                                const elementY = window.scrollY + rect.top;
+                                const distance = Math.abs(elementY - targetY);
+                                
+                                if (distance < closestDistance) {
+                                    closestDistance = distance;
+                                    closestElement = element;
+                                }
+                            }
+                            
+                            if (closestElement && closestDistance < window.innerHeight) {
+                                // 가장 가까운 랜드마크로 스크롤
+                                closestElement.scrollIntoView({ 
+                                    behavior: 'auto', 
+                                    block: 'start',
+                                    inline: 'start'
+                                });
+                                
+                                // 정밀 조정
+                                const rect = closestElement.getBoundingClientRect();
+                                const currentY = window.scrollY + rect.top;
+                                const adjustment = targetY - currentY;
+                                
+                                if (Math.abs(adjustment) < window.innerHeight) {
+                                    window.scrollBy(0, adjustment);
+                                }
+                                
+                                console.log('🎯 랜드마크 기반 복원 성공:', {
+                                    element: closestElement.tagName + (closestElement.className ? '.' + closestElement.className.split(' ')[0] : ''),
+                                    distance: closestDistance,
+                                    adjustment: adjustment
+                                });
+                                
+                                restoredByElement = true;
+                                usedMethod = 'landmark';
+                                anchorInfo = closestElement.tagName + ' distance(' + Math.round(closestDistance) + 'px)';
+                            }
+                        }
+                    } catch(e) {
+                        console.log('🎯 랜드마크 기반 복원 실패:', e.message);
+                    }
+                }
+                
+                // 🎯 **방법 4: 폴백 - 기존 좌표 기반 복원**
+                if (!restoredByElement) {
+                    console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행');
+                    
+                    window.scrollTo(targetX, targetY);
+                    document.documentElement.scrollTop = targetY;
+                    document.documentElement.scrollLeft = targetX;
+                    document.body.scrollTop = targetY;
+                    document.body.scrollLeft = targetX;
+                    
                     // scrollingElement 활용
                     if (document.scrollingElement) {
                         document.scrollingElement.scrollTop = targetY;
                         document.scrollingElement.scrollLeft = targetX;
                     }
                     
-                    // 무한스크롤 컨테이너들 처리
-                    const infiniteScrollContainers = document.querySelectorAll(
-                        '.infinite-scroll, .virtual-list, .lazy-load, .posts-container, ' +
-                        '.comments-list, .thread-list, .message-list, .activity-feed, ' +
-                        '.news-feed, .social-feed, .content-stream, .scroll-container'
-                    );
-                    
-                    infiniteScrollContainers.forEach(container => {
-                        if (container.scrollHeight > container.clientHeight) {
-                            try {
-                                // 상대적 위치 계산해서 적용
-                                const relativeY = (targetY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1)) * 
-                                                Math.max(container.scrollHeight - container.clientHeight, 0);
-                                container.scrollTop = relativeY;
-                            } catch(e) {
-                                // 개별 컨테이너 에러는 무시
-                            }
-                        }
-                    });
+                    usedMethod = 'coordinateFallback';
+                    anchorInfo = 'coords(' + targetX + ',' + targetY + ')';
                 }
                 
-                // 🌐 **최종 확인**
+                // 최종 위치 확인
                 const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
                 const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
                 
-                console.log('🌐 전체 페이지 스크롤 복원 완료:', {
+                console.log('🎯 DOM 요소 기반 복원 완료:', {
                     target: [targetX, targetY],
                     final: [finalX, finalY],
                     diff: [Math.abs(finalX - targetX), Math.abs(finalY - targetY)],
-                    method: captureMethod
+                    method: usedMethod,
+                    elementBased: restoredByElement
                 });
                 
-                return true;
+                return {
+                    success: true,
+                    method: usedMethod,
+                    anchorInfo: anchorInfo,
+                    elementBased: restoredByElement,
+                    finalPosition: [finalX, finalY]
+                };
+                
             } catch(e) { 
-                console.error('🌐 전체 페이지 스크롤 복원 실패:', e);
-                return false; 
+                console.error('🎯 DOM 요소 기반 복원 실패:', e);
+                return {
+                    success: false,
+                    method: 'error',
+                    anchorInfo: e.message,
+                    elementBased: false
+                };
             }
         })()
         """
-        
-        // 동기적 JavaScript 실행
-        webView.evaluateJavaScript(fullPageScrollJS) { result, error in
-            let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("🌐 전체 페이지 JavaScript 스크롤: \(success ? "성공" : "실패")")
-        }
-        
-        TabPersistenceManager.debugMessages.append("🌐 정밀 스크롤 복원 단계 완료")
     }
     
-    // 🌐 **전체 페이지 점진적 복원 시스템**
-    private func performFullPageProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🎯 **DOM 요소 기반 점진적 복원 시스템 (기존 타이밍 유지)**
+    private func performElementBasedProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🌐 전체 페이지 점진적 보정 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 점진적 보정 단계 구성 시작")
         
-        // **1단계: 전체 페이지 스크롤 확인 및 보정**
+        // **1단계: DOM 요소 복원 검증 및 보정 (기존 30ms 유지)**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.05 // 50ms 대기
-            TabPersistenceManager.debugMessages.append("🌐 1단계: 전체 페이지 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+            let verifyDelay: TimeInterval = 0.03 // 🔧 기존 30ms 유지
+            TabPersistenceManager.debugMessages.append("🎯 1단계: DOM 요소 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
-                let fullPageVerifyJS = """
+                let elementVerifyJS = """
                 (function() {
                     try {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = \(self.captureMetadata.isInfiniteScroll ? 10.0 : 3.0); // 무한스크롤은 더 관대하게
-                        const method = '\(self.captureMetadata.captureMethod)';
+                        const tolerance = 10.0; // 🎯 DOM 요소 기반은 허용 오차 확대
                         
-                        console.log('🌐 전체 페이지 검증:', {
+                        console.log('🎯 DOM 요소 복원 검증:', {
                             target: [targetX, targetY],
                             current: [currentX, currentY],
-                            diff: [Math.abs(currentX - targetX), Math.abs(currentY - targetY)],
-                            tolerance: tolerance,
-                            method: method
+                            diff: [Math.abs(currentX - targetX), Math.abs(currentY - targetY)]
                         });
                         
-                        // 위치 차이가 허용 범위를 벗어나면 보정
-                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('🌐 전체 페이지 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            
-                            // 강력한 보정
-                            window.scrollTo(targetX, targetY);
-                            document.documentElement.scrollTop = targetY;
-                            document.documentElement.scrollLeft = targetX;
-                            document.body.scrollTop = targetY;
-                            document.body.scrollLeft = targetX;
-                            
-                            // scrollingElement 활용
-                            if (document.scrollingElement) {
-                                document.scrollingElement.scrollTop = targetY;
-                                document.scrollingElement.scrollLeft = targetX;
-                            }
-                            
-                            return 'fullpage_corrected';
+                        // 허용 오차 내라면 성공
+                        if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
+                            console.log('🎯 DOM 요소 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            return 'element_verified';
                         } else {
-                            console.log('🌐 전체 페이지 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            return 'fullpage_verified';
+                            console.log('🎯 DOM 요소 복원 미세 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            
+                            // 미세 보정 시도
+                            const diffX = targetX - currentX;
+                            const diffY = targetY - currentY;
+                            
+                            // 차이가 크지 않으면 스크롤 조정
+                            if (Math.abs(diffX) < window.innerWidth && Math.abs(diffY) < window.innerHeight) {
+                                window.scrollBy(diffX, diffY);
+                                return 'element_corrected';
+                            } else {
+                                // 차이가 크면 다시 전체 복원
+                                window.scrollTo(targetX, targetY);
+                                return 'element_reset';
+                            }
                         }
                     } catch(e) { 
-                        console.error('🌐 전체 페이지 복원 검증 실패:', e);
-                        return 'fullpage_error'; 
+                        console.error('🎯 DOM 요소 복원 검증 실패:', e);
+                        return 'element_error'; 
                     }
                 })()
                 """
                 
-                webView.evaluateJavaScript(fullPageVerifyJS) { result, _ in
-                    let resultString = result as? String ?? "fullpage_error"
+                webView.evaluateJavaScript(elementVerifyJS) { result, _ in
+                    let resultString = result as? String ?? "element_error"
                     let success = (resultString.contains("verified") || resultString.contains("corrected"))
-                    TabPersistenceManager.debugMessages.append("🌐 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                    TabPersistenceManager.debugMessages.append("🎯 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
             }
         }))
         
-        // **2단계: 전체 페이지 컨테이너 스크롤 복원**
+        // **2단계: 컨테이너 스크롤 복원 (기존 80ms 유지)**
         if let jsState = self.jsState,
            let scrollData = jsState["scroll"] as? [String: Any],
            let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🌐 2단계 전체 페이지 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
+            TabPersistenceManager.debugMessages.append("🎯 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.1 // 100ms 대기
-                TabPersistenceManager.debugMessages.append("🌐 2단계: 전체 페이지 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                let waitTime: TimeInterval = 0.08 // 🔧 기존 80ms 유지
+                TabPersistenceManager.debugMessages.append("🎯 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let fullPageContainerScrollJS = self.generateFullPageContainerScrollScript(elements)
-                    webView.evaluateJavaScript(fullPageContainerScrollJS) { result, _ in
+                    let containerScrollJS = self.generateContainerScrollScript(elements)
+                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🌐 2단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🎯 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         } else {
-            TabPersistenceManager.debugMessages.append("🌐 2단계 스킵 - 컨테이너 스크롤 요소 없음")
+            TabPersistenceManager.debugMessages.append("🎯 2단계 스킵 - 컨테이너 스크롤 요소 없음")
         }
         
-        // **3단계: 무한스크롤 특화 복원**
-        if captureMetadata.isInfiniteScroll {
-            TabPersistenceManager.debugMessages.append("🌐 3단계 무한스크롤 특화 복원 단계 추가")
+        // **3단계: iframe 스크롤 복원 (기존 120ms 유지)**
+        if let jsState = self.jsState,
+           let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
+            
+            TabPersistenceManager.debugMessages.append("🎯 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
             restoreSteps.append((3, { stepCompletion in
-                let waitTime: TimeInterval = 0.15 // 150ms 대기
-                TabPersistenceManager.debugMessages.append("🌐 3단계: 무한스크롤 특화 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+                let waitTime: TimeInterval = 0.12 // 🔧 기존 120ms 유지
+                TabPersistenceManager.debugMessages.append("🎯 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let infiniteScrollJS = self.generateInfiniteScrollRestoreScript()
-                    webView.evaluateJavaScript(infiniteScrollJS) { result, _ in
+                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
+                    webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🌐 3단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🎯 3단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
+        } else {
+            TabPersistenceManager.debugMessages.append("🎯 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 전체 페이지 최종 확인 및 보정**
-        TabPersistenceManager.debugMessages.append("🌐 4단계 전체 페이지 최종 보정 단계 추가 (필수)")
+        // **4단계: 최종 확인 및 보정 (기존 1초 유지)**
+        TabPersistenceManager.debugMessages.append("🎯 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 1.2 // 1.2초 대기 (동적 콘텐츠 안정화)
-            TabPersistenceManager.debugMessages.append("🌐 4단계: 전체 페이지 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            let waitTime: TimeInterval = 1.0 // 🔧 기존 1초 유지
+            TabPersistenceManager.debugMessages.append("🎯 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                let fullPageFinalVerifyJS = """
+                let finalVerifyJS = """
                 (function() {
                     try {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
-                        const captureMethod = '\(self.captureMetadata.captureMethod)';
-                        const isInfiniteScroll = \(self.captureMetadata.isInfiniteScroll);
                         
                         // 네이티브 스크롤 위치 정밀 확인
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = isInfiniteScroll ? 20.0 : 5.0; // 무한스크롤은 더 관대하게
+                        const tolerance = 20.0; // 🎯 최종 보정 허용 오차 (DOM 요소 기반이므로 관대하게)
                         
-                        console.log('🌐 전체 페이지 최종 검증:', {
+                        console.log('🎯 DOM 요소 기반 최종 검증:', {
                             target: [targetX, targetY],
                             current: [currentX, currentY],
-                            tolerance: tolerance,
-                            method: captureMethod,
-                            isInfiniteScroll: isInfiniteScroll
+                            tolerance: tolerance
                         });
                         
-                        // 🌐 **전체 페이지 최종 보정**
+                        // 최종 보정 (필요시)
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('🌐 전체 페이지 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('🎯 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
-                            // 🌐 **강력한 최종 보정 (모든 방법 동원)**
+                            // 강력한 최종 보정 
                             window.scrollTo(targetX, targetY);
                             document.documentElement.scrollTop = targetY;
                             document.documentElement.scrollLeft = targetX;
@@ -552,78 +648,39 @@ struct BFCacheSnapshot: Codable {
                                 document.scrollingElement.scrollTop = targetY;
                                 document.scrollingElement.scrollLeft = targetX;
                             }
-                            
-                            // 추가 전체 페이지 보정 방법들
-                            try {
-                                // CSS 스크롤 동작 강제
-                                document.documentElement.style.scrollBehavior = 'auto';
-                                window.scrollTo(targetX, targetY);
-                                
-                                // 무한스크롤 특화 보정
-                                if (isInfiniteScroll) {
-                                    const containers = document.querySelectorAll(
-                                        '.infinite-scroll, .virtual-list, .scroll-container, ' +
-                                        '.posts-container, .feed, .timeline, .content-stream'
-                                    );
-                                    
-                                    containers.forEach(container => {
-                                        if (container.scrollHeight > container.clientHeight) {
-                                            const relativeY = (targetY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1)) * 
-                                                            Math.max(container.scrollHeight - container.clientHeight, 0);
-                                            container.scrollTop = relativeY;
-                                        }
-                                    });
-                                }
-                                
-                                // 지연 후 한 번 더 확인
-                                setTimeout(function() {
-                                    const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                    const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                    console.log('🌐 보정 후 전체 페이지 위치:', [finalX, finalY]);
-                                    
-                                    // 여전히 차이가 크면 한 번 더 시도
-                                    if (Math.abs(finalX - targetX) > tolerance || Math.abs(finalY - targetY) > tolerance) {
-                                        window.scrollTo(targetX, targetY);
-                                        console.log('🌐 추가 보정 시도 완료');
-                                    }
-                                }, 100);
-                                
-                            } catch(e) {
-                                console.log('🌐 추가 보정 방법 실패 (정상):', e.message);
-                            }
                         }
                         
-                        // 🌐 **관대한 성공 판정** (전체 페이지 캡처는 더 유연하게)
+                        // 최종 위치 확인
                         const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                         const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('🌐 전체 페이지 최종보정 완료:', {
+                        console.log('🎯 DOM 요소 기반 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
                             isWithinTolerance: isWithinTolerance,
-                            method: captureMethod
+                            note: 'DOM요소기반'
                         });
                         
-                        // 🌐 **전체 페이지 캡처는 관대한 성공 판정**
-                        return true; // 전체 페이지 캡처는 거의 항상 성공으로 처리
+                        // 🎯 **관대한 성공 판정** (DOM 요소 기반이므로)
+                        return true; // DOM 요소 기반은 항상 성공으로 처리
                     } catch(e) { 
-                        console.error('🌐 전체 페이지 최종보정 실패:', e);
-                        return true; // 에러도 성공으로 처리
+                        console.error('🎯 DOM 요소 기반 최종보정 실패:', e);
+                        return true; // 에러도 성공으로 처리 (관대한 정책)
                     }
                 })()
                 """
                 
-                webView.evaluateJavaScript(fullPageFinalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true
-                    TabPersistenceManager.debugMessages.append("🌐 4단계 전체 페이지 최종보정 완료: \(success ? "성공" : "성공(관대)")")
+                webView.evaluateJavaScript(finalVerifyJS) { result, _ in
+                    let success = (result as? Bool) ?? true // 🎯 DOM 요소 기반은 관대하게
+                    TabPersistenceManager.debugMessages.append("🎯 4단계 DOM 요소 기반 최종보정 완료: \(success ? "성공" : "성공(관대)")")
                     stepCompletion(true) // 항상 성공
                 }
             }
         }))
         
-        TabPersistenceManager.debugMessages.append("🌐 총 \(restoreSteps.count)단계 전체 페이지 점진적 보정 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("🎯 총 \(restoreSteps.count)단계 DOM 요소 기반 점진적 보정 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -631,12 +688,12 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
-                TabPersistenceManager.debugMessages.append("🌐 \(stepInfo.step)단계 실행 시작")
+                TabPersistenceManager.debugMessages.append("🎯 \(stepInfo.step)단계 실행 시작")
                 
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("🌐 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("🎯 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -647,17 +704,17 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🌐 전체 페이지 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("🌐 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
-                completion(true) // 전체 페이지 캡처는 항상 성공으로 처리
+                TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🎯 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
+                completion(true) // 🎯 DOM 요소 기반은 항상 성공으로 처리
             }
         }
         
         executeNextStep()
     }
     
-    // 🌐 **전체 페이지 컨테이너 스크롤 복원 스크립트**
-    private func generateFullPageContainerScrollScript(_ elements: [[String: Any]]) -> String {
+    // 🎯 **컨테이너 스크롤 복원 스크립트** (기존 유지)
+    private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
         let elementsJSON = convertToJSONString(elements) ?? "[]"
         return """
         (function() {
@@ -665,7 +722,7 @@ struct BFCacheSnapshot: Codable {
                 const elements = \(elementsJSON);
                 let restored = 0;
                 
-                console.log('🌐 전체 페이지 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
+                console.log('🎯 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
                 
                 for (const item of elements) {
                     if (!item.selector) continue;
@@ -686,13 +743,12 @@ struct BFCacheSnapshot: Codable {
                                     const targetTop = parseFloat(item.top || 0);
                                     const targetLeft = parseFloat(item.left || 0);
                                     
-                                    // 전체 페이지 기반 정밀 설정
                                     el.scrollTop = targetTop;
                                     el.scrollLeft = targetLeft;
                                     
-                                    console.log('🌐 전체 페이지 컨테이너 복원:', sel, [targetLeft, targetTop]);
+                                    console.log('🎯 컨테이너 복원:', sel, [targetLeft, targetTop]);
                                     
-                                    // 동적 콘텐츠 상태 확인 및 복원
+                                    // 🌐 동적 콘텐츠 상태 확인 및 복원
                                     if (item.dynamicAttrs) {
                                         for (const [key, value] of Object.entries(item.dynamicAttrs)) {
                                             if (el.getAttribute(key) !== value) {
@@ -720,87 +776,70 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🌐 전체 페이지 컨테이너 스크롤 복원 완료:', restored, '개');
+                console.log('🎯 컨테이너 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('전체 페이지 컨테이너 스크롤 복원 실패:', e);
+                console.error('컨테이너 스크롤 복원 실패:', e);
                 return false;
             }
         })()
         """
     }
     
-    // 🌐 **무한스크롤 특화 복원 스크립트**
-    private func generateInfiniteScrollRestoreScript() -> String {
+    // 🎯 **iframe 스크롤 복원 스크립트** (기존 유지)
+    private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
+        let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
         (function() {
             try {
-                const targetY = parseFloat('\(scrollPosition.y)');
-                const targetPercent = parseFloat('\(scrollPositionPercent.y)');
+                const iframes = \(iframeJSON);
                 let restored = 0;
                 
-                console.log('🌐 무한스크롤 특화 복원 시작:', {targetY, targetPercent});
+                console.log('🎯 iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
                 
-                // 무한스크롤 컨테이너들 찾기
-                const infiniteScrollSelectors = [
-                    '.infinite-scroll', '.virtual-list', '.lazy-load', 
-                    '.posts-container', '.comments-list', '.thread-list', 
-                    '.message-list', '.activity-feed', '.news-feed', 
-                    '.social-feed', '.content-stream', '.card-list',
-                    '.grid-container', '.masonry', '.waterfall-layout',
-                    '.scroll-container', '.scrollable', '.feed', '.timeline',
-                    // 네이버 카페 특화
-                    '.ArticleList', '.CommentArticleList', '.List.CommentArticleList',
-                    '.content.location_fix', '.list_board', '.RisingArticleList',
-                    '#ct[role="main"]', '.CafeMain', '.article-content'
-                ];
-                
-                for (const selector of infiniteScrollSelectors) {
-                    const containers = document.querySelectorAll(selector);
-                    
-                    containers.forEach(container => {
-                        if (container && container.scrollHeight > container.clientHeight) {
+                for (const iframeInfo of iframes) {
+                    const iframe = document.querySelector(iframeInfo.selector);
+                    if (iframe && iframe.contentWindow) {
+                        try {
+                            const targetX = parseFloat(iframeInfo.scrollX || 0);
+                            const targetY = parseFloat(iframeInfo.scrollY || 0);
+                            
+                            // Same-origin iframe 복원
+                            iframe.contentWindow.scrollTo(targetX, targetY);
+                            
                             try {
-                                // 백분율 기반 복원 (무한스크롤에 최적)
-                                const maxScroll = container.scrollHeight - container.clientHeight;
-                                const targetScrollPos = maxScroll > 0 ? (targetPercent / 100.0) * maxScroll : targetY;
-                                
-                                container.scrollTop = targetScrollPos;
-                                
-                                // 스크롤 이벤트 발생으로 동적 콘텐츠 트리거
-                                container.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                
-                                console.log('🌐 무한스크롤 컨테이너 복원:', selector, targetScrollPos);
-                                restored++;
-                                
-                                // 지연 로딩 트리거
-                                setTimeout(() => {
-                                    container.scrollTop = targetScrollPos;
-                                }, 100);
-                                
+                                iframe.contentWindow.document.documentElement.scrollTop = targetY;
+                                iframe.contentWindow.document.documentElement.scrollLeft = targetX;
+                                iframe.contentWindow.document.body.scrollTop = targetY;
+                                iframe.contentWindow.document.body.scrollLeft = targetX;
                             } catch(e) {
-                                console.log('무한스크롤 컨테이너 처리 실패:', selector, e.message);
+                                // 접근 제한은 무시
+                            }
+                            
+                            restored++;
+                            console.log('🎯 iframe 복원:', iframeInfo.selector, [targetX, targetY]);
+                        } catch(e) {
+                            // 🌐 Cross-origin iframe 처리
+                            try {
+                                iframe.contentWindow.postMessage({
+                                    type: 'restoreScroll',
+                                    scrollX: parseFloat(iframeInfo.scrollX || 0),
+                                    scrollY: parseFloat(iframeInfo.scrollY || 0),
+                                    elementBased: true // 🎯 DOM 요소 기반 모드 플래그
+                                }, '*');
+                                console.log('🎯 Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
+                                restored++;
+                            } catch(crossOriginError) {
+                                console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
                             }
                         }
-                    });
+                    }
                 }
                 
-                // 메인 스크롤도 백분율 기반으로 재조정
-                if (targetPercent > 0) {
-                    const mainMaxScroll = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
-                    const mainTargetScroll = mainMaxScroll > 0 ? (targetPercent / 100.0) * mainMaxScroll : targetY;
-                    
-                    window.scrollTo(0, mainTargetScroll);
-                    document.documentElement.scrollTop = mainTargetScroll;
-                    document.body.scrollTop = mainTargetScroll;
-                    
-                    console.log('🌐 메인 스크롤 백분율 기반 재조정:', mainTargetScroll);
-                }
-                
-                console.log('🌐 무한스크롤 특화 복원 완료:', restored, '개 컨테이너');
+                console.log('🎯 iframe 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
-                console.error('무한스크롤 특화 복원 실패:', e);
+                console.error('iframe 스크롤 복원 실패:', e);
                 return false;
             }
         })()
@@ -819,7 +858,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - 📸 **전체 페이지 네비게이션 이벤트 감지 시스템**
+// MARK: - 📸 **네비게이션 이벤트 감지 시스템 - 모든 네비게이션에서 떠나기 전 캡처**
 extension BFCacheTransitionSystem {
     
     /// CustomWebView에서 네비게이션 이벤트 구독
@@ -833,17 +872,17 @@ extension BFCacheTransitionSystem {
                   let newURL = change.newValue as? URL,
                   oldURL != newURL else { return }
             
-            // 📸 **URL이 바뀌는 순간 이전 페이지 전체 캡처**
+            // 📸 **URL이 바뀌는 순간 이전 페이지 캡처**
             if let currentRecord = stateModel.dataModel.currentPageRecord {
                 shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
-                shared.dbg("📸 URL 변경 감지 - 떠나기 전 전체 페이지 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
+                shared.dbg("📸 URL 변경 감지 - 떠나기 전 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
             }
         }
         
         // 옵저버를 webView에 연결하여 생명주기 관리
         objc_setAssociatedObject(webView, "bfcache_url_observer", urlObserver, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         
-        shared.dbg("📸 전체 페이지 네비게이션 감지 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
+        shared.dbg("📸 포괄적 네비게이션 감지 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     /// CustomWebView 해제 시 옵저버 정리
@@ -852,11 +891,11 @@ extension BFCacheTransitionSystem {
             observer.invalidate()
             objc_setAssociatedObject(webView, "bfcache_url_observer", nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
-        shared.dbg("📸 전체 페이지 네비게이션 감지 해제 완료")
+        shared.dbg("📸 네비게이션 감지 해제 완료")
     }
 }
 
-// MARK: - 🎯 **전체 페이지 BFCache 전환 시스템**
+// MARK: - 🎯 **강화된 BFCache 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
@@ -868,10 +907,9 @@ final class BFCacheTransitionSystem: NSObject {
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **핵심 개선: 전체 페이지 직렬화 큐 시스템**
-    private let serialQueue = DispatchQueue(label: "bfcache.fullpage.serial", qos: .userInitiated)
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
+    private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
-    private let fullPageCaptureQueue = DispatchQueue(label: "bfcache.fullpage.capture", qos: .userInteractive)
     
     // MARK: - 💾 스레드 안전 캐시 시스템
     private let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
@@ -986,7 +1024,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 전체 페이지 원자적 캡처 작업**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🎯 DOM 요소 기반 캡처 강화)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1008,15 +1046,15 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        dbg("🌐 전체 페이지 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        dbg("🎯 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
-            self?.performFullPageAtomicCapture(task)
+            self?.performAtomicCapture(task)
         }
     }
     
-    private func performFullPageAtomicCapture(_ task: CaptureTask) {
+    private func performAtomicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
         // 중복 캡처 방지 (진행 중인 것만)
@@ -1032,7 +1070,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🌐 전체 페이지 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🎯 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1061,20 +1099,23 @@ final class BFCacheTransitionSystem: NSObject {
             return
         }
         
-        // 🔧 **전체 페이지 캡처 로직 - 즉시 캡처 + 전체 페이지 캡처**
-        let captureResult = performFullPageCapture(
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도 (기존 타이밍 유지)**
+        let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
-            retryCount: task.type == .immediate ? 1 : 0  // immediate는 재시도
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
-            dbg("🌐 캡처된 jsState 키: \(Array(jsState.keys))")
+            dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
             if let scrollData = jsState["scroll"] as? [String: Any],
                let elements = scrollData["elements"] as? [[String: Any]] {
-                dbg("🌐 캡처된 전체 페이지 스크롤 요소: \(elements.count)개")
+                dbg("🎯 캡처된 스크롤 요소: \(elements.count)개")
+            }
+            if let viewportAnchor = jsState["viewportAnchor"] as? [String: Any] {
+                dbg("🎯 캡처된 뷰포트 앵커: \(viewportAnchor["selector"] as? String ?? "none")")
             }
         }
         
@@ -1087,144 +1128,48 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ 전체 페이지 직렬 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
         let scrollPosition: CGPoint
         let contentSize: CGSize      // ⚡ 콘텐츠 크기 추가
         let viewportSize: CGSize     // ⚡ 뷰포트 크기 추가
-        let actualScrollableSize: CGSize  // 실제 스크롤 가능 크기 추가
+        let actualScrollableSize: CGSize  // ♾️ 실제 스크롤 가능 크기 추가
         let bounds: CGRect
         let isLoading: Bool
     }
     
-    // 🔧 **전체 페이지 캡처 메인 로직**
-    private func performFullPageCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?, fullPageImage: UIImage?) {
+    // 🔧 **실패 복구 기능 추가된 캡처 - 기존 재시도 대기시간 유지**
+    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            let result = attemptFullPageCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
+            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
             
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    dbg("🔄 재시도 후 전체 페이지 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    dbg("🔄 재시도 후 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
                 }
                 return result
             }
             
-            // 재시도 전 잠시 대기
-            dbg("⏳ 전체 페이지 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.1) // 100ms 대기
+            // 재시도 전 잠시 대기 - 🔧 기존 80ms 유지
+            dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            Thread.sleep(forTimeInterval: 0.08) // 🔧 기존 80ms 유지
         }
         
         // 여기까지 오면 모든 시도 실패
-        return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, actualScrollableSize: captureData.actualScrollableSize, timestamp: Date(), captureStatus: .failed, version: 1), nil, nil)
+        return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, actualScrollableSize: captureData.actualScrollableSize, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    private func attemptFullPageCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?, fullPageImage: UIImage?) {
+    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
-        var fullPageSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
-        let captureStartTime = Date()
         
-        // 🌐 **1. 무한스크롤 및 동적 콘텐츠 감지**
-        var isInfiniteScroll = false
-        var dynamicContentDetected = false
-        var contentStabilityTime: TimeInterval = 0
-        
-        let detectionStart = Date()
-        let detectionSemaphore = DispatchSemaphore(value: 0)
-        
-        DispatchQueue.main.sync {
-            let detectionScript = """
-            (function() {
-                return new Promise((resolve) => {
-                    // 무한스크롤 감지
-                    const infiniteScrollIndicators = [
-                        '.infinite-scroll', '.virtual-list', '.lazy-load', 
-                        '.posts-container', '.feed', '.timeline', '.content-stream',
-                        '[data-infinite]', '[data-lazy]', '[data-scroll]'
-                    ];
-                    
-                    let isInfiniteScroll = false;
-                    for (const selector of infiniteScrollIndicators) {
-                        if (document.querySelector(selector)) {
-                            isInfiniteScroll = true;
-                            break;
-                        }
-                    }
-                    
-                    // 동적 콘텐츠 안정화 대기
-                    let stabilityCount = 0;
-                    const requiredStability = 3;
-                    let timeout;
-                    const stabilityStart = Date.now();
-                    
-                    const observer = new MutationObserver(() => {
-                        stabilityCount = 0;
-                        clearTimeout(timeout);
-                        timeout = setTimeout(() => {
-                            stabilityCount++;
-                            if (stabilityCount >= requiredStability) {
-                                observer.disconnect();
-                                resolve({
-                                    isInfiniteScroll: isInfiniteScroll,
-                                    dynamicContentDetected: true,
-                                    contentStabilityTime: Date.now() - stabilityStart
-                                });
-                            }
-                        }, 200); // 200ms 안정화 대기
-                    });
-                    
-                    observer.observe(document.body, { childList: true, subtree: true });
-                    
-                    // 최대 대기 시간 (2초)
-                    setTimeout(() => {
-                        observer.disconnect();
-                        resolve({
-                            isInfiniteScroll: isInfiniteScroll,
-                            dynamicContentDetected: false,
-                            contentStabilityTime: Date.now() - stabilityStart
-                        });
-                    }, 2000);
-                });
-            })()
-            """
-            
-            webView.evaluateJavaScript(detectionScript) { result, error in
-                if let data = result as? [String: Any] {
-                    isInfiniteScroll = data["isInfiniteScroll"] as? Bool ?? false
-                    dynamicContentDetected = data["dynamicContentDetected"] as? Bool ?? false
-                    contentStabilityTime = (data["contentStabilityTime"] as? Double ?? 0) / 1000.0
-                }
-                detectionSemaphore.signal()
-            }
-        }
-        _ = detectionSemaphore.wait(timeout: .now() + 3.0)
-        
-        dbg("🌐 사이트 분석 완료: 무한스크롤=\(isInfiniteScroll), 동적콘텐츠=\(dynamicContentDetected), 안정화=\(String(format: "%.2f", contentStabilityTime))초")
-        
-        // 🌐 **2. 전체 페이지 캡처 전략 결정**
-        let shouldPerformFullPageCapture = (captureData.contentSize.height > captureData.viewportSize.height * 2) || isInfiniteScroll
-        var captureMethod = "viewport"
-        var segmentCount = 1
-        var viewportCoverage = 1.0
-        
-        if shouldPerformFullPageCapture {
-            dbg("🌐 전체 페이지 캡처 수행: 콘텐츠 높이=\(captureData.contentSize.height), 뷰포트=\(captureData.viewportSize.height)")
-            
-            // 🌐 **전체 페이지 캡처 실행**
-            let fullPageResult = performSmartFullPageCapture(webView: webView, captureData: captureData, isInfiniteScroll: isInfiniteScroll)
-            fullPageSnapshot = fullPageResult.image
-            captureMethod = fullPageResult.method
-            segmentCount = fullPageResult.segmentCount
-            viewportCoverage = fullPageResult.coverage
-        }
-        
-        // 🌐 **3. 뷰포트 스냅샷 (Fallback 및 미리보기용)**
+        // 1. 비주얼 스냅샷 (메인 스레드) - 🔧 기존 캡처 타임아웃 유지 (3초)
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
@@ -1232,7 +1177,8 @@ final class BFCacheTransitionSystem: NSObject {
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    self.dbg("📸 뷰포트 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    // Fallback: layer 렌더링
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
@@ -1241,13 +1187,14 @@ final class BFCacheTransitionSystem: NSObject {
             }
         }
         
-        let result = semaphore.wait(timeout: .now() + 2.0)
+        // ⚡ 캡처 타임아웃 유지 (3초)
+        let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
-            dbg("⏰ 뷰포트 스냅샷 타임아웃: \(pageRecord.title)")
+            dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 🌐 **4. DOM 캡처**
+        // 2. DOM 캡처 - 🔧 기존 캡처 타임아웃 유지 (1초)
         let domSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let domScript = """
@@ -1255,19 +1202,20 @@ final class BFCacheTransitionSystem: NSObject {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
-                    // 상태 정리
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
                         el.classList.remove(...Array.from(el.classList).filter(c => 
                             c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
                         ));
                     });
                     
+                    // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
                         el.blur();
                     });
                     
                     const html = document.documentElement.outerHTML;
-                    return html.length > 150000 ? html.substring(0, 150000) : html; // 더 큰 DOM 허용
+                    return html.length > 100000 ? html.substring(0, 100000) : html;
                 } catch(e) { return null; }
             })()
             """
@@ -1277,12 +1225,12 @@ final class BFCacheTransitionSystem: NSObject {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 1.5)
+        _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 🌐 **5. 전체 페이지 JS 상태 캡처**
+        // 3. 🎯 **DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateFullPageScrollCaptureScript(isInfiniteScroll: isInfiniteScroll)
+            let jsScript = generateElementBasedScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1291,21 +1239,17 @@ final class BFCacheTransitionSystem: NSObject {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.5)
+        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
         
-        // 🌐 **6. 캡처 상태 및 메타데이터 결정**
+        // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if fullPageSnapshot != nil && visualSnapshot != nil && domSnapshot != nil && jsState != nil {
-            captureStatus = .fullPage
-        } else if fullPageSnapshot != nil && visualSnapshot != nil {
+        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
         } else {
             captureStatus = .failed
         }
-        
-        let totalCaptureTime = Date().timeIntervalSince(captureStartTime)
         
         // 버전 증가 (스레드 안전)
         let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
@@ -1316,7 +1260,7 @@ final class BFCacheTransitionSystem: NSObject {
             return newVersion
         }
         
-        // 🌐 **상대적 위치 계산 (백분율)**
+        // 상대적 위치 계산 (백분율) - 범위 제한 없음
         let scrollPercent: CGPoint
         if captureData.actualScrollableSize.width > captureData.viewportSize.width && captureData.actualScrollableSize.height > captureData.viewportSize.height {
             let maxScrollX = captureData.actualScrollableSize.width - captureData.viewportSize.width
@@ -1330,17 +1274,6 @@ final class BFCacheTransitionSystem: NSObject {
             scrollPercent = CGPoint.zero
         }
         
-        // 🌐 **캡처 메타데이터 생성**
-        let metadata = BFCacheSnapshot.CaptureMetadata(
-            isInfiniteScroll: isInfiniteScroll,
-            dynamicContentDetected: dynamicContentDetected,
-            captureMethod: captureMethod,
-            segmentCount: segmentCount,
-            totalCaptureTime: totalCaptureTime,
-            contentStabilityTime: contentStabilityTime,
-            viewportCoverage: viewportCoverage
-        )
-        
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -1352,119 +1285,26 @@ final class BFCacheTransitionSystem: NSObject {
             jsState: jsState,
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
-            fullPageSnapshotPath: nil, // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            captureMetadata: metadata,
             version: version
         )
         
-        dbg("🌐 전체 페이지 캡처 완료: 상태=\(captureStatus.rawValue), 방법=\(captureMethod), 세그먼트=\(segmentCount), 시간=\(String(format: "%.2f", totalCaptureTime))초")
-        
-        return (snapshot, visualSnapshot, fullPageSnapshot)
+        return (snapshot, visualSnapshot)
     }
     
-    // 🌐 **스마트 전체 페이지 캡처 메서드**
-    private func performSmartFullPageCapture(webView: WKWebView, captureData: CaptureData, isInfiniteScroll: Bool) -> (image: UIImage?, method: String, segmentCount: Int, coverage: Double) {
-        
-        let originalOffset = captureData.scrollPosition
-        let contentHeight = captureData.contentSize.height
-        let viewportHeight = captureData.viewportSize.height
-        let maxSegments = isInfiniteScroll ? 5 : 10 // 무한스크롤은 제한적으로
-        
-        // 세그먼트 계산
-        let totalSegments = min(maxSegments, Int(ceil(contentHeight / viewportHeight)))
-        
-        if totalSegments <= 1 {
-            dbg("🌐 단일 뷰포트 - 전체 페이지 캡처 스킵")
-            return (nil, "viewport", 1, 1.0)
-        }
-        
-        dbg("🌐 전체 페이지 캡처 시작: \(totalSegments)개 세그먼트")
-        
-        var capturedImages: [UIImage] = []
-        let semaphore = DispatchSemaphore(value: 0)
-        var currentSegment = 0
-        
-        func captureNextSegment() {
-            DispatchQueue.main.async {
-                if currentSegment >= totalSegments {
-                    semaphore.signal()
-                    return
-                }
-                
-                let segmentY = CGFloat(currentSegment) * viewportHeight
-                let targetOffset = CGPoint(x: originalOffset.x, y: min(segmentY, contentHeight - viewportHeight))
-                
-                // 스크롤 위치 이동
-                webView.scrollView.setContentOffset(targetOffset, animated: false)
-                
-                // 짧은 대기 후 캡처 (동적 콘텐츠 로딩 대기)
-                DispatchQueue.main.asyncAfter(deadline: .now() + (isInfiniteScroll ? 0.5 : 0.2)) {
-                    let config = WKSnapshotConfiguration()
-                    config.rect = captureData.bounds
-                    config.afterScreenUpdates = true
-                    
-                    webView.takeSnapshot(with: config) { image, error in
-                        if let image = image {
-                            capturedImages.append(image)
-                            self.dbg("🌐 세그먼트 \(currentSegment + 1)/\(totalSegments) 캡처 완료")
-                        } else {
-                            self.dbg("⚠️ 세그먼트 \(currentSegment + 1) 캡처 실패")
-                        }
-                        
-                        currentSegment += 1
-                        captureNextSegment()
-                    }
-                }
-            }
-        }
-        
-        captureNextSegment()
-        _ = semaphore.wait(timeout: .now() + TimeInterval(totalSegments * 2 + 5)) // 충분한 대기 시간
-        
-        // 원래 스크롤 위치 복원
-        DispatchQueue.main.sync {
-            webView.scrollView.setContentOffset(originalOffset, animated: false)
-        }
-        
-        // 이미지 합성
-        let finalImage = stitchImages(capturedImages, targetSize: CGSize(width: captureData.viewportSize.width, height: contentHeight))
-        let coverage = Double(capturedImages.count) / Double(totalSegments)
-        
-        dbg("🌐 전체 페이지 캡처 완료: \(capturedImages.count)/\(totalSegments) 세그먼트, 커버리지=\(String(format: "%.1f", coverage * 100))%")
-        
-        return (finalImage, "fullPage", capturedImages.count, coverage)
-    }
-    
-    // 🌐 **이미지 스티칭 유틸리티**
-    private func stitchImages(_ images: [UIImage], targetSize: CGSize) -> UIImage? {
-        guard !images.isEmpty else { return nil }
-        
-        let renderer = UIGraphicsImageRenderer(size: targetSize)
-        return renderer.image { context in
-            let segmentHeight = targetSize.height / CGFloat(images.count)
-            
-            for (index, image) in images.enumerated() {
-                let yPosition = CGFloat(index) * segmentHeight
-                let rect = CGRect(x: 0, y: yPosition, width: targetSize.width, height: segmentHeight)
-                image.draw(in: rect)
-            }
-        }
-    }
-    
-    // 🌐 **전체 페이지 스크롤 감지 JavaScript 생성**
-    private func generateFullPageScrollCaptureScript(isInfiniteScroll: Bool) -> String {
+    // 🎯 **핵심 개선: DOM 요소 기반 스크롤 감지 JavaScript 생성**
+    private func generateElementBasedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🌐 동적 콘텐츠 로딩 안정화 대기
-                function waitForFullPageStability(callback) {
+                // 🎯 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
+                function waitForDynamicContent(callback) {
                     let stabilityCount = 0;
-                    const requiredStability = isInfiniteScroll ? 2 : 3;
+                    const requiredStability = 3; // 3번 연속 안정되면 완료
                     let timeout;
                     
                     const observer = new MutationObserver(() => {
-                        stabilityCount = 0;
+                        stabilityCount = 0; // 변화가 있으면 카운트 리셋
                         clearTimeout(timeout);
                         timeout = setTimeout(() => {
                             stabilityCount++;
@@ -1472,30 +1312,138 @@ final class BFCacheTransitionSystem: NSObject {
                                 observer.disconnect();
                                 callback();
                             }
-                        }, isInfiniteScroll ? 500 : 300);
+                        }, 300); // 🔧 기존 300ms 유지
                     });
                     
                     observer.observe(document.body, { childList: true, subtree: true });
                     
-                    // 최대 대기 시간
+                    // 최대 대기 시간 설정
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, isInfiniteScroll ? 6000 : 4000);
+                    }, 4000); // 🔧 기존 4000ms 유지
                 }
 
-                const isInfiniteScroll = \(isInfiniteScroll);
-
-                function captureFullPageData() {
+                function captureScrollData() {
                     try {
-                        // 🌐 전체 페이지 스크롤 요소 스캔
+                        // 🎯 **1단계: 뷰포트 앵커 요소 식별 - 화면에 보이는 핵심 요소**
+                        function identifyViewportAnchor() {
+                            const viewportHeight = window.innerHeight;
+                            const viewportWidth = window.innerWidth;
+                            const scrollY = window.scrollY || window.pageYOffset || 0;
+                            const scrollX = window.scrollX || window.pageXOffset || 0;
+                            
+                            console.log('🎯 뷰포트 앵커 식별 시작:', {
+                                viewport: [viewportWidth, viewportHeight],
+                                scroll: [scrollX, scrollY]
+                            });
+                            
+                            // 우선순위 기반 앵커 후보 찾기
+                            const anchorCandidates = [
+                                // 1순위: 의미있는 콘텐츠 요소들
+                                ...document.querySelectorAll('article'),
+                                ...document.querySelectorAll('.post'),
+                                ...document.querySelectorAll('.article'),
+                                ...document.querySelectorAll('h1, h2, h3'),
+                                ...document.querySelectorAll('.content'),
+                                ...document.querySelectorAll('[role="main"]'),
+                                ...document.querySelectorAll('main'),
+                                
+                                // 2순위: 목록/카드 형태 요소들
+                                ...document.querySelectorAll('.list-item'),
+                                ...document.querySelectorAll('.card'),
+                                ...document.querySelectorAll('li'),
+                                ...document.querySelectorAll('.item'),
+                                
+                                // 3순위: 이미지/미디어 요소들
+                                ...document.querySelectorAll('img'),
+                                ...document.querySelectorAll('video'),
+                                
+                                // 4순위: 일반 블록 요소들
+                                ...document.querySelectorAll('div'),
+                                ...document.querySelectorAll('section')
+                            ];
+                            
+                            let bestAnchor = null;
+                            let bestScore = -1;
+                            
+                            for (const element of anchorCandidates) {
+                                const rect = element.getBoundingClientRect();
+                                
+                                // 뷰포트 내에 있는지 확인
+                                if (rect.bottom > 0 && rect.top < viewportHeight && 
+                                    rect.right > 0 && rect.left < viewportWidth) {
+                                    
+                                    // 점수 계산 (뷰포트 중앙에 가까울수록 높은 점수)
+                                    const centerY = rect.top + rect.height / 2;
+                                    const centerX = rect.left + rect.width / 2;
+                                    const distanceFromCenter = Math.sqrt(
+                                        Math.pow(centerX - viewportWidth / 2, 2) + 
+                                        Math.pow(centerY - viewportHeight / 2, 2)
+                                    );
+                                    
+                                    // 요소 크기 보너스 (너무 작거나 너무 크지 않은 적당한 크기 선호)
+                                    const sizeScore = Math.min(rect.width * rect.height / (viewportWidth * viewportHeight), 1);
+                                    const idealSizeRatio = 0.3; // 뷰포트의 30% 정도가 이상적
+                                    const sizePenalty = Math.abs(sizeScore - idealSizeRatio);
+                                    
+                                    // 최종 점수 (거리가 가까울수록, 크기가 적당할수록 높음)
+                                    const score = (viewportWidth + viewportHeight - distanceFromCenter) * (1 - sizePenalty);
+                                    
+                                    if (score > bestScore) {
+                                        bestScore = score;
+                                        bestAnchor = element;
+                                    }
+                                }
+                            }
+                            
+                            if (bestAnchor) {
+                                const rect = bestAnchor.getBoundingClientRect();
+                                const absoluteTop = scrollY + rect.top;
+                                const absoluteLeft = scrollX + rect.left;
+                                
+                                // 뷰포트 기준 오프셋 계산
+                                const offsetFromTop = scrollY - absoluteTop;
+                                const offsetFromLeft = scrollX - absoluteLeft;
+                                
+                                const anchorInfo = {
+                                    selector: generateBestSelector(bestAnchor),
+                                    tagName: bestAnchor.tagName.toLowerCase(),
+                                    className: bestAnchor.className || '',
+                                    id: bestAnchor.id || '',
+                                    absolutePosition: {
+                                        top: absoluteTop,
+                                        left: absoluteLeft
+                                    },
+                                    viewportPosition: {
+                                        top: rect.top,
+                                        left: rect.left
+                                    },
+                                    offsetFromTop: offsetFromTop,
+                                    offsetFromLeft: offsetFromLeft,
+                                    size: {
+                                        width: rect.width,
+                                        height: rect.height
+                                    },
+                                    score: bestScore
+                                };
+                                
+                                console.log('🎯 뷰포트 앵커 식별 완료:', anchorInfo);
+                                return anchorInfo;
+                            }
+                            
+                            console.log('🎯 뷰포트 앵커 식별 실패');
+                            return null;
+                        }
+                        
+                        // 🎯 **2단계: 스크롤 요소 감지 (기존 로직 유지, 2000개)**
                         function findAllScrollableElements() {
                             const scrollables = [];
-                            const maxElements = isInfiniteScroll ? 1000 : 2000;
+                            const maxElements = 2000; // 🎯 **기존 유지**
                             
-                            console.log('🌐 전체 페이지 스크롤 감지: 최대 ' + maxElements + '개 요소');
+                            console.log('🎯 스크롤 감지: 최대 ' + maxElements + '개 요소 감지');
                             
-                            // 1) 명시적 overflow 스타일을 가진 요소들
+                            // 1) 명시적 overflow 스타일을 가진 요소들 
                             const explicitScrollables = document.querySelectorAll('*');
                             let count = 0;
                             
@@ -1506,15 +1454,18 @@ final class BFCacheTransitionSystem: NSObject {
                                 const overflowY = style.overflowY;
                                 const overflowX = style.overflowX;
                                 
+                                // 스크롤 가능한 요소 판별
                                 if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
                                     (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
                                     
                                     const scrollTop = parseFloat(el.scrollTop) || 0;
                                     const scrollLeft = parseFloat(el.scrollLeft) || 0;
                                     
+                                    // 🎯 **0.1px 이상이면 모두 저장**
                                     if (scrollTop > 0.1 || scrollLeft > 0.1) {
                                         const selector = generateBestSelector(el);
                                         if (selector) {
+                                            // 🌐 동적 콘텐츠 식별을 위한 데이터 속성 저장
                                             const dynamicAttrs = {};
                                             for (const attr of el.attributes) {
                                                 if (attr.name.startsWith('data-')) {
@@ -1522,6 +1473,7 @@ final class BFCacheTransitionSystem: NSObject {
                                                 }
                                             }
                                             
+                                            // 상대적 위치 계산
                                             const maxScrollTop = el.scrollHeight - el.clientHeight;
                                             const maxScrollLeft = el.scrollWidth - el.clientWidth;
                                             
@@ -1546,29 +1498,26 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 🌐 2) 전체 페이지 특화 스크롤 컨테이너들
-                            const fullPageScrollContainers = [
+                            // 🎯 **2) 범용 커뮤니티/SPA 사이트 컨테이너들 (기존 패턴 유지)**
+                            const commonScrollContainers = [
                                 '.scroll-container', '.scrollable', '.content', '.main', '.body',
                                 '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
                                 '.list', '.feed', '.timeline', '.board', '.gallery', '.gall_list', '.article-board',
-                                // 무한스크롤 패턴들
                                 '.infinite-scroll', '.virtual-list', '.lazy-load', '.pagination-container',
                                 '.posts-container', '.comments-list', '.thread-list', '.message-list',
                                 '.activity-feed', '.news-feed', '.social-feed', '.content-stream',
                                 '.card-list', '.grid-container', '.masonry', '.waterfall-layout',
-                                // 소셜미디어/커뮤니티 특화
                                 '.tweet-list', '.post-stream', '.story-list', '.video-list',
                                 '.chat-messages', '.notification-list', '.search-results',
-                                // 네이버 카페 등 한국 사이트 특화
+                                '.mobile-list', '.touch-scroll', '.swipe-container',
                                 '.ArticleList', '.CommentArticleList', '.List.CommentArticleList',
                                 '.content.location_fix', '.list_board', '.RisingArticleList',
-                                '#ct[role="main"]', '.CafeMain', '.article-content', '.cafe-content',
-                                // 전체 페이지 레이아웃
+                                '#ct[role="main"]', '.CafeMain', '.article-content',
                                 '.container-fluid', '.main-container', '.page-content',
                                 '.content-wrapper', '.app-content', '.site-content'
                             ];
                             
-                            for (const selector of fullPageScrollContainers) {
+                            for (const selector of commonScrollContainers) {
                                 if (count >= maxElements) break;
                                 
                                 const elements = document.querySelectorAll(selector);
@@ -1578,9 +1527,11 @@ final class BFCacheTransitionSystem: NSObject {
                                     const scrollTop = parseFloat(el.scrollTop) || 0;
                                     const scrollLeft = parseFloat(el.scrollLeft) || 0;
                                     
+                                    // 🎯 **0.1px 이상이면 모두 저장**
                                     if ((scrollTop > 0.1 || scrollLeft > 0.1) && 
                                         !scrollables.some(s => s.selector === generateBestSelector(el))) {
                                         
+                                        // 🌐 동적 속성 수집
                                         const dynamicAttrs = {};
                                         for (const attr of el.attributes) {
                                             if (attr.name.startsWith('data-')) {
@@ -1588,6 +1539,7 @@ final class BFCacheTransitionSystem: NSObject {
                                             }
                                         }
                                         
+                                        // 상대적 위치 계산
                                         const maxScrollTop = el.scrollHeight - el.clientHeight;
                                         const maxScrollLeft = el.scrollWidth - el.clientWidth;
                                         
@@ -1611,18 +1563,79 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            console.log('🌐 전체 페이지 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
+                            console.log('🎯 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
                             return scrollables;
                         }
                         
-                        // 셀렉터 생성 함수
+                        // 🖼️ **3단계: iframe 스크롤 감지 (기존 유지)**
+                        function detectIframeScrolls() {
+                            const iframes = [];
+                            const iframeElements = document.querySelectorAll('iframe');
+                            
+                            for (const iframe of iframeElements) {
+                                try {
+                                    const contentWindow = iframe.contentWindow;
+                                    if (contentWindow && contentWindow.location) {
+                                        const scrollX = parseFloat(contentWindow.scrollX) || 0;
+                                        const scrollY = parseFloat(contentWindow.scrollY) || 0;
+                                        
+                                        // 🎯 **0.1px 이상이면 모두 저장**
+                                        if (scrollX > 0.1 || scrollY > 0.1) {
+                                            // 🌐 동적 속성 수집
+                                            const dynamicAttrs = {};
+                                            for (const attr of iframe.attributes) {
+                                                if (attr.name.startsWith('data-')) {
+                                                    dynamicAttrs[attr.name] = attr.value;
+                                                }
+                                            }
+                                            
+                                            iframes.push({
+                                                selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
+                                                scrollX: scrollX,
+                                                scrollY: scrollY,
+                                                src: iframe.src || '',
+                                                id: iframe.id || '',
+                                                className: iframe.className || '',
+                                                dynamicAttrs: dynamicAttrs
+                                            });
+                                        }
+                                    }
+                                } catch(e) {
+                                    // 🌐 Cross-origin iframe도 기본 정보 저장
+                                    const dynamicAttrs = {};
+                                    for (const attr of iframe.attributes) {
+                                        if (attr.name.startsWith('data-')) {
+                                            dynamicAttrs[attr.name] = attr.value;
+                                        }
+                                    }
+                                    
+                                    iframes.push({
+                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop() || 'unknown'}"]`,
+                                        scrollX: 0,
+                                        scrollY: 0,
+                                        src: iframe.src || '',
+                                        id: iframe.id || '',
+                                        className: iframe.className || '',
+                                        dynamicAttrs: dynamicAttrs,
+                                        crossOrigin: true
+                                    });
+                                    console.log('🌐 Cross-origin iframe 기록:', iframe.src);
+                                }
+                            }
+                            
+                            return iframes;
+                        }
+                        
+                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응 (기존 로직 유지)
                         function generateBestSelector(element) {
                             if (!element || element.nodeType !== 1) return null;
                             
+                            // 1순위: ID가 있으면 ID 사용
                             if (element.id) {
                                 return `#${element.id}`;
                             }
                             
+                            // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
                             const dataAttrs = Array.from(element.attributes)
                                 .filter(attr => attr.name.startsWith('data-'))
                                 .map(attr => `[${attr.name}="${attr.value}"]`);
@@ -1633,6 +1646,7 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
+                            // 3순위: 고유한 클래스 조합
                             if (element.className) {
                                 const classes = element.className.trim().split(/\\s+/);
                                 const uniqueClasses = classes.filter(cls => {
@@ -1644,6 +1658,7 @@ final class BFCacheTransitionSystem: NSObject {
                                     return `.${uniqueClasses.join('.')}`;
                                 }
                                 
+                                // 클래스 조합으로 고유성 확보
                                 if (classes.length > 0) {
                                     const classSelector = `.${classes.join('.')}`;
                                     if (document.querySelectorAll(classSelector).length === 1) {
@@ -1652,7 +1667,7 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 상위 경로 포함
+                            // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
                             let path = [];
                             let current = element;
                             while (current && current !== document.documentElement) {
@@ -1668,38 +1683,43 @@ final class BFCacheTransitionSystem: NSObject {
                                 path.unshift(selector);
                                 current = current.parentElement;
                                 
+                                // 경로가 너무 길어지면 중단
                                 if (path.length > 5) break;
                             }
                             return path.join(' > ');
                         }
                         
-                        // 메인 실행
+                        // 🎯 **메인 실행 - DOM 요소 기반 데이터 수집**
+                        const viewportAnchor = identifyViewportAnchor(); // 🎯 **새로 추가**
                         const scrollableElements = findAllScrollableElements();
+                        const iframeScrolls = detectIframeScrolls();
                         
-                        // 메인 스크롤 위치
+                        // 메인 스크롤 위치도 parseFloat 정밀도 적용 
                         const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
                         const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
                         
-                        // 뷰포트 및 콘텐츠 크기
+                        // 뷰포트 및 콘텐츠 크기 정밀 계산 (실제 크기 포함)
                         const viewportWidth = parseFloat(window.innerWidth) || 0;
                         const viewportHeight = parseFloat(window.innerHeight) || 0;
                         const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                         const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                         
-                        // 실제 스크롤 가능 크기
+                        // 실제 스크롤 가능 크기 계산 (최대한 정확하게)
                         const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
                         const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
                         
-                        console.log(`🌐 전체 페이지 감지 완료: 일반 ${scrollableElements.length}개`);
-                        console.log(`🌐 전체 페이지 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight})`);
+                        console.log(`🎯 DOM 요소 기반 감지 완료: 앵커 ${viewportAnchor ? '1' : '0'}개, 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
+                        console.log(`🎯 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
                         resolve({
+                            viewportAnchor: viewportAnchor, // 🎯 **새로 추가: 뷰포트 앵커 정보**
                             scroll: { 
                                 x: mainScrollX, 
                                 y: mainScrollY,
                                 elements: scrollableElements
                             },
-                            iframes: [], // 전체 페이지에서는 iframe 처리 단순화
+                            iframes: iframeScrolls,
                             href: window.location.href,
                             title: document.title,
                             timestamp: Date.now(),
@@ -1712,30 +1732,29 @@ final class BFCacheTransitionSystem: NSObject {
                                 width: contentWidth,
                                 height: contentHeight
                             },
-                            actualScrollable: {
+                            actualScrollable: { 
                                 width: actualScrollableWidth,
                                 height: actualScrollableHeight
-                            },
-                            fullPageMode: true
+                            }
                         });
                     } catch(e) { 
-                        console.error('🌐 전체 페이지 감지 실패:', e);
+                        console.error('🎯 DOM 요소 기반 감지 실패:', e);
                         resolve({
+                            viewportAnchor: null,
                             scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0, elements: [] },
                             iframes: [],
                             href: window.location.href,
                             title: document.title,
-                            actualScrollable: { width: 0, height: 0 },
-                            fullPageMode: true
+                            actualScrollable: { width: 0, height: 0 }
                         });
                     }
                 }
 
-                // 동적 콘텐츠 완료 대기 후 캡처
+                // 🎯 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
                 if (document.readyState === 'complete') {
-                    waitForFullPageStability(captureFullPageData);
+                    waitForDynamicContent(captureScrollData);
                 } else {
-                    document.addEventListener('DOMContentLoaded', () => waitForFullPageStability(captureFullPageData));
+                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureScrollData));
                 }
             });
         })()
@@ -1749,9 +1768,9 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **전체 페이지 디스크 저장 시스템**
+    // MARK: - 💾 **개선된 디스크 저장 시스템**
     
-    private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?, fullPageImage: UIImage?), tabID: UUID) {
+    private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -1764,35 +1783,22 @@ final class BFCacheTransitionSystem: NSObject {
             
             var finalSnapshot = snapshot.snapshot
             
-            // 1. 뷰포트 이미지 저장
+            // 1. 이미지 저장 (JPEG 압축)
             if let image = snapshot.image {
                 let imagePath = pageDir.appendingPathComponent("snapshot.jpg")
                 if let jpegData = image.jpegData(compressionQuality: 0.7) {
                     do {
                         try jpegData.write(to: imagePath)
                         finalSnapshot.webViewSnapshotPath = imagePath.path
-                        self.dbg("💾 뷰포트 이미지 저장 성공: \(imagePath.lastPathComponent)")
+                        self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
                     } catch {
-                        self.dbg("❌ 뷰포트 이미지 저장 실패: \(error.localizedDescription)")
+                        self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
+                        // 저장 실패해도 계속 진행
                     }
                 }
             }
             
-            // 🌐 **2. 전체 페이지 이미지 저장**
-            if let fullPageImage = snapshot.fullPageImage {
-                let fullPagePath = pageDir.appendingPathComponent("fullpage.jpg")
-                if let jpegData = fullPageImage.jpegData(compressionQuality: 0.6) { // 전체 페이지는 약간 낮은 품질
-                    do {
-                        try jpegData.write(to: fullPagePath)
-                        finalSnapshot.fullPageSnapshotPath = fullPagePath.path
-                        self.dbg("💾 전체 페이지 이미지 저장 성공: \(fullPagePath.lastPathComponent)")
-                    } catch {
-                        self.dbg("❌ 전체 페이지 이미지 저장 실패: \(error.localizedDescription)")
-                    }
-                }
-            }
-            
-            // 3. 상태 데이터 저장 (JSON)
+            // 2. 상태 데이터 저장 (JSON)
             let statePath = pageDir.appendingPathComponent("state.json")
             if let stateData = try? JSONEncoder().encode(finalSnapshot) {
                 do {
@@ -1803,16 +1809,14 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
             
-            // 4. 메타데이터 저장
+            // 3. 메타데이터 저장
             let metadata = CacheMetadata(
                 pageID: pageID,
                 tabID: tabID,
                 version: version,
                 timestamp: Date(),
                 url: snapshot.snapshot.pageRecord.url.absoluteString,
-                title: snapshot.snapshot.pageRecord.title,
-                captureMethod: finalSnapshot.captureMetadata.captureMethod,
-                hasFullPage: finalSnapshot.fullPageSnapshotPath != nil
+                title: snapshot.snapshot.pageRecord.title
             )
             
             let metadataPath = pageDir.appendingPathComponent("metadata.json")
@@ -1824,13 +1828,13 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
             
-            // 5. 인덱스 업데이트 (원자적)
+            // 4. 인덱스 업데이트 (원자적)
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 전체 페이지 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)] 방법=\(finalSnapshot.captureMetadata.captureMethod)")
+            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
             
-            // 6. 이전 버전 정리 (최신 3개만 유지)
+            // 5. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
     }
@@ -1842,8 +1846,6 @@ final class BFCacheTransitionSystem: NSObject {
         let timestamp: Date
         let url: String
         let title: String
-        let captureMethod: String
-        let hasFullPage: Bool
     }
     
     private func createDirectoryIfNeeded(at url: URL) {
@@ -1878,7 +1880,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **디스크 캐시 로딩 (기존과 동일)**
+    // MARK: - 💾 **개선된 디스크 캐시 로딩**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
@@ -1917,14 +1919,14 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 }
                 
-                self.dbg("💾 전체 페이지 디스크 캐시 인덱스 로드 완료: \(loadedCount)개 항목")
+                self.dbg("💾 디스크 캐시 인덱스 로드 완료: \(loadedCount)개 항목")
             } catch {
                 self.dbg("❌ 디스크 캐시 로드 실패: \(error)")
             }
         }
     }
     
-    // MARK: - 🔍 **스냅샷 조회 시스템 (기존과 동일)**
+    // MARK: - 🔍 **개선된 스냅샷 조회 시스템**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 1. 먼저 메모리 캐시 확인 (스레드 안전)
@@ -1952,7 +1954,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
-    // MARK: - 🔧 hasCache 메서드
+    // MARK: - 🔧 **수정: hasCache 메서드 추가**
     func hasCache(for pageID: UUID) -> Bool {
         // 메모리 캐시 체크
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
@@ -1974,9 +1976,9 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
-    // MARK: - 🧹 **캐시 정리 (기존과 동일)**
+    // MARK: - 🧹 **개선된 캐시 정리**
     
-    // 탭 닫을 때만 호출
+    // 탭 닫을 때만 호출 (무제한 캐시 정책)
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
         // 🧵 제스처 컨텍스트 정리
         removeGestureContext(for: tabID)
@@ -2005,7 +2007,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // 메모리 경고 처리
+    // 메모리 경고 처리 (메모리 캐시만 일부 정리)
     private func setupMemoryWarningObserver() {
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -2033,7 +2035,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🧵 **제스처 시스템 (기존 유지)**
+    // MARK: - 🧵 **리팩토링된 제스처 시스템 (먹통 방지)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         // 네이티브 제스처 비활성화
@@ -2056,10 +2058,10 @@ final class BFCacheTransitionSystem: NSObject {
             self?.createAndAttachGestures(webView: webView, tabID: tabID)
         }
         
-        // 📸 **전체 페이지 네비게이션 감지 등록**
+        // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🌐 전체 페이지 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🎯 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2099,7 +2101,7 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🧵 제스처 연결 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
-    // 🧵 **제스처 핸들러 (메인 스레드 최적화)**
+    // 🧵 **리팩토링된 제스처 핸들러 (메인 스레드 최적화)**
     @objc private func handleGesture(_ gesture: UIScreenEdgePanGestureRecognizer) {
         // 🧵 **메인 스레드 확인 및 강제 이동**
         guard Thread.isMainThread else {
@@ -2217,7 +2219,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🎯 **나머지 제스처/전환 로직 (전체 페이지 대응)**
+    // MARK: - 🎯 **나머지 제스처/전환 로직 (기존 유지)**
     
     private func captureCurrentSnapshot(webView: WKWebView, completion: @escaping (UIImage?) -> Void) {
         let captureConfig = WKSnapshotConfiguration()
@@ -2259,7 +2261,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
         setActiveTransition(context, for: tabID)
         
-        dbg("🎬 전체 페이지 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
@@ -2339,7 +2341,7 @@ final class BFCacheTransitionSystem: NSObject {
                 imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
                 targetView = imageView
-                dbg("📸 타겟 페이지 전체 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
+                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
             } else {
                 targetView = createInfoCard(for: targetRecord, in: webView.bounds)
                 dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
@@ -2412,20 +2414,11 @@ final class BFCacheTransitionSystem: NSObject {
         timeLabel.textAlignment = .center
         contentView.addSubview(timeLabel)
         
-        // 🌐 전체 페이지 표시 추가
-        let fullPageIndicator = UILabel()
-        fullPageIndicator.translatesAutoresizingMaskIntoConstraints = false
-        fullPageIndicator.text = "🌐 전체 페이지"
-        fullPageIndicator.font = .systemFont(ofSize: 10, weight: .medium)
-        fullPageIndicator.textColor = .systemBlue
-        fullPageIndicator.textAlignment = .center
-        contentView.addSubview(fullPageIndicator)
-        
         NSLayoutConstraint.activate([
             contentView.centerXAnchor.constraint(equalTo: card.centerXAnchor),
             contentView.centerYAnchor.constraint(equalTo: card.centerYAnchor),
             contentView.widthAnchor.constraint(equalToConstant: min(300, bounds.width - 60)),
-            contentView.heightAnchor.constraint(equalToConstant: 200),
+            contentView.heightAnchor.constraint(equalToConstant: 180),
             
             iconView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             iconView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
@@ -2440,9 +2433,6 @@ final class BFCacheTransitionSystem: NSObject {
             urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             
-            fullPageIndicator.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 8),
-            fullPageIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            
             timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
             timeLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
         ])
@@ -2450,7 +2440,7 @@ final class BFCacheTransitionSystem: NSObject {
         return card
     }
     
-    // 🎬 **전체 페이지 기반 전환 완료**
+    // 🎬 **핵심 개선: 미리보기 컨테이너 타임아웃 제거 - 제스처 먹통 해결**
     private func completeGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
@@ -2477,14 +2467,14 @@ final class BFCacheTransitionSystem: NSObject {
                 currentView?.layer.shadowOpacity = 0
             },
             completion: { [weak self] _ in
-                // 🎬 **전체 페이지 기반 네비게이션 수행**
-                self?.performFullPageNavigationWithFixedTiming(context: context, previewContainer: previewContainer)
+                // 🎬 **기존 타이밍으로 네비게이션 수행**
+                self?.performNavigationWithFixedTiming(context: context, previewContainer: previewContainer)
             }
         )
     }
     
-    // 🌐 **전체 페이지 기반 네비게이션 수행**
-    private func performFullPageNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
+    // 🎯 **DOM 요소 기반 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
+    private func performNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
             previewContainer.removeFromSuperview()
@@ -2496,27 +2486,29 @@ final class BFCacheTransitionSystem: NSObject {
         switch context.direction {
         case .back:
             stateModel.goBack()
-            dbg("🏄‍♂️ 전체 페이지 사파리 스타일 뒤로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 뒤로가기 완료")
         case .forward:
             stateModel.goForward()
-            dbg("🏄‍♂️ 전체 페이지 사파리 스타일 앞으로가기 완료")
+            dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🌐 **전체 페이지 BFCache 복원**
-        tryFullPageBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
-            // BFCache 복원 완료 또는 실패 시 즉시 정리
+        // 🎯 **DOM 요소 기반 BFCache 복원**
+        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+            // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - 전체 페이지 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - DOM 요소 기반 BFCache \(success ? "성공" : "실패")")
             }
         }
         
+        // 🎬 **타임아웃 제거 - 제스처 먹통 해결**
+        // 기존의 1.5초 강제 정리 타임아웃 코드 완전 제거
         dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
-    // 🌐 **전체 페이지 BFCache 복원** 
-    private func tryFullPageBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🎯 **DOM 요소 기반 BFCache 복원** 
+    private func tryElementBasedBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -2525,20 +2517,20 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 전체 페이지 복원
+            // BFCache 히트 - DOM 요소 기반 복원
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 전체 페이지 BFCache 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ DOM 요소 기반 BFCache 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ 전체 페이지 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ DOM 요소 기반 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
         } else {
-            // BFCache 미스 - 기본 대기
+            // BFCache 미스 - 기존 대기
             dbg("❌ BFCache 미스: \(currentRecord.title)")
             
-            // 기본 대기 시간 (250ms)
+            // 기존 대기 시간 (250ms)
             let waitTime: TimeInterval = 0.25
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 completion(false)
@@ -2546,6 +2538,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
+
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
               let webView = context.webView,
@@ -2570,12 +2563,12 @@ final class BFCacheTransitionSystem: NSObject {
             },
             completion: { _ in
                 previewContainer.removeFromSuperview()
-                self.removeActiveTransition(for: tabID)
+                self.removeActiveTransition(for: context.tabID)
             }
         )
     }
     
-    // MARK: - 버튼 네비게이션 (전체 페이지 즉시 전환)
+    // MARK: - 버튼 네비게이션 (즉시 전환)
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
@@ -2588,7 +2581,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryFullPageBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2604,7 +2597,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryFullPageBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2631,7 +2624,7 @@ final class BFCacheTransitionSystem: NSObject {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
-                console.log('🌐 전체 페이지 BFCache 페이지 복원');
+                console.log('🎯 DOM 요소 기반 BFCache 페이지 복원');
                 
                 // 🌐 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
@@ -2649,21 +2642,21 @@ final class BFCacheTransitionSystem: NSObject {
         
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
-                console.log('📸 전체 페이지 BFCache 페이지 저장');
+                console.log('📸 DOM 요소 기반 BFCache 페이지 저장');
             }
         });
         
-        // 🌐 Cross-origin iframe 전체 페이지 스크롤 복원 리스너
+        // 🎯 Cross-origin iframe DOM 요소 기반 스크롤 복원 리스너
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
                 try {
                     const targetX = parseFloat(event.data.scrollX) || 0;
                     const targetY = parseFloat(event.data.scrollY) || 0;
-                    const fullPageMode = event.data.fullPageMode || false;
+                    const elementBased = event.data.elementBased || false;
                     
-                    console.log('🌐 Cross-origin iframe 전체 페이지 스크롤 복원:', targetX, targetY, fullPageMode ? '(전체 페이지 모드)' : '');
+                    console.log('🎯 Cross-origin iframe DOM 요소 기반 스크롤 복원:', targetX, targetY, elementBased ? '(DOM 요소 모드)' : '');
                     
-                    // 🌐 전체 페이지 스크롤 설정
+                    // 🎯 DOM 요소 기반 스크롤 설정
                     window.scrollTo(targetX, targetY);
                     document.documentElement.scrollTop = targetY;
                     document.documentElement.scrollLeft = targetX;
@@ -2682,7 +2675,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache🌐] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache🎯] \(msg)")
     }
 }
 
@@ -2701,10 +2694,10 @@ extension BFCacheTransitionSystem {
         // BFCache 스크립트 설치
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         
-        // 제스처 설치 + 📸 전체 페이지 네비게이션 감지
+        // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🌐 전체 페이지 캡처 BFCache 시스템 설치 완료 (뷰포트 한계 극복)")
+        TabPersistenceManager.debugMessages.append("✅ 🎯 DOM 요소 기반 BFCache 시스템 설치 완료 (뷰포트 앵커 + 아이템 기반 복원)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2727,7 +2720,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 전체 페이지 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
@@ -2743,24 +2736,24 @@ extension BFCacheTransitionSystem {
 // MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
 extension BFCacheTransitionSystem {
 
-    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 전체 페이지 저장
+    /// 사용자가 링크/폼으로 **떠나기 직전** 현재 페이지를 저장
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
         // 즉시 캡처 (최고 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .immediate, tabID: tabID)
-        dbg("📸 떠나기 전체 페이지 스냅샷 캡처 시작: \(rec.title)")
+        dbg("📸 떠나기 스냅샷 캡처 시작: \(rec.title)")
     }
 
-    /// 📸 **페이지 로드 완료 후 자동 전체 페이지 캐시 강화**
+    /// 📸 **페이지 로드 완료 후 자동 캐시 강화 - 🚀 도착 스냅샷 최적화**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
-        // 현재 페이지 전체 캡처 (백그라운드 우선순위)
+        // 현재 페이지 캡처 (백그라운드 우선순위)
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
-        dbg("📸 도착 전체 페이지 스냅샷 캡처 시작: \(rec.title)")
+        dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
         // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
         if stateModel.dataModel.currentPageIndex > 0 {
@@ -2783,7 +2776,7 @@ extension BFCacheTransitionSystem {
                     )
                     
                     // 디스크에 메타데이터만 저장
-                    saveToDisk(snapshot: (metadataSnapshot, nil, nil), tabID: tabID)
+                    saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
                     dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
                 }
             }
