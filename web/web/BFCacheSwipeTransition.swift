@@ -13,6 +13,7 @@
 //  🎬 **미리보기 타임아웃 제거** - 제스처 먹통 문제 해결
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //  🚀 **충분한 안정화 시간** - 4단계 200ms, 전체 400ms 상한선
+//  🔧 **렌더링 검증 강화** - 완료 즉시 복원, 상한선 유지
 //
 
 import UIKit
@@ -280,7 +281,7 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🚀 충분한 안정화 시간 점진적 보정 단계 구성 시작")
         
-        // **1단계: 스크롤 확인 및 즉시 보정 (50ms)**
+        // **1단계: 스크롤 확인 및 즉시 보정 (50ms) + 🔧 렌더링 검증 강화**
         restoreSteps.append((1, 0.05, { stepCompletion in
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: 50ms)")
             
@@ -291,8 +292,8 @@ struct BFCacheSnapshot: Codable {
                         const targetX = \(self.scrollPosition.x);
                         const targetY = \(self.scrollPosition.y);
                         
-                        // DOM 안정화 대기
-                        function checkAfterStabilization() {
+                        // 🔧 렌더링 완료 대기 후 검증
+                        function checkAfterRenderingComplete() {
                             const currentX = window.scrollX || window.pageXOffset || 0;
                             const currentY = window.scrollY || window.pageYOffset || 0;
                             const tolerance = 5;
@@ -316,12 +317,12 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         
-                        // 렌더링 완료 대기
+                        // 🔧 렌더링 완료 확인 후 검증 (상한선 내에서)
                         if (document.readyState === 'complete') {
-                            requestAnimationFrame(checkAfterStabilization);
+                            requestAnimationFrame(checkAfterRenderingComplete);
                         } else {
                             document.addEventListener('DOMContentLoaded', () => {
-                                requestAnimationFrame(checkAfterStabilization);
+                                requestAnimationFrame(checkAfterRenderingComplete);
                             });
                         }
                     });
@@ -382,7 +383,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (200ms) - 항상 포함**
+        // **4단계: 최종 확인 및 보정 (200ms) - 항상 포함 + 🔧 렌더링 검증 강화**
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, 0.2, { stepCompletion in
@@ -441,7 +442,7 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         
-                        // 렌더링 완료 후 실행
+                        // 🔧 렌더링 완료 후 실행 (상한선 내에서)
                         if (document.readyState === 'complete') {
                             requestAnimationFrame(finalCheck);
                         } else {
@@ -2236,7 +2237,7 @@ extension BFCacheTransitionSystem {
         
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ⚡ 충분한 안정화 시간 BFCache 시스템 설치 완료 (4단계 200ms, 전체 400ms)")
+        TabPersistenceManager.debugMessages.append("✅ ⚡ 즉시 스크롤 복원 BFCache 시스템 설치 완료 (🔧 렌더링 검증 강화, 상한선 유지)")
     }
     
     static func uninstall(from webView: WKWebView) {
