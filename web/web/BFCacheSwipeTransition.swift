@@ -14,8 +14,8 @@
 //  📸 **포괄적 떠나기 전 캡처** - 모든 네비게이션에서 캐시 보존
 //  🚀 **복원/대기 시간 최적화** - 캐처 안정성 유지하며 20% 성능 향상
 //  🗑️ **적응형 시스템 제거** - 고정 타이밍으로 단순화
-//  📈 **무한스크롤 대응 강화** - 스크롤 요소 감지 제한 대폭 확장 (50개 → 1000개)
-//  🔧 **타이밍 안정화** - 스크롤 복원 1단계 30ms, 렌더링 대기 200ms/3초로 조정
+//  📈 **범용 스크롤 감지 강화** - 스크롤 요소 감지 2000개로 확장, 동적 콘텐츠 안정화 강화
+//  🔧 **타이밍 안정화** - 스크롤 복원 1단계 30ms, 렌더링 대기 300ms/4초로 조정
 //
 
 import UIKit
@@ -295,7 +295,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.07 // 🚀 고정 80ms
+                let waitTime: TimeInterval = 0.08 // 🚀 고정 80ms
                 TabPersistenceManager.debugMessages.append("🔄 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -334,11 +334,11 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔧 3단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (🚀 고정 250ms) - 항상 포함 (🔧 핵심 수정)**
+        // **4단계: 최종 확인 및 보정 (🚀 고정 1초) - 항상 포함 (🔧 핵심 수정)**
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 0.90 // 🚀 고정 250ms 최종 대기
+            let waitTime: TimeInterval = 1.0 // 🚀 고정 1초 최종 대기
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -740,7 +740,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (강화된 스크롤 감지)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (📈 범용 스크롤 감지 강화)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -930,7 +930,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🚀 캡처 타임아웃 그대로 유지
         
-        // 3. 🔍 **강화된 JS 상태 캡처 - 범용 스크롤 감지** - 🚀 캡처 타임아웃 그대로 유지 (2초)
+        // 3. 📈 **범용 스크롤 감지 강화 JS 상태 캡처** - 🚀 캡처 타임아웃 그대로 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
             let jsScript = generateEnhancedScrollCaptureScript()
@@ -977,36 +977,46 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔍 **핵심 개선: 범용 스크롤 감지 JavaScript 생성 - 📈 무한스크롤 대응 강화 (50개 → 1000개)**
+    // 📈 **핵심 개선: 범용 스크롤 감지 JavaScript 생성 - 강화된 동적 콘텐츠 안정화 (2000개 확장)**
     private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🌐 **동적 콘텐츠 로딩 대기 (MutationObserver 활용) - 🔧 타이밍 안정화**
+                // 📈 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 타이밍 안정화**
                 function waitForDynamicContent(callback) {
+                    let stabilityCount = 0;
+                    const requiredStability = 3; // 3번 연속 안정되면 완료
                     let timeout;
+                    
                     const observer = new MutationObserver(() => {
+                        stabilityCount = 0; // 변화가 있으면 카운트 리셋
                         clearTimeout(timeout);
                         timeout = setTimeout(() => {
-                            observer.disconnect();
-                            callback();
-                        }, 200); // 🔧 타이밍 안정화: 150ms → 200ms (+50ms)
+                            stabilityCount++;
+                            if (stabilityCount >= requiredStability) {
+                                observer.disconnect();
+                                callback();
+                            }
+                        }, 300); // 🔧 타이밍 안정화: 200ms → 300ms (+100ms)
                     });
+                    
                     observer.observe(document.body, { childList: true, subtree: true });
+                    
+                    // 최대 대기 시간 설정
                     setTimeout(() => {
                         observer.disconnect();
                         callback();
-                    }, 3000); // 🔧 타이밍 안정화: 2500ms → 3000ms (+500ms)
+                    }, 4000); // 🔧 타이밍 안정화: 3000ms → 4000ms (+1000ms)
                 }
 
                 function captureScrollData() {
                     try {
-                        // 🔍 **1단계: 범용 스크롤 요소 스캔**
+                        // 📈 **1단계: 범용 스크롤 요소 스캔 - 2000개로 확장**
                         function findAllScrollableElements() {
                             const scrollables = [];
-                            const maxElements = 1000; // 📈 **핵심 수정: 50개 → 1000개 대폭 확장**
+                            const maxElements = 2000; // 📈 **핵심 수정: 1000개 → 2000개 대폭 확장**
                             
-                            console.log('📈 무한스크롤 대응 강화: 최대 ' + maxElements + '개 요소 감지');
+                            console.log('📈 범용 스크롤 감지 강화: 최대 ' + maxElements + '개 요소 감지');
                             
                             // 1) 명시적 overflow 스타일을 가진 요소들
                             const explicitScrollables = document.querySelectorAll('*');
@@ -1051,12 +1061,12 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 🌐 2) 무한 스크롤 사이트에 흔한 컨테이너들 (디시인사이드, 네이버 카페 고려)
+                            // 📈 **2) 범용 커뮤니티/SPA 사이트 컨테이너들 (네이버 카페 등 포함)**
                             const commonScrollContainers = [
                                 '.scroll-container', '.scrollable', '.content', '.main', '.body',
                                 '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
                                 '.list', '.feed', '.timeline', '.board', '.gallery', '.gall_list', '.article-board',
-                                // 📈 **추가 무한스크롤 패턴들 - 더 많은 사이트 대응**
+                                // 📈 **무한스크롤 패턴들 - 더 많은 사이트 대응**
                                 '.infinite-scroll', '.virtual-list', '.lazy-load', '.pagination-container',
                                 '.posts-container', '.comments-list', '.thread-list', '.message-list',
                                 '.activity-feed', '.news-feed', '.social-feed', '.content-stream',
@@ -1064,8 +1074,15 @@ final class BFCacheTransitionSystem: NSObject {
                                 // 📈 **소셜미디어/커뮤니티 특화 패턴**
                                 '.tweet-list', '.post-stream', '.story-list', '.video-list',
                                 '.chat-messages', '.notification-list', '.search-results',
-                                // 📈 **모바일 특화 패턴**
-                                '.mobile-list', '.touch-scroll', '.swipe-container'
+                                // 📈 **모바일 최적화 패턴**
+                                '.mobile-list', '.touch-scroll', '.swipe-container',
+                                // 📈 **네이버 카페 등 범용 커뮤니티 패턴**
+                                '.ArticleList', '.CommentArticleList', '.List.CommentArticleList',
+                                '.content.location_fix', '.list_board', '.RisingArticleList',
+                                '#ct[role="main"]', '.CafeMain', '.article-content',
+                                // 📈 **추가 범용 패턴**
+                                '.container-fluid', '.main-container', '.page-content',
+                                '.content-wrapper', '.app-content', '.site-content'
                             ];
                             
                             for (const selector of commonScrollContainers) {
@@ -1102,7 +1119,55 @@ final class BFCacheTransitionSystem: NSObject {
                                 }
                             }
                             
-                            // 📈 **3) 가상화 스크롤 및 커스텀 스크롤 감지 (추가)**
+                            // 📈 **3) Shadow DOM 스크롤 감지 추가**
+                            function findShadowDOMScrollables(root) {
+                                if (count >= maxElements) return;
+                                
+                                try {
+                                    const walker = document.createTreeWalker(
+                                        root,
+                                        NodeFilter.SHOW_ELEMENT,
+                                        {
+                                            acceptNode: function(node) {
+                                                return node.shadowRoot ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+                                            }
+                                        }
+                                    );
+                                    
+                                    let node;
+                                    while (node = walker.nextNode()) {
+                                        if (count >= maxElements) break;
+                                        if (node.shadowRoot) {
+                                            const shadowScrollables = node.shadowRoot.querySelectorAll('*');
+                                            for (const el of shadowScrollables) {
+                                                if (count >= maxElements) break;
+                                                const style = getComputedStyle(el);
+                                                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                                                    el.scrollTop > 0) {
+                                                    scrollables.push({
+                                                        selector: 'shadow-dom-element',
+                                                        top: el.scrollTop,
+                                                        left: el.scrollLeft,
+                                                        maxTop: el.scrollHeight - el.clientHeight,
+                                                        maxLeft: el.scrollWidth - el.clientWidth,
+                                                        id: el.id || '',
+                                                        className: el.className || '',
+                                                        tagName: el.tagName.toLowerCase(),
+                                                        isShadowDOM: true
+                                                    });
+                                                    count++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch(e) {
+                                    console.log('Shadow DOM 스크롤 감지 실패:', e);
+                                }
+                            }
+                            
+                            findShadowDOMScrollables(document);
+                            
+                            // 📈 **4) 가상화 스크롤 및 커스텀 스크롤 감지 (추가)**
                             const virtualScrollSelectors = [
                                 '[data-virtualized]', '[data-virtual-list]', '[data-react-window]',
                                 '.react-window', '.react-virtualized', '.vue-virtual-scroller',
@@ -1271,11 +1336,11 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 🔍 **메인 실행**
+                        // 📈 **메인 실행**
                         const scrollableElements = findAllScrollableElements();
                         const iframeScrolls = detectIframeScrolls();
                         
-                        console.log(`📈 무한스크롤 대응 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`📈 범용 스크롤 감지 강화 완료: 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
                         
                         resolve({
                             scroll: { 
@@ -1294,7 +1359,7 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         });
                     } catch(e) { 
-                        console.error('📈 무한스크롤 감지 실패:', e);
+                        console.error('📈 범용 스크롤 감지 실패:', e);
                         resolve({
                             scroll: { x: window.scrollX, y: window.scrollY, elements: [] },
                             iframes: [],
@@ -1304,7 +1369,7 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 }
 
-                // 🌐 동적 콘텐츠 완료 대기 후 캡처
+                // 📈 동적 콘텐츠 완료 대기 후 캡처
                 if (document.readyState === 'complete') {
                     waitForDynamicContent(captureScrollData);
                 } else {
@@ -1615,7 +1680,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("📈 BFCache 제스처 설정 완료 (무한스크롤 대응 강화): 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("📈 BFCache 제스처 설정 완료 (범용 스크롤 감지 강화): 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2240,7 +2305,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 📈 무한스크롤 대응 강화 BFCache 시스템 설치 완료 (1000개 스크롤 요소 감지, 타이밍 안정화)")
+        TabPersistenceManager.debugMessages.append("✅ 📈 범용 스크롤 감지 강화 BFCache 시스템 설치 완료 (2000개 스크롤 요소 감지, 동적 콘텐츠 안정화 강화)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
