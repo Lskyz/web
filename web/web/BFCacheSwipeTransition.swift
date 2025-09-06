@@ -245,7 +245,7 @@ struct BFCacheSnapshot: Codable {
         
         // **1단계: 스크롤 확인 및 즉시 보정 (🚀 고정 30ms) - 즉시 복원 검증**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.03 // 🚀 고정 30ms
+            let verifyDelay: TimeInterval = 0.05 // 🚀 고정 30ms
             TabPersistenceManager.debugMessages.append("🔄 1단계: 즉시 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
@@ -336,7 +336,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 4단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 0.25 // 🚀 고정 250ms 최종 대기
+            let waitTime: TimeInterval = 0.30 // 🚀 고정 250ms 최종 대기
             TabPersistenceManager.debugMessages.append("🔄 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
