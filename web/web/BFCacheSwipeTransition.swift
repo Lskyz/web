@@ -1,4 +1,4 @@
-1ㄷ//
+//
 //  BFCacheSwipeTransition.swift
 //  🎯 **강화된 BFCache 전환 시스템**
 //  ✅ 직렬화 큐로 레이스 컨디션 완전 제거
