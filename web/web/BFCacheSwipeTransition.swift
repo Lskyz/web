@@ -183,12 +183,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🎯 선로딩 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
         // 🎯 **1단계: 콘텐츠 선로딩 및 확인**
-        performContentPreloading(to: webView) { [weak self] preloadSuccess in
-            guard let self = self else {
-                completion(false)
-                return
-            }
-            
+        performContentPreloading(to: webView) { preloadSuccess in
             if preloadSuccess {
                 TabPersistenceManager.debugMessages.append("✅ 콘텐츠 선로딩 성공 - 스크롤 복원 진행")
                 
