@@ -441,180 +441,128 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
         
-                        // **1단계: 🎯 스마트 한 번에 위치 찾기 (브라우저 차단 해결)**
+        // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결)**
         restoreSteps.append((1, { stepCompletion in
-            let smartDelay: TimeInterval = 0.1
-            TabPersistenceManager.debugMessages.append("🎯 1단계: 스마트 한 번에 위치 찾기 (대기: \(String(format: "%.0f", smartDelay * 1000))ms)")
+            let progressiveDelay: TimeInterval = 0.1
+            TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + smartDelay) {
-                let smartScrollJS = """
+            DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
+                let progressiveScrollJS = """
                 (function() {
                     return new Promise(async (resolve) => {
                         try {
                             const targetX = parseFloat('\(self.scrollPosition.x)');
                             const targetY = parseFloat('\(self.scrollPosition.y)');
-                            const targetPercentY = parseFloat('\(self.scrollPositionPercent.y)');
-                            const tolerance = 30.0;
+                            const tolerance = 50.0;
                             
-                            console.log('🎯 스마트 한 번에 위치 찾기 시작:', {
-                                target: [targetX, targetY], 
-                                percent: targetPercentY
-                            });
+                            console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
                             
-                            // 🎯 **방법 1: 백분율 기반 즉시 복원 (가장 빠름)**
-                            if (targetPercentY > 0 && targetPercentY <= 100) {
-                                const currentContentHeight = Math.max(
-                                    document.documentElement.scrollHeight,
-                                    document.body.scrollHeight
-                                );
-                                const maxScrollY = currentContentHeight - window.innerHeight;
+                            // 🚫 **브라우저 차단 대응: 점진적 스크롤**
+                            let attempts = 0;
+                            const maxAttempts = 15;
+                            
+                            while (attempts < maxAttempts) {
+                                // 현재 위치 확인
+                                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                                const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                                 
-                                if (maxScrollY > 0) {
-                                    const calculatedY = (targetPercentY / 100) * maxScrollY;
-                                    
-                                    console.log('🎯 백분율 기반 계산:', {
-                                        contentHeight: currentContentHeight,
-                                        maxScroll: maxScrollY,
-                                        percent: targetPercentY,
-                                        calculated: calculatedY
-                                    });
-                                    
-                                    // 즉시 스크롤
-                                    window.scrollTo(targetX, calculatedY);
-                                    document.documentElement.scrollTop = calculatedY;
-                                    document.body.scrollTop = calculatedY;
-                                    
-                                    // 즉시 확인
-                                    await new Promise(resolve => setTimeout(resolve, 100));
-                                    
-                                    const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                    if (Math.abs(currentY - calculatedY) <= tolerance) {
-                                        console.log('🎯 백분율 기반 복원 성공!', {calculated: calculatedY, actual: currentY});
-                                        resolve('smart_percent_success');
-                                        return;
-                                    }
+                                // 목표 도달 확인
+                                if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
+                                    console.log('🚫 점진적 스크롤 성공:', {current: [currentX, currentY], attempts: attempts + 1});
+                                    resolve('progressive_success');
+                                    return;
                                 }
-                            }
-                            
-                            // 🎯 **방법 2: 대용량 콘텐츠 강제 로딩 (한 번에)**
-                            console.log('🎯 대용량 콘텐츠 강제 로딩 시도');
-                            
-                            const forceContentLoad = async () => {
-                                // 현재 스크롤 가능한 최대 높이
-                                let maxScrollY = Math.max(
+                                
+                                // 스크롤 한계 확인 (더 이상 스크롤할 수 없음)
+                                const maxScrollY = Math.max(
                                     document.documentElement.scrollHeight - window.innerHeight,
                                     document.body.scrollHeight - window.innerHeight,
                                     0
                                 );
+                                const maxScrollX = Math.max(
+                                    document.documentElement.scrollWidth - window.innerWidth,
+                                    document.body.scrollWidth - window.innerWidth,
+                                    0
+                                );
                                 
-                                console.log('🎯 강제 로딩 전:', {maxScroll: maxScrollY, target: targetY});
-                                
-                                // 목표보다 현재 최대값이 작으면 강제 로딩
-                                if (targetY > maxScrollY) {
-                                    // 🚀 **가상 스크롤로 대용량 로딩**
-                                    const estimatedNeedMore = targetY - maxScrollY;
-                                    const loadSteps = Math.ceil(estimatedNeedMore / window.innerHeight);
+                                if (currentY >= maxScrollY && targetY > maxScrollY) {
+                                    console.log('🚫 Y축 스크롤 한계 도달:', {current: currentY, max: maxScrollY, target: targetY});
                                     
-                                    console.log('🎯 가상 스크롤 로딩:', {needMore: estimatedNeedMore, steps: loadSteps});
+                                    // 🚫 **무한 스크롤 트리거 시도**
+                                    console.log('🚫 무한 스크롤 트리거 시도');
                                     
-                                    // 빠른 연속 스크롤로 콘텐츠 로딩 유도
-                                    for (let i = 0; i < Math.min(loadSteps, 10); i++) {
-                                        const virtualY = maxScrollY + (i * window.innerHeight);
-                                        
-                                        // 가상 스크롤 이벤트 발생
-                                        window.scrollTo(0, virtualY);
-                                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                        
-                                        // 무한 스크롤 트리거
-                                        const loadMoreButtons = document.querySelectorAll(
-                                            '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                                            '.load-more, .show-more, .infinite-scroll-trigger, ' +
-                                            '[data-role="load"], [aria-label*="more"], [aria-label*="load"]'
-                                        );
-                                        
-                                        loadMoreButtons.forEach(btn => {
-                                            if (btn && typeof btn.click === 'function') {
-                                                try { btn.click(); } catch(e) {}
-                                            }
-                                        });
-                                        
-                                        // 터치 이벤트도 발생
-                                        try {
-                                            document.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
-                                        } catch(e) {}
-                                        
-                                        // 콘텐츠 로딩 짧은 대기
-                                        await new Promise(resolve => setTimeout(resolve, 50));
+                                    // 스크롤 이벤트 강제 발생
+                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                                    
+                                    // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
+                                    try {
+                                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                                        document.dispatchEvent(touchEvent);
+                                    } catch(e) {
+                                        // TouchEvent 지원 안 되면 무시
                                     }
                                     
-                                    // 로딩 완료 대기
-                                    await new Promise(resolve => setTimeout(resolve, 300));
-                                    
-                                    // 업데이트된 최대 스크롤 확인
-                                    const newMaxScrollY = Math.max(
-                                        document.documentElement.scrollHeight - window.innerHeight,
-                                        document.body.scrollHeight - window.innerHeight,
-                                        0
+                                    // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
+                                    const loadMoreButtons = document.querySelectorAll(
+                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
                                     );
                                     
-                                    console.log('🎯 강제 로딩 후:', {oldMax: maxScrollY, newMax: newMaxScrollY, target: targetY});
-                                    
-                                    maxScrollY = newMaxScrollY;
+                                    loadMoreButtons.forEach(btn => {
+                                        if (btn && typeof btn.click === 'function') {
+                                            try {
+                                                btn.click();
+                                                console.log('🚫 "더보기" 버튼 클릭:', btn.className);
+                                            } catch(e) {
+                                                // 클릭 실패는 무시
+                                            }
+                                        }
+                                    });
                                 }
                                 
-                                return maxScrollY;
-                            };
-                            
-                            const finalMaxScrollY = await forceContentLoad();
-                            
-                            // 🎯 **방법 3: 최종 정확한 위치로 스크롤**
-                            const finalTargetY = Math.min(targetY, finalMaxScrollY);
-                            
-                            console.log('🎯 최종 스크롤 시도:', {target: targetY, adjusted: finalTargetY, max: finalMaxScrollY});
-                            
-                            // 정확한 스크롤 실행
-                            window.scrollTo(targetX, finalTargetY);
-                            document.documentElement.scrollTop = finalTargetY;
-                            document.documentElement.scrollLeft = targetX;
-                            document.body.scrollTop = finalTargetY;
-                            document.body.scrollLeft = targetX;
-                            
-                            if (document.scrollingElement) {
-                                document.scrollingElement.scrollTop = finalTargetY;
-                                document.scrollingElement.scrollLeft = targetX;
+                                // 스크롤 시도
+                                window.scrollTo(targetX, targetY);
+                                document.documentElement.scrollTop = targetY;
+                                document.documentElement.scrollLeft = targetX;
+                                document.body.scrollTop = targetY;
+                                document.body.scrollLeft = targetX;
+                                
+                                if (document.scrollingElement) {
+                                    document.scrollingElement.scrollTop = targetY;
+                                    document.scrollingElement.scrollLeft = targetX;
+                                }
+                                
+                                attempts++;
+                                
+                                // 대기 시간 (콘텐츠 로딩 대기)
+                                await new Promise(resolve => setTimeout(resolve, 200));
                             }
                             
-                            // 최종 확인
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                            
+                            // 최대 시도 후에도 실패
                             const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
                             const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
                             
-                            const isSuccess = Math.abs(finalY - finalTargetY) <= tolerance && 
-                                            Math.abs(finalX - targetX) <= tolerance;
-                            
-                            console.log('🎯 스마트 한 번에 위치 찾기 완료:', {
+                            console.log('🚫 점진적 스크롤 한계 도달:', {
                                 target: [targetX, targetY],
-                                adjusted: [targetX, finalTargetY],
                                 final: [finalX, finalY],
-                                success: isSuccess,
-                                method: 'smart_force_load'
+                                attempts: maxAttempts
                             });
                             
-                            resolve(isSuccess ? 'smart_success' : 'smart_partial');
+                            resolve('progressive_partial');
                             
                         } catch(e) { 
-                            console.error('🎯 스마트 위치 찾기 실패:', e);
-                            resolve('smart_error'); 
+                            console.error('🚫 점진적 스크롤 실패:', e);
+                            resolve('progressive_error'); 
                         }
                     });
                 })()
                 """
                 
-                webView.evaluateJavaScript(smartScrollJS) { result, _ in
-                    let resultString = result as? String ?? "smart_error"
+                webView.evaluateJavaScript(progressiveScrollJS) { result, _ in
+                    let resultString = result as? String ?? "progressive_error"
                     let success = resultString.contains("success") || resultString.contains("partial")
-                    TabPersistenceManager.debugMessages.append("🎯 1단계 스마트 완료: \(success ? "성공" : "실패") (\(resultString))")
+                    TabPersistenceManager.debugMessages.append("🚫 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
             }
