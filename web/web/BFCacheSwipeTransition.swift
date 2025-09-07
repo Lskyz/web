@@ -9,7 +9,6 @@
 //  💾 스마트 메모리 관리 
 //  📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
 //  🔧 **뷰포트 앵커 시스템** - 화면에 보이는 핵심 요소 기준
-//  ✨ **부드러운 점진적 스크롤** - 시각적 톡톡 튀기 백그라운드 처리
 //
 
 import UIKit
@@ -432,7 +431,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **✨ 부드러운 브라우저 차단 대응 시스템 (백그라운드 처리)**
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤 + 무한 스크롤 트리거)**
     private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -440,141 +439,130 @@ struct BFCacheSnapshot: Codable {
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("✨ 부드러운 브라우저 차단 대응 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
         
-        // **1단계: ✨ 부드러운 점진적 스크롤 복원 (백그라운드 처리)**
+        // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결)**
         restoreSteps.append((1, { stepCompletion in
-            let progressiveDelay: TimeInterval = 0.05  // ✨ 더 빠른 시작
-            TabPersistenceManager.debugMessages.append("✨ 1단계: 부드러운 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
+            let progressiveDelay: TimeInterval = 0.1
+            TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
-                let smoothProgressiveScrollJS = """
+                let progressiveScrollJS = """
                 (function() {
                     return new Promise(async (resolve) => {
                         try {
                             const targetX = parseFloat('\(self.scrollPosition.x)');
                             const targetY = parseFloat('\(self.scrollPosition.y)');
-                            const tolerance = 30.0;  // ✨ 더 관대한 허용 오차
+                            const tolerance = 50.0;
                             
-                            console.log('✨ 부드러운 점진적 스크롤 시작:', {target: [targetX, targetY]});
+                            console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
                             
-                            // ✨ **핵심 개선: 웹뷰를 일시적으로 숨기기 시작**
-                            const originalVisibility = document.body.style.visibility;
-                            const originalOpacity = document.body.style.opacity;
-                            
-                            // 스크롤 복원 중에는 투명도 조절로 시각적 보정 숨기기
-                            document.body.style.transition = 'opacity 0.1s ease';
-                            document.body.style.opacity = '0.3';
-                            
+                            // 🚫 **브라우저 차단 대응: 점진적 스크롤**
                             let attempts = 0;
-                            const maxAttempts = 8;  // ✨ 시도 횟수 줄임
-                            let lastPosition = { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 };
+                            const maxAttempts = 15;
                             
-                            // ✨ **개선된 부드러운 스크롤 로직**
-                            const smoothScroll = async () => {
-                                while (attempts < maxAttempts) {
-                                    const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                    const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                    
-                                    // 목표 도달 확인
-                                    if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
-                                        console.log('✨ 부드러운 스크롤 성공:', {current: [currentX, currentY], attempts: attempts + 1});
-                                        break;
-                                    }
-                                    
-                                    // 위치 변화 없으면 무한 스크롤 트리거
-                                    if (Math.abs(currentY - lastPosition.y) < 5 && Math.abs(currentX - lastPosition.x) < 5) {
-                                        console.log('✨ 위치 변화 없음 - 무한 스크롤 트리거 시도');
-                                        
-                                        // 스크롤 이벤트 강제 발생
-                                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                        window.dispatchEvent(new Event('resize', { bubbles: true }));
-                                        
-                                        // 하단 영역 "더보기" 버튼 찾기 및 클릭
-                                        const loadMoreButtons = document.querySelectorAll(
-                                            '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                                            '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
-                                        );
-                                        
-                                        for (const btn of loadMoreButtons) {
-                                            if (btn && typeof btn.click === 'function') {
-                                                try {
-                                                    btn.click();
-                                                    console.log('✨ "더보기" 버튼 클릭:', btn.className);
-                                                    break;
-                                                } catch(e) {
-                                                    // 클릭 실패는 무시
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    lastPosition = { x: currentX, y: currentY };
-                                    
-                                    // ✨ **부드러운 멀티 스크롤 시도**
-                                    window.scrollTo(targetX, targetY);
-                                    if (document.documentElement) {
-                                        document.documentElement.scrollTop = targetY;
-                                        document.documentElement.scrollLeft = targetX;
-                                    }
-                                    if (document.body) {
-                                        document.body.scrollTop = targetY;
-                                        document.body.scrollLeft = targetX;
-                                    }
-                                    if (document.scrollingElement) {
-                                        document.scrollingElement.scrollTop = targetY;
-                                        document.scrollingElement.scrollLeft = targetX;
-                                    }
-                                    
-                                    attempts++;
-                                    
-                                    // ✨ 더 짧은 대기 시간으로 부드럽게
-                                    await new Promise(resolve => setTimeout(resolve, 100));
+                            while (attempts < maxAttempts) {
+                                // 현재 위치 확인
+                                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                                const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                                
+                                // 목표 도달 확인
+                                if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
+                                    console.log('🚫 점진적 스크롤 성공:', {current: [currentX, currentY], attempts: attempts + 1});
+                                    resolve('progressive_success');
+                                    return;
                                 }
                                 
-                                // ✨ **스크롤 완료 후 웹뷰 다시 표시**
-                                document.body.style.opacity = originalOpacity || '1';
+                                // 스크롤 한계 확인 (더 이상 스크롤할 수 없음)
+                                const maxScrollY = Math.max(
+                                    document.documentElement.scrollHeight - window.innerHeight,
+                                    document.body.scrollHeight - window.innerHeight,
+                                    0
+                                );
+                                const maxScrollX = Math.max(
+                                    document.documentElement.scrollWidth - window.innerWidth,
+                                    document.body.scrollWidth - window.innerWidth,
+                                    0
+                                );
                                 
-                                // 원래 스타일 복원
-                                setTimeout(() => {
-                                    document.body.style.transition = '';
-                                    if (originalVisibility) {
-                                        document.body.style.visibility = originalVisibility;
+                                if (currentY >= maxScrollY && targetY > maxScrollY) {
+                                    console.log('🚫 Y축 스크롤 한계 도달:', {current: currentY, max: maxScrollY, target: targetY});
+                                    
+                                    // 🚫 **무한 스크롤 트리거 시도**
+                                    console.log('🚫 무한 스크롤 트리거 시도');
+                                    
+                                    // 스크롤 이벤트 강제 발생
+                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                                    
+                                    // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
+                                    try {
+                                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                                        document.dispatchEvent(touchEvent);
+                                    } catch(e) {
+                                        // TouchEvent 지원 안 되면 무시
                                     }
-                                }, 200);  // ✨ 부드러운 전환 완료 대기
+                                    
+                                    // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
+                                    const loadMoreButtons = document.querySelectorAll(
+                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
+                                    );
+                                    
+                                    loadMoreButtons.forEach(btn => {
+                                        if (btn && typeof btn.click === 'function') {
+                                            try {
+                                                btn.click();
+                                                console.log('🚫 "더보기" 버튼 클릭:', btn.className);
+                                            } catch(e) {
+                                                // 클릭 실패는 무시
+                                            }
+                                        }
+                                    });
+                                }
                                 
-                                return attempts < maxAttempts ? 'smooth_success' : 'smooth_partial';
-                            };
+                                // 스크롤 시도
+                                window.scrollTo(targetX, targetY);
+                                document.documentElement.scrollTop = targetY;
+                                document.documentElement.scrollLeft = targetX;
+                                document.body.scrollTop = targetY;
+                                document.body.scrollLeft = targetX;
+                                
+                                if (document.scrollingElement) {
+                                    document.scrollingElement.scrollTop = targetY;
+                                    document.scrollingElement.scrollLeft = targetX;
+                                }
+                                
+                                attempts++;
+                                
+                                // 대기 시간 (콘텐츠 로딩 대기)
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                            }
                             
-                            const result = await smoothScroll();
-                            
+                            // 최대 시도 후에도 실패
                             const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
                             const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
                             
-                            console.log('✨ 부드러운 점진적 스크롤 완료:', {
+                            console.log('🚫 점진적 스크롤 한계 도달:', {
                                 target: [targetX, targetY],
                                 final: [finalX, finalY],
-                                attempts: attempts,
-                                result: result
+                                attempts: maxAttempts
                             });
                             
-                            resolve(result);
+                            resolve('progressive_partial');
                             
                         } catch(e) { 
-                            console.error('✨ 부드러운 점진적 스크롤 실패:', e);
-                            // 실패 시에도 웹뷰 복원
-                            document.body.style.opacity = '1';
-                            document.body.style.transition = '';
-                            resolve('smooth_error'); 
+                            console.error('🚫 점진적 스크롤 실패:', e);
+                            resolve('progressive_error'); 
                         }
                     });
                 })()
                 """
                 
-                webView.evaluateJavaScript(smoothProgressiveScrollJS) { result, _ in
-                    let resultString = result as? String ?? "smooth_error"
+                webView.evaluateJavaScript(progressiveScrollJS) { result, _ in
+                    let resultString = result as? String ?? "progressive_error"
                     let success = resultString.contains("success") || resultString.contains("partial")
-                    TabPersistenceManager.debugMessages.append("✨ 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                    TabPersistenceManager.debugMessages.append("🚫 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
             }
@@ -587,7 +575,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🖼️ 2단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
             restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.1  // ✨ 더 빠른 처리
+                let waitTime: TimeInterval = 0.15
                 TabPersistenceManager.debugMessages.append("🖼️ 2단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -603,11 +591,11 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🖼️ 2단계 스킵 - iframe 요소 없음")
         }
         
-        // **3단계: ✨ 부드러운 최종 확인 및 보정**
+        // **3단계: 최종 확인 및 보정**
         TabPersistenceManager.debugMessages.append("✅ 3단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((3, { stepCompletion in
-            let waitTime: TimeInterval = 0.3  // ✨ 더 빠른 최종 확인
+            let waitTime: TimeInterval = 0.8
             TabPersistenceManager.debugMessages.append("✅ 3단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -620,22 +608,17 @@ struct BFCacheSnapshot: Codable {
                         // 네이티브 스크롤 위치 정밀 확인
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 50.0; // ✨ 관대한 허용 오차
+                        const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
                         
-                        console.log('✅ 부드러운 브라우저 차단 대응 최종 검증:', {
+                        console.log('✅ 브라우저 차단 대응 최종 검증:', {
                             target: [targetX, targetY],
                             current: [currentX, currentY],
                             tolerance: tolerance
                         });
                         
-                        // ✨ **부드러운 최종 보정 (필요시)**
+                        // 최종 보정 (필요시)
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('✅ 부드러운 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            
-                            // 일시적으로 투명도 조절
-                            const originalOpacity = document.body.style.opacity;
-                            document.body.style.transition = 'opacity 0.1s ease';
-                            document.body.style.opacity = '0.7';
+                            console.log('✅ 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
                             // 강력한 최종 보정 
                             window.scrollTo(targetX, targetY);
@@ -649,12 +632,6 @@ struct BFCacheSnapshot: Codable {
                                 document.scrollingElement.scrollTop = targetY;
                                 document.scrollingElement.scrollLeft = targetX;
                             }
-                            
-                            // 원래 투명도 복원
-                            setTimeout(() => {
-                                document.body.style.opacity = originalOpacity || '1';
-                                document.body.style.transition = '';
-                            }, 150);
                         }
                         
                         // 최종 위치 확인
@@ -662,32 +639,32 @@ struct BFCacheSnapshot: Codable {
                         const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('✅ 부드러운 브라우저 차단 대응 최종보정 완료:', {
+                        console.log('✅ 브라우저 차단 대응 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
                             isWithinTolerance: isWithinTolerance,
-                            note: '부드러운브라우저차단대응'
+                            note: '브라우저차단대응'
                         });
                         
-                        // ✨ **관대한 성공 판정** (브라우저 차단 대응)
+                        // 🚫 **관대한 성공 판정** (브라우저 차단 고려)
                         return true; // 브라우저 차단 대응은 항상 성공으로 처리
                     } catch(e) { 
-                        console.error('✅ 부드러운 브라우저 차단 대응 최종보정 실패:', e);
+                        console.error('✅ 브라우저 차단 대응 최종보정 실패:', e);
                         return true; // 에러도 성공으로 처리 (관대한 정책)
                     }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true // ✨ 브라우저 차단 대응은 관대하게
-                    TabPersistenceManager.debugMessages.append("✅ 3단계 부드러운 브라우저 차단 대응 최종보정 완료: \(success ? "성공" : "성공(관대)")")
+                    let success = (result as? Bool) ?? true // 🚫 브라우저 차단 대응은 관대하게
+                    TabPersistenceManager.debugMessages.append("✅ 3단계 브라우저 차단 대응 최종보정 완료: \(success ? "성공" : "성공(관대)")")
                     stepCompletion(true) // 항상 성공
                 }
             }
         }))
         
-        TabPersistenceManager.debugMessages.append("✨ 총 \(restoreSteps.count)단계 부드러운 브라우저 차단 대응 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("🚫 총 \(restoreSteps.count)단계 브라우저 차단 대응 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -695,12 +672,12 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
-                TabPersistenceManager.debugMessages.append("✨ \(stepInfo.step)단계 실행 시작")
+                TabPersistenceManager.debugMessages.append("🚫 \(stepInfo.step)단계 실행 시작")
                 
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("✨ 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("🚫 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -711,9 +688,9 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("✨ 부드러운 브라우저 차단 대응 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("✨ 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
-                completion(true) // ✨ 브라우저 차단 대응은 항상 성공으로 처리
+                TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🚫 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
+                completion(true) // 🚫 브라우저 차단 대응은 항상 성공으로 처리
             }
         }
         
@@ -759,9 +736,9 @@ struct BFCacheSnapshot: Codable {
                                     type: 'restoreScroll',
                                     scrollX: parseFloat(iframeInfo.scrollX || 0),
                                     scrollY: parseFloat(iframeInfo.scrollY || 0),
-                                    smoothRestore: true // ✨ 부드러운 복원 모드 플래그
+                                    browserBlockingWorkaround: true // 🚫 브라우저 차단 대응 모드 플래그
                                 }, '*');
-                                console.log('🖼️ Cross-origin iframe 부드러운 스크롤 요청:', iframeInfo.selector);
+                                console.log('🖼️ Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
                                 restored++;
                             } catch(crossOriginError) {
                                 console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
@@ -1859,7 +1836,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("✨ 부드러운 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🎯 단순화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2271,7 +2248,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // ✨ **부드러운 브라우저 차단 대응 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
+    // 🚫 **브라우저 차단 대응 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
     private func performNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
@@ -2290,13 +2267,13 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // ✨ **부드러운 브라우저 차단 대응 BFCache 복원**
-        trySmoothBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+        // 🚫 **브라우저 차단 대응 BFCache 복원**
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - 부드러운 브라우저 차단 대응 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache \(success ? "성공" : "실패")")
             }
         }
         
@@ -2305,8 +2282,8 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
-    // ✨ **부드러운 브라우저 차단 대응 BFCache 복원** 
-    private func trySmoothBrowserBlockingBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🚫 **브라우저 차단 대응 BFCache 복원** 
+    private func tryBrowserBlockingBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -2315,12 +2292,12 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - 부드러운 브라우저 차단 대응 복원
+            // BFCache 히트 - 브라우저 차단 대응 복원
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 부드러운 브라우저 차단 대응 BFCache 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ 브라우저 차단 대응 BFCache 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ 부드러운 브라우저 차단 대응 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 브라우저 차단 대응 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -2328,13 +2305,14 @@ final class BFCacheTransitionSystem: NSObject {
             // BFCache 미스 - 기존 대기
             dbg("❌ BFCache 미스: \(currentRecord.title)")
             
-            // 기존 대기 시간 (200ms로 단축)
-            let waitTime: TimeInterval = 0.2
+            // 기존 대기 시간 (250ms)
+            let waitTime: TimeInterval = 0.25
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 completion(false)
             }
         }
     }
+    
 
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
@@ -2378,7 +2356,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        trySmoothBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2394,7 +2372,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        trySmoothBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2421,7 +2399,7 @@ final class BFCacheTransitionSystem: NSObject {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
-                console.log('✨ 부드러운 브라우저 차단 대응 BFCache 페이지 복원');
+                console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
                 
                 // 🌐 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
@@ -2439,30 +2417,25 @@ final class BFCacheTransitionSystem: NSObject {
         
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
-                console.log('📸 부드러운 브라우저 차단 대응 BFCache 페이지 저장');
+                console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
             }
         });
         
-        // ✨ Cross-origin iframe 부드러운 브라우저 차단 대응 스크롤 복원 리스너
+        // 🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원 리스너
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
                 try {
                     const targetX = parseFloat(event.data.scrollX) || 0;
                     const targetY = parseFloat(event.data.scrollY) || 0;
-                    const smoothRestore = event.data.smoothRestore || false;
+                    const browserBlockingWorkaround = event.data.browserBlockingWorkaround || false;
                     
-                    console.log('✨ Cross-origin iframe 부드러운 브라우저 차단 대응 스크롤 복원:', targetX, targetY, smoothRestore ? '(부드러운 복원 모드)' : '');
+                    console.log('🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원:', targetX, targetY, browserBlockingWorkaround ? '(브라우저 차단 대응 모드)' : '');
                     
-                    // ✨ 부드러운 브라우저 차단 대응 스크롤 설정
-                    if (smoothRestore) {
-                        // 일시적 투명도 조절
-                        const originalOpacity = document.body.style.opacity;
-                        document.body.style.transition = 'opacity 0.1s ease';
-                        document.body.style.opacity = '0.5';
-                        
+                    // 🚫 브라우저 차단 대응 스크롤 설정
+                    if (browserBlockingWorkaround) {
                         // 점진적 스크롤 시도
                         let attempts = 0;
-                        const maxAttempts = 6;
+                        const maxAttempts = 10;
                         
                         const tryScroll = () => {
                             window.scrollTo(targetX, targetY);
@@ -2474,15 +2447,9 @@ final class BFCacheTransitionSystem: NSObject {
                             const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                             const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                             
-                            if ((Math.abs(currentX - targetX) > 20 || Math.abs(currentY - targetY) > 20) && attempts < maxAttempts) {
+                            if ((Math.abs(currentX - targetX) > 10 || Math.abs(currentY - targetY) > 10) && attempts < maxAttempts) {
                                 attempts++;
-                                setTimeout(tryScroll, 80);
-                            } else {
-                                // 복원 완료 - 투명도 원래대로
-                                document.body.style.opacity = originalOpacity || '1';
-                                setTimeout(() => {
-                                    document.body.style.transition = '';
-                                }, 100);
+                                setTimeout(tryScroll, 150);
                             }
                         };
                         
@@ -2508,7 +2475,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache✨] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
     }
 }
 
@@ -2530,7 +2497,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ ✨ 부드러운 브라우저 차단 대응 BFCache 시스템 설치 완료 (뷰포트 앵커 + 부드러운 점진적 스크롤)")
+        TabPersistenceManager.debugMessages.append("✅ 🚫 브라우저 차단 대응 BFCache 시스템 설치 완료 (뷰포트 앵커 + 점진적 스크롤)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2553,7 +2520,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("✨ 부드러운 브라우저 차단 대응 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
