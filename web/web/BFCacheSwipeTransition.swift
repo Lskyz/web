@@ -681,7 +681,7 @@ struct BFCacheSnapshot: Codable {
         
         // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결)**
         restoreSteps.append((1, { stepCompletion in
-            let progressiveDelay: TimeInterval = 0.1
+            let progressiveDelay: TimeInterval = 0.3
             TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
@@ -802,7 +802,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("✅ 3단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((3, { stepCompletion in
-            let waitTime: TimeInterval = 0.8
+            let waitTime: TimeInterval = 0.9
             TabPersistenceManager.debugMessages.append("✅ 3단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
@@ -815,7 +815,7 @@ struct BFCacheSnapshot: Codable {
                         // 네이티브 스크롤 위치 정밀 확인
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
+                        const tolerance = 10.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
                         
                         console.log('✅ 브라우저 차단 대응 최종 검증 (선로딩 후):', {
                             target: [targetX, targetY],
