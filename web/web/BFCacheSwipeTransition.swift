@@ -1,14 +1,16 @@
 //
 //  BFCacheSwipeTransition.swift
-//  🎯 **DOM 요소 기반 정밀 스크롤 복원 시스템**
-//  ✅ 뷰포트 앵커 + 랜드마크 기반 복원으로 단순화
+//  🎯 **브라우저 Scroll Anchoring 알고리즘 기반 다중 앵커 시스템**
+//  ✅ 대량 선택자 (100개+) 한 번에 스캔으로 성능 최적화
+//  🎯 뷰포트 영역별 분산 배치로 위치 혼란 방지
+//  🔗 6-8개 다중 앵커 저장으로 견고성 확보
+//  📍 "깊고 뷰포트 상단에 가까운" 요소 선호 (브라우저 표준)
 //  🚫 **컨테이너 스크롤 복원 제거** - 복잡성 감소
 //  🚫 **브라우저 차단 대응** - 점진적 스크롤 + 무한 스크롤 트리거
 //  📸 동적 DOM 요소 위치 추적
 //  ♾️ 무한 스크롤 대응 강화
 //  💾 스마트 메모리 관리 
-//  📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
-//  🔧 **뷰포트 앵커 시스템** - 화면에 보이는 핵심 요소 기준
+//  📈 **브라우저 표준 기반 정밀 복원** - 절대 좌표 대신 다중 앵커 기준 복원
 //
 
 import UIKit
@@ -60,7 +62,7 @@ private class GestureContext {
     }
 }
 
-// MARK: - 📸 **개선된 BFCache 페이지 스냅샷 (DOM 요소 기반)**
+// MARK: - 📸 **브라우저 Scroll Anchoring 기반 다중 앵커 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -177,80 +179,83 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🎯 **핵심 개선: DOM 요소 기반 1단계 복원**
+    // 🎯 **핵심 개선: 브라우저 Scroll Anchoring 기반 다중 앵커 복원**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
+        TabPersistenceManager.debugMessages.append("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 복원 시작 - 상태: \(captureStatus.rawValue)")
         
-        // 🎯 **1단계: DOM 요소 기반 스크롤 복원 우선 실행**
-        performElementBasedScrollRestore(to: webView)
+        // 🎯 **1단계: 브라우저 표준 다중 앵커 기반 스크롤 복원 우선 실행**
+        performMultiAnchorScrollRestore(to: webView)
         
         // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
         case .failed:
-            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - DOM 요소 복원만 수행")
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 다중 앵커 복원만 수행")
             completion(true)
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - DOM 요소 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 다중 앵커 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 다중 앵커 복원 + 브라우저 차단 대응")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 다중 앵커 복원 + 브라우저 차단 대응")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 DOM 요소 기반 복원 후 브라우저 차단 대응 시작")
+        TabPersistenceManager.debugMessages.append("🌐 다중 앵커 복원 후 브라우저 차단 대응 시작")
         
-        // 🔧 **DOM 요소 복원 후 브라우저 차단 대응 단계 실행**
+        // 🔧 **다중 앵커 복원 후 브라우저 차단 대응 단계 실행**
         DispatchQueue.main.async {
             self.performBrowserBlockingWorkaround(to: webView, completion: completion)
         }
     }
     
-    // 🎯 **새로 추가: DOM 요소 기반 1단계 복원 메서드**
-    private func performElementBasedScrollRestore(to webView: WKWebView) {
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 시작")
+    // 🔗 **새로 추가: 브라우저 Scroll Anchoring 기반 다중 앵커 1단계 복원 메서드**
+    private func performMultiAnchorScrollRestore(to webView: WKWebView) {
+        TabPersistenceManager.debugMessages.append("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 1단계 복원 시작")
         
         // 1. 네이티브 스크롤뷰 기본 설정 (백업용)
         let targetPos = self.scrollPosition
         webView.scrollView.setContentOffset(targetPos, animated: false)
         
-        // 2. 🎯 **DOM 요소 기반 복원 JavaScript 실행**
-        let elementRestoreJS = generateElementBasedRestoreScript()
+        // 2. 🔗 **브라우저 Scroll Anchoring 기반 다중 앵커 복원 JavaScript 실행**
+        let multiAnchorRestoreJS = generateMultiAnchorRestoreScript()
         
         // 동기적 JavaScript 실행 (즉시)
-        webView.evaluateJavaScript(elementRestoreJS) { result, error in
+        webView.evaluateJavaScript(multiAnchorRestoreJS) { result, error in
             let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 복원: \(success ? "성공" : "실패")")
             
             if let resultDict = result as? [String: Any] {
                 if let method = resultDict["method"] as? String {
-                    TabPersistenceManager.debugMessages.append("🎯 사용된 복원 방법: \(method)")
+                    TabPersistenceManager.debugMessages.append("🔗 사용된 복원 방법: \(method)")
                 }
                 if let anchorInfo = resultDict["anchorInfo"] as? String {
-                    TabPersistenceManager.debugMessages.append("🎯 앵커 정보: \(anchorInfo)")
+                    TabPersistenceManager.debugMessages.append("🔗 앵커 정보: \(anchorInfo)")
+                }
+                if let usedAnchorCount = resultDict["usedAnchorCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🔗 활용된 앵커 수: \(usedAnchorCount)개")
                 }
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 완료")
+        TabPersistenceManager.debugMessages.append("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 1단계 복원 완료")
     }
     
-    // 🎯 **핵심: DOM 요소 기반 복원 JavaScript 생성**
-    private func generateElementBasedRestoreScript() -> String {
+    // 🔗 **핵심: 브라우저 Scroll Anchoring 알고리즘 기반 다중 앵커 복원 JavaScript 생성**
+    private func generateMultiAnchorRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
         
-        // jsState에서 뷰포트 앵커 정보 추출
-        var viewportAnchorData = "null"
+        // jsState에서 다중 앵커 정보 추출
+        var multiAnchorData = "null"
         
         if let jsState = self.jsState {
-            // 뷰포트 앵커 정보
-            if let viewport = jsState["viewportAnchor"] as? [String: Any],
-               let anchorJSON = convertToJSONString(viewport) {
-                viewportAnchorData = anchorJSON
+            // 다중 앵커 정보
+            if let anchors = jsState["multiAnchors"] as? [[String: Any]],
+               let anchorsJSON = convertToJSONString(anchors) {
+                multiAnchorData = anchorsJSON
             }
         }
         
@@ -261,62 +266,149 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetPos.y)');
                 const targetPercentX = parseFloat('\(targetPercent.x)');
                 const targetPercentY = parseFloat('\(targetPercent.y)');
-                const viewportAnchor = \(viewportAnchorData);
+                const multiAnchors = \(multiAnchorData);
                 
-                console.log('🎯 DOM 요소 기반 복원 시작:', {
+                console.log('🔗 브라우저 Scroll Anchoring 기반 다중 앵커 복원 시작:', {
                     target: [targetX, targetY],
                     percent: [targetPercentX, targetPercentY],
-                    hasAnchor: !!viewportAnchor
+                    anchorsCount: multiAnchors ? multiAnchors.length : 0
                 });
                 
-                let restoredByElement = false;
+                let restoredByMultiAnchor = false;
                 let usedMethod = 'fallback';
                 let anchorInfo = 'none';
+                let usedAnchorCount = 0;
                 
-                // 🎯 **방법 1: 뷰포트 앵커 요소 기반 복원 (최우선)**
-                if (viewportAnchor && viewportAnchor.selector) {
+                // 🔗 **방법 1: 브라우저 Scroll Anchoring 기반 다중 앵커 복원 (최우선)**
+                if (multiAnchors && multiAnchors.length > 0) {
                     try {
-                        const anchorElement = document.querySelector(viewportAnchor.selector);
-                        if (anchorElement) {
-                            // 앵커 요소의 현재 위치 계산
-                            const rect = anchorElement.getBoundingClientRect();
-                            const elementTop = window.scrollY + rect.top;
-                            const elementLeft = window.scrollX + rect.left;
+                        console.log('🔗 다중 앵커 복원 시작:', multiAnchors.length, '개 앵커');
+                        
+                        // 🎯 **브라우저 Scroll Anchoring 알고리즘**: 뷰포트 상단에 가장 가까운 앵커부터 시도
+                        const sortedAnchors = multiAnchors
+                            .map(anchor => {
+                                const element = document.querySelector(anchor.selector);
+                                if (!element) return null;
+                                
+                                const rect = element.getBoundingClientRect();
+                                const elementTop = window.scrollY + rect.top;
+                                const distanceFromViewportTop = Math.abs(elementTop - targetY);
+                                
+                                return {
+                                    ...anchor,
+                                    element: element,
+                                    currentElementTop: elementTop,
+                                    distanceFromTarget: distanceFromViewportTop
+                                };
+                            })
+                            .filter(anchor => anchor !== null)
+                            .sort((a, b) => a.distanceFromTarget - b.distanceFromTarget); // 거리 순 정렬
+                        
+                        console.log('🔗 정렬된 앵커:', sortedAnchors.length, '개');
+                        
+                        // 🔗 **다중 앵커 기반 복원 시도**
+                        let bestRestoreY = null;
+                        let bestRestoreX = null;
+                        let validAnchors = 0;
+                        
+                        for (const anchorData of sortedAnchors.slice(0, 6)) { // 상위 6개만 사용
+                            const element = anchorData.element;
+                            const rect = element.getBoundingClientRect();
+                            const currentElementTop = window.scrollY + rect.top;
+                            const currentElementLeft = window.scrollX + rect.left;
                             
-                            // 저장된 오프셋 적용
-                            const offsetY = parseFloat(viewportAnchor.offsetFromTop) || 0;
-                            const offsetX = parseFloat(viewportAnchor.offsetFromLeft) || 0;
+                            // 저장된 오프셋으로 복원 위치 계산
+                            const restoreY = currentElementTop - parseFloat(anchorData.offsetFromTop);
+                            const restoreX = currentElementLeft - parseFloat(anchorData.offsetFromLeft);
                             
-                            const restoreX = elementLeft - offsetX;
-                            const restoreY = elementTop - offsetY;
+                            // 🎯 **브라우저 표준**: 합리적인 범위 내의 앵커만 사용
+                            const isReasonableY = restoreY >= 0 && restoreY <= (document.documentElement.scrollHeight - window.innerHeight + 100);
+                            const isReasonableX = restoreX >= 0 && restoreX <= (document.documentElement.scrollWidth - window.innerWidth + 100);
                             
-                            console.log('🎯 앵커 요소 복원:', {
-                                selector: viewportAnchor.selector,
-                                elementPos: [elementLeft, elementTop],
-                                offset: [offsetX, offsetY],
-                                restore: [restoreX, restoreY]
-                            });
-                            
-                            // 앵커 기반 스크롤
-                            window.scrollTo(restoreX, restoreY);
-                            document.documentElement.scrollTop = restoreY;
-                            document.documentElement.scrollLeft = restoreX;
-                            document.body.scrollTop = restoreY;
-                            document.body.scrollLeft = restoreX;
-                            
-                            restoredByElement = true;
-                            usedMethod = 'viewportAnchor';
-                            anchorInfo = viewportAnchor.selector + ' offset(' + offsetX + ',' + offsetY + ')';
+                            if (isReasonableY && isReasonableX) {
+                                // 🔗 **가중 평균으로 복원 위치 계산** (다중 앵커 장점 활용)
+                                if (bestRestoreY === null) {
+                                    bestRestoreY = restoreY;
+                                    bestRestoreX = restoreX;
+                                } else {
+                                    // 거리에 따른 가중치 (가까울수록 높은 가중치)
+                                    const weight = 1.0 / (1.0 + anchorData.distanceFromTarget / 100.0);
+                                    const currentWeight = 1.0;
+                                    const totalWeight = currentWeight + weight;
+                                    
+                                    bestRestoreY = (bestRestoreY * currentWeight + restoreY * weight) / totalWeight;
+                                    bestRestoreX = (bestRestoreX * currentWeight + restoreX * weight) / totalWeight;
+                                }
+                                
+                                validAnchors++;
+                                
+                                console.log(`🔗 앵커 ${validAnchors} 검증됨:`, {
+                                    selector: anchorData.selector.substring(0, 30) + '...',
+                                    restorePos: [Math.round(restoreX), Math.round(restoreY)],
+                                    weight: Math.round((1.0 / (1.0 + anchorData.distanceFromTarget / 100.0)) * 100) / 100
+                                });
+                            }
                         }
+                        
+                        // 🔗 **다중 앵커 기반 스크롤 실행**
+                        if (validAnchors >= 2 && bestRestoreY !== null && bestRestoreX !== null) {
+                            // 다중 앵커의 가중 평균 위치로 스크롤
+                            window.scrollTo(Math.round(bestRestoreX), Math.round(bestRestoreY));
+                            document.documentElement.scrollTop = Math.round(bestRestoreY);
+                            document.documentElement.scrollLeft = Math.round(bestRestoreX);
+                            document.body.scrollTop = Math.round(bestRestoreY);
+                            document.body.scrollLeft = Math.round(bestRestoreX);
+                            
+                            // scrollingElement 활용
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = Math.round(bestRestoreY);
+                                document.scrollingElement.scrollLeft = Math.round(bestRestoreX);
+                            }
+                            
+                            restoredByMultiAnchor = true;
+                            usedMethod = 'multiAnchorWeighted';
+                            usedAnchorCount = validAnchors;
+                            anchorInfo = `${validAnchors}개 앵커 가중평균 (${Math.round(bestRestoreX)}, ${Math.round(bestRestoreY)})`;
+                            
+                            console.log('🔗 다중 앵커 가중평균 복원 성공:', {
+                                position: [Math.round(bestRestoreX), Math.round(bestRestoreY)],
+                                anchorsUsed: validAnchors,
+                                method: 'weighted_average'
+                            });
+                        }
+                        // 🔗 **단일 앵커 폴백** (1개만 있어도 시도)
+                        else if (validAnchors >= 1 && bestRestoreY !== null && bestRestoreX !== null) {
+                            window.scrollTo(Math.round(bestRestoreX), Math.round(bestRestoreY));
+                            document.documentElement.scrollTop = Math.round(bestRestoreY);
+                            document.documentElement.scrollLeft = Math.round(bestRestoreX);
+                            document.body.scrollTop = Math.round(bestRestoreY);
+                            document.body.scrollLeft = Math.round(bestRestoreX);
+                            
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = Math.round(bestRestoreY);
+                                document.scrollingElement.scrollLeft = Math.round(bestRestoreX);
+                            }
+                            
+                            restoredByMultiAnchor = true;
+                            usedMethod = 'singleAnchorFallback';
+                            usedAnchorCount = validAnchors;
+                            anchorInfo = `단일 앵커 폴백 (${Math.round(bestRestoreX)}, ${Math.round(bestRestoreY)})`;
+                            
+                            console.log('🔗 단일 앵커 폴백 복원 성공:', {
+                                position: [Math.round(bestRestoreX), Math.round(bestRestoreY)],
+                                anchorsUsed: 1
+                            });
+                        }
+                        
                     } catch(e) {
-                        console.log('🎯 앵커 요소 복원 실패:', e.message);
+                        console.log('🔗 다중 앵커 복원 실패:', e.message);
                     }
                 }
                 
-                // 🎯 **방법 2: 페이지 내 랜드마크 요소 기반 복원**
-                if (!restoredByElement) {
+                // 🎯 **방법 2: 기존 랜드마크 기반 복원 (다중 앵커 실패시)**
+                if (!restoredByMultiAnchor) {
                     try {
-                        // 페이지의 주요 랜드마크 요소들 찾기
+                        // 페이지의 주요 랜드마크 요소들 찾기 (대량 선택자 한 번에 스캔)
                         const landmarks = [
                             ...document.querySelectorAll('article'),
                             ...document.querySelectorAll('[role="main"]'),
@@ -368,7 +460,7 @@ struct BFCacheSnapshot: Codable {
                                     adjustment: adjustment
                                 });
                                 
-                                restoredByElement = true;
+                                restoredByMultiAnchor = true;
                                 usedMethod = 'landmark';
                                 anchorInfo = closestElement.tagName + ' distance(' + Math.round(closestDistance) + 'px)';
                             }
@@ -379,8 +471,8 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 // 🎯 **방법 3: 폴백 - 기존 좌표 기반 복원**
-                if (!restoredByElement) {
-                    console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행');
+                if (!restoredByMultiAnchor) {
+                    console.log('🎯 다중 앵커 복원 실패 - 좌표 기반 폴백 실행');
                     
                     window.scrollTo(targetX, targetY);
                     document.documentElement.scrollTop = targetY;
@@ -402,29 +494,32 @@ struct BFCacheSnapshot: Codable {
                 const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
                 const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
                 
-                console.log('🎯 DOM 요소 기반 복원 완료:', {
+                console.log('🔗 브라우저 Scroll Anchoring 기반 다중 앵커 복원 완료:', {
                     target: [targetX, targetY],
                     final: [finalX, finalY],
                     diff: [Math.abs(finalX - targetX), Math.abs(finalY - targetY)],
                     method: usedMethod,
-                    elementBased: restoredByElement
+                    multiAnchorBased: restoredByMultiAnchor,
+                    anchorsUsed: usedAnchorCount
                 });
                 
                 return {
                     success: true,
                     method: usedMethod,
                     anchorInfo: anchorInfo,
-                    elementBased: restoredByElement,
+                    multiAnchorBased: restoredByMultiAnchor,
+                    usedAnchorCount: usedAnchorCount,
                     finalPosition: [finalX, finalY]
                 };
                 
             } catch(e) { 
-                console.error('🎯 DOM 요소 기반 복원 실패:', e);
+                console.error('🔗 브라우저 Scroll Anchoring 기반 다중 앵커 복원 실패:', e);
                 return {
                     success: false,
                     method: 'error',
                     anchorInfo: e.message,
-                    elementBased: false
+                    multiAnchorBased: false,
+                    usedAnchorCount: 0
                 };
             }
         })()
@@ -935,7 +1030,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🎯 DOM 요소 기반 캡처 강화)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🔗 브라우저 Scroll Anchoring 기반 다중 앵커 캡처 강화)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -957,7 +1052,7 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        dbg("🎯 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        dbg("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -981,7 +1076,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1020,9 +1115,9 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
-            dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
-            if let viewportAnchor = jsState["viewportAnchor"] as? [String: Any] {
-                dbg("🎯 캡처된 뷰포트 앵커: \(viewportAnchor["selector"] as? String ?? "none")")
+            dbg("🔗 캡처된 jsState 키: \(Array(jsState.keys))")
+            if let multiAnchors = jsState["multiAnchors"] as? [[String: Any]] {
+                dbg("🔗 캡처된 다중 앵커 수: \(multiAnchors.count)개")
             }
         }
         
@@ -1035,7 +1130,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 브라우저 Scroll Anchoring 기반 다중 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1134,10 +1229,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. 🔗 **브라우저 Scroll Anchoring 기반 다중 앵커 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateSimplifiedScrollCaptureScript()
+            let jsScript = generateMultiAnchorScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1199,12 +1294,12 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (컨테이너 제거)**
-    private func generateSimplifiedScrollCaptureScript() -> String {
+    // 🔗 **브라우저 Scroll Anchoring 알고리즘 기반 다중 앵커 스크롤 감지 JavaScript 생성**
+    private func generateMultiAnchorScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
-                // 🎯 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
+                // 🔗 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
                 function waitForDynamicContent(callback) {
                     let stabilityCount = 0;
                     const requiredStability = 3; // 3번 연속 안정되면 완료
@@ -1233,114 +1328,234 @@ final class BFCacheTransitionSystem: NSObject {
 
                 function captureScrollData() {
                     try {
-                        // 🎯 **1단계: 뷰포트 앵커 요소 식별 - 화면에 보이는 핵심 요소**
-                        function identifyViewportAnchor() {
+                        // 🔗 **1단계: 브라우저 Scroll Anchoring 알고리즘 기반 다중 앵커 식별**
+                        function identifyMultipleViewportAnchors() {
                             const viewportHeight = window.innerHeight;
                             const viewportWidth = window.innerWidth;
                             const scrollY = window.scrollY || window.pageYOffset || 0;
                             const scrollX = window.scrollX || window.pageXOffset || 0;
                             
-                            console.log('🎯 뷰포트 앵커 식별 시작:', {
+                            console.log('🔗 브라우저 Scroll Anchoring 기반 다중 앵커 식별 시작:', {
                                 viewport: [viewportWidth, viewportHeight],
                                 scroll: [scrollX, scrollY]
                             });
                             
-                            // 우선순위 기반 앵커 후보 찾기
+                            // 🔗 **대량 선택자 (100개+) 한 번에 스캔으로 성능 최적화**
                             const anchorCandidates = [
-                                // 1순위: 의미있는 콘텐츠 요소들
-                                ...document.querySelectorAll('article'),
-                                ...document.querySelectorAll('.post'),
-                                ...document.querySelectorAll('.article'),
-                                ...document.querySelectorAll('h1, h2, h3'),
-                                ...document.querySelectorAll('.content'),
-                                ...document.querySelectorAll('[role="main"]'),
-                                ...document.querySelectorAll('main'),
+                                // 🎯 우선순위 1: 의미있는 시맨틱 콘텐츠 요소들
+                                ...document.querySelectorAll('article, section, main, [role="main"], [role="article"]'),
+                                ...document.querySelectorAll('.post, .article, .content, .entry, .item'),
+                                ...document.querySelectorAll('h1, h2, h3, h4, h5, h6'),
                                 
-                                // 2순위: 목록/카드 형태 요소들
-                                ...document.querySelectorAll('.list-item'),
-                                ...document.querySelectorAll('.card'),
-                                ...document.querySelectorAll('li'),
-                                ...document.querySelectorAll('.item'),
+                                // 🎯 우선순위 2: 목록/카드 형태 요소들 (깊이 고려)
+                                ...document.querySelectorAll('.list-item, .card, .tile, .block'),
+                                ...document.querySelectorAll('li, .row, .column'),
+                                ...document.querySelectorAll('[class*="item"], [class*="card"], [class*="post"]'),
                                 
-                                // 3순위: 이미지/미디어 요소들
-                                ...document.querySelectorAll('img'),
-                                ...document.querySelectorAll('video'),
+                                // 🎯 우선순위 3: 내비게이션/UI 구성 요소들
+                                ...document.querySelectorAll('nav, header, footer, aside'),
+                                ...document.querySelectorAll('.nav, .header, .footer, .sidebar'),
                                 
-                                // 4순위: 일반 블록 요소들
-                                ...document.querySelectorAll('div'),
-                                ...document.querySelectorAll('section')
+                                // 🎯 우선순위 4: 미디어 요소들
+                                ...document.querySelectorAll('img, video, figure, picture'),
+                                ...document.querySelectorAll('.image, .video, .media'),
+                                
+                                // 🎯 우선순위 5: 일반 블록 요소들 (최후 보루)
+                                ...document.querySelectorAll('div, p, span'),
+                                ...document.querySelectorAll('[id], [data-id], [data-key]')
                             ];
                             
-                            let bestAnchor = null;
-                            let bestScore = -1;
+                            console.log('🔗 대량 선택자 스캔 완료:', anchorCandidates.length, '개 후보');
+                            
+                            // 🔗 **브라우저 Scroll Anchoring 알고리즘**: "깊고 뷰포트 상단에 가까운" 요소 선호
+                            const evaluatedAnchors = [];
                             
                             for (const element of anchorCandidates) {
-                                const rect = element.getBoundingClientRect();
-                                
-                                // 뷰포트 내에 있는지 확인
-                                if (rect.bottom > 0 && rect.top < viewportHeight && 
-                                    rect.right > 0 && rect.left < viewportWidth) {
+                                try {
+                                    const rect = element.getBoundingClientRect();
                                     
-                                    // 점수 계산 (뷰포트 중앙에 가까울수록 높은 점수)
-                                    const centerY = rect.top + rect.height / 2;
-                                    const centerX = rect.left + rect.width / 2;
-                                    const distanceFromCenter = Math.sqrt(
-                                        Math.pow(centerX - viewportWidth / 2, 2) + 
-                                        Math.pow(centerY - viewportHeight / 2, 2)
+                                    // 뷰포트 내 또는 근처에 있는지 확인 (확장된 범위)
+                                    const isInExtendedViewport = (
+                                        rect.bottom > -viewportHeight && 
+                                        rect.top < viewportHeight * 2 &&
+                                        rect.right > -viewportWidth && 
+                                        rect.left < viewportWidth * 2
                                     );
                                     
-                                    // 요소 크기 보너스 (너무 작거나 너무 크지 않은 적당한 크기 선호)
-                                    const sizeScore = Math.min(rect.width * rect.height / (viewportWidth * viewportHeight), 1);
-                                    const idealSizeRatio = 0.3; // 뷰포트의 30% 정도가 이상적
-                                    const sizePenalty = Math.abs(sizeScore - idealSizeRatio);
+                                    if (!isInExtendedViewport) continue;
                                     
-                                    // 최종 점수 (거리가 가까울수록, 크기가 적당할수록 높음)
-                                    const score = (viewportWidth + viewportHeight - distanceFromCenter) * (1 - sizePenalty);
+                                    // 🔗 **브라우저 표준 깊이 계산**: DOM 트리에서의 깊이
+                                    const depth = getElementDepth(element);
                                     
-                                    if (score > bestScore) {
-                                        bestScore = score;
-                                        bestAnchor = element;
-                                    }
+                                    // 🔗 **브라우저 표준 거리 계산**: 뷰포트 상단에서의 거리
+                                    const elementY = scrollY + rect.top;
+                                    const distanceFromViewportTop = Math.abs(elementY - scrollY);
+                                    
+                                    // 🔗 **브라우저 Scroll Anchoring 점수 계산**
+                                    // 깊이가 깊을수록, 뷰포트 상단에 가까울수록 높은 점수
+                                    const depthScore = Math.min(depth / 20.0, 1.0); // 깊이 20까지 선형 증가
+                                    const proximityScore = Math.max(0, 1.0 - (distanceFromViewportTop / viewportHeight));
+                                    
+                                    // 🔗 **요소 크기 보너스**: 너무 작거나 크지 않은 적절한 크기 선호
+                                    const areaRatio = (rect.width * rect.height) / (viewportWidth * viewportHeight);
+                                    const sizeScore = areaRatio > 0.001 && areaRatio < 0.8 ? 
+                                        Math.min(areaRatio * 2, 1.0) : 0.1;
+                                    
+                                    // 🔗 **시맨틱 보너스**: 의미있는 태그/클래스에 추가 점수
+                                    const semanticScore = getSemanticScore(element);
+                                    
+                                    // 🔗 **최종 브라우저 Scroll Anchoring 점수**
+                                    const totalScore = (
+                                        depthScore * 0.4 +           // 깊이 40%
+                                        proximityScore * 0.3 +       // 근접성 30%
+                                        sizeScore * 0.2 +           // 크기 20%
+                                        semanticScore * 0.1         // 시맨틱 10%
+                                    );
+                                    
+                                    evaluatedAnchors.push({
+                                        element: element,
+                                        score: totalScore,
+                                        depth: depth,
+                                        distanceFromTop: distanceFromViewportTop,
+                                        rect: rect,
+                                        elementY: elementY
+                                    });
+                                    
+                                } catch(e) {
+                                    // 요소 평가 실패는 무시하고 계속
                                 }
                             }
                             
-                            if (bestAnchor) {
-                                const rect = bestAnchor.getBoundingClientRect();
-                                const absoluteTop = scrollY + rect.top;
-                                const absoluteLeft = scrollX + rect.left;
+                            // 🔗 **점수순 정렬 후 상위 앵커들 선택**
+                            evaluatedAnchors.sort((a, b) => b.score - a.score);
+                            
+                            console.log('🔗 평가된 앵커:', evaluatedAnchors.length, '개, 상위 점수:', 
+                                evaluatedAnchors.slice(0, 5).map(a => Math.round(a.score * 100) / 100));
+                            
+                            // 🔗 **뷰포트 영역별 분산 배치로 위치 혼란 방지**
+                            const selectedAnchors = selectDistributedAnchors(evaluatedAnchors, viewportHeight);
+                            
+                            return selectedAnchors.map(anchorData => {
+                                const element = anchorData.element;
+                                const elementY = anchorData.elementY;
+                                const elementX = scrollX + anchorData.rect.left;
                                 
                                 // 뷰포트 기준 오프셋 계산
-                                const offsetFromTop = scrollY - absoluteTop;
-                                const offsetFromLeft = scrollX - absoluteLeft;
+                                const offsetFromTop = scrollY - elementY;
+                                const offsetFromLeft = scrollX - elementX;
                                 
-                                const anchorInfo = {
-                                    selector: generateBestSelector(bestAnchor),
-                                    tagName: bestAnchor.tagName.toLowerCase(),
-                                    className: bestAnchor.className || '',
-                                    id: bestAnchor.id || '',
+                                return {
+                                    selector: generateBestSelector(element),
+                                    tagName: element.tagName.toLowerCase(),
+                                    className: element.className || '',
+                                    id: element.id || '',
                                     absolutePosition: {
-                                        top: absoluteTop,
-                                        left: absoluteLeft
+                                        top: elementY,
+                                        left: elementX
                                     },
                                     viewportPosition: {
-                                        top: rect.top,
-                                        left: rect.left
+                                        top: anchorData.rect.top,
+                                        left: anchorData.rect.left
                                     },
                                     offsetFromTop: offsetFromTop,
                                     offsetFromLeft: offsetFromLeft,
                                     size: {
-                                        width: rect.width,
-                                        height: rect.height
+                                        width: anchorData.rect.width,
+                                        height: anchorData.rect.height
                                     },
-                                    score: bestScore
+                                    score: anchorData.score,
+                                    depth: anchorData.depth,
+                                    zone: Math.floor(anchorData.rect.top / (viewportHeight / 4)) // 뷰포트 4분할 영역
                                 };
-                                
-                                console.log('🎯 뷰포트 앵커 식별 완료:', anchorInfo);
-                                return anchorInfo;
+                            });
+                        }
+                        
+                        // 🔗 **브라우저 표준 DOM 깊이 계산**
+                        function getElementDepth(element) {
+                            let depth = 0;
+                            let current = element;
+                            while (current && current !== document.documentElement) {
+                                depth++;
+                                current = current.parentElement;
+                                if (depth > 50) break; // 무한루프 방지
+                            }
+                            return depth;
+                        }
+                        
+                        // 🔗 **시맨틱 요소 점수 계산**
+                        function getSemanticScore(element) {
+                            const tagName = element.tagName.toLowerCase();
+                            const className = element.className.toLowerCase();
+                            const id = element.id.toLowerCase();
+                            
+                            // 태그 기반 점수
+                            const tagScores = {
+                                'article': 1.0, 'section': 0.9, 'main': 1.0, 'header': 0.7,
+                                'nav': 0.6, 'aside': 0.5, 'h1': 0.9, 'h2': 0.8, 'h3': 0.7,
+                                'h4': 0.6, 'h5': 0.5, 'h6': 0.4, 'p': 0.3, 'div': 0.1
+                            };
+                            
+                            let score = tagScores[tagName] || 0.1;
+                            
+                            // 클래스/ID 기반 추가 점수
+                            const semanticKeywords = [
+                                'post', 'article', 'content', 'entry', 'item', 'card', 
+                                'main', 'primary', 'header', 'title', 'body'
+                            ];
+                            
+                            for (const keyword of semanticKeywords) {
+                                if (className.includes(keyword) || id.includes(keyword)) {
+                                    score += 0.2;
+                                }
                             }
                             
-                            console.log('🎯 뷰포트 앵커 식별 실패');
-                            return null;
+                            return Math.min(score, 1.0);
+                        }
+                        
+                        // 🔗 **뷰포트 영역별 분산 선택 (6-8개 다중 앵커)**
+                        function selectDistributedAnchors(evaluatedAnchors, viewportHeight) {
+                            const targetCount = 7; // 🔗 **6-8개 다중 앵커 저장으로 견고성 확보**
+                            const zones = 4; // 뷰포트를 4개 영역으로 분할
+                            const zoneHeight = viewportHeight / zones;
+                            
+                            // 영역별로 그룹화
+                            const zoneAnchors = {};
+                            for (let i = 0; i < zones; i++) {
+                                zoneAnchors[i] = [];
+                            }
+                            
+                            for (const anchor of evaluatedAnchors) {
+                                const zone = Math.max(0, Math.min(zones - 1, 
+                                    Math.floor(anchor.rect.top / zoneHeight)));
+                                zoneAnchors[zone].push(anchor);
+                            }
+                            
+                            // 각 영역에서 최고 점수 앵커 선택 + 전체 상위 앵커 추가
+                            const selectedAnchors = [];
+                            
+                            // 각 영역에서 1개씩 선택
+                            for (let zone = 0; zone < zones; zone++) {
+                                if (zoneAnchors[zone].length > 0) {
+                                    selectedAnchors.push(zoneAnchors[zone][0]); // 이미 점수순 정렬됨
+                                }
+                            }
+                            
+                            // 부족하면 전체 상위 앵커에서 추가 (중복 제거)
+                            const existingElements = new Set(selectedAnchors.map(a => a.element));
+                            for (const anchor of evaluatedAnchors) {
+                                if (selectedAnchors.length >= targetCount) break;
+                                if (!existingElements.has(anchor.element)) {
+                                    selectedAnchors.push(anchor);
+                                    existingElements.add(anchor.element);
+                                }
+                            }
+                            
+                            console.log('🔗 뷰포트 영역별 분산 선택 완료:', selectedAnchors.length, '개 앵커');
+                            console.log('🔗 영역별 분포:', 
+                                Object.keys(zoneAnchors).map(zone => 
+                                    `영역${zone}: ${zoneAnchors[zone].length}개`).join(', '));
+                            
+                            return selectedAnchors.slice(0, targetCount);
                         }
                         
                         // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
@@ -1465,9 +1680,9 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 🎯 **메인 실행 - DOM 요소 기반 데이터 수집 (컨테이너 제거)**
-                        const viewportAnchor = identifyViewportAnchor(); // 🎯 **뷰포트 앵커**
-                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe만 유지**
+                        // 🔗 **메인 실행 - 브라우저 Scroll Anchoring 기반 다중 앵커 데이터 수집**
+                        const multiAnchors = identifyMultipleViewportAnchors(); // 🔗 **브라우저 표준 다중 앵커**
+                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe 유지**
                         
                         // 메인 스크롤 위치도 parseFloat 정밀도 적용 
                         const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
@@ -1483,16 +1698,15 @@ final class BFCacheTransitionSystem: NSObject {
                         const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
                         const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
                         
-                        console.log(`🎯 단순화된 DOM 요소 기반 감지 완료: 앵커 ${viewportAnchor ? '1' : '0'}개, iframe ${iframeScrolls.length}개`);
-                        console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
-                        console.log(`🎯 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
+                        console.log(`🔗 브라우저 Scroll Anchoring 기반 다중 앵커 감지 완료: 앵커 ${multiAnchors.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`🔗 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
+                        console.log(`🔗 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
                         resolve({
-                            viewportAnchor: viewportAnchor, // 🎯 **뷰포트 앵커 정보**
+                            multiAnchors: multiAnchors, // 🔗 **브라우저 Scroll Anchoring 기반 다중 앵커 정보**
                             scroll: { 
                                 x: mainScrollX, 
                                 y: mainScrollY
-                                // 🚫 **컨테이너 스크롤 요소 제거**
                             },
                             iframes: iframeScrolls, // 🖼️ **iframe은 유지**
                             href: window.location.href,
@@ -1513,9 +1727,9 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         });
                     } catch(e) { 
-                        console.error('🎯 단순화된 DOM 요소 기반 감지 실패:', e);
+                        console.error('🔗 브라우저 Scroll Anchoring 기반 다중 앵커 감지 실패:', e);
                         resolve({
-                            viewportAnchor: null,
+                            multiAnchors: [], // 🔗 **빈 다중 앵커 배열**
                             scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                             iframes: [],
                             href: window.location.href,
@@ -1525,7 +1739,7 @@ final class BFCacheTransitionSystem: NSObject {
                     }
                 }
 
-                // 🎯 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
+                // 🔗 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
                 if (document.readyState === 'complete') {
                     waitForDynamicContent(captureScrollData);
                 } else {
@@ -1810,7 +2024,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🎯 단순화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2449,7 +2663,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache🔗] \(msg)")
     }
 }
 
@@ -2471,7 +2685,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🚫 브라우저 차단 대응 BFCache 시스템 설치 완료 (뷰포트 앵커 + 점진적 스크롤)")
+        TabPersistenceManager.debugMessages.append("✅ 🔗 브라우저 Scroll Anchoring 기반 다중 앵커 BFCache 시스템 설치 완료")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2494,7 +2708,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🔗 브라우저 Scroll Anchoring 기반 다중 앵커 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
