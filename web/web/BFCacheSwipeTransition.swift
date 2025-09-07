@@ -1,14 +1,5 @@
-//
-//  BFCacheSwipeTransition.swift
-//  🎯 **DOM 요소 기반 정밀 스크롤 복원 시스템**
-//  ✅ 뷰포트 앵커 + 랜드마크 기반 복원으로 단순화
-//  🚫 **컨테이너 스크롤 복원 제거** - 복잡성 감소
-//  🚫 **브라우저 차단 대응** - 점진적 스크롤 + 무한 스크롤 트리거
-//  📸 동적 DOM 요소 위치 추적
-//  ♾️ 무한 스크롤 대응 강화
-//  💾 스마트 메모리 관리 
-//  📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
-//  🔧 **뷰포트 앵커 시스템** - 화면에 보이는 핵심 요소 기준
+📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
+//  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 조합
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //
 
@@ -61,7 +52,7 @@ private class GestureContext {
     }
 }
 
-// MARK: - 📸 **개선된 BFCache 페이지 스냅샷 (DOM 요소 기반)**
+// MARK: - 📸 **강화된 BFCache 페이지 스냅샷 (다중 앵커 시스템)**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -178,31 +169,31 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🎯 **핵심 개선: DOM 요소 기반 1단계 복원**
+    // 🎯 **핵심 개선: 강화된 DOM 요소 기반 복원 - 다중 앵커 + 검증**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
+        TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
-        // 🎯 **1단계: DOM 요소 기반 스크롤 복원 우선 실행**
-        performElementBasedScrollRestore(to: webView)
+        // 🎯 **1단계: 강화된 DOM 요소 기반 스크롤 복원 우선 실행**
+        performEnhancedElementBasedScrollRestore(to: webView)
         
         // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
         case .failed:
-            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - DOM 요소 복원만 수행")
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 강화된 DOM 요소 복원만 수행")
             completion(true)
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - DOM 요소 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 강화된 DOM 요소 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 강화된 DOM 요소 복원 + 브라우저 차단 대응")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 강화된 DOM 요소 복원 + 브라우저 차단 대응")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 DOM 요소 기반 복원 후 브라우저 차단 대응 시작")
+        TabPersistenceManager.debugMessages.append("🌐 강화된 DOM 요소 기반 복원 후 브라우저 차단 대응 시작")
         
         // 🔧 **DOM 요소 복원 후 브라우저 차단 대응 단계 실행**
         DispatchQueue.main.async {
@@ -210,26 +201,26 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🎯 **새로 추가: DOM 요소 기반 1단계 복원 메서드**
-    private func performElementBasedScrollRestore(to webView: WKWebView) {
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 시작")
+    // 🎯 **새로 추가: 강화된 DOM 요소 기반 1단계 복원 메서드**
+    private func performEnhancedElementBasedScrollRestore(to webView: WKWebView) {
+        TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 1단계 복원 시작")
         
         // 1. 네이티브 스크롤뷰 기본 설정 (백업용)
         let targetPos = self.scrollPosition
         webView.scrollView.setContentOffset(targetPos, animated: false)
         
-        // 2. 🎯 **DOM 요소 기반 복원 JavaScript 실행**
-        let elementRestoreJS = generateElementBasedRestoreScript()
+        // 2. 🎯 **강화된 DOM 요소 기반 복원 JavaScript 실행**
+        let enhancedRestoreJS = generateEnhancedElementBasedRestoreScript()
         
         // 동기적 JavaScript 실행 (즉시)
-        webView.evaluateJavaScript(elementRestoreJS) { result, error in
+        webView.evaluateJavaScript(enhancedRestoreJS) { result, error in
             if let error = error {
-                TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 복원 JS 실행 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 복원 JS 실행 오류: \(error.localizedDescription)")
                 return
             }
             
             let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
             
             if let resultDict = result as? [String: Any] {
                 if let method = resultDict["method"] as? String {
@@ -244,25 +235,35 @@ struct BFCacheSnapshot: Codable {
                 if let debugInfo = resultDict["debug"] as? [String: Any] {
                     TabPersistenceManager.debugMessages.append("🎯 DOM 복원 디버그: \(debugInfo)")
                 }
+                if let verificationResult = resultDict["verification"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("🎯 복원 검증 결과: \(verificationResult)")
+                }
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 1단계 복원 완료")
+        TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 1단계 복원 완료")
     }
     
-    // 🎯 **핵심: DOM 요소 기반 복원 JavaScript 생성 (상세 디버깅 추가)**
-    private func generateElementBasedRestoreScript() -> String {
+    // 🎯 **핵심: 강화된 DOM 요소 기반 복원 JavaScript 생성 (다중 앵커 + 검증)**
+    private func generateEnhancedElementBasedRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
         
-        // jsState에서 뷰포트 앵커 정보 추출
-        var viewportAnchorData = "null"
+        // jsState에서 다중 앵커 정보 추출
+        var primaryAnchorData = "null"
+        var auxiliaryAnchorsData = "[]"
         
         if let jsState = self.jsState {
-            // 뷰포트 앵커 정보
+            // 주 뷰포트 앵커 정보
             if let viewport = jsState["viewportAnchor"] as? [String: Any],
                let anchorJSON = convertToJSONString(viewport) {
-                viewportAnchorData = anchorJSON
+                primaryAnchorData = anchorJSON
+            }
+            
+            // 🔧 **새로 추가: 보조 앵커들 정보**
+            if let auxiliaryAnchors = jsState["auxiliaryAnchors"] as? [[String: Any]],
+               let anchorsJSON = convertToJSONString(auxiliaryAnchors) {
+                auxiliaryAnchorsData = anchorsJSON
             }
         }
         
@@ -273,13 +274,16 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetPos.y)');
                 const targetPercentX = parseFloat('\(targetPercent.x)');
                 const targetPercentY = parseFloat('\(targetPercent.y)');
-                const viewportAnchor = \(viewportAnchorData);
+                const primaryAnchor = \(primaryAnchorData);
+                const auxiliaryAnchors = \(auxiliaryAnchorsData);
                 
-                console.log('🎯 DOM 요소 기반 복원 시작:', {
+                console.log('🎯 강화된 DOM 요소 기반 복원 시작:', {
                     target: [targetX, targetY],
                     percent: [targetPercentX, targetPercentY],
-                    hasAnchor: !!viewportAnchor,
-                    anchorData: viewportAnchor
+                    hasPrimaryAnchor: !!primaryAnchor,
+                    auxiliaryCount: auxiliaryAnchors.length,
+                    primaryData: primaryAnchor,
+                    auxiliaryData: auxiliaryAnchors
                 });
                 
                 let restoredByElement = false;
@@ -287,97 +291,65 @@ struct BFCacheSnapshot: Codable {
                 let anchorInfo = 'none';
                 let debugInfo = {};
                 let errorMsg = null;
+                let verificationResult = {};
                 
-                // 🎯 **방법 1: 뷰포트 앵커 요소 기반 복원 (최우선) - 상세 디버깅**
-                if (viewportAnchor && viewportAnchor.selector) {
+                // 🎯 **방법 1: 다중 앵커 기반 복원 (최우선) - 주앵커 + 보조앵커**
+                if (primaryAnchor || auxiliaryAnchors.length > 0) {
                     try {
-                        debugInfo.anchorAttempt = {
-                            selector: viewportAnchor.selector,
-                            hasId: !!viewportAnchor.id,
-                            hasClassName: !!viewportAnchor.className,
-                            tagName: viewportAnchor.tagName
+                        console.log('🎯 다중 앵커 복원 시작');
+                        debugInfo.multiAnchorAttempt = {
+                            primaryAnchor: !!primaryAnchor,
+                            auxiliaryCount: auxiliaryAnchors.length
                         };
                         
-                        console.log('🎯 앵커 요소 검색 시작:', viewportAnchor.selector);
-                        
-                        // 🔧 **다중 selector 시도 - 견고한 앵커 찾기**
+                        let successfulAnchor = null;
                         let anchorElement = null;
-                        const selectors = [viewportAnchor.selector];
                         
-                        // ID가 있으면 ID 기반 selector도 추가
-                        if (viewportAnchor.id) {
-                            selectors.push('#' + viewportAnchor.id);
-                        }
-                        
-                        // 클래스명이 있으면 클래스 기반 selector도 추가  
-                        if (viewportAnchor.className) {
-                            const classes = viewportAnchor.className.split(' ').filter(c => c.trim());
-                            if (classes.length > 0) {
-                                selectors.push('.' + classes.join('.'));
-                                // 첫 번째 클래스만으로도 시도
-                                selectors.push('.' + classes[0]);
+                        // 🔧 **주 앵커 시도**
+                        if (primaryAnchor && primaryAnchor.selector) {
+                            console.log('🎯 주 앵커 시도:', primaryAnchor.selector);
+                            anchorElement = tryFindAnchorElement(primaryAnchor);
+                            if (anchorElement) {
+                                successfulAnchor = primaryAnchor;
+                                debugInfo.usedAnchor = 'primary';
+                                console.log('🎯 주 앵커 성공');
                             }
                         }
                         
-                        // 태그명만으로도 시도 (마지막 수단)
-                        if (viewportAnchor.tagName) {
-                            selectors.push(viewportAnchor.tagName.toLowerCase());
-                        }
-                        
-                        debugInfo.selectorAttempts = [];
-                        
-                        for (const selector of selectors) {
-                            try {
-                                const elements = document.querySelectorAll(selector);
-                                debugInfo.selectorAttempts.push({
-                                    selector: selector,
-                                    found: elements.length,
-                                    first10: Array.from(elements).slice(0, 10).map(el => ({
-                                        tag: el.tagName,
-                                        id: el.id || null,
-                                        classes: el.className || null,
-                                        visible: el.offsetParent !== null
-                                    }))
-                                });
-                                
-                                console.log('🎯 Selector 시도:', selector, '결과:', elements.length, '개');
-                                
-                                if (elements.length > 0) {
-                                    // 첫 번째 요소를 앵커로 사용
-                                    anchorElement = elements[0];
-                                    debugInfo.selectedAnchor = {
-                                        selector: selector,
-                                        tagName: anchorElement.tagName,
-                                        id: anchorElement.id || null,
-                                        className: anchorElement.className || null,
-                                        visible: anchorElement.offsetParent !== null
-                                    };
-                                    console.log('🎯 앵커 요소 발견:', selector);
-                                    break;
+                        // 🔧 **보조 앵커들 순차 시도 (주 앵커 실패 시)**
+                        if (!anchorElement && auxiliaryAnchors.length > 0) {
+                            console.log('🎯 보조 앵커들 시도:', auxiliaryAnchors.length, '개');
+                            for (let i = 0; i < auxiliaryAnchors.length; i++) {
+                                const auxAnchor = auxiliaryAnchors[i];
+                                if (auxAnchor && auxAnchor.selector) {
+                                    console.log('🎯 보조 앵커', i + 1, '시도:', auxAnchor.selector);
+                                    anchorElement = tryFindAnchorElement(auxAnchor);
+                                    if (anchorElement) {
+                                        successfulAnchor = auxAnchor;
+                                        debugInfo.usedAnchor = 'auxiliary_' + (i + 1);
+                                        console.log('🎯 보조 앵커', i + 1, '성공');
+                                        break;
+                                    }
                                 }
-                            } catch(selectorError) {
-                                debugInfo.selectorAttempts.push({
-                                    selector: selector,
-                                    error: selectorError.message
-                                });
-                                console.log('🎯 Selector 오류:', selector, selectorError.message);
                             }
                         }
                         
-                        if (anchorElement) {
+                        if (anchorElement && successfulAnchor) {
                             // 앵커 요소의 현재 위치 계산
                             const rect = anchorElement.getBoundingClientRect();
                             const elementTop = window.scrollY + rect.top;
                             const elementLeft = window.scrollX + rect.left;
                             
                             // 저장된 오프셋 적용
-                            const offsetY = parseFloat(viewportAnchor.offsetFromTop) || 0;
-                            const offsetX = parseFloat(viewportAnchor.offsetFromLeft) || 0;
+                            const offsetY = parseFloat(successfulAnchor.offsetFromTop) || 0;
+                            const offsetX = parseFloat(successfulAnchor.offsetFromLeft) || 0;
                             
                             const restoreX = elementLeft - offsetX;
                             const restoreY = elementTop - offsetY;
                             
                             debugInfo.anchorCalculation = {
+                                anchorType: debugInfo.usedAnchor,
+                                selector: successfulAnchor.selector,
                                 elementPosition: [elementLeft, elementTop],
                                 savedOffset: [offsetX, offsetY],
                                 restorePosition: [restoreX, restoreY],
@@ -387,61 +359,71 @@ struct BFCacheSnapshot: Codable {
                                 }
                             };
                             
-                            console.log('🎯 앵커 요소 복원:', {
-                                selector: viewportAnchor.selector,
-                                elementPos: [elementLeft, elementTop],
-                                offset: [offsetX, offsetY],
-                                restore: [restoreX, restoreY]
-                            });
+                            console.log('🎯 다중 앵커 복원:', debugInfo.anchorCalculation);
                             
                             // 앵커 기반 스크롤
-                            window.scrollTo(restoreX, restoreY);
-                            document.documentElement.scrollTop = restoreY;
-                            document.documentElement.scrollLeft = restoreX;
-                            document.body.scrollTop = restoreY;
-                            document.body.scrollLeft = restoreX;
+                            performScrollTo(restoreX, restoreY);
                             
                             restoredByElement = true;
-                            usedMethod = 'viewportAnchor';
-                            anchorInfo = viewportAnchor.selector + ' offset(' + offsetX + ',' + offsetY + ')';
+                            usedMethod = 'multiAnchor';
+                            anchorInfo = debugInfo.usedAnchor + '(' + successfulAnchor.selector + ')';
                         } else {
-                            errorMsg = '앵커 요소를 찾을 수 없음: ' + viewportAnchor.selector;
-                            console.log('🎯 앵커 요소 복원 실패: 요소를 찾을 수 없음');
+                            errorMsg = '모든 앵커 요소 검색 실패';
+                            console.log('🎯 다중 앵커 복원 실패: 모든 앵커를 찾을 수 없음');
                         }
                     } catch(e) {
-                        errorMsg = '앵커 복원 오류: ' + e.message;
-                        debugInfo.anchorError = e.message;
-                        console.log('🎯 앵커 요소 복원 실패:', e.message);
+                        errorMsg = '다중 앵커 복원 오류: ' + e.message;
+                        debugInfo.multiAnchorError = e.message;
+                        console.log('🎯 다중 앵커 복원 실패:', e.message);
                     }
                 }
                 
-                // 🎯 **방법 2: 페이지 내 랜드마크 요소 기반 복원 (상세 디버깅)**
+                // 🎯 **방법 2: 강화된 랜드마크 요소 기반 복원 (확장된 검색 범위)**
                 if (!restoredByElement) {
                     try {
-                        console.log('🎯 랜드마크 기반 복원 시작');
+                        console.log('🎯 강화된 랜드마크 기반 복원 시작');
                         
-                        // 페이지의 주요 랜드마크 요소들 찾기
-                        const landmarkSelectors = [
+                        // 🔧 **확장된 랜드마크 selector - 더 포괄적인 검색**
+                        const enhancedLandmarkSelectors = [
+                            // 1순위: 의미있는 콘텐츠 요소들
                             'article', '[role="main"]', 'main', '.post', '.article', '.content',
-                            'h1, h2, h3', '.list-item', '.card', 'li', '.item',
-                            'img', 'video', 'div', 'section'
+                            'h1, h2, h3, h4, h5, h6', '.title', '.headline', '.subject',
+                            
+                            // 2순위: 목록/카드 형태 요소들  
+                            '.list-item', '.card', '.item', '.entry', '.row',
+                            'li', 'tr', '.cell', '.tile',
+                            
+                            // 3순위: 이미지/미디어 요소들
+                            'img', 'video', '.image', '.media', '.photo', '.picture',
+                            
+                            // 4순위: 텍스트 블록 요소들
+                            'p', '.text', '.description', '.summary', '.excerpt',
+                            
+                            // 5순위: 네비게이션/UI 요소들
+                            'nav', '.nav', '.menu', '.tab', '.button', 'button',
+                            
+                            // 6순위: 일반 블록 요소들 (광범위하게)
+                            'div', 'section', 'aside', 'header', 'footer', 'span'
                         ];
                         
                         let allLandmarks = [];
-                        debugInfo.landmarkScan = {};
+                        debugInfo.enhancedLandmarkScan = {};
                         
-                        for (const selectorGroup of landmarkSelectors) {
+                        for (const selectorGroup of enhancedLandmarkSelectors) {
                             try {
                                 const elements = document.querySelectorAll(selectorGroup);
-                                debugInfo.landmarkScan[selectorGroup] = elements.length;
+                                debugInfo.enhancedLandmarkScan[selectorGroup] = elements.length;
                                 allLandmarks.push(...Array.from(elements));
                             } catch(e) {
-                                debugInfo.landmarkScan[selectorGroup] = 'error: ' + e.message;
+                                debugInfo.enhancedLandmarkScan[selectorGroup] = 'error: ' + e.message;
                             }
                         }
                         
+                        // 🔧 **검색 범위 대폭 확대: 50개 → 200개**
+                        const searchLimit = 200;
                         debugInfo.totalLandmarks = allLandmarks.length;
-                        console.log('🎯 랜드마크 요소 총 개수:', allLandmarks.length);
+                        debugInfo.searchLimit = searchLimit;
+                        console.log('🎯 강화된 랜드마크 요소 총 개수:', allLandmarks.length, '검색 범위:', searchLimit);
                         
                         if (allLandmarks.length > 0) {
                             // 타겟 Y 위치에서 가장 가까운 랜드마크 찾기
@@ -449,7 +431,10 @@ struct BFCacheSnapshot: Codable {
                             let closestDistance = Infinity;
                             let candidateAnalysis = [];
                             
-                            for (const element of allLandmarks.slice(0, 50)) { // 성능을 위해 처음 50개만
+                            // 🔧 **검색 범위 대폭 확대**
+                            const searchCandidates = allLandmarks.slice(0, searchLimit);
+                            
+                            for (const element of searchCandidates) {
                                 try {
                                     const rect = element.getBoundingClientRect();
                                     const elementY = window.scrollY + rect.top;
@@ -473,14 +458,19 @@ struct BFCacheSnapshot: Codable {
                                 }
                             }
                             
-                            debugInfo.landmarkAnalysis = {
+                            debugInfo.enhancedLandmarkAnalysis = {
                                 candidateCount: candidateAnalysis.length,
+                                searchLimit: searchLimit,
+                                closestDistance: closestDistance,
                                 closest: candidateAnalysis.length > 0 ? candidateAnalysis.reduce((prev, curr) => 
                                     prev.distance < curr.distance ? prev : curr) : null,
-                                top5: candidateAnalysis.sort((a, b) => a.distance - b.distance).slice(0, 5)
+                                top10: candidateAnalysis.sort((a, b) => a.distance - b.distance).slice(0, 10)
                             };
                             
-                            if (closestElement && closestDistance < window.innerHeight) {
+                            // 🔧 **거리 허용치 대폭 완화: 1화면 → 3화면 높이**
+                            const maxAllowedDistance = window.innerHeight * 3;
+                            
+                            if (closestElement && closestDistance < maxAllowedDistance) {
                                 // 가장 가까운 랜드마크로 스크롤
                                 closestElement.scrollIntoView({ 
                                     behavior: 'auto', 
@@ -493,87 +483,153 @@ struct BFCacheSnapshot: Codable {
                                 const currentY = window.scrollY + rect.top;
                                 const adjustment = targetY - currentY;
                                 
-                                if (Math.abs(adjustment) < window.innerHeight) {
+                                // 🔧 **조정 허용 범위 확대**
+                                if (Math.abs(adjustment) < window.innerHeight * 2) {
                                     window.scrollBy(0, adjustment);
                                 }
                                 
-                                debugInfo.landmarkRestore = {
+                                debugInfo.enhancedLandmarkRestore = {
                                     element: closestElement.tagName + (closestElement.className ? '.' + closestElement.className.split(' ')[0] : ''),
                                     distance: closestDistance,
+                                    maxAllowed: maxAllowedDistance,
                                     adjustment: adjustment,
                                     finalY: window.scrollY
                                 };
                                 
-                                console.log('🎯 랜드마크 기반 복원 성공:', {
-                                    element: closestElement.tagName + (closestElement.className ? '.' + closestElement.className.split(' ')[0] : ''),
-                                    distance: closestDistance,
-                                    adjustment: adjustment
-                                });
+                                console.log('🎯 강화된 랜드마크 기반 복원 성공:', debugInfo.enhancedLandmarkRestore);
                                 
                                 restoredByElement = true;
-                                usedMethod = 'landmark';
+                                usedMethod = 'enhancedLandmark';
                                 anchorInfo = closestElement.tagName + ' distance(' + Math.round(closestDistance) + 'px)';
                             } else {
-                                errorMsg = '적절한 랜드마크를 찾을 수 없음 (최단거리: ' + Math.round(closestDistance) + 'px)';
-                                console.log('🎯 랜드마크 기반 복원 실패: 적절한 요소 없음');
+                                errorMsg = '적절한 랜드마크를 찾을 수 없음 (최단거리: ' + Math.round(closestDistance) + 'px, 허용: ' + Math.round(maxAllowedDistance) + 'px)';
+                                console.log('🎯 강화된 랜드마크 기반 복원 실패:', errorMsg);
                             }
                         } else {
                             errorMsg = '랜드마크 요소가 없음';
-                            console.log('🎯 랜드마크 기반 복원 실패: 요소 없음');
+                            console.log('🎯 강화된 랜드마크 기반 복원 실패: 요소 없음');
                         }
                     } catch(e) {
-                        errorMsg = '랜드마크 복원 오류: ' + e.message;
-                        debugInfo.landmarkError = e.message;
-                        console.log('🎯 랜드마크 기반 복원 실패:', e.message);
+                        errorMsg = '강화된 랜드마크 복원 오류: ' + e.message;
+                        debugInfo.enhancedLandmarkError = e.message;
+                        console.log('🎯 강화된 랜드마크 기반 복원 실패:', e.message);
                     }
                 }
                 
-                // 🎯 **방법 3: 폴백 - 기존 좌표 기반 복원**
+                // 🎯 **방법 3: 페이지 높이 변화 감지 및 비례 조정 폴백**
                 if (!restoredByElement) {
-                    console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행');
-                    
-                    window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
-                    
-                    // scrollingElement 활용
-                    if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetY;
-                        document.scrollingElement.scrollLeft = targetX;
+                    try {
+                        console.log('🎯 비례 조정 폴백 시작');
+                        
+                        // 현재 페이지 높이와 저장된 높이 비교
+                        const currentPageHeight = Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight
+                        );
+                        const savedContentHeight = parseFloat('\(contentSize.height)') || currentPageHeight;
+                        
+                        if (savedContentHeight > 0 && Math.abs(currentPageHeight - savedContentHeight) > 100) {
+                            // 페이지 높이가 변경됨 - 비례 조정
+                            const heightRatio = currentPageHeight / savedContentHeight;
+                            const adjustedTargetY = targetY * heightRatio;
+                            
+                            debugInfo.proportionalAdjustment = {
+                                savedHeight: savedContentHeight,
+                                currentHeight: currentPageHeight,
+                                heightRatio: heightRatio,
+                                originalTarget: targetY,
+                                adjustedTarget: adjustedTargetY
+                            };
+                            
+                            console.log('🎯 페이지 높이 변화 감지 - 비례 조정:', debugInfo.proportionalAdjustment);
+                            
+                            performScrollTo(targetX, adjustedTargetY);
+                            
+                            usedMethod = 'proportionalAdjustment';
+                            anchorInfo = 'ratio(' + heightRatio.toFixed(3) + ')';
+                        } else {
+                            // 기존 좌표 기반 복원
+                            console.log('🎯 기존 좌표 기반 폴백 실행');
+                            performScrollTo(targetX, targetY);
+                            usedMethod = 'coordinateFallback';
+                            anchorInfo = 'coords(' + targetX + ',' + targetY + ')';
+                        }
+                    } catch(e) {
+                        errorMsg = '폴백 복원 오류: ' + e.message;
+                        debugInfo.fallbackError = e.message;
+                        console.log('🎯 폴백 복원 실패:', e.message);
+                        
+                        // 최후의 수단
+                        performScrollTo(targetX, targetY);
+                        usedMethod = 'emergencyFallback';
+                        anchorInfo = 'emergency';
                     }
-                    
-                    usedMethod = 'coordinateFallback';
-                    anchorInfo = 'coords(' + targetX + ',' + targetY + ')';
                 }
                 
-                // 최종 위치 확인
-                const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                
-                debugInfo.finalResult = {
-                    target: [targetX, targetY],
-                    final: [finalX, finalY],
-                    diff: [Math.abs(finalX - targetX), Math.abs(finalY - targetY)],
-                    method: usedMethod,
-                    elementBased: restoredByElement
-                };
-                
-                console.log('🎯 DOM 요소 기반 복원 완료:', debugInfo.finalResult);
+                // 🔧 **복원 후 위치 검증 및 보정**
+                setTimeout(() => {
+                    try {
+                        const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const diffY = Math.abs(finalY - targetY);
+                        const diffX = Math.abs(finalX - targetX);
+                        
+                        verificationResult = {
+                            target: [targetX, targetY],
+                            final: [finalX, finalY],
+                            diff: [diffX, diffY],
+                            method: usedMethod,
+                            elementBased: restoredByElement,
+                            withinTolerance: diffX <= 50 && diffY <= 50
+                        };
+                        
+                        // 🔧 **위치 차이가 크면 점진적 보정**
+                        if (!verificationResult.withinTolerance && (diffY > 100 || diffX > 100)) {
+                            console.log('🎯 위치 차이 감지 - 점진적 보정 시작:', verificationResult);
+                            
+                            // 점진적 보정 (3단계로 나누어 이동)
+                            const steps = 3;
+                            const stepX = (targetX - finalX) / steps;
+                            const stepY = (targetY - finalY) / steps;
+                            
+                            for (let i = 1; i <= steps; i++) {
+                                setTimeout(() => {
+                                    const stepTargetX = finalX + stepX * i;
+                                    const stepTargetY = finalY + stepY * i;
+                                    performScrollTo(stepTargetX, stepTargetY);
+                                    console.log('🎯 점진적 보정', i + '/' + steps + ':', [stepTargetX, stepTargetY]);
+                                }, i * 200);
+                            }
+                            
+                            verificationResult.progressiveCorrection = {
+                                steps: steps,
+                                stepSize: [stepX, stepY]
+                            };
+                        }
+                        
+                        console.log('🎯 강화된 DOM 요소 기반 복원 완료:', verificationResult);
+                        
+                    } catch(verifyError) {
+                        verificationResult = {
+                            error: verifyError.message,
+                            method: usedMethod
+                        };
+                        console.log('🎯 복원 검증 실패:', verifyError.message);
+                    }
+                }, 100);
                 
                 return {
                     success: true,
                     method: usedMethod,
                     anchorInfo: anchorInfo,
                     elementBased: restoredByElement,
-                    finalPosition: [finalX, finalY],
                     debug: debugInfo,
-                    error: errorMsg
+                    error: errorMsg,
+                    verification: verificationResult
                 };
                 
             } catch(e) { 
-                console.error('🎯 DOM 요소 기반 복원 실패:', e);
+                console.error('🎯 강화된 DOM 요소 기반 복원 실패:', e);
                 return {
                     success: false,
                     method: 'error',
@@ -582,6 +638,45 @@ struct BFCacheSnapshot: Codable {
                     error: e.message,
                     debug: { globalError: e.message }
                 };
+            }
+            
+            // 🔧 **헬퍼 함수들**
+            
+            // 앵커 요소 찾기 (다중 selector 지원)
+            function tryFindAnchorElement(anchor) {
+                if (!anchor || !anchor.selector) return null;
+                
+                // 다중 selector 시도
+                const selectors = anchor.selectors || [anchor.selector];
+                
+                for (const selector of selectors) {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        if (elements.length > 0) {
+                            // 첫 번째 요소 반환
+                            return elements[0];
+                        }
+                    } catch(e) {
+                        // selector 오류는 무시하고 다음 시도
+                        continue;
+                    }
+                }
+                
+                return null;
+            }
+            
+            // 통합된 스크롤 실행 함수
+            function performScrollTo(x, y) {
+                window.scrollTo(x, y);
+                document.documentElement.scrollTop = y;
+                document.documentElement.scrollLeft = x;
+                document.body.scrollTop = y;
+                document.body.scrollLeft = x;
+                
+                if (document.scrollingElement) {
+                    document.scrollingElement.scrollTop = y;
+                    document.scrollingElement.scrollLeft = x;
+                }
             }
         })()
         """
@@ -1191,7 +1286,7 @@ final class BFCacheTransitionSystem: NSObject {
         case background // 과거 페이지 (일반 우선순위)
     }
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🎯 DOM 요소 기반 캡처 강화)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🎯 강화된 DOM 요소 기반 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1213,7 +1308,7 @@ final class BFCacheTransitionSystem: NSObject {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        dbg("🎯 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        dbg("🎯 강화된 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1237,7 +1332,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 표시
         pendingCaptures.insert(pageID)
-        dbg("🎯 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        dbg("🎯 강화된 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1277,8 +1372,11 @@ final class BFCacheTransitionSystem: NSObject {
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
             dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
-            if let viewportAnchor = jsState["viewportAnchor"] as? [String: Any] {
-                dbg("🎯 캡처된 뷰포트 앵커: \(viewportAnchor["selector"] as? String ?? "none")")
+            if let primaryAnchor = jsState["viewportAnchor"] as? [String: Any] {
+                dbg("🎯 캡처된 주 뷰포트 앵커: \(primaryAnchor["selector"] as? String ?? "none")")
+            }
+            if let auxiliaryAnchors = jsState["auxiliaryAnchors"] as? [[String: Any]] {
+                dbg("🎯 캡처된 보조 앵커 개수: \(auxiliaryAnchors.count)개")
             }
         }
         
@@ -1291,7 +1389,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         // 진행 중 해제
         pendingCaptures.remove(pageID)
-        dbg("✅ DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
+        dbg("✅ 강화된 DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1390,10 +1488,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. 🎯 **강화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateSimplifiedScrollCaptureScript()
+            let jsScript = generateEnhancedScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1455,8 +1553,8 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (컨테이너 제거) - 상세 디버깅 추가**
-    private func generateSimplifiedScrollCaptureScript() -> String {
+    // 🎯 **강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (다중 앵커 시스템) - 상세 디버깅 추가**
+    private func generateEnhancedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
@@ -1487,106 +1585,152 @@ final class BFCacheTransitionSystem: NSObject {
                     }, 4000); // 🔧 기존 4000ms 유지
                 }
 
-                function captureScrollData() {
+                function captureEnhancedScrollData() {
                     try {
-                        console.log('🎯 뷰포트 앵커 + iframe 스크롤 감지 시작');
+                        console.log('🎯 강화된 다중 앵커 + iframe 스크롤 감지 시작');
                         
-                        // 🎯 **1단계: 뷰포트 앵커 요소 식별 - 화면에 보이는 핵심 요소 (상세 디버깅)**
-                        function identifyViewportAnchor() {
+                        // 🎯 **1단계: 다중 앵커 요소 식별 - 주앵커 + 보조앵커 3-5개**
+                        function identifyMultipleAnchors() {
                             const viewportHeight = window.innerHeight;
                             const viewportWidth = window.innerWidth;
                             const scrollY = window.scrollY || window.pageYOffset || 0;
                             const scrollX = window.scrollX || window.pageXOffset || 0;
                             
-                            console.log('🎯 뷰포트 앵커 식별 시작:', {
+                            console.log('🎯 다중 앵커 식별 시작:', {
                                 viewport: [viewportWidth, viewportHeight],
                                 scroll: [scrollX, scrollY]
                             });
                             
-                            // 우선순위 기반 앵커 후보 찾기
-                            const anchorCandidates = [
-                                // 1순위: 의미있는 콘텐츠 요소들
-                                ...document.querySelectorAll('article'),
-                                ...document.querySelectorAll('.post'),
-                                ...document.querySelectorAll('.article'),
-                                ...document.querySelectorAll('h1, h2, h3'),
-                                ...document.querySelectorAll('.content'),
-                                ...document.querySelectorAll('[role="main"]'),
-                                ...document.querySelectorAll('main'),
+                            // 🔧 **확장된 우선순위 기반 앵커 후보 찾기**
+                            const prioritizedSelectors = [
+                                // 1순위: 고유 ID를 가진 의미있는 콘텐츠 요소들
+                                'article[id]', '[role="main"][id]', 'main[id]', '.post[id]', '.article[id]',
                                 
-                                // 2순위: 목록/카드 형태 요소들
-                                ...document.querySelectorAll('.list-item'),
-                                ...document.querySelectorAll('.card'),
-                                ...document.querySelectorAll('li'),
-                                ...document.querySelectorAll('.item'),
+                                // 2순위: 헤딩과 제목 요소들
+                                'h1, h2, h3', '.title', '.headline', '.subject', '.topic',
                                 
-                                // 3순위: 이미지/미디어 요소들
-                                ...document.querySelectorAll('img'),
-                                ...document.querySelectorAll('video'),
+                                // 3순위: 고유 클래스를 가진 콘텐츠 블록들  
+                                '.content', '.body', '.text', '.description', '.summary',
                                 
-                                // 4순위: 일반 블록 요소들
-                                ...document.querySelectorAll('div'),
-                                ...document.querySelectorAll('section')
+                                // 4순위: 목록/카드 형태 요소들
+                                '.list-item', '.card', '.item', '.entry', '.row', '.tile',
+                                'li', 'tr', '.cell',
+                                
+                                // 5순위: 이미지/미디어 요소들 (고유 속성 우선)
+                                'img[id]', 'img[alt]', 'video[id]', '.image', '.media', '.photo', '.picture',
+                                
+                                // 6순위: 네비게이션/UI 요소들
+                                'nav', '.nav', '.menu', '.tab', 'button', '.button',
+                                
+                                // 7순위: 일반 블록 요소들 (광범위하게)
+                                'div', 'section', 'aside', 'header', 'footer', 'p', 'span'
                             ];
                             
-                            console.log('🎯 앵커 후보 총 개수:', anchorCandidates.length);
+                            let allCandidates = [];
                             
-                            let bestAnchor = null;
-                            let bestScore = -1;
-                            let candidateAnalysis = [];
+                            for (const selectorGroup of prioritizedSelectors) {
+                                try {
+                                    const elements = document.querySelectorAll(selectorGroup);
+                                    allCandidates.push(...Array.from(elements));
+                                } catch(e) {
+                                    // selector 오류는 무시
+                                }
+                            }
                             
-                            for (const element of anchorCandidates.slice(0, 100)) { // 성능을 위해 처음 100개만 분석
+                            console.log('🎯 앵커 후보 총 개수:', allCandidates.length);
+                            
+                            let scoredCandidates = [];
+                            
+                            // 🔧 **확장된 검색 범위: 200개까지 평가**
+                            const evaluationLimit = 200;
+                            const candidatesToEvaluate = allCandidates.slice(0, evaluationLimit);
+                            
+                            for (const element of candidatesToEvaluate) {
                                 try {
                                     const rect = element.getBoundingClientRect();
                                     
-                                    // 뷰포트 내에 있는지 확인
-                                    const isInViewport = rect.bottom > 0 && rect.top < viewportHeight && 
-                                                       rect.right > 0 && rect.left < viewportWidth;
+                                    // 뷰포트 내에 있는지 확인 (확장된 범위)
+                                    const isInViewport = rect.bottom > -viewportHeight && rect.top < viewportHeight * 2 && 
+                                                       rect.right > -viewportWidth && rect.left < viewportWidth * 2;
                                     
                                     if (isInViewport) {
-                                        // 점수 계산 (뷰포트 중앙에 가까울수록 높은 점수)
+                                        // 🔧 **정교한 점수 계산 시스템**
                                         const centerY = rect.top + rect.height / 2;
                                         const centerX = rect.left + rect.width / 2;
+                                        
+                                        // 뷰포트 중앙에서의 거리
                                         const distanceFromCenter = Math.sqrt(
                                             Math.pow(centerX - viewportWidth / 2, 2) + 
                                             Math.pow(centerY - viewportHeight / 2, 2)
                                         );
                                         
-                                        // 요소 크기 보너스 (너무 작거나 너무 크지 않은 적당한 크기 선호)
-                                        const sizeScore = Math.min(rect.width * rect.height / (viewportWidth * viewportHeight), 1);
-                                        const idealSizeRatio = 0.3; // 뷰포트의 30% 정도가 이상적
-                                        const sizePenalty = Math.abs(sizeScore - idealSizeRatio);
+                                        // 요소 크기 보너스
+                                        const elementArea = rect.width * rect.height;
+                                        const viewportArea = viewportWidth * viewportHeight;
+                                        const sizeRatio = elementArea / viewportArea;
+                                        const idealSizeRatio = 0.1; // 뷰포트의 10% 정도가 이상적
+                                        const sizeScore = Math.max(0, 1 - Math.abs(sizeRatio - idealSizeRatio) * 2);
                                         
-                                        // 최종 점수 (거리가 가까울수록, 크기가 적당할수록 높음)
-                                        const score = (viewportWidth + viewportHeight - distanceFromCenter) * (1 - sizePenalty);
+                                        // 고유성 보너스
+                                        let uniquenessBonus = 0;
+                                        if (element.id) uniquenessBonus += 0.5;
+                                        if (element.className && element.className.trim()) uniquenessBonus += 0.3;
+                                        if (element.tagName.match(/^(H[1-6]|ARTICLE|MAIN)$/)) uniquenessBonus += 0.4;
                                         
-                                        candidateAnalysis.push({
-                                            tag: element.tagName,
-                                            id: element.id || null,
-                                            className: (element.className || '').split(' ')[0] || null,
-                                            score: score,
+                                        // 텍스트 내용 보너스
+                                        const textContent = (element.textContent || '').trim();
+                                        const textBonus = textContent.length > 10 && textContent.length < 200 ? 0.3 : 0;
+                                        
+                                        // 최종 점수 계산
+                                        const baseScore = (viewportWidth + viewportHeight) - distanceFromCenter;
+                                        const finalScore = baseScore * (0.3 + sizeScore * 0.4 + uniquenessBonus * 0.2 + textBonus * 0.1);
+                                        
+                                        scoredCandidates.push({
+                                            element: element,
+                                            score: finalScore,
                                             distance: distanceFromCenter,
-                                            sizeScore: sizeScore,
-                                            centerPos: [centerX, centerY],
-                                            visible: element.offsetParent !== null
+                                            sizeRatio: sizeRatio,
+                                            uniquenessBonus: uniquenessBonus,
+                                            textLength: textContent.length,
+                                            rect: rect,
+                                            elementInfo: {
+                                                tag: element.tagName,
+                                                id: element.id || null,
+                                                className: (element.className || '').split(' ')[0] || null,
+                                                textPreview: textContent.substring(0, 50)
+                                            }
                                         });
-                                        
-                                        if (score > bestScore) {
-                                            bestScore = score;
-                                            bestAnchor = element;
-                                        }
                                     }
                                 } catch(e) {
                                     // 개별 요소 오류는 무시
                                 }
                             }
                             
-                            // 분석 결과 로깅
-                            const topCandidates = candidateAnalysis.sort((a, b) => b.score - a.score).slice(0, 5);
-                            console.log('🎯 상위 5개 앵커 후보:', topCandidates);
+                            // 점수순으로 정렬
+                            scoredCandidates.sort((a, b) => b.score - a.score);
                             
-                            if (bestAnchor) {
-                                const rect = bestAnchor.getBoundingClientRect();
+                            console.log('🎯 상위 10개 앵커 후보:', 
+                                scoredCandidates.slice(0, 10).map(c => ({
+                                    tag: c.elementInfo.tag,
+                                    id: c.elementInfo.id,
+                                    className: c.elementInfo.className,
+                                    score: Math.round(c.score),
+                                    distance: Math.round(c.distance)
+                                }))
+                            );
+                            
+                            if (scoredCandidates.length === 0) {
+                                console.log('🎯 다중 앵커 식별 실패 - 적절한 후보 없음');
+                                return { primaryAnchor: null, auxiliaryAnchors: [] };
+                            }
+                            
+                            // 🔧 **주 앵커 + 보조 앵커 3-5개 선정**
+                            const primaryCandidate = scoredCandidates[0];
+                            const auxiliaryCandidates = scoredCandidates.slice(1, 6); // 최대 5개 보조 앵커
+                            
+                            function createAnchorData(candidate) {
+                                const element = candidate.element;
+                                const rect = candidate.rect;
                                 const absoluteTop = scrollY + rect.top;
                                 const absoluteLeft = scrollX + rect.left;
                                 
@@ -1594,53 +1738,72 @@ final class BFCacheTransitionSystem: NSObject {
                                 const offsetFromTop = scrollY - absoluteTop;
                                 const offsetFromLeft = scrollX - absoluteLeft;
                                 
-                                // 🔧 **다중 selector 생성 - 복원 성공률 향상**
+                                // 🔧 **강화된 다중 selector 생성 전략**
                                 const selectors = [];
                                 
                                 // ID 기반 selector (최우선)
-                                if (bestAnchor.id) {
-                                    selectors.push('#' + bestAnchor.id);
-                                }
-                                
-                                // 클래스 기반 selector
-                                if (bestAnchor.className) {
-                                    const classes = bestAnchor.className.trim().split(/\\s+/).filter(c => c);
-                                    if (classes.length > 0) {
-                                        selectors.push('.' + classes.join('.'));
-                                        selectors.push('.' + classes[0]); // 첫 번째 클래스만
-                                    }
+                                if (element.id) {
+                                    selectors.push('#' + element.id);
                                 }
                                 
                                 // 데이터 속성 기반
-                                const dataAttrs = Array.from(bestAnchor.attributes)
+                                const dataAttrs = Array.from(element.attributes)
                                     .filter(attr => attr.name.startsWith('data-'))
+                                    .slice(0, 3) // 최대 3개만
                                     .map(attr => `[${attr.name}="${attr.value}"]`);
                                 if (dataAttrs.length > 0) {
-                                    selectors.push(bestAnchor.tagName.toLowerCase() + dataAttrs.join(''));
+                                    selectors.push(element.tagName.toLowerCase() + dataAttrs.join(''));
                                 }
                                 
-                                // 텍스트 내용 기반 (짧은 텍스트만)
-                                const textContent = (bestAnchor.textContent || '').trim();
-                                if (textContent.length > 0 && textContent.length < 50) {
-                                    selectors.push(`${bestAnchor.tagName.toLowerCase()}[textcontent*="${textContent.substring(0, 20)}"]`);
+                                // 클래스 기반 selector (다양한 조합)
+                                if (element.className) {
+                                    const classes = element.className.trim().split(/\\s+/).filter(c => c);
+                                    if (classes.length > 0) {
+                                        // 전체 클래스 조합
+                                        selectors.push('.' + classes.join('.'));
+                                        // 첫 번째 클래스만
+                                        selectors.push('.' + classes[0]);
+                                        // 태그 + 첫 번째 클래스
+                                        selectors.push(element.tagName.toLowerCase() + '.' + classes[0]);
+                                    }
                                 }
                                 
-                                // 기본 tag+class 기반
-                                if (bestAnchor.className) {
-                                    const firstClass = bestAnchor.className.trim().split(/\\s+/)[0];
-                                    selectors.push(`${bestAnchor.tagName.toLowerCase()}.${firstClass}`);
+                                // 텍스트 내용 기반 (짧은 텍스트만, 특수문자 제거)
+                                const textContent = (element.textContent || '').trim();
+                                if (textContent.length > 5 && textContent.length < 50) {
+                                    const cleanText = textContent.replace(/[^\\w\\s가-힣]/g, '').trim();
+                                    if (cleanText.length > 5) {
+                                        const textSelector = `${element.tagName.toLowerCase()}:contains("${cleanText.substring(0, 20)}")`;
+                                        // contains는 표준이 아니므로 주석 처리하고 대안 제공
+                                        // selectors.push(textSelector);
+                                    }
+                                }
+                                
+                                // nth-child 기반 (부모 내 위치)
+                                try {
+                                    const parent = element.parentElement;
+                                    if (parent) {
+                                        const siblings = Array.from(parent.children);
+                                        const index = siblings.indexOf(element) + 1;
+                                        if (index > 0 && siblings.length < 20) { // 너무 많은 형제가 있으면 제외
+                                            const nthSelector = `${parent.tagName.toLowerCase()} > ${element.tagName.toLowerCase()}:nth-child(${index})`;
+                                            selectors.push(nthSelector);
+                                        }
+                                    }
+                                } catch(e) {
+                                    // nth-child 생성 실패는 무시
                                 }
                                 
                                 // 최종 fallback: 태그명만
-                                selectors.push(bestAnchor.tagName.toLowerCase());
+                                selectors.push(element.tagName.toLowerCase());
                                 
-                                const anchorInfo = {
-                                    selector: generateBestSelector(bestAnchor), // 메인 selector
+                                return {
+                                    selector: generateBestSelector(element), // 메인 selector
                                     selectors: selectors, // 🔧 **복원용 다중 selector 배열**
-                                    tagName: bestAnchor.tagName.toLowerCase(),
-                                    className: bestAnchor.className || '',
-                                    id: bestAnchor.id || '',
-                                    textContent: textContent.substring(0, 100), // 텍스트 내용도 저장
+                                    tagName: element.tagName.toLowerCase(),
+                                    className: element.className || '',
+                                    id: element.id || '',
+                                    textContent: textContent.substring(0, 100),
                                     absolutePosition: {
                                         top: absoluteTop,
                                         left: absoluteLeft
@@ -1655,21 +1818,25 @@ final class BFCacheTransitionSystem: NSObject {
                                         width: rect.width,
                                         height: rect.height
                                     },
-                                    score: bestScore,
-                                    candidateCount: candidateAnalysis.length
+                                    score: candidate.score,
+                                    anchorType: 'enhanced', // 강화된 앵커임을 표시
+                                    captureTimestamp: Date.now()
                                 };
-                                
-                                console.log('🎯 뷰포트 앵커 식별 완료:', {
-                                    selector: anchorInfo.selector,
-                                    selectors: selectors.length + '개',
-                                    score: bestScore,
-                                    candidateCount: candidateAnalysis.length
-                                });
-                                return anchorInfo;
                             }
                             
-                            console.log('🎯 뷰포트 앵커 식별 실패 - 적절한 후보 없음 (총 후보: ' + candidateAnalysis.length + '개)');
-                            return null;
+                            const primaryAnchor = createAnchorData(primaryCandidate);
+                            const auxiliaryAnchors = auxiliaryCandidates.map(createAnchorData);
+                            
+                            console.log('🎯 다중 앵커 식별 완료:', {
+                                primaryAnchor: primaryAnchor.selector,
+                                auxiliaryCount: auxiliaryAnchors.length,
+                                auxiliarySelectors: auxiliaryAnchors.map(a => a.selector).slice(0, 3)
+                            });
+                            
+                            return {
+                                primaryAnchor: primaryAnchor,
+                                auxiliaryAnchors: auxiliaryAnchors
+                            };
                         }
                         
                         // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
@@ -1799,9 +1966,9 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 🎯 **메인 실행 - DOM 요소 기반 데이터 수집 (컨테이너 제거)**
-                        const viewportAnchor = identifyViewportAnchor(); // 🎯 **뷰포트 앵커**
-                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe만 유지**
+                        // 🎯 **메인 실행 - 강화된 다중 앵커 기반 데이터 수집**
+                        const anchorData = identifyMultipleAnchors(); // 🎯 **다중 앵커 시스템**
+                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 유지**
                         
                         // 메인 스크롤 위치도 parseFloat 정밀도 적용 
                         const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
@@ -1817,16 +1984,16 @@ final class BFCacheTransitionSystem: NSObject {
                         const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
                         const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
                         
-                        console.log(`🎯 DOM 요소 기반 감지 완료: 앵커 ${viewportAnchor ? '1' : '0'}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`🎯 강화된 다중 앵커 기반 감지 완료: 주앵커 ${anchorData.primaryAnchor ? '1' : '0'}개, 보조앵커 ${anchorData.auxiliaryAnchors.length}개, iframe ${iframeScrolls.length}개`);
                         console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
                         console.log(`🎯 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
                         resolve({
-                            viewportAnchor: viewportAnchor, // 🎯 **뷰포트 앵커 정보**
+                            viewportAnchor: anchorData.primaryAnchor, // 🎯 **주 뷰포트 앵커 정보**
+                            auxiliaryAnchors: anchorData.auxiliaryAnchors, // 🎯 **보조 앵커들 정보** 
                             scroll: { 
                                 x: mainScrollX, 
                                 y: mainScrollY
-                                // 🚫 **컨테이너 스크롤 요소 제거**
                             },
                             iframes: iframeScrolls, // 🖼️ **iframe은 유지**
                             href: window.location.href,
@@ -1847,9 +2014,10 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         });
                     } catch(e) { 
-                        console.error('🎯 DOM 요소 기반 감지 실패:', e);
+                        console.error('🎯 강화된 다중 앵커 기반 감지 실패:', e);
                         resolve({
                             viewportAnchor: null,
+                            auxiliaryAnchors: [],
                             scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                             iframes: [],
                             href: window.location.href,
@@ -1862,9 +2030,9 @@ final class BFCacheTransitionSystem: NSObject {
 
                 // 🎯 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
                 if (document.readyState === 'complete') {
-                    waitForDynamicContent(captureScrollData);
+                    waitForDynamicContent(captureEnhancedScrollData);
                 } else {
-                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureScrollData));
+                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureEnhancedScrollData));
                 }
             });
         })()
@@ -2145,7 +2313,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🎯 단순화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🎯 강화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2806,7 +2974,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🚫 브라우저 차단 대응 BFCache 시스템 설치 완료 (뷰포트 앵커 + 점진적 스크롤)")
+        TabPersistenceManager.debugMessages.append("✅ 🚫 강화된 브라우저 차단 대응 BFCache 시스템 설치 완료 (다중 앵커 + 검증)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2829,7 +2997,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🚫 강화된 브라우저 차단 대응 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
