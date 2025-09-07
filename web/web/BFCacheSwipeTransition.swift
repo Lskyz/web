@@ -289,8 +289,8 @@ final class BFCacheNavigationDelegate: NSObject, WKNavigationDelegate {
         system?.overlay_forceRemove(webView)
         system?.scrollLock_end(webView)
         
-        // 원래 DataModel의 델리게이트 메서드 호출
-        dataModel?.webViewWebContentProcessDidTerminate?(webView)
+        // 원래 DataModel의 델리게이트 메서드가 존재하면 호출
+        // 현재 WebViewDataModel에는 해당 메서드가 없으므로 별도 처리 없이 복구만 수행
     }
     
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -311,12 +311,12 @@ final class BFCacheNavigationDelegate: NSObject, WKNavigationDelegate {
     
     @available(iOS 14.0, *)
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        dataModel?.webView?(webView, navigationAction: navigationAction, didBecome: download)
+        dataModel?.webView(webView, navigationAction: navigationAction, didBecome: download)
     }
-    
+
     @available(iOS 14.0, *)
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        dataModel?.webView?(webView, navigationResponse: navigationResponse, didBecome: download)
+        dataModel?.webView(webView, navigationResponse: navigationResponse, didBecome: download)
     }
 }
 
@@ -648,7 +648,7 @@ final class RestoreStateMachine {
     }
     
     private func timedOutFallback() {
-        guard let webView = webView, let system = system else { return }
+        guard webView != nil, let system = system else { return }
         state = .timedOut
         
         // 랜드마크 근사로 즉시 공개
@@ -1737,10 +1737,8 @@ final class BFCacheTransitionSystem: NSObject {
     private func handleRestoreMessage(name: String, body: Any?, tabID: UUID) {
         guard let messageDict = body as? [String: Any] else { return }
         
-        let success = messageDict["ok"] as? Bool ?? false
         let method = messageDict["method"] as? String ?? "unknown"
-        
-        dbg("📨 복원 메시지 수신: \(method), 성공: \(success)")
+        dbg("📨 복원 메시지 수신: \(method)")
         
         // 상태머신으로 전달
         if let stateMachine = _stateMachines[tabID] {
@@ -1751,10 +1749,9 @@ final class BFCacheTransitionSystem: NSObject {
     private func handleProgressiveMessage(name: String, body: Any?, tabID: UUID) {
         guard let messageDict = body as? [String: Any] else { return }
         
-        let success = messageDict["ok"] as? Bool ?? false
         let cycles = messageDict["cycles"] as? Int ?? 0
         let reason = messageDict["reason"] as? String ?? "unknown"
-        
+
         dbg("📨 버스트 로딩 메시지 수신: \(reason), 사이클: \(cycles)")
         
         // 상태머신으로 전달
@@ -1766,9 +1763,8 @@ final class BFCacheTransitionSystem: NSObject {
     private func handleIFrameMessage(name: String, body: Any?, tabID: UUID) {
         guard let messageDict = body as? [String: Any] else { return }
         
-        let success = messageDict["ok"] as? Bool ?? false
         let restored = messageDict["restored"] as? Int ?? 0
-        
+
         dbg("📨 iframe 복원 메시지 수신: 복원됨 \(restored)개")
         
         // 상태머신으로 전달
