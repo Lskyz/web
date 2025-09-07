@@ -1584,43 +1584,15 @@ final class BFCacheTransitionSystem: NSObject {
                 }
             }
             
-            // 3. 메타데이터 저장
-            let metadata = CacheMetadata(
-                pageID: pageID,
-                tabID: tabID,
-                version: version,
-                timestamp: Date(),
-                url: snapshot.snapshot.pageRecord.url.absoluteString,
-                title: snapshot.snapshot.pageRecord.title
-            )
-            
-            let metadataPath = pageDir.appendingPathComponent("metadata.json")
-            if let metadataData = try? JSONEncoder().encode(metadata) {
-                do {
-                    try metadataData.write(to: metadataPath)
-                } catch {
-                    self.dbg("❌ 메타데이터 저장 실패: \(error.localizedDescription)")
-                }
-            }
-            
-            // 4. 인덱스 업데이트 (원자적)
+            // 3. 인덱스 업데이트 (원자적)
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
             self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
             
-            // 5. 이전 버전 정리 (최신 3개만 유지)
+            // 4. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
-    }
-    
-    private struct CacheMetadata: Codable {
-        let pageID: UUID
-        let tabID: UUID
-        let version: Int
-        let timestamp: Date
-        let url: String
-        let title: String
     }
     
     private func createDirectoryIfNeeded(at url: URL) {
@@ -1677,15 +1649,17 @@ final class BFCacheTransitionSystem: NSObject {
                         
                         for pageDir in pageDirs {
                             if pageDir.lastPathComponent.hasPrefix("Page_") {
-                                // metadata.json 로드
-                                let metadataPath = pageDir.appendingPathComponent("metadata.json")
-                                if let data = try? Data(contentsOf: metadataPath),
-                                   let metadata = try? JSONDecoder().decode(CacheMetadata.self, from: data) {
+                                // state.json에서 pageID 추출하여 인덱스 등록
+                                let statePath = pageDir.appendingPathComponent("state.json")
+                                if let data = try? Data(contentsOf: statePath),
+                                   let snapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
+                                    
+                                    let pageID = snapshot.pageRecord.id
                                     
                                     // 스레드 안전하게 인덱스 업데이트
-                                    self.setDiskIndex(pageDir.path, for: metadata.pageID)
+                                    self.setDiskIndex(pageDir.path, for: pageID)
                                     self.cacheAccessQueue.async(flags: .barrier) {
-                                        self._cacheVersion[metadata.pageID] = metadata.version
+                                        self._cacheVersion[pageID] = snapshot.version
                                     }
                                     loadedCount += 1
                                 }
@@ -2555,7 +2529,7 @@ extension BFCacheTransitionSystem {
         captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
         dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
         
-        // 이전 페이지들도 순차적으로 캐시 확인 및 캡처
+        // 이전 페이지들도 순차적으로 캐시 확인
         if stateModel.dataModel.currentPageIndex > 0 {
             // 최근 3개 페이지만 체크 (성능 고려)
             let checkCount = min(3, stateModel.dataModel.currentPageIndex)
@@ -2564,20 +2538,9 @@ extension BFCacheTransitionSystem {
             for i in startIndex..<stateModel.dataModel.currentPageIndex {
                 let previousRecord = stateModel.dataModel.pageHistory[i]
                 
-                // 캐시가 없는 경우만 메타데이터 저장
+                // 캐시가 없는 경우만 기록 (메타데이터 저장 없이 단순 캐시 확인만)
                 if !hasCache(for: previousRecord.id) {
-                    // 메타데이터만 저장 (이미지는 없음)
-                    let metadataSnapshot = BFCacheSnapshot(
-                        pageRecord: previousRecord,
-                        scrollPosition: .zero,
-                        timestamp: Date(),
-                        captureStatus: .failed,
-                        version: 1
-                    )
-                    
-                    // 디스크에 메타데이터만 저장
-                    saveToDisk(snapshot: (metadataSnapshot, nil), tabID: tabID)
-                    dbg("📸 이전 페이지 메타데이터 저장: '\(previousRecord.title)' [인덱스: \(i)]")
+                    dbg("📸 이전 페이지 캐시 없음: '\(previousRecord.title)' [인덱스: \(i)]")
                 }
             }
         }
