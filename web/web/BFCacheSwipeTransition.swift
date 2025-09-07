@@ -10,6 +10,9 @@
 //  📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
 //  🔧 **뷰포트 앵커 시스템** - 화면에 보이는 핵심 요소 기준
 //  🎯 **정밀 스크롤 복원 강화** - 앵커/랜드마크/고정헤더/가상리스트 대응
+//  🔍 **뷰포트 범위 밖 DOM 감지 강화** - 전체 문서 스캔으로 확장
+//  📏 **점진적 스크롤 정확도 향상** - 동적 허용오차 + 백분율 강화
+//  🏷️ **범용 커스텀 클래스 패턴** - 사이트 특화 없는 일반적 패턴만
 //
 
 import UIKit
@@ -273,6 +276,26 @@ struct BFCacheSnapshot: Codable {
                 let usedMethod = 'fallback';
                 let anchorInfo = 'none';
                 
+                // 📏 **동적 허용 오차 계산 - 큰 스크롤 거리 대응**
+                const contentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight
+                );
+                const contentWidth = Math.max(
+                    document.documentElement.scrollWidth,
+                    document.body.scrollWidth
+                );
+                
+                // 스크롤 거리에 따른 동적 허용 오차 (최대 300px)
+                const dynamicToleranceY = Math.min(300, Math.max(30, targetY * 0.02));
+                const dynamicToleranceX = Math.min(200, Math.max(20, targetX * 0.02));
+                
+                console.log('📏 동적 허용오차:', {
+                    toleranceX: dynamicToleranceX,
+                    toleranceY: dynamicToleranceY,
+                    contentSize: [contentWidth, contentHeight]
+                });
+                
                 // 🎯 **방법 1: 앵커 기반 정밀 복원 (스키마 v2)**
                 if (restorationData && restorationData.anchors && restorationData.anchors.length > 0) {
                     try {
@@ -313,12 +336,22 @@ struct BFCacheSnapshot: Codable {
                                         }
                                     }
                                     
-                                    // 앵커 기반 스크롤 실행
-                                    window.scrollTo(Math.max(0, restoreX), Math.max(0, restoreY));
-                                    document.documentElement.scrollTop = Math.max(0, restoreY);
-                                    document.documentElement.scrollLeft = Math.max(0, restoreX);
-                                    document.body.scrollTop = Math.max(0, restoreY);
-                                    document.body.scrollLeft = Math.max(0, restoreX);
+                                    // 📏 **개선된 스크롤 실행 - 동적 허용오차 적용**
+                                    const finalRestoreX = Math.max(0, restoreX);
+                                    const finalRestoreY = Math.max(0, restoreY);
+                                    
+                                    // 복수 방법으로 스크롤 설정
+                                    window.scrollTo(finalRestoreX, finalRestoreY);
+                                    document.documentElement.scrollTop = finalRestoreY;
+                                    document.documentElement.scrollLeft = finalRestoreX;
+                                    document.body.scrollTop = finalRestoreY;
+                                    document.body.scrollLeft = finalRestoreX;
+                                    
+                                    // scrollingElement 활용
+                                    if (document.scrollingElement) {
+                                        document.scrollingElement.scrollTop = finalRestoreY;
+                                        document.scrollingElement.scrollLeft = finalRestoreX;
+                                    }
                                     
                                     restoredByElement = true;
                                     usedMethod = 'anchor_' + anchor.role;
@@ -372,9 +405,16 @@ struct BFCacheSnapshot: Codable {
                                         }
                                     }
                                     
-                                    window.scrollTo(targetX, Math.max(0, restoreY));
-                                    document.documentElement.scrollTop = Math.max(0, restoreY);
-                                    document.body.scrollTop = Math.max(0, restoreY);
+                                    // 📏 **개선된 스크롤 실행**
+                                    const finalRestoreY = Math.max(0, restoreY);
+                                    
+                                    window.scrollTo(targetX, finalRestoreY);
+                                    document.documentElement.scrollTop = finalRestoreY;
+                                    document.body.scrollTop = finalRestoreY;
+                                    
+                                    if (document.scrollingElement) {
+                                        document.scrollingElement.scrollTop = finalRestoreY;
+                                    }
                                     
                                     restoredByElement = true;
                                     usedMethod = 'landmark_' + landmark.role;
@@ -417,6 +457,10 @@ struct BFCacheSnapshot: Codable {
                             document.documentElement.scrollTop = adjustedY;
                             document.body.scrollTop = adjustedY;
                             
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = adjustedY;
+                            }
+                            
                             restoredByElement = true;
                             usedMethod = 'virtualList_' + vl.type;
                             anchorInfo = 'index:' + estimatedIndex + ' height:' + itemHeightAvg;
@@ -426,7 +470,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **방법 4: 백분율 기반 복원**
+                // 🎯 **방법 4: 강화된 백분율 기반 복원**
                 if (!restoredByElement && targetPercentY > 0) {
                     try {
                         const currentScrollHeight = Math.max(
@@ -438,36 +482,51 @@ struct BFCacheSnapshot: Codable {
                             document.body.scrollWidth
                         );
                         
-                        const maxScrollY = currentScrollHeight - window.innerHeight;
-                        const maxScrollX = currentScrollWidth - window.innerWidth;
+                        const maxScrollY = Math.max(0, currentScrollHeight - window.innerHeight);
+                        const maxScrollX = Math.max(0, currentScrollWidth - window.innerWidth);
                         
                         const percentRestoreY = (targetPercentY / 100.0) * maxScrollY;
                         const percentRestoreX = (targetPercentX / 100.0) * maxScrollX;
                         
-                        console.log('🎯 백분율 기반 복원:', {
+                        console.log('🎯 강화된 백분율 기반 복원:', {
                             percent: [targetPercentX, targetPercentY],
                             currentSize: [currentScrollWidth, currentScrollHeight],
                             maxScroll: [maxScrollX, maxScrollY],
-                            restore: [percentRestoreX, percentRestoreY]
+                            restore: [percentRestoreX, percentRestoreY],
+                            dynamicTolerance: [dynamicToleranceX, dynamicToleranceY]
                         });
                         
-                        window.scrollTo(Math.max(0, percentRestoreX), Math.max(0, percentRestoreY));
-                        document.documentElement.scrollTop = Math.max(0, percentRestoreY);
-                        document.documentElement.scrollLeft = Math.max(0, percentRestoreX);
-                        document.body.scrollTop = Math.max(0, percentRestoreY);
-                        document.body.scrollLeft = Math.max(0, percentRestoreX);
+                        // 📏 **정확도 검증 - 동적 허용오차 적용**
+                        const diffX = Math.abs(percentRestoreX - targetX);
+                        const diffY = Math.abs(percentRestoreY - targetY);
                         
-                        restoredByElement = true;
-                        usedMethod = 'percentage';
-                        anchorInfo = 'percent(' + targetPercentX.toFixed(1) + ',' + targetPercentY.toFixed(1) + ')';
+                        if (diffY <= dynamicToleranceY && diffX <= dynamicToleranceX) {
+                            // 백분율 기반이 더 정확한 경우
+                            window.scrollTo(Math.max(0, percentRestoreX), Math.max(0, percentRestoreY));
+                            document.documentElement.scrollTop = Math.max(0, percentRestoreY);
+                            document.documentElement.scrollLeft = Math.max(0, percentRestoreX);
+                            document.body.scrollTop = Math.max(0, percentRestoreY);
+                            document.body.scrollLeft = Math.max(0, percentRestoreX);
+                            
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = Math.max(0, percentRestoreY);
+                                document.scrollingElement.scrollLeft = Math.max(0, percentRestoreX);
+                            }
+                            
+                            restoredByElement = true;
+                            usedMethod = 'percentage_accurate';
+                            anchorInfo = 'percent(' + targetPercentX.toFixed(1) + ',' + targetPercentY.toFixed(1) + ') tolerance(' + dynamicToleranceX.toFixed(1) + ',' + dynamicToleranceY.toFixed(1) + ')';
+                        } else {
+                            console.log('📏 백분율 복원 정확도 부족:', {diff: [diffX, diffY], tolerance: [dynamicToleranceX, dynamicToleranceY]});
+                        }
                     } catch(e) {
-                        console.log('🎯 백분율 복원 실패:', e.message);
+                        console.log('🎯 강화된 백분율 복원 실패:', e.message);
                     }
                 }
                 
-                // 🎯 **방법 5: 폴백 - 절대 좌표 기반 복원**
+                // 🎯 **방법 5: 폴백 - 절대 좌표 기반 복원 (동적 허용오차 적용)**
                 if (!restoredByElement) {
-                    console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행');
+                    console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행 (동적 허용오차 적용)');
                     
                     window.scrollTo(targetX, targetY);
                     document.documentElement.scrollTop = targetY;
@@ -482,7 +541,7 @@ struct BFCacheSnapshot: Codable {
                     }
                     
                     usedMethod = 'coordinateFallback';
-                    anchorInfo = 'coords(' + targetX + ',' + targetY + ')';
+                    anchorInfo = 'coords(' + targetX + ',' + targetY + ') tolerance(' + dynamicToleranceX.toFixed(1) + ',' + dynamicToleranceY.toFixed(1) + ')';
                 }
                 
                 // 최종 위치 확인
@@ -493,6 +552,7 @@ struct BFCacheSnapshot: Codable {
                     target: [targetX, targetY],
                     final: [finalX, finalY],
                     diff: [Math.abs(finalX - targetX), Math.abs(finalY - targetY)],
+                    dynamicTolerance: [dynamicToleranceX, dynamicToleranceY],
                     method: usedMethod,
                     elementBased: restoredByElement
                 });
@@ -514,7 +574,8 @@ struct BFCacheSnapshot: Codable {
                     method: usedMethod,
                     anchorInfo: anchorInfo,
                     elementBased: restoredByElement,
-                    finalPosition: [finalX, finalY]
+                    finalPosition: [finalX, finalY],
+                    dynamicTolerance: [dynamicToleranceX, dynamicToleranceY]
                 };
                 
             } catch(e) { 
@@ -552,22 +613,33 @@ struct BFCacheSnapshot: Codable {
                         try {
                             const targetX = parseFloat('\(self.scrollPosition.x)');
                             const targetY = parseFloat('\(self.scrollPosition.y)');
-                            const tolerance = 50.0;
                             
-                            console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
+                            // 📏 **동적 허용 오차 계산 - 큰 스크롤 거리 대응**
+                            const dynamicToleranceY = Math.min(300, Math.max(50, targetY * 0.03));
+                            const dynamicToleranceX = Math.min(200, Math.max(30, targetX * 0.03));
+                            
+                            console.log('🚫 점진적 스크롤 시작:', {
+                                target: [targetX, targetY],
+                                dynamicTolerance: [dynamicToleranceX, dynamicToleranceY]
+                            });
                             
                             // 🚫 **브라우저 차단 대응: 점진적 스크롤**
                             let attempts = 0;
-                            const maxAttempts = 15;
+                            const maxAttempts = 20; // 시도 횟수 증가
                             
                             while (attempts < maxAttempts) {
                                 // 현재 위치 확인
                                 const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                                 const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                                 
-                                // 목표 도달 확인
-                                if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
-                                    console.log('🚫 점진적 스크롤 성공:', {current: [currentX, currentY], attempts: attempts + 1});
+                                // 📏 **동적 허용오차로 목표 도달 확인**
+                                if (Math.abs(currentX - targetX) <= dynamicToleranceX && Math.abs(currentY - targetY) <= dynamicToleranceY) {
+                                    console.log('🚫 점진적 스크롤 성공:', {
+                                        current: [currentX, currentY], 
+                                        target: [targetX, targetY],
+                                        attempts: attempts + 1,
+                                        tolerance: [dynamicToleranceX, dynamicToleranceY]
+                                    });
                                     resolve('progressive_success');
                                     return;
                                 }
@@ -602,25 +674,44 @@ struct BFCacheSnapshot: Codable {
                                         // TouchEvent 지원 안 되면 무시
                                     }
                                     
-                                    // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
-                                    const loadMoreButtons = document.querySelectorAll(
-                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
-                                    );
+                                    // 🏷️ **범용 더보기 버튼 패턴 - 사이트 특화 없음**
+                                    const loadMoreSelectors = [
+                                        '[data-testid*="load"]',
+                                        '[data-testid*="more"]',
+                                        '[class*="load-more"]',
+                                        '[class*="show-more"]',
+                                        '[class*="load"][class*="more"]',
+                                        '[class*="infinite-scroll"]',
+                                        '[data-role="load"]',
+                                        '[data-role="more"]',
+                                        '[aria-label*="더보기"]',
+                                        '[aria-label*="more"]',
+                                        '[aria-label*="load"]',
+                                        'button[class*="more"]',
+                                        'button[class*="load"]',
+                                        '.btn-more',
+                                        '.btn-load',
+                                        '#load-more',
+                                        '#show-more'
+                                    ];
                                     
-                                    loadMoreButtons.forEach(btn => {
-                                        if (btn && typeof btn.click === 'function') {
-                                            try {
-                                                btn.click();
-                                                console.log('🚫 "더보기" 버튼 클릭:', btn.className);
-                                            } catch(e) {
-                                                // 클릭 실패는 무시
+                                    for (const selector of loadMoreSelectors) {
+                                        const buttons = document.querySelectorAll(selector);
+                                        buttons.forEach(btn => {
+                                            if (btn && typeof btn.click === 'function') {
+                                                try {
+                                                    btn.click();
+                                                    console.log('🚫 "더보기" 버튼 클릭:', selector);
+                                                } catch(e) {
+                                                    // 클릭 실패는 무시
+                                                }
                                             }
-                                        }
-                                    });
+                                        });
+                                        if (buttons.length > 0) break; // 하나라도 찾으면 중단
+                                    }
                                 }
                                 
-                                // 스크롤 시도
+                                // 📏 **개선된 스크롤 시도 - 복수 방법**
                                 window.scrollTo(targetX, targetY);
                                 document.documentElement.scrollTop = targetY;
                                 document.documentElement.scrollLeft = targetX;
@@ -634,8 +725,9 @@ struct BFCacheSnapshot: Codable {
                                 
                                 attempts++;
                                 
-                                // 대기 시간 (콘텐츠 로딩 대기)
-                                await new Promise(resolve => setTimeout(resolve, 200));
+                                // 🚫 **점진적 대기 시간 조정** (콘텐츠 로딩 대기)
+                                const waitTime = attempts < 5 ? 150 : (attempts < 10 ? 200 : 300);
+                                await new Promise(resolve => setTimeout(resolve, waitTime));
                             }
                             
                             // 최대 시도 후에도 실패
@@ -645,7 +737,8 @@ struct BFCacheSnapshot: Codable {
                             console.log('🚫 점진적 스크롤 한계 도달:', {
                                 target: [targetX, targetY],
                                 final: [finalX, finalY],
-                                attempts: maxAttempts
+                                attempts: maxAttempts,
+                                tolerance: [dynamicToleranceX, dynamicToleranceY]
                             });
                             
                             resolve('progressive_partial');
@@ -704,19 +797,22 @@ struct BFCacheSnapshot: Codable {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         
+                        // 📏 **동적 허용 오차 재계산**
+                        const dynamicToleranceY = Math.min(300, Math.max(50, targetY * 0.03));
+                        const dynamicToleranceX = Math.min(200, Math.max(30, targetX * 0.03));
+                        
                         // 네이티브 스크롤 위치 정밀 확인
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
                         
                         console.log('✅ 브라우저 차단 대응 최종 검증:', {
                             target: [targetX, targetY],
                             current: [currentX, currentY],
-                            tolerance: tolerance
+                            tolerance: [dynamicToleranceX, dynamicToleranceY]
                         });
                         
-                        // 최종 보정 (필요시)
-                        if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
+                        // 📏 **동적 허용오차로 최종 보정 판단**
+                        if (Math.abs(currentX - targetX) > dynamicToleranceX || Math.abs(currentY - targetY) > dynamicToleranceY) {
                             console.log('✅ 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
                             // 강력한 최종 보정 
@@ -736,12 +832,12 @@ struct BFCacheSnapshot: Codable {
                         // 최종 위치 확인
                         const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                         const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
+                        const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= dynamicToleranceX && Math.abs(finalCurrentY - targetY) <= dynamicToleranceY;
                         
                         console.log('✅ 브라우저 차단 대응 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
-                            tolerance: tolerance,
+                            tolerance: [dynamicToleranceX, dynamicToleranceY],
                             isWithinTolerance: isWithinTolerance,
                             note: '브라우저차단대응'
                         });
@@ -1368,122 +1464,183 @@ final class BFCacheTransitionSystem: NSObject {
                         const percentX = maxScrollX > 0 ? (mainScrollX / maxScrollX * 100.0) : 0;
                         const percentY = maxScrollY > 0 ? (mainScrollY / maxScrollY * 100.0) : 0;
                         
-                        // 🎯 **2. 앵커 후보 수집 (최대 5개) - 정밀 복원의 핵심**
+                        // 🔍 **뷰포트 범위 밖 DOM 요소 감지 강화**: collectAnchorCandidates() 수정
                         function collectAnchorCandidates() {
-                            const candidates = [
-                                ...document.querySelectorAll('h1,h2,h3'),
-                                ...document.querySelectorAll('article'),
-                                ...document.querySelectorAll('main,[role="main"]'),
-                                ...document.querySelectorAll('.post,.article'),
-                                ...document.querySelectorAll('.card,.list-item'),
-                                ...document.querySelectorAll('section')
-                            ];
-                            
-                            const anchors = [];
-                            const viewportCenterX = viewportWidth / 2;
-                            const viewportCenterY = viewportHeight / 2;
-                            
-                            for (const element of candidates) {
-                                const rect = element.getBoundingClientRect();
-                                
-                                // 뷰포트에 부분이라도 걸친 요소만
-                                if (rect.bottom > 0 && rect.top < viewportHeight && 
-                                    rect.right > 0 && rect.left < viewportWidth) {
-                                    
-                                    const centerX = rect.left + rect.width / 2;
-                                    const centerY = rect.top + rect.height / 2;
-                                    const distanceFromCenter = Math.sqrt(
-                                        Math.pow(centerX - viewportCenterX, 2) + 
-                                        Math.pow(centerY - viewportCenterY, 2)
-                                    );
-                                    
-                                    // 크기 점수 (30% 정도가 이상적)
-                                    const sizeRatio = (rect.width * rect.height) / (viewportWidth * viewportHeight);
-                                    const idealSizeRatio = 0.3;
-                                    const sizePenalty = Math.abs(sizeRatio - idealSizeRatio);
-                                    
-                                    // 최종 점수
-                                    const score = (viewportWidth + viewportHeight - distanceFromCenter) * (1 - sizePenalty);
-                                    
-                                    const absTop = mainScrollY + rect.top;
-                                    const absLeft = mainScrollX + rect.left;
-                                    const offsetFromTop = mainScrollY - absTop;
-                                    const offsetFromLeft = mainScrollX - absLeft;
-                                    
-                                    // 텍스트 및 해시
-                                    const textContent = (element.textContent || '').trim();
-                                    const textHead = textContent.substring(0, 60);
-                                    const textHash = generateSimpleHash(textHead);
-                                    
-                                    // 역할 결정
-                                    let role = 'other';
-                                    const tagName = element.tagName.toLowerCase();
-                                    if (tagName.match(/^h[1-3]$/)) role = tagName;
-                                    else if (tagName === 'article') role = 'article';
-                                    else if (tagName === 'main' || element.getAttribute('role') === 'main') role = 'main';
-                                    else if (element.className.includes('post')) role = 'article';
-                                    else if (element.className.includes('card')) role = 'card';
-                                    else if (element.className.includes('list-item')) role = 'list-item';
-                                    else if (tagName === 'section') role = 'section';
-                                    
-                                    anchors.push({
-                                        selector: generateBestSelector(element),
-                                        role: role,
-                                        absTop: absTop,
-                                        absLeft: absLeft,
-                                        offsetFromTop: offsetFromTop,
-                                        offsetFromLeft: offsetFromLeft,
-                                        width: rect.width,
-                                        height: rect.height,
-                                        textHead: textHead,
-                                        textHash: textHash,
-                                        score: score
-                                    });
-                                }
-                            }
-                            
-                            // 점수별 정렬 후 상위 5개 선택
-                            anchors.sort((a, b) => b.score - a.score);
-                            return anchors.slice(0, 5);
-                        }
-                        
-                        // 🎯 **3. 랜드마크 수집 (최대 12개) - 퍼센트 실패시 근사 스냅**
-                        function collectLandmarks() {
-                            const landmarkSelectors = [
+                            // 🔍 **전체 문서 스캔으로 확장** - 뷰포트 제한 제거
+                            const baseSelectors = [
                                 'h1,h2,h3,h4,h5,h6',
                                 'article',
                                 'main,[role="main"]',
                                 'section',
-                                '.post,.article,.content',
-                                '.card,.item,.list-item',
-                                'header,footer',
-                                'nav,[role="navigation"]',
-                                'aside,[role="complementary"]',
-                                '.sidebar,.menu',
-                                'img[alt]',
-                                'video,audio'
+                                // 🏷️ **범용 커스텀 클래스 패턴** - 사이트 특화 없음
+                                '.post,.article,.content,.item,.card',
+                                '.list-item,.feed-item,.story-item',
+                                '.entry,.blog-post,.news-item',
+                                '[data-item],.data-entry,[data-post]',
+                                '[id*="item"],[id*="post"],[id*="entry"]',
+                                '[class*="item"],[class*="post"],[class*="entry"]',
+                                'li[class*="item"],li[class*="post"]',
+                                '.row[class*="item"],.col[class*="item"]'
+                            ];
+                            
+                            const allCandidates = [];
+                            for (const selector of baseSelectors) {
+                                const elements = document.querySelectorAll(selector);
+                                allCandidates.push(...Array.from(elements));
+                            }
+                            
+                            const anchors = [];
+                            const processedElements = new Set();
+                            
+                            for (const element of allCandidates) {
+                                if (processedElements.has(element)) continue;
+                                processedElements.add(element);
+                                
+                                const rect = element.getBoundingClientRect();
+                                
+                                // 🔍 **뷰포트 제한 완화** - 최소 크기만 확인
+                                if (rect.width < 10 || rect.height < 10) continue;
+                                
+                                // 🔍 **전체 문서 범위에서 요소 수집** - 뷰포트 밖도 포함
+                                const absTop = mainScrollY + rect.top;
+                                const absLeft = mainScrollX + rect.left;
+                                const offsetFromTop = mainScrollY - absTop;
+                                const offsetFromLeft = mainScrollX - absLeft;
+                                
+                                // 🔍 **뷰포트 내 요소에 높은 점수 부여, 밖은 낮은 점수**
+                                const inViewport = (rect.bottom > 0 && rect.top < viewportHeight && 
+                                                  rect.right > 0 && rect.left < viewportWidth);
+                                
+                                let score = 0;
+                                if (inViewport) {
+                                    // 뷰포트 내 요소는 중앙 거리 기반 점수
+                                    const centerX = rect.left + rect.width / 2;
+                                    const centerY = rect.top + rect.height / 2;
+                                    const viewportCenterX = viewportWidth / 2;
+                                    const viewportCenterY = viewportHeight / 2;
+                                    const distanceFromCenter = Math.sqrt(
+                                        Math.pow(centerX - viewportCenterX, 2) + 
+                                        Math.pow(centerY - viewportCenterY, 2)
+                                    );
+                                    score = 1000 - distanceFromCenter; // 높은 기본 점수
+                                } else {
+                                    // 뷰포트 밖 요소는 낮은 점수지만 포함
+                                    score = 100 - Math.abs(absTop - mainScrollY) / 100;
+                                }
+                                
+                                // 크기 점수 추가
+                                const sizeRatio = (rect.width * rect.height) / (viewportWidth * viewportHeight);
+                                const idealSizeRatio = 0.3;
+                                const sizePenalty = Math.abs(sizeRatio - idealSizeRatio);
+                                score *= (1 - sizePenalty * 0.5);
+                                
+                                // 텍스트 및 해시
+                                const textContent = (element.textContent || '').trim();
+                                const textHead = textContent.substring(0, 60);
+                                const textHash = generateSimpleHash(textHead);
+                                
+                                // 🏷️ **범용 역할 결정** - 사이트 특화 없음
+                                let role = 'other';
+                                const tagName = element.tagName.toLowerCase();
+                                const className = element.className.toLowerCase();
+                                const idName = (element.id || '').toLowerCase();
+                                
+                                if (tagName.match(/^h[1-6]$/)) role = tagName;
+                                else if (tagName === 'article') role = 'article';
+                                else if (tagName === 'main' || element.getAttribute('role') === 'main') role = 'main';
+                                else if (tagName === 'section') role = 'section';
+                                else if (className.includes('post') || idName.includes('post')) role = 'post';
+                                else if (className.includes('article') || idName.includes('article')) role = 'article';
+                                else if (className.includes('content') || idName.includes('content')) role = 'content';
+                                else if (className.includes('item') || idName.includes('item')) role = 'item';
+                                else if (className.includes('card') || idName.includes('card')) role = 'card';
+                                else if (className.includes('entry') || idName.includes('entry')) role = 'entry';
+                                else if (element.hasAttribute('data-item') || element.hasAttribute('data-post')) role = 'data-item';
+                                
+                                anchors.push({
+                                    selector: generateBestSelector(element),
+                                    role: role,
+                                    absTop: absTop,
+                                    absLeft: absLeft,
+                                    offsetFromTop: offsetFromTop,
+                                    offsetFromLeft: offsetFromLeft,
+                                    width: rect.width,
+                                    height: rect.height,
+                                    textHead: textHead,
+                                    textHash: textHash,
+                                    score: score,
+                                    inViewport: inViewport
+                                });
+                            }
+                            
+                            // 🔍 **점수별 정렬 후 상위 8개 선택** (범위 확장)
+                            anchors.sort((a, b) => b.score - a.score);
+                            const selectedAnchors = anchors.slice(0, 8);
+                            
+                            console.log('🔍 앵커 후보 수집:', {
+                                total: allCandidates.length,
+                                processed: anchors.length,
+                                selected: selectedAnchors.length,
+                                inViewport: selectedAnchors.filter(a => a.inViewport).length,
+                                outViewport: selectedAnchors.filter(a => !a.inViewport).length
+                            });
+                            
+                            return selectedAnchors;
+                        }
+                        
+                        // 🔍 **뷰포트 범위 밖 DOM 요소 감지 강화**: collectLandmarks() 수정
+                        function collectLandmarks() {
+                            const landmarkSelectors = [
+                                'h1,h2,h3,h4,h5,h6',
+                                'article,section',
+                                'main,[role="main"]',
+                                'header,footer,nav,aside',
+                                // 🏷️ **범용 랜드마크 패턴**
+                                '.header,.footer,.sidebar,.menu,.nav',
+                                '.content,.main,.primary,.secondary',
+                                '.post,.article,.item,.card,.entry',
+                                '.list,.grid,.feed,.timeline',
+                                '[data-component],.component,[data-section]',
+                                '[role="banner"],[role="navigation"],[role="complementary"]',
+                                'img[alt],video,audio,.media',
+                                '.container,.wrapper,.layout'
                             ];
                             
                             const landmarks = [];
+                            const processedElements = new Set();
                             
                             for (const selector of landmarkSelectors) {
                                 const elements = document.querySelectorAll(selector);
                                 for (const element of elements) {
-                                    if (landmarks.length >= 12) break;
+                                    if (landmarks.length >= 15) break; // 🔍 **개수 증가**
+                                    if (processedElements.has(element)) continue;
+                                    processedElements.add(element);
                                     
                                     const rect = element.getBoundingClientRect();
-                                    if (rect.height > 10 && rect.width > 10) { // 최소 크기 필터
+                                    // 🔍 **최소 크기 조건만 확인** - 뷰포트 제한 제거
+                                    if (rect.height > 5 && rect.width > 5) {
                                         const absTop = mainScrollY + rect.top;
                                         const textContent = (element.textContent || '').trim();
                                         const textHead = textContent.substring(0, 60);
                                         const textHash = generateSimpleHash(textHead);
                                         
+                                        // 🏷️ **범용 역할 결정**
                                         let role = 'other';
-                                        if (element.tagName.match(/^H[1-6]$/)) role = element.tagName.toLowerCase();
-                                        else if (element.tagName === 'ARTICLE') role = 'article';
-                                        else if (element.tagName === 'MAIN') role = 'main';
-                                        else if (element.tagName === 'SECTION') role = 'section';
-                                        else if (element.className.includes('card')) role = 'card';
+                                        const tagName = element.tagName.toLowerCase();
+                                        const className = element.className.toLowerCase();
+                                        
+                                        if (tagName.match(/^h[1-6]$/)) role = tagName;
+                                        else if (tagName === 'article') role = 'article';
+                                        else if (tagName === 'main') role = 'main';
+                                        else if (tagName === 'section') role = 'section';
+                                        else if (tagName === 'header') role = 'header';
+                                        else if (tagName === 'footer') role = 'footer';
+                                        else if (tagName === 'nav') role = 'nav';
+                                        else if (tagName === 'aside') role = 'aside';
+                                        else if (className.includes('content')) role = 'content';
+                                        else if (className.includes('sidebar')) role = 'sidebar';
+                                        else if (className.includes('menu')) role = 'menu';
+                                        else if (className.includes('item') || className.includes('card')) role = 'item';
                                         
                                         landmarks.push({
                                             selector: generateBestSelector(element),
@@ -1493,8 +1650,16 @@ final class BFCacheTransitionSystem: NSObject {
                                         });
                                     }
                                 }
-                                if (landmarks.length >= 12) break;
+                                if (landmarks.length >= 15) break;
                             }
+                            
+                            console.log('🔍 랜드마크 수집:', {
+                                total: landmarks.length,
+                                roles: landmarks.reduce((acc, l) => {
+                                    acc[l.role] = (acc[l.role] || 0) + 1;
+                                    return acc;
+                                }, {})
+                            });
                             
                             return landmarks;
                         }
@@ -1525,11 +1690,15 @@ final class BFCacheTransitionSystem: NSObject {
                         
                         // 🎯 **5. 가상 리스트 힌트**
                         function detectVirtualList() {
+                            // 🏷️ **범용 가상 리스트 패턴**
                             const virtualListTypes = [
                                 { selector: '.react-virtualized', type: 'react-virtualized' },
-                                { selector: '[class*="RecyclerView"]', type: 'RecyclerView' },
+                                { selector: '[class*="virtualized"]', type: 'virtualized' },
                                 { selector: '[class*="virtual-list"]', type: 'virtual-list' },
-                                { selector: '[data-virtualized]', type: 'data-virtualized' }
+                                { selector: '[data-virtualized]', type: 'data-virtualized' },
+                                { selector: '[class*="RecyclerView"]', type: 'RecyclerView' },
+                                { selector: '[class*="infinite-scroll"]', type: 'infinite-scroll' },
+                                { selector: '.virtual-scroller', type: 'virtual-scroller' }
                             ];
                             
                             for (const {selector, type} of virtualListTypes) {
@@ -1543,7 +1712,7 @@ final class BFCacheTransitionSystem: NSObject {
                                     const afterPx = afterEl ? parseFloat(afterEl.getBoundingClientRect().height) || 0 : 0;
                                     
                                     // 평균 아이템 높이 추정
-                                    const visibleItems = element.querySelectorAll('[class*="item"], [data-index]');
+                                    const visibleItems = element.querySelectorAll('[class*="item"], [data-index], [class*="row"]');
                                     let itemHeightAvg = 0;
                                     if (visibleItems.length > 0) {
                                         const heights = Array.from(visibleItems).map(item => item.getBoundingClientRect().height);
@@ -1564,13 +1733,16 @@ final class BFCacheTransitionSystem: NSObject {
                         
                         // 🎯 **6. 무한스크롤 트리거**
                         function collectLoadTriggers() {
+                            // 🏷️ **범용 트리거 패턴**
                             const triggerSelectors = [
-                                '.load-more',
-                                '.show-more',
-                                '[data-testid*="load"]',
+                                '.load-more,.show-more,.btn-more,.btn-load',
+                                '[data-testid*="load"],[data-testid*="more"]',
                                 '[class*="load"][class*="more"]',
-                                '[aria-label*="더보기"]',
-                                '[aria-label*="more"]'
+                                '[class*="infinite-scroll"]',
+                                '[aria-label*="더보기"],[aria-label*="more"],[aria-label*="load"]',
+                                '[data-role="load"],[data-role="more"]',
+                                'button[class*="more"],button[class*="load"]',
+                                '#load-more,#show-more'
                             ];
                             
                             const triggers = [];
@@ -1578,15 +1750,15 @@ final class BFCacheTransitionSystem: NSObject {
                             for (const selector of triggerSelectors) {
                                 const elements = document.querySelectorAll(selector);
                                 for (const element of elements) {
-                                    if (triggers.length >= 6) break;
+                                    if (triggers.length >= 8) break; // 개수 증가
                                     
-                                    const label = element.innerText || element.getAttribute('aria-label') || '';
+                                    const label = element.innerText || element.getAttribute('aria-label') || element.className || '';
                                     triggers.push({
                                         selector: generateBestSelector(element),
                                         label: label.substring(0, 40)
                                     });
                                 }
-                                if (triggers.length >= 6) break;
+                                if (triggers.length >= 8) break;
                             }
                             
                             return triggers;
@@ -1650,13 +1822,14 @@ final class BFCacheTransitionSystem: NSObject {
                         
                         // 🎯 **8. 레이아웃 서명**
                         function generateLayoutKey() {
-                            const firstScreenElements = document.querySelectorAll('h1,h2,h3,.main,.content,article');
+                            const firstScreenElements = document.querySelectorAll('h1,h2,h3,.main,.content,article,.item,.post');
                             const texts = [];
                             const classes = [];
                             
-                            for (const element of Array.from(firstScreenElements).slice(0, 10)) {
+                            for (const element of Array.from(firstScreenElements).slice(0, 15)) { // 개수 증가
                                 const rect = element.getBoundingClientRect();
-                                if (rect.top < viewportHeight) { // 첫 화면에 있는 요소만
+                                // 🔍 **뷰포트 제한 완화** - 근처 요소도 포함
+                                if (rect.top < viewportHeight + 200) { // 200px 여유
                                     const text = (element.textContent || '').trim().substring(0, 20);
                                     if (text) texts.push(text);
                                     
@@ -1669,7 +1842,7 @@ final class BFCacheTransitionSystem: NSObject {
                             return generateSimpleHash(combined);
                         }
                         
-                        // 🌐 **개선된 셀렉터 생성**
+                        // 🌐 **개선된 셀렉터 생성** - 🏷️ 범용 패턴 활용
                         function generateBestSelector(element) {
                             if (!element || element.nodeType !== 1) return null;
                             
@@ -1759,6 +1932,7 @@ final class BFCacheTransitionSystem: NSObject {
                         console.log(`🎯 정밀 DOM 요소 기반 감지 완료: 앵커 ${anchors.length}개, 랜드마크 ${landmarks.length}개, 고정헤더 ${stickyTop}px`);
                         console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 퍼센트: (${percentX.toFixed(1)}, ${percentY.toFixed(1)})`);
                         console.log(`🎯 가상리스트: ${virtualList.type}, 트리거: ${loadTriggers.length}개, iframe: ${iframesV2.length}개`);
+                        console.log(`🔍 뷰포트 범위 확장: 앵커 ${anchors.filter(a => a.inViewport).length}개(뷰포트내) + ${anchors.filter(a => !a.inViewport).length}개(뷰포트외)`);
                         
                         resolve({
                             // 🎯 **1. 위치/크기 정밀 좌표 + 상대치**
@@ -1768,7 +1942,7 @@ final class BFCacheTransitionSystem: NSObject {
                             content: { width: contentWidth, height: contentHeight },
                             actualScrollable: { width: actualScrollableWidth, height: actualScrollableHeight },
                             
-                            // 🎯 **2-3. 앵커 + 랜드마크**
+                            // 🔍 **2-3. 뷰포트 범위 밖 포함 앵커 + 랜드마크**
                             anchors: anchors,
                             landmarks: landmarks,
                             
