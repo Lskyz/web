@@ -1,8 +1,9 @@
 //
 //  BFCacheSwipeTransition.swift
 //  🎯 **DOM 요소 기반 정밀 스크롤 복원 시스템**
-//  ✅ 1단계: 아이템/앵커 요소 기반 복원으로 변경
-//  🔄 뷰포트 내 기준 요소 식별 후 scrollIntoView 실행
+//  ✅ 뷰포트 앵커 + 랜드마크 기반 복원으로 단순화
+//  🚫 **컨테이너 스크롤 복원 제거** - 복잡성 감소
+//  🚫 **브라우저 차단 대응** - 점진적 스크롤 + 무한 스크롤 트리거
 //  📸 동적 DOM 요소 위치 추적
 //  ♾️ 무한 스크롤 대응 강화
 //  💾 스마트 메모리 관리 
@@ -194,17 +195,17 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - DOM 요소 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - DOM 요소 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - DOM 요소 복원 + 전체 다단계 복원")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - DOM 요소 복원 + 브라우저 차단 대응")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 DOM 요소 기반 복원 후 다단계 보정 시작")
+        TabPersistenceManager.debugMessages.append("🌐 DOM 요소 기반 복원 후 브라우저 차단 대응 시작")
         
-        // 🔧 **DOM 요소 복원 후 추가 보정 단계 실행 (기존 타이밍 유지)**
+        // 🔧 **DOM 요소 복원 후 브라우저 차단 대응 단계 실행**
         DispatchQueue.main.async {
-            self.performElementBasedProgressiveRestore(to: webView, completion: completion)
+            self.performBrowserBlockingWorkaround(to: webView, completion: completion)
         }
     }
     
@@ -244,20 +245,12 @@ struct BFCacheSnapshot: Codable {
         
         // jsState에서 뷰포트 앵커 정보 추출
         var viewportAnchorData = "null"
-        var scrollableElementsData = "[]"
         
         if let jsState = self.jsState {
             // 뷰포트 앵커 정보
             if let viewport = jsState["viewportAnchor"] as? [String: Any],
                let anchorJSON = convertToJSONString(viewport) {
                 viewportAnchorData = anchorJSON
-            }
-            
-            // 스크롤 요소 정보
-            if let scrollData = jsState["scroll"] as? [String: Any],
-               let elements = scrollData["elements"] as? [[String: Any]],
-               let elementsJSON = convertToJSONString(elements) {
-                scrollableElementsData = elementsJSON
             }
         }
         
@@ -269,13 +262,11 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentX = parseFloat('\(targetPercent.x)');
                 const targetPercentY = parseFloat('\(targetPercent.y)');
                 const viewportAnchor = \(viewportAnchorData);
-                const scrollableElements = \(scrollableElementsData);
                 
                 console.log('🎯 DOM 요소 기반 복원 시작:', {
                     target: [targetX, targetY],
                     percent: [targetPercentX, targetPercentY],
-                    hasAnchor: !!viewportAnchor,
-                    elementsCount: scrollableElements.length
+                    hasAnchor: !!viewportAnchor
                 });
                 
                 let restoredByElement = false;
@@ -322,59 +313,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **방법 2: 주요 스크롤 컨테이너 내 아이템 기반 복원**
-                if (!restoredByElement && scrollableElements.length > 0) {
-                    for (const scrollInfo of scrollableElements) {
-                        if (!scrollInfo.selector) continue;
-                        
-                        try {
-                            const scrollContainer = document.querySelector(scrollInfo.selector);
-                            if (scrollContainer && scrollContainer.children.length > 0) {
-                                // 컨테이너 내 아이템들 분석
-                                const items = Array.from(scrollContainer.children);
-                                const targetScrollTop = parseFloat(scrollInfo.top) || 0;
-                                
-                                if (targetScrollTop > 0 && items.length > 0) {
-                                    // 아이템 높이 추정
-                                    const firstItemHeight = items[0].getBoundingClientRect().height;
-                                    const estimatedItemIndex = Math.floor(targetScrollTop / firstItemHeight);
-                                    const targetItemIndex = Math.min(estimatedItemIndex, items.length - 1);
-                                    
-                                    if (targetItemIndex > 0) {
-                                        const targetItem = items[targetItemIndex];
-                                        
-                                        // 아이템으로 스크롤 (부드럽지 않게)
-                                        targetItem.scrollIntoView({ 
-                                            behavior: 'auto', 
-                                            block: 'start',
-                                            inline: 'start'
-                                        });
-                                        
-                                        // 컨테이너 내부 정밀 조정
-                                        const remainderScroll = targetScrollTop - (targetItemIndex * firstItemHeight);
-                                        scrollContainer.scrollTop = targetItem.offsetTop + remainderScroll;
-                                        
-                                        console.log('🎯 아이템 기반 복원 성공:', {
-                                            container: scrollInfo.selector,
-                                            itemIndex: targetItemIndex,
-                                            itemHeight: firstItemHeight,
-                                            remainder: remainderScroll
-                                        });
-                                        
-                                        restoredByElement = true;
-                                        usedMethod = 'containerItem';
-                                        anchorInfo = scrollInfo.selector + ' item[' + targetItemIndex + ']';
-                                        break;
-                                    }
-                                }
-                            }
-                        } catch(e) {
-                            console.log('🎯 컨테이너 아이템 복원 실패:', scrollInfo.selector, e.message);
-                        }
-                    }
-                }
-                
-                // 🎯 **방법 3: 페이지 내 랜드마크 요소 기반 복원**
+                // 🎯 **방법 2: 페이지 내 랜드마크 요소 기반 복원**
                 if (!restoredByElement) {
                     try {
                         // 페이지의 주요 랜드마크 요소들 찾기
@@ -439,7 +378,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **방법 4: 폴백 - 기존 좌표 기반 복원**
+                // 🎯 **방법 3: 폴백 - 기존 좌표 기반 복원**
                 if (!restoredByElement) {
                     console.log('🎯 DOM 요소 복원 실패 - 좌표 기반 폴백 실행');
                     
@@ -492,127 +431,172 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🎯 **DOM 요소 기반 점진적 복원 시스템 (기존 타이밍 유지)**
-    private func performElementBasedProgressiveRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤 + 무한 스크롤 트리거)**
+    private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 점진적 보정 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
         
-        // **1단계: DOM 요소 복원 검증 및 보정 (기존 30ms 유지)**
+        // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결)**
         restoreSteps.append((1, { stepCompletion in
-            let verifyDelay: TimeInterval = 0.03 // 🔧 기존 30ms 유지
-            TabPersistenceManager.debugMessages.append("🎯 1단계: DOM 요소 복원 검증 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+            let progressiveDelay: TimeInterval = 0.1
+            TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
-                let elementVerifyJS = """
+            DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
+                let progressiveScrollJS = """
                 (function() {
-                    try {
-                        const targetX = parseFloat('\(self.scrollPosition.x)');
-                        const targetY = parseFloat('\(self.scrollPosition.y)');
-                        const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 10.0; // 🎯 DOM 요소 기반은 허용 오차 확대
-                        
-                        console.log('🎯 DOM 요소 복원 검증:', {
-                            target: [targetX, targetY],
-                            current: [currentX, currentY],
-                            diff: [Math.abs(currentX - targetX), Math.abs(currentY - targetY)]
-                        });
-                        
-                        // 허용 오차 내라면 성공
-                        if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
-                            console.log('🎯 DOM 요소 복원 정확함:', {current: [currentX, currentY], target: [targetX, targetY]});
-                            return 'element_verified';
-                        } else {
-                            console.log('🎯 DOM 요소 복원 미세 보정 필요:', {current: [currentX, currentY], target: [targetX, targetY]});
+                    return new Promise(async (resolve) => {
+                        try {
+                            const targetX = parseFloat('\(self.scrollPosition.x)');
+                            const targetY = parseFloat('\(self.scrollPosition.y)');
+                            const tolerance = 50.0;
                             
-                            // 미세 보정 시도
-                            const diffX = targetX - currentX;
-                            const diffY = targetY - currentY;
+                            console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
                             
-                            // 차이가 크지 않으면 스크롤 조정
-                            if (Math.abs(diffX) < window.innerWidth && Math.abs(diffY) < window.innerHeight) {
-                                window.scrollBy(diffX, diffY);
-                                return 'element_corrected';
-                            } else {
-                                // 차이가 크면 다시 전체 복원
+                            // 🚫 **브라우저 차단 대응: 점진적 스크롤**
+                            let attempts = 0;
+                            const maxAttempts = 15;
+                            
+                            while (attempts < maxAttempts) {
+                                // 현재 위치 확인
+                                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                                const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                                
+                                // 목표 도달 확인
+                                if (Math.abs(currentX - targetX) <= tolerance && Math.abs(currentY - targetY) <= tolerance) {
+                                    console.log('🚫 점진적 스크롤 성공:', {current: [currentX, currentY], attempts: attempts + 1});
+                                    resolve('progressive_success');
+                                    return;
+                                }
+                                
+                                // 스크롤 한계 확인 (더 이상 스크롤할 수 없음)
+                                const maxScrollY = Math.max(
+                                    document.documentElement.scrollHeight - window.innerHeight,
+                                    document.body.scrollHeight - window.innerHeight,
+                                    0
+                                );
+                                const maxScrollX = Math.max(
+                                    document.documentElement.scrollWidth - window.innerWidth,
+                                    document.body.scrollWidth - window.innerWidth,
+                                    0
+                                );
+                                
+                                if (currentY >= maxScrollY && targetY > maxScrollY) {
+                                    console.log('🚫 Y축 스크롤 한계 도달:', {current: currentY, max: maxScrollY, target: targetY});
+                                    
+                                    // 🚫 **무한 스크롤 트리거 시도**
+                                    console.log('🚫 무한 스크롤 트리거 시도');
+                                    
+                                    // 스크롤 이벤트 강제 발생
+                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                                    
+                                    // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
+                                    try {
+                                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                                        document.dispatchEvent(touchEvent);
+                                    } catch(e) {
+                                        // TouchEvent 지원 안 되면 무시
+                                    }
+                                    
+                                    // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
+                                    const loadMoreButtons = document.querySelectorAll(
+                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
+                                    );
+                                    
+                                    loadMoreButtons.forEach(btn => {
+                                        if (btn && typeof btn.click === 'function') {
+                                            try {
+                                                btn.click();
+                                                console.log('🚫 "더보기" 버튼 클릭:', btn.className);
+                                            } catch(e) {
+                                                // 클릭 실패는 무시
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                // 스크롤 시도
                                 window.scrollTo(targetX, targetY);
-                                return 'element_reset';
+                                document.documentElement.scrollTop = targetY;
+                                document.documentElement.scrollLeft = targetX;
+                                document.body.scrollTop = targetY;
+                                document.body.scrollLeft = targetX;
+                                
+                                if (document.scrollingElement) {
+                                    document.scrollingElement.scrollTop = targetY;
+                                    document.scrollingElement.scrollLeft = targetX;
+                                }
+                                
+                                attempts++;
+                                
+                                // 대기 시간 (콘텐츠 로딩 대기)
+                                await new Promise(resolve => setTimeout(resolve, 200));
                             }
+                            
+                            // 최대 시도 후에도 실패
+                            const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            
+                            console.log('🚫 점진적 스크롤 한계 도달:', {
+                                target: [targetX, targetY],
+                                final: [finalX, finalY],
+                                attempts: maxAttempts
+                            });
+                            
+                            resolve('progressive_partial');
+                            
+                        } catch(e) { 
+                            console.error('🚫 점진적 스크롤 실패:', e);
+                            resolve('progressive_error'); 
                         }
-                    } catch(e) { 
-                        console.error('🎯 DOM 요소 복원 검증 실패:', e);
-                        return 'element_error'; 
-                    }
+                    });
                 })()
                 """
                 
-                webView.evaluateJavaScript(elementVerifyJS) { result, _ in
-                    let resultString = result as? String ?? "element_error"
-                    let success = (resultString.contains("verified") || resultString.contains("corrected"))
-                    TabPersistenceManager.debugMessages.append("🎯 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                webView.evaluateJavaScript(progressiveScrollJS) { result, _ in
+                    let resultString = result as? String ?? "progressive_error"
+                    let success = resultString.contains("success") || resultString.contains("partial")
+                    TabPersistenceManager.debugMessages.append("🚫 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
                     stepCompletion(success)
                 }
             }
         }))
         
-        // **2단계: 컨테이너 스크롤 복원 (기존 80ms 유지)**
-        if let jsState = self.jsState,
-           let scrollData = jsState["scroll"] as? [String: Any],
-           let elements = scrollData["elements"] as? [[String: Any]], !elements.isEmpty {
-            
-            TabPersistenceManager.debugMessages.append("🎯 2단계 컨테이너 스크롤 복원 단계 추가 - 요소 \(elements.count)개")
-            
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.08 // 🔧 기존 80ms 유지
-                TabPersistenceManager.debugMessages.append("🎯 2단계: 컨테이너 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let containerScrollJS = self.generateContainerScrollScript(elements)
-                    webView.evaluateJavaScript(containerScrollJS) { result, _ in
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🎯 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        } else {
-            TabPersistenceManager.debugMessages.append("🎯 2단계 스킵 - 컨테이너 스크롤 요소 없음")
-        }
-        
-        // **3단계: iframe 스크롤 복원 (기존 120ms 유지)**
+        // **2단계: iframe 스크롤 복원 (기존 유지)**
         if let jsState = self.jsState,
            let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
             
-            TabPersistenceManager.debugMessages.append("🎯 3단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
+            TabPersistenceManager.debugMessages.append("🖼️ 2단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
             
-            restoreSteps.append((3, { stepCompletion in
-                let waitTime: TimeInterval = 0.12 // 🔧 기존 120ms 유지
-                TabPersistenceManager.debugMessages.append("🎯 3단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
+            restoreSteps.append((2, { stepCompletion in
+                let waitTime: TimeInterval = 0.15
+                TabPersistenceManager.debugMessages.append("🖼️ 2단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                     let iframeScrollJS = self.generateIframeScrollScript(iframeData)
                     webView.evaluateJavaScript(iframeScrollJS) { result, _ in
                         let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🎯 3단계 완료: \(success ? "성공" : "실패")")
+                        TabPersistenceManager.debugMessages.append("🖼️ 2단계 완료: \(success ? "성공" : "실패")")
                         stepCompletion(success)
                     }
                 }
             }))
         } else {
-            TabPersistenceManager.debugMessages.append("🎯 3단계 스킵 - iframe 요소 없음")
+            TabPersistenceManager.debugMessages.append("🖼️ 2단계 스킵 - iframe 요소 없음")
         }
         
-        // **4단계: 최종 확인 및 보정 (기존 1초 유지)**
-        TabPersistenceManager.debugMessages.append("🎯 4단계 최종 보정 단계 추가 (필수)")
+        // **3단계: 최종 확인 및 보정**
+        TabPersistenceManager.debugMessages.append("✅ 3단계 최종 보정 단계 추가 (필수)")
         
-        restoreSteps.append((4, { stepCompletion in
-            let waitTime: TimeInterval = 1.0 // 🔧 기존 1초 유지
-            TabPersistenceManager.debugMessages.append("🎯 4단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+        restoreSteps.append((3, { stepCompletion in
+            let waitTime: TimeInterval = 0.8
+            TabPersistenceManager.debugMessages.append("✅ 3단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
@@ -624,9 +608,9 @@ struct BFCacheSnapshot: Codable {
                         // 네이티브 스크롤 위치 정밀 확인
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const tolerance = 20.0; // 🎯 최종 보정 허용 오차 (DOM 요소 기반이므로 관대하게)
+                        const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
                         
-                        console.log('🎯 DOM 요소 기반 최종 검증:', {
+                        console.log('✅ 브라우저 차단 대응 최종 검증:', {
                             target: [targetX, targetY],
                             current: [currentX, currentY],
                             tolerance: tolerance
@@ -634,7 +618,7 @@ struct BFCacheSnapshot: Codable {
                         
                         // 최종 보정 (필요시)
                         if (Math.abs(currentX - targetX) > tolerance || Math.abs(currentY - targetY) > tolerance) {
-                            console.log('🎯 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
+                            console.log('✅ 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
                             // 강력한 최종 보정 
                             window.scrollTo(targetX, targetY);
@@ -655,32 +639,32 @@ struct BFCacheSnapshot: Codable {
                         const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const isWithinTolerance = Math.abs(finalCurrentX - targetX) <= tolerance && Math.abs(finalCurrentY - targetY) <= tolerance;
                         
-                        console.log('🎯 DOM 요소 기반 최종보정 완료:', {
+                        console.log('✅ 브라우저 차단 대응 최종보정 완료:', {
                             current: [finalCurrentX, finalCurrentY],
                             target: [targetX, targetY],
                             tolerance: tolerance,
                             isWithinTolerance: isWithinTolerance,
-                            note: 'DOM요소기반'
+                            note: '브라우저차단대응'
                         });
                         
-                        // 🎯 **관대한 성공 판정** (DOM 요소 기반이므로)
-                        return true; // DOM 요소 기반은 항상 성공으로 처리
+                        // 🚫 **관대한 성공 판정** (브라우저 차단 고려)
+                        return true; // 브라우저 차단 대응은 항상 성공으로 처리
                     } catch(e) { 
-                        console.error('🎯 DOM 요소 기반 최종보정 실패:', e);
+                        console.error('✅ 브라우저 차단 대응 최종보정 실패:', e);
                         return true; // 에러도 성공으로 처리 (관대한 정책)
                     }
                 })()
                 """
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, _ in
-                    let success = (result as? Bool) ?? true // 🎯 DOM 요소 기반은 관대하게
-                    TabPersistenceManager.debugMessages.append("🎯 4단계 DOM 요소 기반 최종보정 완료: \(success ? "성공" : "성공(관대)")")
+                    let success = (result as? Bool) ?? true // 🚫 브라우저 차단 대응은 관대하게
+                    TabPersistenceManager.debugMessages.append("✅ 3단계 브라우저 차단 대응 최종보정 완료: \(success ? "성공" : "성공(관대)")")
                     stepCompletion(true) // 항상 성공
                 }
             }
         }))
         
-        TabPersistenceManager.debugMessages.append("🎯 총 \(restoreSteps.count)단계 DOM 요소 기반 점진적 보정 단계 구성 완료")
+        TabPersistenceManager.debugMessages.append("🚫 총 \(restoreSteps.count)단계 브라우저 차단 대응 단계 구성 완료")
         
         // 단계별 실행
         func executeNextStep() {
@@ -688,12 +672,12 @@ struct BFCacheSnapshot: Codable {
                 let stepInfo = restoreSteps[currentStep]
                 currentStep += 1
                 
-                TabPersistenceManager.debugMessages.append("🎯 \(stepInfo.step)단계 실행 시작")
+                TabPersistenceManager.debugMessages.append("🚫 \(stepInfo.step)단계 실행 시작")
                 
                 let stepStart = Date()
                 stepInfo.action { success in
                     let stepDuration = Date().timeIntervalSince(stepStart)
-                    TabPersistenceManager.debugMessages.append("🎯 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
+                    TabPersistenceManager.debugMessages.append("🚫 단계 \(stepInfo.step) 소요시간: \(String(format: "%.2f", stepDuration))초")
                     stepResults.append(success)
                     executeNextStep()
                 }
@@ -704,89 +688,16 @@ struct BFCacheSnapshot: Codable {
                 let totalSteps = stepResults.count
                 let overallSuccess = successCount > totalSteps / 2
                 
-                TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 점진적 보정 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("🎯 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
-                completion(true) // 🎯 DOM 요소 기반은 항상 성공으로 처리
+                TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
+                TabPersistenceManager.debugMessages.append("🚫 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
+                completion(true) // 🚫 브라우저 차단 대응은 항상 성공으로 처리
             }
         }
         
         executeNextStep()
     }
     
-    // 🎯 **컨테이너 스크롤 복원 스크립트** (기존 유지)
-    private func generateContainerScrollScript(_ elements: [[String: Any]]) -> String {
-        let elementsJSON = convertToJSONString(elements) ?? "[]"
-        return """
-        (function() {
-            try {
-                const elements = \(elementsJSON);
-                let restored = 0;
-                
-                console.log('🎯 컨테이너 스크롤 복원 시작:', elements.length, '개 요소');
-                
-                for (const item of elements) {
-                    if (!item.selector) continue;
-                    
-                    // 다양한 selector 시도
-                    const selectors = [
-                        item.selector,
-                        item.selector.replace(/\\[\\d+\\]/g, ''), // 인덱스 제거
-                        item.className ? '.' + item.className : null,
-                        item.id ? '#' + item.id : null
-                    ].filter(s => s);
-                    
-                    for (const sel of selectors) {
-                        const elements = document.querySelectorAll(sel);
-                        if (elements.length > 0) {
-                            elements.forEach(el => {
-                                if (el && typeof el.scrollTop === 'number') {
-                                    const targetTop = parseFloat(item.top || 0);
-                                    const targetLeft = parseFloat(item.left || 0);
-                                    
-                                    el.scrollTop = targetTop;
-                                    el.scrollLeft = targetLeft;
-                                    
-                                    console.log('🎯 컨테이너 복원:', sel, [targetLeft, targetTop]);
-                                    
-                                    // 🌐 동적 콘텐츠 상태 확인 및 복원
-                                    if (item.dynamicAttrs) {
-                                        for (const [key, value] of Object.entries(item.dynamicAttrs)) {
-                                            if (el.getAttribute(key) !== value) {
-                                                console.log('🌐 콘텐츠 불일치 감지:', sel, key, value);
-                                                el.setAttribute(key, value);
-                                            }
-                                        }
-                                    }
-                                    
-                                    // 스크롤 이벤트 강제 발생
-                                    try {
-                                        el.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                        el.style.scrollBehavior = 'auto';
-                                        el.scrollTop = targetTop;
-                                        el.scrollLeft = targetLeft;
-                                    } catch(e) {
-                                        // 개별 요소 에러는 무시
-                                    }
-                                    
-                                    restored++;
-                                }
-                            });
-                            break;
-                        }
-                    }
-                }
-                
-                console.log('🎯 컨테이너 스크롤 복원 완료:', restored, '개');
-                return restored > 0;
-            } catch(e) {
-                console.error('컨테이너 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
-    }
-    
-    // 🎯 **iframe 스크롤 복원 스크립트** (기존 유지)
+    // 🖼️ **iframe 스크롤 복원 스크립트** (기존 유지)
     private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
         let iframeJSON = convertToJSONString(iframeData) ?? "[]"
         return """
@@ -795,7 +706,7 @@ struct BFCacheSnapshot: Codable {
                 const iframes = \(iframeJSON);
                 let restored = 0;
                 
-                console.log('🎯 iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
+                console.log('🖼️ iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
                 
                 for (const iframeInfo of iframes) {
                     const iframe = document.querySelector(iframeInfo.selector);
@@ -817,7 +728,7 @@ struct BFCacheSnapshot: Codable {
                             }
                             
                             restored++;
-                            console.log('🎯 iframe 복원:', iframeInfo.selector, [targetX, targetY]);
+                            console.log('🖼️ iframe 복원:', iframeInfo.selector, [targetX, targetY]);
                         } catch(e) {
                             // 🌐 Cross-origin iframe 처리
                             try {
@@ -825,9 +736,9 @@ struct BFCacheSnapshot: Codable {
                                     type: 'restoreScroll',
                                     scrollX: parseFloat(iframeInfo.scrollX || 0),
                                     scrollY: parseFloat(iframeInfo.scrollY || 0),
-                                    elementBased: true // 🎯 DOM 요소 기반 모드 플래그
+                                    browserBlockingWorkaround: true // 🚫 브라우저 차단 대응 모드 플래그
                                 }, '*');
-                                console.log('🎯 Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
+                                console.log('🖼️ Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
                                 restored++;
                             } catch(crossOriginError) {
                                 console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
@@ -836,7 +747,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                console.log('🎯 iframe 스크롤 복원 완료:', restored, '개');
+                console.log('🖼️ iframe 스크롤 복원 완료:', restored, '개');
                 return restored > 0;
             } catch(e) {
                 console.error('iframe 스크롤 복원 실패:', e);
@@ -1110,10 +1021,6 @@ final class BFCacheTransitionSystem: NSObject {
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
             dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
-            if let scrollData = jsState["scroll"] as? [String: Any],
-               let elements = scrollData["elements"] as? [[String: Any]] {
-                dbg("🎯 캡처된 스크롤 요소: \(elements.count)개")
-            }
             if let viewportAnchor = jsState["viewportAnchor"] as? [String: Any] {
                 dbg("🎯 캡처된 뷰포트 앵커: \(viewportAnchor["selector"] as? String ?? "none")")
             }
@@ -1227,10 +1134,10 @@ final class BFCacheTransitionSystem: NSObject {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 🎯 **DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateElementBasedScrollCaptureScript()
+            let jsScript = generateSimplifiedScrollCaptureScript()
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let data = result as? [String: Any] {
@@ -1292,8 +1199,8 @@ final class BFCacheTransitionSystem: NSObject {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **핵심 개선: DOM 요소 기반 스크롤 감지 JavaScript 생성**
-    private func generateElementBasedScrollCaptureScript() -> String {
+    // 🎯 **단순화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (컨테이너 제거)**
+    private func generateSimplifiedScrollCaptureScript() -> String {
         return """
         (function() {
             return new Promise(resolve => {
@@ -1436,138 +1343,7 @@ final class BFCacheTransitionSystem: NSObject {
                             return null;
                         }
                         
-                        // 🎯 **2단계: 스크롤 요소 감지 (기존 로직 유지, 2000개)**
-                        function findAllScrollableElements() {
-                            const scrollables = [];
-                            const maxElements = 2000; // 🎯 **기존 유지**
-                            
-                            console.log('🎯 스크롤 감지: 최대 ' + maxElements + '개 요소 감지');
-                            
-                            // 1) 명시적 overflow 스타일을 가진 요소들 
-                            const explicitScrollables = document.querySelectorAll('*');
-                            let count = 0;
-                            
-                            for (const el of explicitScrollables) {
-                                if (count >= maxElements) break;
-                                
-                                const style = window.getComputedStyle(el);
-                                const overflowY = style.overflowY;
-                                const overflowX = style.overflowX;
-                                
-                                // 스크롤 가능한 요소 판별
-                                if ((overflowY === 'auto' || overflowY === 'scroll' || overflowX === 'auto' || overflowX === 'scroll') &&
-                                    (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)) {
-                                    
-                                    const scrollTop = parseFloat(el.scrollTop) || 0;
-                                    const scrollLeft = parseFloat(el.scrollLeft) || 0;
-                                    
-                                    // 🎯 **0.1px 이상이면 모두 저장**
-                                    if (scrollTop > 0.1 || scrollLeft > 0.1) {
-                                        const selector = generateBestSelector(el);
-                                        if (selector) {
-                                            // 🌐 동적 콘텐츠 식별을 위한 데이터 속성 저장
-                                            const dynamicAttrs = {};
-                                            for (const attr of el.attributes) {
-                                                if (attr.name.startsWith('data-')) {
-                                                    dynamicAttrs[attr.name] = attr.value;
-                                                }
-                                            }
-                                            
-                                            // 상대적 위치 계산
-                                            const maxScrollTop = el.scrollHeight - el.clientHeight;
-                                            const maxScrollLeft = el.scrollWidth - el.clientWidth;
-                                            
-                                            scrollables.push({
-                                                selector: selector,
-                                                top: scrollTop,
-                                                left: scrollLeft,
-                                                topPercent: maxScrollTop > 0 ? (scrollTop / maxScrollTop * 100) : 0,
-                                                leftPercent: maxScrollLeft > 0 ? (scrollLeft / maxScrollLeft * 100) : 0,
-                                                maxTop: maxScrollTop,
-                                                maxLeft: maxScrollLeft,
-                                                actualMaxTop: el.scrollHeight,
-                                                actualMaxLeft: el.scrollWidth,
-                                                id: el.id || '',
-                                                className: el.className || '',
-                                                tagName: el.tagName.toLowerCase(),
-                                                dynamicAttrs: dynamicAttrs
-                                            });
-                                            count++;
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // 🎯 **2) 범용 커뮤니티/SPA 사이트 컨테이너들 (기존 패턴 유지)**
-                            const commonScrollContainers = [
-                                '.scroll-container', '.scrollable', '.content', '.main', '.body',
-                                '[data-scroll]', '[data-scrollable]', '.overflow-auto', '.overflow-scroll',
-                                '.list', '.feed', '.timeline', '.board', '.gallery', '.gall_list', '.article-board',
-                                '.infinite-scroll', '.virtual-list', '.lazy-load', '.pagination-container',
-                                '.posts-container', '.comments-list', '.thread-list', '.message-list',
-                                '.activity-feed', '.news-feed', '.social-feed', '.content-stream',
-                                '.card-list', '.grid-container', '.masonry', '.waterfall-layout',
-                                '.tweet-list', '.post-stream', '.story-list', '.video-list',
-                                '.chat-messages', '.notification-list', '.search-results',
-                                '.mobile-list', '.touch-scroll', '.swipe-container',
-                                '.ArticleList', '.CommentArticleList', '.List.CommentArticleList',
-                                '.content.location_fix', '.list_board', '.RisingArticleList',
-                                '#ct[role="main"]', '.CafeMain', '.article-content',
-                                '.container-fluid', '.main-container', '.page-content',
-                                '.content-wrapper', '.app-content', '.site-content'
-                            ];
-                            
-                            for (const selector of commonScrollContainers) {
-                                if (count >= maxElements) break;
-                                
-                                const elements = document.querySelectorAll(selector);
-                                for (const el of elements) {
-                                    if (count >= maxElements) break;
-                                    
-                                    const scrollTop = parseFloat(el.scrollTop) || 0;
-                                    const scrollLeft = parseFloat(el.scrollLeft) || 0;
-                                    
-                                    // 🎯 **0.1px 이상이면 모두 저장**
-                                    if ((scrollTop > 0.1 || scrollLeft > 0.1) && 
-                                        !scrollables.some(s => s.selector === generateBestSelector(el))) {
-                                        
-                                        // 🌐 동적 속성 수집
-                                        const dynamicAttrs = {};
-                                        for (const attr of el.attributes) {
-                                            if (attr.name.startsWith('data-')) {
-                                                dynamicAttrs[attr.name] = attr.value;
-                                            }
-                                        }
-                                        
-                                        // 상대적 위치 계산
-                                        const maxScrollTop = el.scrollHeight - el.clientHeight;
-                                        const maxScrollLeft = el.scrollWidth - el.clientWidth;
-                                        
-                                        scrollables.push({
-                                            selector: generateBestSelector(el) || selector,
-                                            top: scrollTop,
-                                            left: scrollLeft,
-                                            topPercent: maxScrollTop > 0 ? (scrollTop / maxScrollTop * 100) : 0,
-                                            leftPercent: maxScrollLeft > 0 ? (scrollLeft / maxScrollLeft * 100) : 0,
-                                            maxTop: maxScrollTop,
-                                            maxLeft: maxScrollLeft,
-                                            actualMaxTop: el.scrollHeight,
-                                            actualMaxLeft: el.scrollWidth,
-                                            id: el.id || '',
-                                            className: el.className || '',
-                                            tagName: el.tagName.toLowerCase(),
-                                            dynamicAttrs: dynamicAttrs
-                                        });
-                                        count++;
-                                    }
-                                }
-                            }
-                            
-                            console.log('🎯 스크롤 요소 감지 완료: ' + count + '/' + maxElements + '개');
-                            return scrollables;
-                        }
-                        
-                        // 🖼️ **3단계: iframe 스크롤 감지 (기존 유지)**
+                        // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
                         function detectIframeScrolls() {
                             const iframes = [];
                             const iframeElements = document.querySelectorAll('iframe');
@@ -1689,10 +1465,9 @@ final class BFCacheTransitionSystem: NSObject {
                             return path.join(' > ');
                         }
                         
-                        // 🎯 **메인 실행 - DOM 요소 기반 데이터 수집**
-                        const viewportAnchor = identifyViewportAnchor(); // 🎯 **새로 추가**
-                        const scrollableElements = findAllScrollableElements();
-                        const iframeScrolls = detectIframeScrolls();
+                        // 🎯 **메인 실행 - DOM 요소 기반 데이터 수집 (컨테이너 제거)**
+                        const viewportAnchor = identifyViewportAnchor(); // 🎯 **뷰포트 앵커**
+                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe만 유지**
                         
                         // 메인 스크롤 위치도 parseFloat 정밀도 적용 
                         const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
@@ -1708,18 +1483,18 @@ final class BFCacheTransitionSystem: NSObject {
                         const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
                         const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
                         
-                        console.log(`🎯 DOM 요소 기반 감지 완료: 앵커 ${viewportAnchor ? '1' : '0'}개, 일반 ${scrollableElements.length}개, iframe ${iframeScrolls.length}개`);
+                        console.log(`🎯 단순화된 DOM 요소 기반 감지 완료: 앵커 ${viewportAnchor ? '1' : '0'}개, iframe ${iframeScrolls.length}개`);
                         console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight}) 콘텐츠: (${contentWidth}, ${contentHeight})`);
                         console.log(`🎯 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
                         resolve({
-                            viewportAnchor: viewportAnchor, // 🎯 **새로 추가: 뷰포트 앵커 정보**
+                            viewportAnchor: viewportAnchor, // 🎯 **뷰포트 앵커 정보**
                             scroll: { 
                                 x: mainScrollX, 
-                                y: mainScrollY,
-                                elements: scrollableElements
+                                y: mainScrollY
+                                // 🚫 **컨테이너 스크롤 요소 제거**
                             },
-                            iframes: iframeScrolls,
+                            iframes: iframeScrolls, // 🖼️ **iframe은 유지**
                             href: window.location.href,
                             title: document.title,
                             timestamp: Date.now(),
@@ -1738,10 +1513,10 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         });
                     } catch(e) { 
-                        console.error('🎯 DOM 요소 기반 감지 실패:', e);
+                        console.error('🎯 단순화된 DOM 요소 기반 감지 실패:', e);
                         resolve({
                             viewportAnchor: null,
-                            scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0, elements: [] },
+                            scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                             iframes: [],
                             href: window.location.href,
                             title: document.title,
@@ -2061,7 +1836,7 @@ final class BFCacheTransitionSystem: NSObject {
         // 📸 **포괄적 네비게이션 감지 등록**
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🎯 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🎯 단순화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     // 🧵 **기존 제스처 정리**
@@ -2473,7 +2248,7 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // 🎯 **DOM 요소 기반 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
+    // 🚫 **브라우저 차단 대응 타이밍을 적용한 네비게이션 수행 - 타임아웃 제거**
     private func performNavigationWithFixedTiming(context: TransitionContext, previewContainer: UIView) {
         guard let stateModel = context.stateModel else {
             // 실패 시 즉시 정리
@@ -2492,13 +2267,13 @@ final class BFCacheTransitionSystem: NSObject {
             dbg("🏄‍♂️ 사파리 스타일 앞으로가기 완료")
         }
         
-        // 🎯 **DOM 요소 기반 BFCache 복원**
-        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
+        // 🚫 **브라우저 차단 대응 BFCache 복원**
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             // BFCache 복원 완료 또는 실패 시 즉시 정리 (깜빡임 최소화)
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - DOM 요소 기반 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache \(success ? "성공" : "실패")")
             }
         }
         
@@ -2507,8 +2282,8 @@ final class BFCacheTransitionSystem: NSObject {
         dbg("🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지")
     }
     
-    // 🎯 **DOM 요소 기반 BFCache 복원** 
-    private func tryElementBasedBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
+    // 🚫 **브라우저 차단 대응 BFCache 복원** 
+    private func tryBrowserBlockingBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
@@ -2517,12 +2292,12 @@ final class BFCacheTransitionSystem: NSObject {
         
         // BFCache에서 스냅샷 가져오기
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // BFCache 히트 - DOM 요소 기반 복원
+            // BFCache 히트 - 브라우저 차단 대응 복원
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ DOM 요소 기반 BFCache 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ 브라우저 차단 대응 BFCache 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ DOM 요소 기반 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 브라우저 차단 대응 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -2581,7 +2356,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goBack()
-        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .back) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2597,7 +2372,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         stateModel.goForward()
-        tryElementBasedBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
+        tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: .forward) { _ in
             // 버튼 네비게이션은 콜백 무시
         }
     }
@@ -2624,7 +2399,7 @@ final class BFCacheTransitionSystem: NSObject {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
-                console.log('🎯 DOM 요소 기반 BFCache 페이지 복원');
+                console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
                 
                 // 🌐 동적 콘텐츠 새로고침 (필요시)
                 if (window.location.pathname.includes('/feed') ||
@@ -2642,26 +2417,51 @@ final class BFCacheTransitionSystem: NSObject {
         
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
-                console.log('📸 DOM 요소 기반 BFCache 페이지 저장');
+                console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
             }
         });
         
-        // 🎯 Cross-origin iframe DOM 요소 기반 스크롤 복원 리스너
+        // 🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원 리스너
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
                 try {
                     const targetX = parseFloat(event.data.scrollX) || 0;
                     const targetY = parseFloat(event.data.scrollY) || 0;
-                    const elementBased = event.data.elementBased || false;
+                    const browserBlockingWorkaround = event.data.browserBlockingWorkaround || false;
                     
-                    console.log('🎯 Cross-origin iframe DOM 요소 기반 스크롤 복원:', targetX, targetY, elementBased ? '(DOM 요소 모드)' : '');
+                    console.log('🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원:', targetX, targetY, browserBlockingWorkaround ? '(브라우저 차단 대응 모드)' : '');
                     
-                    // 🎯 DOM 요소 기반 스크롤 설정
-                    window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
+                    // 🚫 브라우저 차단 대응 스크롤 설정
+                    if (browserBlockingWorkaround) {
+                        // 점진적 스크롤 시도
+                        let attempts = 0;
+                        const maxAttempts = 10;
+                        
+                        const tryScroll = () => {
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.documentElement.scrollLeft = targetX;
+                            document.body.scrollTop = targetY;
+                            document.body.scrollLeft = targetX;
+                            
+                            const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            
+                            if ((Math.abs(currentX - targetX) > 10 || Math.abs(currentY - targetY) > 10) && attempts < maxAttempts) {
+                                attempts++;
+                                setTimeout(tryScroll, 150);
+                            }
+                        };
+                        
+                        tryScroll();
+                    } else {
+                        // 기본 스크롤
+                        window.scrollTo(targetX, targetY);
+                        document.documentElement.scrollTop = targetY;
+                        document.documentElement.scrollLeft = targetX;
+                        document.body.scrollTop = targetY;
+                        document.body.scrollLeft = targetX;
+                    }
                     
                 } catch(e) {
                     console.error('Cross-origin iframe 스크롤 복원 실패:', e);
@@ -2675,7 +2475,7 @@ final class BFCacheTransitionSystem: NSObject {
     // MARK: - 디버그
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache🎯] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
     }
 }
 
@@ -2697,7 +2497,7 @@ extension BFCacheTransitionSystem {
         // 제스처 설치 + 📸 포괄적 네비게이션 감지
         shared.setupGestures(for: webView, stateModel: stateModel)
         
-        TabPersistenceManager.debugMessages.append("✅ 🎯 DOM 요소 기반 BFCache 시스템 설치 완료 (뷰포트 앵커 + 아이템 기반 복원)")
+        TabPersistenceManager.debugMessages.append("✅ 🚫 브라우저 차단 대응 BFCache 시스템 설치 완료 (뷰포트 앵커 + 점진적 스크롤)")
     }
     
     // CustomWebView의 dismantleUIView에서 호출
@@ -2720,7 +2520,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🎯 DOM 요소 기반 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 BFCache 시스템 제거 완료")
     }
     
     // 버튼 네비게이션 래퍼
