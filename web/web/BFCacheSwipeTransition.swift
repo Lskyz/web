@@ -996,7 +996,7 @@ extension BFCacheTransitionSystem {
                   oldURL != newURL else { return }
             
             // 📸 **URL이 바뀌는 순간 이전 페이지 캡처**
-            if let currentRecord = stateModel.dataModel.currentPageRecord {
+            if stateModel.dataModel.currentPageRecord != nil {
                 shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
                 shared.dbg("📸 URL 변경 감지 - 떠나기 전 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
             }
