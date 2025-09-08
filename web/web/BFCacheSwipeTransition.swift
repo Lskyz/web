@@ -5,6 +5,7 @@
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🌐 **무한스크롤 특화** - 극거리(1만px+) 복원 지원
+//  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
 //
 
 import UIKit
@@ -273,28 +274,28 @@ struct BFCacheSnapshot: Codable {
                     tier1: {
                         name: '정밀앵커',
                         maxDistance: window.innerHeight * 2,      // 0-2화면 (0-1600px)
-                        tolerance: 20,                            // 20px 허용 오차
+                        tolerance: 50,                            // 50px 허용 오차
                         anchors: primaryAnchor ? [primaryAnchor] : [],
                         description: '뷰포트 정밀 복원'
                     },
                     tier2: {
                         name: '보조앵커',
                         maxDistance: window.innerHeight * 10,     // 2-10화면 (1600px-8000px)
-                        tolerance: 100,                           // 100px 허용 오차
+                        tolerance: 50,                            // 50px 허용 오차
                         anchors: auxiliaryAnchors,
                         description: '세션 근거리 탐색'
                     },
                     tier3: {
                         name: '랜드마크앵커',
                         maxDistance: window.innerHeight * 50,     // 10-50화면 (8000px-40000px)
-                        tolerance: 500,                           // 500px 허용 오차
+                        tolerance: 50,                            // 50px 허용 오차
                         anchors: landmarkAnchors,
                         description: '깊은 탐색 복원'
                     },
                     tier4: {
                         name: '구조적앵커',
                         maxDistance: Infinity,                    // 50화면+ (40000px+)
-                        tolerance: 2000,                          // 2000px 허용 오차
+                        tolerance: 50,                            // 50px 허용 오차
                         anchors: structuralAnchors,
                         description: '극한 스크롤 복원'
                     }
@@ -499,11 +500,18 @@ struct BFCacheSnapshot: Codable {
                     try {
                         console.log('🎯 Tier 1 정밀 요소 폴백 시작');
                         
-                        // 고유 ID/데이터 속성을 가진 정밀 요소들
+                        // 🔧 **범용 정밀 selector 패턴 (대폭 확장)**
                         const precisionSelectors = [
-                            '[id]', '[data-testid]', '[data-id]', '[data-key]',
-                            '.card[id]', '.item[id]', '.post[id]', '.entry[id]',
-                            'article[id]', 'section[id]', 'main[id]', '[role="main"][id]'
+                            // 고유성이 높은 요소들 (ID/고유 속성)
+                            '[id]:not([id=""])', '[data-testid]', '[data-id]', '[data-key]',
+                            '[data-item-id]', '[data-article-id]', '[data-post-id]', '[data-comment-id]',
+                            '[data-user-id]', '[data-content-id]', '[data-thread-id]', '[data-message-id]',
+                            // Vue/React/Angular 등에서 고유 키 속성
+                            '[data-v-*][id]', '[data-reactid]', '[key]', '[ng-reflect-*]',
+                            // 웹 컴포넌트 관련
+                            '[data-component-id]', '[data-widget-id]', '[data-module-id]',
+                            // CMS/블로그 플랫폼 공통
+                            '[data-entry-id]', '[data-slug]', '[data-permalink]'
                         ];
                         
                         const result = tryElementBasedRestore(precisionSelectors, targetX, targetY, tolerance, 50);
@@ -523,116 +531,158 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🔧 **Tier 2: 콘텐츠 아이템 기반 폴백 (2-10화면)**
+                // 🔧 **Tier 2-4: 통합된 범용 요소 기반 폴백 (거리별 구분만)**
                 function tryContentItemFallback(targetX, targetY, tolerance) {
-                    try {
-                        console.log('🎯 Tier 2 콘텐츠 아이템 폴백 시작');
-                        
-                        // 콘텐츠 단위 요소들 (포스트, 상품, 글 등)
-                        const contentSelectors = [
-                            '.post', '.article', '.item', '.card', '.entry', '.product',
-                            '.list-item', '.feed-item', '.content-item', '.row',
-                            'article', 'li', '.tile', '.cell', '.comment',
-                            'h1, h2, h3', '.title', '.headline', '.subject'
-                        ];
-                        
-                        const result = tryElementBasedRestore(contentSelectors, targetX, targetY, tolerance, 200);
-                        
-                        if (result.success) {
-                            result.anchorInfo = `content_${result.anchorInfo}`;
-                            console.log('✅ Tier 2 콘텐츠 아이템 폴백 성공:', result);
-                        }
-                        
-                        return result;
-                    } catch(e) {
-                        return { 
-                            success: false, 
-                            error: `Tier 2 폴백 예외: ${e.message}`,
-                            debug: { exception: e.message }
-                        };
-                    }
+                    return tryUniversalElementFallback(targetX, targetY, tolerance, 2, 200);
                 }
                 
-                // 🔧 **Tier 3: 페이지 섹션 기반 폴백 (10-50화면)**
                 function tryPageSectionFallback(targetX, targetY, tolerance) {
+                    return tryUniversalElementFallback(targetX, targetY, tolerance, 3, 100);
+                }
+                
+                function tryPageStructureFallback(targetX, targetY, tolerance) {
+                    // 🔧 **구조적 복원: 페이지 높이 기반 비례 조정**
+                    const proportionalResult = tryProportionalRestore(targetX, targetY, tolerance);
+                    if (proportionalResult.success) {
+                        console.log('✅ Tier 4 비례 조정 성공:', proportionalResult);
+                        return proportionalResult;
+                    }
+                    
+                    // 통합 범용 요소 기반 복원
+                    const elementResult = tryUniversalElementFallback(targetX, targetY, tolerance, 4, 50);
+                    
+                    if (elementResult.success) {
+                        return elementResult;
+                    }
+                    
+                    // 🔧 **최후 수단: 좌표 기반 복원**
+                    console.log('🎯 Tier 4 최후 수단: 좌표 기반 복원');
+                    performScrollTo(targetX, targetY);
+                    
+                    return {
+                        success: true,
+                        anchorInfo: `coords(${targetX},${targetY})`,
+                        debug: { 
+                            method: 'coordinate_fallback',
+                            proportionalFailed: proportionalResult.error,
+                            elementsFailed: elementResult.error
+                        }
+                    };
+                }
+                
+                // 🔧 **새로운 통합 범용 요소 기반 폴백 함수**
+                function tryUniversalElementFallback(targetX, targetY, tolerance, tierNum, maxElements) {
                     try {
-                        console.log('🎯 Tier 3 페이지 섹션 폴백 시작');
+                        console.log(`🎯 Tier ${tierNum} 통합 범용 요소 폴백 시작`);
                         
-                        // 페이지 구조 요소들 (섹션, 영역 등)
-                        const sectionSelectors = [
-                            'section', 'main', 'article', 'aside', 'nav',
-                            '.section', '.container', '.wrapper', '.content',
-                            '.header', '.footer', '.sidebar', '.main-content',
-                            '[role="main"]', '[role="banner"]', '[role="contentinfo"]',
-                            '.infinite-scroll-item', '.page-section', '.block'
+                        // 🔧 **대폭 확장된 범용 selector 패턴 (모든 계층 공통)**
+                        const universalSelectors = [
+                            // 기본 목록/테이블 요소들
+                            'li', 'tr', 'td', 'th', 'dt', 'dd',
+                            
+                            // 범용 콘텐츠 컨테이너들 (클래스 기반)
+                            'div[class*="item"]', 'div[class*="list"]', 'div[class*="card"]',
+                            'div[class*="post"]', 'div[class*="article"]', 'div[class*="entry"]',
+                            'div[class*="content"]', 'div[class*="box"]', 'div[class*="container"]',
+                            'div[class*="row"]', 'div[class*="cell"]', 'div[class*="tile"]',
+                            'div[class*="block"]', 'div[class*="widget"]', 'div[class*="module"]',
+                            'div[class*="section"]', 'div[class*="panel"]', 'div[class*="wrapper"]',
+                            
+                            // 소셜미디어/커뮤니티 공통
+                            'div[class*="comment"]', 'div[class*="reply"]', 'div[class*="feed"]',
+                            'div[class*="thread"]', 'div[class*="message"]', 'div[class*="chat"]',
+                            'div[class*="status"]', 'div[class*="update"]', 'div[class*="note"]',
+                            
+                            // 이커머스/쇼핑몰 공통
+                            'div[class*="product"]', 'div[class*="goods"]', 'div[class*="shop"]',
+                            'div[class*="cart"]', 'div[class*="order"]', 'div[class*="price"]',
+                            
+                            // 뉴스/미디어 공통
+                            'div[class*="news"]', 'div[class*="media"]', 'div[class*="story"]',
+                            'div[class*="headline"]', 'div[class*="summary"]', 'div[class*="excerpt"]',
+                            
+                            // 헤딩 요소들
+                            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                            
+                            // 인터랙티브 요소들
+                            'a[href]', 'button', 'input', 'textarea', 'select',
+                            'form', 'fieldset', 'legend', 'label',
+                            
+                            // 시맨틱 HTML5 요소들
+                            'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                            'figure', 'figcaption', 'details', 'summary', 'dialog',
+                            
+                            // 미디어 요소들
+                            'img', 'video', 'audio', 'iframe', 'embed', 'object',
+                            'canvas', 'svg', 'picture', 'source',
+                            
+                            // 테이블 관련
+                            'table', 'thead', 'tbody', 'tfoot', 'caption', 'colgroup', 'col',
+                            
+                            // 리스트 관련
+                            'ul', 'ol', 'dl', 'menu', 'dir',
+                            
+                            // 텍스트 포맷팅
+                            'p', 'span', 'div', 'pre', 'code', 'blockquote', 'cite',
+                            'strong', 'em', 'b', 'i', 'u', 's', 'mark', 'del', 'ins',
+                            
+                            // 무한스크롤/페이지네이션 관련
+                            'div[class*="infinite"]', 'div[class*="lazy"]', 'div[class*="load"]',
+                            'div[class*="more"]', 'div[class*="next"]', 'div[class*="page"]',
+                            'div[class*="pagination"]', 'div[class*="pager"]', 'div[class*="nav"]',
+                            
+                            // 광고/프로모션 관련
+                            'div[class*="ad"]', 'div[class*="banner"]', 'div[class*="promo"]',
+                            'div[class*="sponsor"]', 'div[class*="recommend"]',
+                            
+                            // 타임라인/날짜 관련
+                            'div[class*="time"]', 'div[class*="date"]', 'div[class*="day"]',
+                            'div[class*="month"]', 'div[class*="year"]', 'div[class*="calendar"]',
+                            
+                            // 사용자 인터페이스 요소들
+                            'div[class*="menu"]', 'div[class*="toolbar"]', 'div[class*="sidebar"]',
+                            'div[class*="modal"]', 'div[class*="popup"]', 'div[class*="tooltip"]',
+                            'div[class*="dropdown"]', 'div[class*="accordion"]', 'div[class*="tab"]',
+                            
+                            // Role 기반 selector들
+                            '[role="article"]', '[role="main"]', '[role="banner"]', '[role="navigation"]',
+                            '[role="contentinfo"]', '[role="complementary"]', '[role="search"]',
+                            '[role="form"]', '[role="dialog"]', '[role="button"]', '[role="link"]',
+                            '[role="listitem"]', '[role="menuitem"]', '[role="option"]',
+                            
+                            // ARIA 라벨 기반
+                            '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
+                            '[aria-expanded]', '[aria-selected]', '[aria-checked]',
+                            
+                            // 데이터 속성 기반 (더 포괄적)
+                            '[data-*]', '[data-component]', '[data-widget]', '[data-module]',
+                            '[data-type]', '[data-category]', '[data-tag]', '[data-index]',
+                            
+                            // 모바일 앱 웹뷰 공통
+                            'div[class*="app"]', 'div[class*="mobile"]', 'div[class*="touch"]',
+                            'div[class*="swipe"]', 'div[class*="scroll"]', 'div[class*="view"]',
+                            
+                            // CMS/플랫폼별 공통 패턴
+                            'div[class*="wp-"]', 'div[class*="drupal-"]', 'div[class*="joomla-"]',
+                            'div[class*="bootstrap-"]', 'div[class*="material-"]', 'div[class*="ant-"]',
+                            
+                            // 웹 애플리케이션 공통
+                            'div[class*="react-"]', 'div[class*="vue-"]', 'div[class*="angular-"]',
+                            'div[class*="component"]', 'div[class*="element"]', 'div[class*="control"]'
                         ];
                         
-                        const result = tryElementBasedRestore(sectionSelectors, targetX, targetY, tolerance, 100);
+                        const result = tryElementBasedRestore(universalSelectors, targetX, targetY, tolerance, maxElements);
                         
                         if (result.success) {
-                            result.anchorInfo = `section_${result.anchorInfo}`;
-                            console.log('✅ Tier 3 페이지 섹션 폴백 성공:', result);
+                            result.anchorInfo = `tier${tierNum}_${result.anchorInfo}`;
+                            console.log(`✅ Tier ${tierNum} 통합 범용 요소 폴백 성공:`, result);
                         }
                         
                         return result;
                     } catch(e) {
                         return { 
                             success: false, 
-                            error: `Tier 3 폴백 예외: ${e.message}`,
-                            debug: { exception: e.message }
-                        };
-                    }
-                }
-                
-                // 🔧 **Tier 4: 페이지 구조 기반 폴백 (50화면+)**
-                function tryPageStructureFallback(targetX, targetY, tolerance) {
-                    try {
-                        console.log('🎯 Tier 4 페이지 구조 폴백 시작');
-                        
-                        // 큰 구조 요소들 (페이지네이션, 광고 등)
-                        const structureSelectors = [
-                            '.pagination', '.pager', '.page-nav',
-                            '.ad', '.advertisement', '.banner', '.promotion',
-                            '.load-more', '.show-more', '.infinite-trigger',
-                            '.date-separator', '.month-separator', '.year-separator',
-                            '.category-header', '.section-header', '.chapter',
-                            'iframe', '.embed', '.widget', '.module'
-                        ];
-                        
-                        // 🔧 **구조적 복원: 페이지 높이 기반 비례 조정**
-                        const proportionalResult = tryProportionalRestore(targetX, targetY, tolerance);
-                        if (proportionalResult.success) {
-                            console.log('✅ Tier 4 비례 조정 성공:', proportionalResult);
-                            return proportionalResult;
-                        }
-                        
-                        // 구조 요소 기반 복원
-                        const elementResult = tryElementBasedRestore(structureSelectors, targetX, targetY, tolerance, 50);
-                        
-                        if (elementResult.success) {
-                            elementResult.anchorInfo = `structure_${elementResult.anchorInfo}`;
-                            console.log('✅ Tier 4 페이지 구조 폴백 성공:', elementResult);
-                            return elementResult;
-                        }
-                        
-                        // 🔧 **최후 수단: 좌표 기반 복원**
-                        console.log('🎯 Tier 4 최후 수단: 좌표 기반 복원');
-                        performScrollTo(targetX, targetY);
-                        
-                        return {
-                            success: true,
-                            anchorInfo: `coords(${targetX},${targetY})`,
-                            debug: { 
-                                method: 'coordinate_fallback',
-                                proportionalFailed: proportionalResult.error,
-                                elementsFailed: elementResult.error
-                            }
-                        };
-                        
-                    } catch(e) {
-                        return { 
-                            success: false, 
-                            error: `Tier 4 폴백 예외: ${e.message}`,
+                            error: `Tier ${tierNum} 폴백 예외: ${e.message}`,
                             debug: { exception: e.message }
                         };
                     }
@@ -1694,16 +1744,23 @@ extension BFCacheTransitionSystem {
                                 scroll: [scrollX, scrollY]
                             });
                             
-                            // 🎯 **4계층 구성 정의**
+                            // 🎯 **4계층 구성 정의 - 범용적 selector 패턴**
                             const TIER_CONFIGS = {
                                 tier1: {
                                     name: '정밀앵커',
                                     maxDistance: viewportHeight * 2,     // 0-2화면
+                                    tolerance: 50,                        // 50px 허용 오차
                                     selectors: [
-                                        // 고유 ID/데이터 속성을 가진 정밀 요소들
-                                        '[id]', '[data-testid]', '[data-id]', '[data-key]',
-                                        '.card[id]', '.item[id]', '.post[id]', '.entry[id]',
-                                        'article[id]', 'section[id]', 'main[id]', '[role="main"][id]'
+                                        // 고유성이 높은 요소들 (ID/고유 속성)
+                                        '[id]:not([id=""])', '[data-testid]', '[data-id]', '[data-key]',
+                                        '[data-item-id]', '[data-article-id]', '[data-post-id]', '[data-comment-id]',
+                                        '[data-user-id]', '[data-content-id]', '[data-thread-id]', '[data-message-id]',
+                                        // Vue/React/Angular 등에서 고유 키 속성
+                                        '[data-v-*][id]', '[data-reactid]', '[key]', '[ng-reflect-*]',
+                                        // 웹 컴포넌트 관련
+                                        '[data-component-id]', '[data-widget-id]', '[data-module-id]',
+                                        // CMS/블로그 플랫폼 공통
+                                        '[data-entry-id]', '[data-slug]', '[data-permalink]'
                                     ],
                                     priority: 10,
                                     maxCandidates: 30
@@ -1711,12 +1768,101 @@ extension BFCacheTransitionSystem {
                                 tier2: {
                                     name: '보조앵커', 
                                     maxDistance: viewportHeight * 10,    // 2-10화면
+                                    tolerance: 50,                        // 50px 허용 오차
                                     selectors: [
-                                        // 콘텐츠 단위 요소들
-                                        '.post', '.article', '.item', '.card', '.entry', '.product',
-                                        '.list-item', '.feed-item', '.content-item', '.row',
-                                        'article', 'li', '.tile', '.cell', '.comment',
-                                        'h1, h2, h3', '.title', '.headline', '.subject'
+                                        // 🔧 **대폭 확장된 범용 selector 패턴 (모든 사이트 호환)**
+                                        // 기본 목록/테이블 요소들
+                                        'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                        
+                                        // 범용 콘텐츠 컨테이너들 (클래스 기반)
+                                        'div[class*="item"]', 'div[class*="list"]', 'div[class*="card"]',
+                                        'div[class*="post"]', 'div[class*="article"]', 'div[class*="entry"]',
+                                        'div[class*="content"]', 'div[class*="box"]', 'div[class*="container"]',
+                                        'div[class*="row"]', 'div[class*="cell"]', 'div[class*="tile"]',
+                                        'div[class*="block"]', 'div[class*="widget"]', 'div[class*="module"]',
+                                        'div[class*="section"]', 'div[class*="panel"]', 'div[class*="wrapper"]',
+                                        
+                                        // 소셜미디어/커뮤니티 공통
+                                        'div[class*="comment"]', 'div[class*="reply"]', 'div[class*="feed"]',
+                                        'div[class*="thread"]', 'div[class*="message"]', 'div[class*="chat"]',
+                                        'div[class*="status"]', 'div[class*="update"]', 'div[class*="note"]',
+                                        
+                                        // 이커머스/쇼핑몰 공통
+                                        'div[class*="product"]', 'div[class*="goods"]', 'div[class*="shop"]',
+                                        'div[class*="cart"]', 'div[class*="order"]', 'div[class*="price"]',
+                                        
+                                        // 뉴스/미디어 공통
+                                        'div[class*="news"]', 'div[class*="media"]', 'div[class*="story"]',
+                                        'div[class*="headline"]', 'div[class*="summary"]', 'div[class*="excerpt"]',
+                                        
+                                        // 헤딩 요소들
+                                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                        
+                                        // 인터랙티브 요소들
+                                        'a[href]', 'button', 'input', 'textarea', 'select',
+                                        'form', 'fieldset', 'legend', 'label',
+                                        
+                                        // 시맨틱 HTML5 요소들
+                                        'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                                        'figure', 'figcaption', 'details', 'summary', 'dialog',
+                                        
+                                        // 미디어 요소들
+                                        'img', 'video', 'audio', 'iframe', 'embed', 'object',
+                                        'canvas', 'svg', 'picture', 'source',
+                                        
+                                        // 테이블 관련
+                                        'table', 'thead', 'tbody', 'tfoot', 'caption', 'colgroup', 'col',
+                                        
+                                        // 리스트 관련
+                                        'ul', 'ol', 'dl', 'menu', 'dir',
+                                        
+                                        // 텍스트 포맷팅
+                                        'p', 'span', 'div', 'pre', 'code', 'blockquote', 'cite',
+                                        'strong', 'em', 'b', 'i', 'u', 's', 'mark', 'del', 'ins',
+                                        
+                                        // 무한스크롤/페이지네이션 관련
+                                        'div[class*="infinite"]', 'div[class*="lazy"]', 'div[class*="load"]',
+                                        'div[class*="more"]', 'div[class*="next"]', 'div[class*="page"]',
+                                        'div[class*="pagination"]', 'div[class*="pager"]', 'div[class*="nav"]',
+                                        
+                                        // 광고/프로모션 관련
+                                        'div[class*="ad"]', 'div[class*="banner"]', 'div[class*="promo"]',
+                                        'div[class*="sponsor"]', 'div[class*="recommend"]',
+                                        
+                                        // 타임라인/날짜 관련
+                                        'div[class*="time"]', 'div[class*="date"]', 'div[class*="day"]',
+                                        'div[class*="month"]', 'div[class*="year"]', 'div[class*="calendar"]',
+                                        
+                                        // 사용자 인터페이스 요소들
+                                        'div[class*="menu"]', 'div[class*="toolbar"]', 'div[class*="sidebar"]',
+                                        'div[class*="modal"]', 'div[class*="popup"]', 'div[class*="tooltip"]',
+                                        'div[class*="dropdown"]', 'div[class*="accordion"]', 'div[class*="tab"]',
+                                        
+                                        // Role 기반 selector들
+                                        '[role="article"]', '[role="main"]', '[role="banner"]', '[role="navigation"]',
+                                        '[role="contentinfo"]', '[role="complementary"]', '[role="search"]',
+                                        '[role="form"]', '[role="dialog"]', '[role="button"]', '[role="link"]',
+                                        '[role="listitem"]', '[role="menuitem"]', '[role="option"]',
+                                        
+                                        // ARIA 라벨 기반
+                                        '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
+                                        '[aria-expanded]', '[aria-selected]', '[aria-checked]',
+                                        
+                                        // 데이터 속성 기반 (더 포괄적)
+                                        '[data-*]', '[data-component]', '[data-widget]', '[data-module]',
+                                        '[data-type]', '[data-category]', '[data-tag]', '[data-index]',
+                                        
+                                        // 모바일 앱 웹뷰 공통
+                                        'div[class*="app"]', 'div[class*="mobile"]', 'div[class*="touch"]',
+                                        'div[class*="swipe"]', 'div[class*="scroll"]', 'div[class*="view"]',
+                                        
+                                        // CMS/플랫폼별 공통 패턴
+                                        'div[class*="wp-"]', 'div[class*="drupal-"]', 'div[class*="joomla-"]',
+                                        'div[class*="bootstrap-"]', 'div[class*="material-"]', 'div[class*="ant-"]',
+                                        
+                                        // 웹 애플리케이션 공통
+                                        'div[class*="react-"]', 'div[class*="vue-"]', 'div[class*="angular-"]',
+                                        'div[class*="component"]', 'div[class*="element"]', 'div[class*="control"]'
                                     ],
                                     priority: 7,
                                     maxCandidates: 50
@@ -1724,13 +1870,101 @@ extension BFCacheTransitionSystem {
                                 tier3: {
                                     name: '랜드마크앵커',
                                     maxDistance: viewportHeight * 50,    // 10-50화면
+                                    tolerance: 50,                        // 50px 허용 오차
                                     selectors: [
-                                        // 페이지 구조 요소들
-                                        'section', 'main', 'article', 'aside', 'nav',
-                                        '.section', '.container', '.wrapper', '.content',
-                                        '.header', '.footer', '.sidebar', '.main-content',
-                                        '[role="main"]', '[role="banner"]', '[role="contentinfo"]',
-                                        '.infinite-scroll-item', '.page-section', '.block'
+                                        // 🔧 **Tier2와 동일한 범용 selector (계층별 거리로만 구분)**
+                                        // 기본 목록/테이블 요소들
+                                        'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                        
+                                        // 범용 콘텐츠 컨테이너들 (클래스 기반)
+                                        'div[class*="item"]', 'div[class*="list"]', 'div[class*="card"]',
+                                        'div[class*="post"]', 'div[class*="article"]', 'div[class*="entry"]',
+                                        'div[class*="content"]', 'div[class*="box"]', 'div[class*="container"]',
+                                        'div[class*="row"]', 'div[class*="cell"]', 'div[class*="tile"]',
+                                        'div[class*="block"]', 'div[class*="widget"]', 'div[class*="module"]',
+                                        'div[class*="section"]', 'div[class*="panel"]', 'div[class*="wrapper"]',
+                                        
+                                        // 소셜미디어/커뮤니티 공통
+                                        'div[class*="comment"]', 'div[class*="reply"]', 'div[class*="feed"]',
+                                        'div[class*="thread"]', 'div[class*="message"]', 'div[class*="chat"]',
+                                        'div[class*="status"]', 'div[class*="update"]', 'div[class*="note"]',
+                                        
+                                        // 이커머스/쇼핑몰 공통
+                                        'div[class*="product"]', 'div[class*="goods"]', 'div[class*="shop"]',
+                                        'div[class*="cart"]', 'div[class*="order"]', 'div[class*="price"]',
+                                        
+                                        // 뉴스/미디어 공통
+                                        'div[class*="news"]', 'div[class*="media"]', 'div[class*="story"]',
+                                        'div[class*="headline"]', 'div[class*="summary"]', 'div[class*="excerpt"]',
+                                        
+                                        // 헤딩 요소들
+                                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                        
+                                        // 인터랙티브 요소들
+                                        'a[href]', 'button', 'input', 'textarea', 'select',
+                                        'form', 'fieldset', 'legend', 'label',
+                                        
+                                        // 시맨틱 HTML5 요소들
+                                        'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                                        'figure', 'figcaption', 'details', 'summary', 'dialog',
+                                        
+                                        // 미디어 요소들
+                                        'img', 'video', 'audio', 'iframe', 'embed', 'object',
+                                        'canvas', 'svg', 'picture', 'source',
+                                        
+                                        // 테이블 관련
+                                        'table', 'thead', 'tbody', 'tfoot', 'caption', 'colgroup', 'col',
+                                        
+                                        // 리스트 관련
+                                        'ul', 'ol', 'dl', 'menu', 'dir',
+                                        
+                                        // 텍스트 포맷팅
+                                        'p', 'span', 'div', 'pre', 'code', 'blockquote', 'cite',
+                                        'strong', 'em', 'b', 'i', 'u', 's', 'mark', 'del', 'ins',
+                                        
+                                        // 무한스크롤/페이지네이션 관련
+                                        'div[class*="infinite"]', 'div[class*="lazy"]', 'div[class*="load"]',
+                                        'div[class*="more"]', 'div[class*="next"]', 'div[class*="page"]',
+                                        'div[class*="pagination"]', 'div[class*="pager"]', 'div[class*="nav"]',
+                                        
+                                        // 광고/프로모션 관련
+                                        'div[class*="ad"]', 'div[class*="banner"]', 'div[class*="promo"]',
+                                        'div[class*="sponsor"]', 'div[class*="recommend"]',
+                                        
+                                        // 타임라인/날짜 관련
+                                        'div[class*="time"]', 'div[class*="date"]', 'div[class*="day"]',
+                                        'div[class*="month"]', 'div[class*="year"]', 'div[class*="calendar"]',
+                                        
+                                        // 사용자 인터페이스 요소들
+                                        'div[class*="menu"]', 'div[class*="toolbar"]', 'div[class*="sidebar"]',
+                                        'div[class*="modal"]', 'div[class*="popup"]', 'div[class*="tooltip"]',
+                                        'div[class*="dropdown"]', 'div[class*="accordion"]', 'div[class*="tab"]',
+                                        
+                                        // Role 기반 selector들
+                                        '[role="article"]', '[role="main"]', '[role="banner"]', '[role="navigation"]',
+                                        '[role="contentinfo"]', '[role="complementary"]', '[role="search"]',
+                                        '[role="form"]', '[role="dialog"]', '[role="button"]', '[role="link"]',
+                                        '[role="listitem"]', '[role="menuitem"]', '[role="option"]',
+                                        
+                                        // ARIA 라벨 기반
+                                        '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
+                                        '[aria-expanded]', '[aria-selected]', '[aria-checked]',
+                                        
+                                        // 데이터 속성 기반 (더 포괄적)
+                                        '[data-*]', '[data-component]', '[data-widget]', '[data-module]',
+                                        '[data-type]', '[data-category]', '[data-tag]', '[data-index]',
+                                        
+                                        // 모바일 앱 웹뷰 공통
+                                        'div[class*="app"]', 'div[class*="mobile"]', 'div[class*="touch"]',
+                                        'div[class*="swipe"]', 'div[class*="scroll"]', 'div[class*="view"]',
+                                        
+                                        // CMS/플랫폼별 공통 패턴
+                                        'div[class*="wp-"]', 'div[class*="drupal-"]', 'div[class*="joomla-"]',
+                                        'div[class*="bootstrap-"]', 'div[class*="material-"]', 'div[class*="ant-"]',
+                                        
+                                        // 웹 애플리케이션 공통
+                                        'div[class*="react-"]', 'div[class*="vue-"]', 'div[class*="angular-"]',
+                                        'div[class*="component"]', 'div[class*="element"]', 'div[class*="control"]'
                                     ],
                                     priority: 5,
                                     maxCandidates: 30
@@ -1738,14 +1972,101 @@ extension BFCacheTransitionSystem {
                                 tier4: {
                                     name: '구조적앵커',
                                     maxDistance: Infinity,                // 50화면+
+                                    tolerance: 50,                        // 50px 허용 오차
                                     selectors: [
-                                        // 큰 구조 요소들
-                                        '.pagination', '.pager', '.page-nav',
-                                        '.ad', '.advertisement', '.banner', '.promotion',
-                                        '.load-more', '.show-more', '.infinite-trigger',
-                                        '.date-separator', '.month-separator', '.year-separator',
-                                        '.category-header', '.section-header', '.chapter',
-                                        'iframe', '.embed', '.widget', '.module'
+                                        // 🔧 **Tier2와 동일한 범용 selector (계층별 거리로만 구분)**
+                                        // 기본 목록/테이블 요소들
+                                        'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                        
+                                        // 범용 콘텐츠 컨테이너들 (클래스 기반)
+                                        'div[class*="item"]', 'div[class*="list"]', 'div[class*="card"]',
+                                        'div[class*="post"]', 'div[class*="article"]', 'div[class*="entry"]',
+                                        'div[class*="content"]', 'div[class*="box"]', 'div[class*="container"]',
+                                        'div[class*="row"]', 'div[class*="cell"]', 'div[class*="tile"]',
+                                        'div[class*="block"]', 'div[class*="widget"]', 'div[class*="module"]',
+                                        'div[class*="section"]', 'div[class*="panel"]', 'div[class*="wrapper"]',
+                                        
+                                        // 소셜미디어/커뮤니티 공통
+                                        'div[class*="comment"]', 'div[class*="reply"]', 'div[class*="feed"]',
+                                        'div[class*="thread"]', 'div[class*="message"]', 'div[class*="chat"]',
+                                        'div[class*="status"]', 'div[class*="update"]', 'div[class*="note"]',
+                                        
+                                        // 이커머스/쇼핑몰 공통
+                                        'div[class*="product"]', 'div[class*="goods"]', 'div[class*="shop"]',
+                                        'div[class*="cart"]', 'div[class*="order"]', 'div[class*="price"]',
+                                        
+                                        // 뉴스/미디어 공통
+                                        'div[class*="news"]', 'div[class*="media"]', 'div[class*="story"]',
+                                        'div[class*="headline"]', 'div[class*="summary"]', 'div[class*="excerpt"]',
+                                        
+                                        // 헤딩 요소들
+                                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                        
+                                        // 인터랙티브 요소들
+                                        'a[href]', 'button', 'input', 'textarea', 'select',
+                                        'form', 'fieldset', 'legend', 'label',
+                                        
+                                        // 시맨틱 HTML5 요소들
+                                        'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                                        'figure', 'figcaption', 'details', 'summary', 'dialog',
+                                        
+                                        // 미디어 요소들
+                                        'img', 'video', 'audio', 'iframe', 'embed', 'object',
+                                        'canvas', 'svg', 'picture', 'source',
+                                        
+                                        // 테이블 관련
+                                        'table', 'thead', 'tbody', 'tfoot', 'caption', 'colgroup', 'col',
+                                        
+                                        // 리스트 관련
+                                        'ul', 'ol', 'dl', 'menu', 'dir',
+                                        
+                                        // 텍스트 포맷팅
+                                        'p', 'span', 'div', 'pre', 'code', 'blockquote', 'cite',
+                                        'strong', 'em', 'b', 'i', 'u', 's', 'mark', 'del', 'ins',
+                                        
+                                        // 무한스크롤/페이지네이션 관련
+                                        'div[class*="infinite"]', 'div[class*="lazy"]', 'div[class*="load"]',
+                                        'div[class*="more"]', 'div[class*="next"]', 'div[class*="page"]',
+                                        'div[class*="pagination"]', 'div[class*="pager"]', 'div[class*="nav"]',
+                                        
+                                        // 광고/프로모션 관련
+                                        'div[class*="ad"]', 'div[class*="banner"]', 'div[class*="promo"]',
+                                        'div[class*="sponsor"]', 'div[class*="recommend"]',
+                                        
+                                        // 타임라인/날짜 관련
+                                        'div[class*="time"]', 'div[class*="date"]', 'div[class*="day"]',
+                                        'div[class*="month"]', 'div[class*="year"]', 'div[class*="calendar"]',
+                                        
+                                        // 사용자 인터페이스 요소들
+                                        'div[class*="menu"]', 'div[class*="toolbar"]', 'div[class*="sidebar"]',
+                                        'div[class*="modal"]', 'div[class*="popup"]', 'div[class*="tooltip"]',
+                                        'div[class*="dropdown"]', 'div[class*="accordion"]', 'div[class*="tab"]',
+                                        
+                                        // Role 기반 selector들
+                                        '[role="article"]', '[role="main"]', '[role="banner"]', '[role="navigation"]',
+                                        '[role="contentinfo"]', '[role="complementary"]', '[role="search"]',
+                                        '[role="form"]', '[role="dialog"]', '[role="button"]', '[role="link"]',
+                                        '[role="listitem"]', '[role="menuitem"]', '[role="option"]',
+                                        
+                                        // ARIA 라벨 기반
+                                        '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
+                                        '[aria-expanded]', '[aria-selected]', '[aria-checked]',
+                                        
+                                        // 데이터 속성 기반 (더 포괄적)
+                                        '[data-*]', '[data-component]', '[data-widget]', '[data-module]',
+                                        '[data-type]', '[data-category]', '[data-tag]', '[data-index]',
+                                        
+                                        // 모바일 앱 웹뷰 공통
+                                        'div[class*="app"]', 'div[class*="mobile"]', 'div[class*="touch"]',
+                                        'div[class*="swipe"]', 'div[class*="scroll"]', 'div[class*="view"]',
+                                        
+                                        // CMS/플랫폼별 공통 패턴
+                                        'div[class*="wp-"]', 'div[class*="drupal-"]', 'div[class*="joomla-"]',
+                                        'div[class*="bootstrap-"]', 'div[class*="material-"]', 'div[class*="ant-"]',
+                                        
+                                        // 웹 애플리케이션 공통
+                                        'div[class*="react-"]', 'div[class*="vue-"]', 'div[class*="angular-"]',
+                                        'div[class*="component"]', 'div[class*="element"]', 'div[class*="control"]'
                                     ],
                                     priority: 3,
                                     maxCandidates: 20
