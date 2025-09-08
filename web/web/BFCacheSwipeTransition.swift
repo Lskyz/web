@@ -11,7 +11,9 @@
 //  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
 //  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
 //  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
-//
+//  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
+//  🔧 **iframe 복원 제거** - 불필요한 단계 제거
+//  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 
 import UIKit
 import WebKit
@@ -1067,7 +1069,7 @@ struct BFCacheSnapshot: Codable {
                     errorMsg = '모든 4계층 복원 실패';
                 }
                 
-                // 🔧 **복원 후 위치 검증 및 보정**
+                // 🔧 **복원 후 위치 검증 및 보정 - ✅ 실제 위치 정확 측정**
                 setTimeout(() => {
                     try {
                         const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
@@ -1087,10 +1089,20 @@ struct BFCacheSnapshot: Codable {
                             method: usedMethod,
                             tolerance: tolerance,
                             withinTolerance: diffX <= tolerance && diffY <= tolerance,
-                            elementBased: restoredByElement
+                            elementBased: restoredByElement,
+                            // ✅ **추가: 실제 복원 상황 정확 기록**
+                            actualRestoreDistance: Math.sqrt(diffX * diffX + diffY * diffY),
+                            actualRestoreSuccess: diffY <= 50 // 50px 이내면 실제 성공으로 간주
                         };
                         
                         console.log('🎯 4계층 복원 검증:', verificationResult);
+                        
+                        // ✅ **수정: 실제 복원 성공 여부를 정확히 로그에 기록**
+                        if (verificationResult.actualRestoreSuccess) {
+                            console.log(`✅ 실제 복원 성공: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
+                        } else {
+                            console.log(`❌ 실제 복원 실패: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
+                        }
                         
                         // 🔧 **허용 오차 초과 시 점진적 보정**
                         if (!verificationResult.withinTolerance && (diffY > tolerance || diffX > tolerance)) {
@@ -1174,7 +1186,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤 + 무한 스크롤 트리거) - 상세 디버깅**
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤) - ✅ iframe 복원 제거**
     private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -1376,38 +1388,14 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: iframe 스크롤 복원 (기존 유지)**
-        if let jsState = self.jsState,
-           let iframeData = jsState["iframes"] as? [[String: Any]], !iframeData.isEmpty {
-            
-            TabPersistenceManager.debugMessages.append("🖼️ 2단계 iframe 스크롤 복원 단계 추가 - iframe \(iframeData.count)개")
-            
-            restoreSteps.append((2, { stepCompletion in
-                let waitTime: TimeInterval = 0.15
-                TabPersistenceManager.debugMessages.append("🖼️ 2단계: iframe 스크롤 복원 (대기: \(String(format: "%.2f", waitTime))초)")
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-                    let iframeScrollJS = self.generateIframeScrollScript(iframeData)
-                    webView.evaluateJavaScript(iframeScrollJS) { result, error in
-                        if let error = error {
-                            TabPersistenceManager.debugMessages.append("🖼️ 2단계 JavaScript 실행 오류: \(error.localizedDescription)")
-                        }
-                        let success = (result as? Bool) ?? false
-                        TabPersistenceManager.debugMessages.append("🖼️ 2단계 완료: \(success ? "성공" : "실패")")
-                        stepCompletion(success)
-                    }
-                }
-            }))
-        } else {
-            TabPersistenceManager.debugMessages.append("🖼️ 2단계 스킵 - iframe 요소 없음")
-        }
+        // ✅ **iframe 복원 단계 제거됨**
         
-        // **3단계: 최종 확인 및 보정**
-        TabPersistenceManager.debugMessages.append("✅ 3단계 최종 보정 단계 추가 (필수)")
+        // **2단계: 최종 확인 및 보정**
+        TabPersistenceManager.debugMessages.append("✅ 2단계 최종 보정 단계 추가 (필수)")
         
-        restoreSteps.append((3, { stepCompletion in
+        restoreSteps.append((2, { stepCompletion in
             let waitTime: TimeInterval = 0.8
-            TabPersistenceManager.debugMessages.append("✅ 3단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
+            TabPersistenceManager.debugMessages.append("✅ 2단계: 최종 보정 (대기: \(String(format: "%.2f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
                 let finalVerifyJS = """
@@ -1416,7 +1404,7 @@ struct BFCacheSnapshot: Codable {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         
-                        // 네이티브 스크롤 위치 정밀 확인
+                        // ✅ **수정: 실제 스크롤 위치 정확 측정**
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                         const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
@@ -1451,7 +1439,7 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         
-                        // 최종 위치 확인
+                        // ✅ **최종 위치 정확 측정 및 기록**
                         const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
                         const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
                         const finalDiffX = Math.abs(finalCurrentX - targetX);
@@ -1467,16 +1455,21 @@ struct BFCacheSnapshot: Codable {
                             note: '브라우저차단대응'
                         });
                         
-                        // 🚫 **관대한 성공 판정** (브라우저 차단 고려)
+                        // ✅ **수정: 실제 복원 성공 여부 정확히 반환**
+                        const actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
+                        
                         return {
-                            success: true, // 브라우저 차단 대응은 항상 성공으로 처리
+                            success: actualRestoreSuccess, // ✅ 실제 복원 성공 여부
                             withinTolerance: finalWithinTolerance,
-                            finalDiff: [finalDiffX, finalDiffY]
+                            finalDiff: [finalDiffX, finalDiffY],
+                            actualTarget: [targetX, targetY],
+                            actualFinal: [finalCurrentX, finalCurrentY],
+                            actualRestoreSuccess: actualRestoreSuccess
                         };
                     } catch(e) { 
                         console.error('✅ 브라우저 차단 대응 최종보정 실패:', e);
                         return {
-                            success: true, // 에러도 성공으로 처리 (관대한 정책)
+                            success: false,
                             error: e.message
                         };
                     }
@@ -1485,24 +1478,36 @@ struct BFCacheSnapshot: Codable {
                 
                 webView.evaluateJavaScript(finalVerifyJS) { result, error in
                     if let error = error {
-                        TabPersistenceManager.debugMessages.append("✅ 3단계 JavaScript 실행 오류: \(error.localizedDescription)")
+                        TabPersistenceManager.debugMessages.append("✅ 2단계 JavaScript 실행 오류: \(error.localizedDescription)")
                     }
                     
-                    let success = true // 🚫 브라우저 차단 대응은 관대하게
+                    var success = false
                     if let resultDict = result as? [String: Any] {
+                        // ✅ **수정: 실제 복원 성공 여부를 정확히 체크**
+                        success = (resultDict["actualRestoreSuccess"] as? Bool) ?? false
+                        
                         if let withinTolerance = resultDict["withinTolerance"] as? Bool {
-                            TabPersistenceManager.debugMessages.append("✅ 3단계 허용 오차 내: \(withinTolerance)")
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 허용 오차 내: \(withinTolerance)")
                         }
                         if let finalDiff = resultDict["finalDiff"] as? [Double] {
-                            TabPersistenceManager.debugMessages.append("✅ 3단계 최종 차이: X=\(String(format: "%.1f", finalDiff[0]))px, Y=\(String(format: "%.1f", finalDiff[1]))px")
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 최종 차이: X=\(String(format: "%.1f", finalDiff[0]))px, Y=\(String(format: "%.1f", finalDiff[1]))px")
+                        }
+                        if let actualTarget = resultDict["actualTarget"] as? [Double],
+                           let actualFinal = resultDict["actualFinal"] as? [Double] {
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 실제 복원: 목표=\(String(format: "%.0f", actualTarget[1]))px → 실제=\(String(format: "%.0f", actualFinal[1]))px")
+                        }
+                        if let actualRestoreSuccess = resultDict["actualRestoreSuccess"] as? Bool {
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 실제 복원 성공: \(actualRestoreSuccess)")
                         }
                         if let errorMsg = resultDict["error"] as? String {
-                            TabPersistenceManager.debugMessages.append("✅ 3단계 오류: \(errorMsg)")
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 오류: \(errorMsg)")
                         }
+                    } else {
+                        success = false
                     }
                     
-                    TabPersistenceManager.debugMessages.append("✅ 3단계 브라우저 차단 대응 최종보정 완료: \(success ? "성공" : "성공(관대)")")
-                    stepCompletion(true) // 항상 성공
+                    TabPersistenceManager.debugMessages.append("✅ 2단계 브라우저 차단 대응 최종보정 완료: \(success ? "성공" : "실패")")
+                    stepCompletion(success)
                 }
             }
         }))
@@ -1529,75 +1534,15 @@ struct BFCacheSnapshot: Codable {
                 let duration = Date().timeIntervalSince(startTime)
                 let successCount = stepResults.filter { $0 }.count
                 let totalSteps = stepResults.count
-                let overallSuccess = successCount > totalSteps / 2
+                let overallSuccess = successCount > 0 // ✅ 수정: 하나라도 성공하면 성공
                 
                 TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 완료: \(successCount)/\(totalSteps) 성공, 소요시간: \(String(format: "%.2f", duration))초")
-                TabPersistenceManager.debugMessages.append("🚫 최종 결과: \(overallSuccess ? "✅ 성공" : "✅ 성공(관대)")")
-                completion(true) // 🚫 브라우저 차단 대응은 항상 성공으로 처리
+                TabPersistenceManager.debugMessages.append("🚫 최종 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
+                completion(overallSuccess)
             }
         }
         
         executeNextStep()
-    }
-    
-    // 🖼️ **iframe 스크롤 복원 스크립트** (기존 유지)
-    private func generateIframeScrollScript(_ iframeData: [[String: Any]]) -> String {
-        let iframeJSON = convertToJSONString(iframeData) ?? "[]"
-        return """
-        (function() {
-            try {
-                const iframes = \(iframeJSON);
-                let restored = 0;
-                
-                console.log('🖼️ iframe 스크롤 복원 시작:', iframes.length, '개 iframe');
-                
-                for (const iframeInfo of iframes) {
-                    const iframe = document.querySelector(iframeInfo.selector);
-                    if (iframe && iframe.contentWindow) {
-                        try {
-                            const targetX = parseFloat(iframeInfo.scrollX || 0);
-                            const targetY = parseFloat(iframeInfo.scrollY || 0);
-                            
-                            // Same-origin iframe 복원
-                            iframe.contentWindow.scrollTo(targetX, targetY);
-                            
-                            try {
-                                iframe.contentWindow.document.documentElement.scrollTop = targetY;
-                                iframe.contentWindow.document.documentElement.scrollLeft = targetX;
-                                iframe.contentWindow.document.body.scrollTop = targetY;
-                                iframe.contentWindow.document.body.scrollLeft = targetX;
-                            } catch(e) {
-                                // 접근 제한은 무시
-                            }
-                            
-                            restored++;
-                            console.log('🖼️ iframe 복원:', iframeInfo.selector, [targetX, targetY]);
-                        } catch(e) {
-                            // 🌐 Cross-origin iframe 처리
-                            try {
-                                iframe.contentWindow.postMessage({
-                                    type: 'restoreScroll',
-                                    scrollX: parseFloat(iframeInfo.scrollX || 0),
-                                    scrollY: parseFloat(iframeInfo.scrollY || 0),
-                                    browserBlockingWorkaround: true // 🚫 브라우저 차단 대응 모드 플래그
-                                }, '*');
-                                console.log('🖼️ Cross-origin iframe 스크롤 요청:', iframeInfo.selector);
-                                restored++;
-                            } catch(crossOriginError) {
-                                console.log('Cross-origin iframe 접근 불가:', iframeInfo.selector);
-                            }
-                        }
-                    }
-                }
-                
-                console.log('🖼️ iframe 스크롤 복원 완료:', restored, '개');
-                return restored > 0;
-            } catch(e) {
-                console.error('iframe 스크롤 복원 실패:', e);
-                return false;
-            }
-        })()
-        """
     }
     
     // 안전한 JSON 변환 유틸리티
@@ -1902,14 +1847,14 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // ✅ **수정: Promise 제거한 4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성**
+    // ✅ **수정: Promise 제거한 4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 - 🎯 스크롤 위치 기반 앵커 선택 개선**
     private func generateFourTierScrollCaptureScriptFixed() -> String {
         return """
         (function() {
             try {
-                console.log('🎯 4계층 강화된 다중 앵커 + iframe 스크롤 감지 시작 (동기 실행)');
+                console.log('🎯 4계층 강화된 다중 앵커 감지 시작 (동기 실행)');
                 
-                // 🎯 **1단계: 4계층 앵커 요소 식별 시스템**
+                // 🎯 **1단계: 4계층 앵커 요소 식별 시스템 - 스크롤 위치 기반 개선**
                 function identifyFourTierAnchors() {
                     const viewportHeight = window.innerHeight;
                     const viewportWidth = window.innerWidth;
@@ -1921,14 +1866,21 @@ extension BFCacheTransitionSystem {
                         scroll: [scrollX, scrollY]
                     });
                     
-                    // 🎯 **4계층 구성 정의 - ✅ 유효한 CSS selector만 사용**
+                    // 🎯 **4계층 구성 정의 - ✅ 유효한 CSS selector만 사용 + 스크롤 위치 기반 개선**
                     const TIER_CONFIGS = {
                         tier1: {
                             name: '정밀앵커',
                             maxDistance: viewportHeight * 2,     // 0-2화면
                             tolerance: 50,                        // 50px 허용 오차
                             selectors: [
-                                // ID를 가진 요소들
+                                // 🎯 **스크롤 위치 근처 컨텐츠 요소 우선**
+                                'li', 'tr', 'td',                // 리스트/테이블 아이템
+                                '.item', '.list-item', '.card', '.post', '.article',
+                                '.comment', '.reply', '.feed', '.thread', '.message',
+                                '.product', '.news', '.media',
+                                'p', 'div[class*="content"]', 'div[class*="item"]',
+                                
+                                // ID를 가진 요소들 (하위 우선순위)
                                 '[id]',
                                 // 특정 data 속성들
                                 '[data-testid]', '[data-id]', '[data-key]',
@@ -1948,10 +1900,16 @@ extension BFCacheTransitionSystem {
                             maxDistance: viewportHeight * 10,    // 2-10화면
                             tolerance: 50,                        // 50px 허용 오차
                             selectors: [
+                                // 🎯 **컨텐츠 요소 최우선**
+                                'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                '.item', '.list-item', '.card', '.post', '.article',
+                                '.content', '.box', '.container', '.row', '.cell',
+                                '.comment', '.reply', '.feed', '.thread', '.message',
+                                '.product', '.news', '.media',
+                                
                                 // 기본 HTML 요소들
                                 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
                                 'p', 'div', 'span', 'a', 'button',
-                                'li', 'tr', 'td', 'th', 'dt', 'dd',
                                 'ul', 'ol', 'dl',
                                 'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
                                 'img', 'video', 'iframe', 'canvas', 'svg',
@@ -1959,11 +1917,6 @@ extension BFCacheTransitionSystem {
                                 'table', 'thead', 'tbody', 'tfoot',
                                 'pre', 'code', 'blockquote',
                                 
-                                // 클래스 패턴 (구체적인 클래스명)
-                                '.item', '.list-item', '.card', '.post', '.article',
-                                '.content', '.box', '.container', '.row', '.cell',
-                                '.comment', '.reply', '.feed', '.thread', '.message',
-                                '.product', '.news', '.media',
                                 '.load-more', '.show-more', '.infinite-scroll',
                                 
                                 // role 속성들
@@ -1988,15 +1941,15 @@ extension BFCacheTransitionSystem {
                             maxDistance: viewportHeight * 50,    // 10-50화면
                             tolerance: 50,                        // 50px 허용 오차
                             selectors: [
-                                // Tier2와 동일한 selector 사용 (거리로만 구분)
+                                // 🎯 **컨텐츠 요소 최우선 (Tier2와 동일하지만 거리로 구분)**
+                                'li', 'tr', 'td',
+                                '.item', '.list-item', '.card', '.post', '.article',
+                                '.content', '.box', '.container',
                                 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
                                 'p', 'div', 'span', 'a', 'button',
-                                'li', 'tr', 'td', 'th', 'dt', 'dd',
                                 'ul', 'ol', 'dl',
                                 'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
                                 'img', 'video', 'iframe',
-                                '.item', '.list-item', '.card', '.post', '.article',
-                                '.content', '.box', '.container',
                                 '[role="article"]', '[role="main"]',
                                 '[aria-label]',
                                 '[data-component]', '[data-widget]', '[data-module]'
@@ -2009,12 +1962,13 @@ extension BFCacheTransitionSystem {
                             maxDistance: Infinity,                // 50화면+
                             tolerance: 50,                        // 50px 허용 오차
                             selectors: [
-                                // 가장 기본적인 요소들만
+                                // 🎯 **컨텐츠 요소 우선, 구조 요소는 후순위**
+                                'li', '.item', '.content',
                                 'h1', 'h2', 'h3',
                                 'p', 'div', 'span',
                                 'article', 'section',
                                 'img',
-                                '.item', '.content', '.container',
+                                '.container',
                                 '[role="main"]'
                             ],
                             priority: 3,
@@ -2059,7 +2013,7 @@ extension BFCacheTransitionSystem {
                                 totalElements: tierCandidates.length
                             });
                             
-                            // 뷰포트 기준 거리 계산 및 필터링
+                            // 🎯 **스크롤 위치 기준 거리 계산 및 필터링 - 개선된 품질 점수**
                             let scoredCandidates = [];
                             
                             for (const element of tierCandidates.slice(0, config.maxCandidates * 2)) {
@@ -2068,7 +2022,7 @@ extension BFCacheTransitionSystem {
                                     const elementY = scrollY + rect.top;
                                     const elementX = scrollX + rect.left;
                                     
-                                    // 거리 계산
+                                    // 🎯 **스크롤 위치 기준 거리 계산**
                                     const distance = Math.sqrt(
                                         Math.pow(elementX - scrollX, 2) + 
                                         Math.pow(elementY - scrollY, 2)
@@ -2076,8 +2030,22 @@ extension BFCacheTransitionSystem {
                                     
                                     // 계층별 거리 제한 체크
                                     if (distance <= config.maxDistance) {
-                                        // 요소 품질 점수 계산
+                                        // 🎯 **개선된 요소 품질 점수 계산 - 스크롤 위치 근처 우선**
                                         let qualityScore = config.priority;
+                                        
+                                        // 🎯 **스크롤 위치 근처 보너스 (핵심 개선)**
+                                        const scrollProximity = Math.abs(elementY - scrollY);
+                                        if (scrollProximity <= viewportHeight) qualityScore += 5; // 1화면 내
+                                        else if (scrollProximity <= viewportHeight * 2) qualityScore += 3; // 2화면 내
+                                        else if (scrollProximity <= viewportHeight * 5) qualityScore += 1; // 5화면 내
+                                        
+                                        // 🎯 **컨텐츠 요소 보너스 (핵심 개선)**
+                                        const tagName = element.tagName.toLowerCase();
+                                        const className = element.className || '';
+                                        if (['li', 'tr', 'td'].includes(tagName)) qualityScore += 4; // 리스트/테이블 아이템
+                                        if (className.includes('item') || className.includes('card') || 
+                                            className.includes('post') || className.includes('article') ||
+                                            className.includes('comment') || className.includes('feed')) qualityScore += 3;
                                         
                                         // 고유성 보너스
                                         if (element.id) qualityScore += 3;
@@ -2097,8 +2065,9 @@ extension BFCacheTransitionSystem {
                                         // 가시성 보너스
                                         if (element.offsetParent !== null) qualityScore += 1;
                                         
-                                        // 최종 점수 = 품질 점수 / (거리 + 1)
-                                        const finalScore = qualityScore / (distance + 1);
+                                        // 🎯 **개선된 최종 점수 = 품질 점수 / (스크롤 위치 거리 + 1)**
+                                        const scrollDistance = Math.abs(elementY - scrollY);
+                                        const finalScore = qualityScore / (scrollDistance + 1);
                                         
                                         scoredCandidates.push({
                                             // 🚫 **수정: DOM 요소 대신 기본 타입만 저장**
@@ -2110,6 +2079,7 @@ extension BFCacheTransitionSystem {
                                             },
                                             score: finalScore,
                                             distance: distance,
+                                            scrollDistance: scrollDistance, // 🎯 **추가: 스크롤 거리**
                                             qualityScore: qualityScore,
                                             tier: tierKey,
                                             // 내부 처리용 (반환하지 않음)
@@ -2121,7 +2091,7 @@ extension BFCacheTransitionSystem {
                                 }
                             }
                             
-                            // 점수순 정렬 및 상위 후보 선택
+                            // 🎯 **점수순 정렬 및 상위 후보 선택 - 스크롤 위치 가까운 것 우선**
                             scoredCandidates.sort((a, b) => b.score - a.score);
                             const selectedCandidates = scoredCandidates.slice(0, config.maxCandidates);
                             
@@ -2217,6 +2187,7 @@ extension BFCacheTransitionSystem {
                                 score: candidate.score,
                                 qualityScore: candidate.qualityScore,
                                 distance: candidate.distance,
+                                scrollDistance: candidate.scrollDistance, // 🎯 **추가: 스크롤 거리**
                                 tagName: element.tagName.toLowerCase(),
                                 className: element.className || '',
                                 id: element.id || '',
@@ -2262,7 +2233,7 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
+                // ✅ **iframe 감지는 유지하되 복원에서는 제거됨**
                 function detectIframeScrolls() {
                     const iframes = [];
                     const iframeElements = document.querySelectorAll('iframe');
@@ -2391,7 +2362,7 @@ extension BFCacheTransitionSystem {
                 
                 // 🎯 **메인 실행 - 4계층 강화된 앵커 기반 데이터 수집**
                 const anchorData = identifyFourTierAnchors(); // 🎯 **4계층 앵커 시스템**
-                const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 유지**
+                const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 감지만 유지**
                 
                 // 메인 스크롤 위치도 parseFloat 정밀도 적용 
                 const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
@@ -2426,7 +2397,7 @@ extension BFCacheTransitionSystem {
                         x: mainScrollX, 
                         y: mainScrollY
                     },
-                    iframes: iframeScrolls, // 🖼️ **iframe은 유지**
+                    iframes: iframeScrolls, // 🖼️ **iframe은 감지만 유지**
                     href: window.location.href,
                     title: document.title,
                     timestamp: Date.now(),
@@ -2500,51 +2471,11 @@ extension BFCacheTransitionSystem {
             }
         });
         
-        // 🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원 리스너
+        // ✅ **Cross-origin iframe 리스너는 유지하되 복원에서는 사용하지 않음**
         window.addEventListener('message', function(event) {
             if (event.data && event.data.type === 'restoreScroll') {
-                try {
-                    const targetX = parseFloat(event.data.scrollX) || 0;
-                    const targetY = parseFloat(event.data.scrollY) || 0;
-                    const browserBlockingWorkaround = event.data.browserBlockingWorkaround || false;
-                    
-                    console.log('🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원:', targetX, targetY, browserBlockingWorkaround ? '(브라우저 차단 대응 모드)' : '');
-                    
-                    // 🚫 브라우저 차단 대응 스크롤 설정
-                    if (browserBlockingWorkaround) {
-                        // 점진적 스크롤 시도
-                        let attempts = 0;
-                        const maxAttempts = 10;
-                        
-                        const tryScroll = () => {
-                            window.scrollTo(targetX, targetY);
-                            document.documentElement.scrollTop = targetY;
-                            document.documentElement.scrollLeft = targetX;
-                            document.body.scrollTop = targetY;
-                            document.body.scrollLeft = targetX;
-                            
-                            const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            
-                            if ((Math.abs(currentX - targetX) > 10 || Math.abs(currentY - targetY) > 10) && attempts < maxAttempts) {
-                                attempts++;
-                                setTimeout(tryScroll, 150);
-                            }
-                        };
-                        
-                        tryScroll();
-                    } else {
-                        // 기본 스크롤
-                        window.scrollTo(targetX, targetY);
-                        document.documentElement.scrollTop = targetY;
-                        document.documentElement.scrollLeft = targetX;
-                        document.body.scrollTop = targetY;
-                        document.body.scrollLeft = targetX;
-                    }
-                    
-                } catch(e) {
-                    console.error('Cross-origin iframe 스크롤 복원 실패:', e);
-                }
+                console.log('🖼️ Cross-origin iframe 스크롤 복원 요청 수신 (현재 사용 안 함)');
+                // 현재는 iframe 복원을 사용하지 않으므로 로그만 남김
             }
         });
         """
