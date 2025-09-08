@@ -67,7 +67,7 @@ extension BFCacheTransitionSystem {
                   oldURL != newURL else { return }
             
             // 📸 **URL이 바뀌는 순간 이전 페이지 캡처**
-            if let currentRecord = stateModel.dataModel.currentPageRecord {
+            if stateModel.dataModel.currentPageRecord != nil {
                 shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
                 shared.dbg("📸 URL 변경 감지 - 떠나기 전 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
             }
@@ -102,14 +102,14 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
-    private let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
+    internal let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
     // MARK: - 💾 스레드 안전 캐시 시스템
-    private let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
-    private var _memoryCache: [UUID: BFCacheSnapshot] = [:]
+    internal let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
+    internal var _memoryCache: [UUID: BFCacheSnapshot] = [:]
     private var _diskCacheIndex: [UUID: String] = [:]
-    private var _cacheVersion: [UUID: Int] = [:]
+    internal var _cacheVersion: [UUID: Int] = [:]
     
     // 스레드 안전 액세서
     private var memoryCache: [UUID: BFCacheSnapshot] {
@@ -220,7 +220,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 💾 **개선된 디스크 저장 시스템**
     
-    private func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
+    internal func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
             guard let self = self else { return }
             
@@ -395,7 +395,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 메모리 캐시 관리
     
-    private func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
+    internal func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
