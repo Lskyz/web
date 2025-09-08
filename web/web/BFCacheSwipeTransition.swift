@@ -8,7 +8,7 @@
 //  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
 //  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
 //  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
-//  🎯 **앵커 복원 로직 개선** - 풀백 대신 앵커 우선 사용
+//  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
 //
 
 import UIKit
@@ -216,7 +216,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🎯 4계층 강화된 DOM 요소 기반 1단계 복원 완료")
     }
     
-    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화) - 🚫 반환값 타입 수정 + 앵커 복원 로직 개선**
+    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화) - 🎯 앵커 복원 로직 수정**
     private func generateFourTierElementBasedRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -280,28 +280,28 @@ struct BFCacheSnapshot: Codable {
                     tier1: {
                         name: '정밀앵커',
                         maxDistance: window.innerHeight * 2,      // 0-2화면 (0-1600px)
-                        tolerance: 100,                           // 🔧 **허용 오차 100px로 증가**
+                        tolerance: 100,                           // 🎯 **수정: 허용 오차 증가 (50px → 100px)**
                         anchors: primaryAnchor ? [primaryAnchor] : [],
                         description: '뷰포트 정밀 복원'
                     },
                     tier2: {
                         name: '보조앵커',
                         maxDistance: window.innerHeight * 10,     // 2-10화면 (1600px-8000px)
-                        tolerance: 150,                           // 🔧 **허용 오차 150px로 증가**
+                        tolerance: 150,                           // 🎯 **수정: 허용 오차 증가 (50px → 150px)**
                         anchors: auxiliaryAnchors,
                         description: '세션 근거리 탐색'
                     },
                     tier3: {
                         name: '랜드마크앵커',
                         maxDistance: window.innerHeight * 50,     // 10-50화면 (8000px-40000px)
-                        tolerance: 200,                           // 🔧 **허용 오차 200px로 증가**
+                        tolerance: 200,                           // 🎯 **수정: 허용 오차 증가 (50px → 200px)**
                         anchors: landmarkAnchors,
                         description: '깊은 탐색 복원'
                     },
                     tier4: {
                         name: '구조적앵커',
                         maxDistance: Infinity,                    // 50화면+ (40000px+)
-                        tolerance: 300,                           // 🔧 **허용 오차 300px로 증가**
+                        tolerance: 300,                           // 🎯 **수정: 허용 오차 증가 (50px → 300px)**
                         anchors: structuralAnchors,
                         description: '극한 스크롤 복원'
                     }
@@ -367,37 +367,29 @@ struct BFCacheSnapshot: Codable {
                     try {
                         console.log(`🔄 Tier ${tierNum} 복원 로직 실행`);
                         
-                        // 🔧 **앵커 기반 복원 우선 시도 (개선된 로직)**
+                        // Tier별 특화 앵커 처리
                         if (config.anchors && config.anchors.length > 0) {
-                            console.log(`🔍 Tier ${tierNum} 앵커 기반 복원 시도: ${config.anchors.length}개 앵커`);
-                            const anchorResult = tryImprovedMultipleAnchors(config.anchors, targetX, targetY, config.tolerance, tierNum);
+                            // 🔧 **기존 다중 앵커 시스템 활용**
+                            const anchorResult = tryMultipleAnchors(config.anchors, targetX, targetY, config.tolerance);
                             if (anchorResult.success) {
-                                console.log(`✅ Tier ${tierNum} 앵커 기반 복원 성공:`, anchorResult);
                                 return {
                                     success: true,
                                     method: `tier${tierNum}_anchor`,
                                     anchorInfo: `${config.name}(${anchorResult.anchorInfo})`,
                                     debug: anchorResult.debug
                                 };
-                            } else {
-                                console.log(`❌ Tier ${tierNum} 앵커 기반 복원 실패:`, anchorResult.error);
-                                debugInfo[`tier${tierNum}_anchor_failed`] = anchorResult.error;
                             }
                         }
                         
                         // Tier별 폴백 전략
-                        console.log(`🔄 Tier ${tierNum} 폴백 전략 시도`);
                         const fallbackResult = tryTierFallback(tierNum, config, targetX, targetY);
                         if (fallbackResult.success) {
-                            console.log(`✅ Tier ${tierNum} 폴백 성공:`, fallbackResult);
                             return {
                                 success: true,
                                 method: `tier${tierNum}_fallback`,
                                 anchorInfo: `${config.name}_fallback(${fallbackResult.anchorInfo})`,
                                 debug: fallbackResult.debug
                             };
-                        } else {
-                            console.log(`❌ Tier ${tierNum} 폴백 실패:`, fallbackResult.error);
                         }
                         
                         return {
@@ -407,7 +399,6 @@ struct BFCacheSnapshot: Codable {
                         };
                         
                     } catch(e) {
-                        console.error(`Tier ${tierNum} 예외:`, e);
                         return {
                             success: false,
                             error: `Tier ${tierNum} 예외: ${e.message}`,
@@ -416,52 +407,75 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **개선된 다중 앵커 복원 함수 (디버깅 강화 + 관대한 허용 오차)**
-                function tryImprovedMultipleAnchors(anchors, targetX, targetY, tolerance, tierNum) {
-                    console.log(`🔍 Tier ${tierNum} 개선된 다중 앵커 복원 시작:`, {
-                        anchorCount: anchors.length,
-                        tolerance: tolerance,
-                        target: [targetX, targetY]
-                    });
-                    
+                // 🎯 **수정: 다중 앵커 복원 함수 (앵커 처리 로직 개선)**
+                function tryMultipleAnchors(anchors, targetX, targetY, tolerance) {
                     let successfulAnchor = null;
                     let anchorElement = null;
-                    let anchorDebug = {
-                        attemptedAnchors: [],
-                        searchResults: [],
-                        errorDetails: []
+                    let anchorDebug = { 
+                        attempts: [],
+                        validAnchors: 0,
+                        selectorTests: []
                     };
                     
-                    // 🔧 **개선된 앵커 검색 로직**
-                    for (let i = 0; i < anchors.length; i++) {
-                        const anchor = anchors[i];
-                        
-                        // 🔧 **안전한 앵커 데이터 검증**
+                    // 🎯 **수정: 앵커 데이터 유효성 사전 검증**
+                    const validAnchors = anchors.filter(anchor => {
                         if (!anchor) {
-                            anchorDebug.errorDetails.push(`앵커 ${i + 1}: null 데이터`);
-                            continue;
+                            anchorDebug.attempts.push({ anchor: 'null', result: 'invalid_anchor_object' });
+                            return false;
                         }
                         
-                        console.log(`🔍 앵커 ${i + 1} 검색 시작:`, anchor);
-                        anchorDebug.attemptedAnchors.push({
-                            index: i + 1,
-                            anchor: anchor
+                        // 🎯 **수정: selector와 selectors 모두 체크**
+                        const hasSelector = anchor.selector && typeof anchor.selector === 'string' && anchor.selector.trim().length > 0;
+                        const hasSelectors = anchor.selectors && Array.isArray(anchor.selectors) && anchor.selectors.length > 0;
+                        
+                        if (!hasSelector && !hasSelectors) {
+                            anchorDebug.attempts.push({ 
+                                anchor: anchor.anchorType || 'unknown',
+                                result: 'no_valid_selector',
+                                selectorValue: anchor.selector,
+                                selectorsValue: anchor.selectors
+                            });
+                            return false;
+                        }
+                        
+                        anchorDebug.validAnchors++;
+                        return true;
+                    });
+                    
+                    console.log(`🔍 앵커 유효성 검증: ${validAnchors.length}/${anchors.length}개 유효`);
+                    
+                    if (validAnchors.length === 0) {
+                        return {
+                            success: false,
+                            error: '유효한 앵커 없음',
+                            debug: anchorDebug
+                        };
+                    }
+                    
+                    // 🎯 **수정: 유효한 앵커들에 대해 순차 시도**
+                    for (let i = 0; i < validAnchors.length; i++) {
+                        const anchor = validAnchors[i];
+                        console.log(`🔍 앵커 ${i + 1}/${validAnchors.length} 시도:`, {
+                            type: anchor.anchorType || 'unknown',
+                            selector: anchor.selector || null,
+                            selectors: anchor.selectors || null
                         });
                         
-                        // 🔧 **향상된 앵커 요소 검색**
-                        const searchResult = tryImprovedFindAnchorElement(anchor, i + 1);
-                        anchorDebug.searchResults.push(searchResult);
+                        const attemptResult = tryFindAnchorElement(anchor);
+                        anchorDebug.attempts.push({
+                            anchorIndex: i + 1,
+                            anchorType: anchor.anchorType || 'unknown',
+                            primarySelector: anchor.selector || null,
+                            selectorsCount: anchor.selectors ? anchor.selectors.length : 0,
+                            result: attemptResult ? 'found' : 'not_found'
+                        });
                         
-                        if (searchResult.element) {
+                        if (attemptResult) {
+                            anchorElement = attemptResult;
                             successfulAnchor = anchor;
-                            anchorElement = searchResult.element;
                             anchorDebug.usedAnchor = `anchor_${i + 1}`;
-                            anchorDebug.usedSelector = searchResult.usedSelector;
-                            console.log(`✅ 앵커 ${i + 1} 검색 성공:`, searchResult);
+                            console.log(`✅ 앵커 ${i + 1} 성공: ${anchor.anchorType || 'unknown'}`);
                             break;
-                        } else {
-                            console.log(`❌ 앵커 ${i + 1} 검색 실패:`, searchResult.error);
-                            anchorDebug.errorDetails.push(`앵커 ${i + 1}: ${searchResult.error}`);
                         }
                     }
                     
@@ -472,79 +486,78 @@ struct BFCacheSnapshot: Codable {
                             const elementTop = window.scrollY + rect.top;
                             const elementLeft = window.scrollX + rect.left;
                             
-                            // 🔧 **안전한 오프셋 추출 (기본값 제공)**
-                            const offsetY = parseFloat(successfulAnchor.offsetFromTop) || 0;
-                            const offsetX = parseFloat(successfulAnchor.offsetFromLeft) || 0;
+                            // 🎯 **수정: 오프셋 처리 개선 - 안전한 변환**
+                            const savedOffsetY = successfulAnchor.offsetFromTop;
+                            const savedOffsetX = successfulAnchor.offsetFromLeft;
+                            
+                            let offsetY = 0;
+                            let offsetX = 0;
+                            
+                            // 숫자형 변환 시도
+                            if (typeof savedOffsetY === 'number') {
+                                offsetY = savedOffsetY;
+                            } else if (typeof savedOffsetY === 'string') {
+                                const parsed = parseFloat(savedOffsetY);
+                                if (!isNaN(parsed)) offsetY = parsed;
+                            }
+                            
+                            if (typeof savedOffsetX === 'number') {
+                                offsetX = savedOffsetX;
+                            } else if (typeof savedOffsetX === 'string') {
+                                const parsed = parseFloat(savedOffsetX);
+                                if (!isNaN(parsed)) offsetX = parsed;
+                            }
                             
                             const restoreX = elementLeft - offsetX;
                             const restoreY = elementTop - offsetY;
                             
-                            // 허용 오차 체크
+                            // 🎯 **수정: 허용 오차 체크 개선 - OR 조건으로 변경**
                             const diffX = Math.abs(restoreX - targetX);
                             const diffY = Math.abs(restoreY - targetY);
                             
+                            // 🎯 **핵심 수정: 허용 오차를 AND가 아닌 OR로 변경하고, 전체 거리도 고려**
+                            const overallDistance = Math.sqrt(diffX * diffX + diffY * diffY);
+                            const withinToleranceXY = diffX <= tolerance || diffY <= tolerance; // OR 조건
+                            const withinToleranceOverall = overallDistance <= tolerance * 1.5; // 전체 거리 허용
+                            const withinTolerance = withinToleranceXY || withinToleranceOverall;
+                            
                             anchorDebug.calculation = {
                                 anchorType: anchorDebug.usedAnchor,
-                                selector: anchorDebug.usedSelector,
+                                selector: anchor.selector || (anchor.selectors ? anchor.selectors[0] : null),
                                 elementPosition: [elementLeft, elementTop],
                                 savedOffset: [offsetX, offsetY],
                                 restorePosition: [restoreX, restoreY],
                                 targetPosition: [targetX, targetY],
                                 diff: [diffX, diffY],
+                                overallDistance: overallDistance,
                                 tolerance: tolerance,
-                                withinTolerance: diffX <= tolerance && diffY <= tolerance
+                                toleranceOverall: tolerance * 1.5,
+                                withinToleranceXY: withinToleranceXY,
+                                withinToleranceOverall: withinToleranceOverall,
+                                withinTolerance: withinTolerance
                             };
                             
-                            console.log('🎯 앵커 기반 복원 계산:', anchorDebug.calculation);
-                            
-                            // 🔧 **관대한 허용 오차 적용**
-                            if (diffX <= tolerance && diffY <= tolerance) {
-                                // 앵커 기반 스크롤 실행
-                                performScrollTo(restoreX, restoreY);
+                            if (withinTolerance) {
+                                console.log('🎯 다중 앵커 복원 성공:', anchorDebug.calculation);
                                 
-                                console.log(`✅ Tier ${tierNum} 앵커 복원 성공:`, {
-                                    anchorInfo: anchorDebug.usedAnchor,
-                                    selector: anchorDebug.usedSelector,
-                                    diff: [diffX, diffY],
-                                    tolerance: tolerance
-                                });
+                                // 앵커 기반 스크롤
+                                performScrollTo(restoreX, restoreY);
                                 
                                 return {
                                     success: true,
-                                    anchorInfo: `${anchorDebug.usedAnchor}(${anchorDebug.usedSelector})`,
+                                    anchorInfo: `${anchorDebug.usedAnchor}(${Math.round(overallDistance)}px)`,
                                     debug: anchorDebug
                                 };
                             } else {
-                                console.log(`❌ Tier ${tierNum} 앵커 허용 오차 초과:`, {
-                                    diff: [diffX, diffY], 
-                                    tolerance: tolerance,
-                                    diffMax: Math.max(diffX, diffY)
-                                });
-                                
-                                // 🔧 **허용 오차 초과해도 부분 성공으로 처리 (관대한 정책)**
-                                if (Math.max(diffX, diffY) <= tolerance * 2) {
-                                    console.log(`⚠️ Tier ${tierNum} 관대한 정책으로 앵커 복원 시도:`, {
-                                        diff: [diffX, diffY],
-                                        relaxedTolerance: tolerance * 2
-                                    });
-                                    
-                                    performScrollTo(restoreX, restoreY);
-                                    
-                                    return {
-                                        success: true,
-                                        anchorInfo: `${anchorDebug.usedAnchor}(관대한정책)`,
-                                        debug: anchorDebug
-                                    };
-                                }
-                                
+                                console.log(`❌ 앵커 허용 오차 초과:`, anchorDebug.calculation);
                                 return {
                                     success: false,
-                                    error: `허용 오차 초과: ${Math.max(diffX, diffY).toFixed(1)}px > ${tolerance}px`,
+                                    error: `허용 오차 초과: 전체거리=${Math.round(overallDistance)}px > ${tolerance}px`,
                                     debug: anchorDebug
                                 };
                             }
                         } catch(calcError) {
-                            console.error(`❌ Tier ${tierNum} 앵커 계산 오류:`, calcError);
+                            anchorDebug.calculationError = calcError.message;
                             return {
                                 success: false,
                                 error: `앵커 계산 오류: ${calcError.message}`,
@@ -553,119 +566,11 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
                     
-                    console.log(`❌ Tier ${tierNum} 모든 앵커 검색 실패`);
                     return {
                         success: false,
                         error: '모든 앵커 요소 검색 실패',
                         debug: anchorDebug
                     };
-                }
-                
-                // 🔧 **향상된 앵커 요소 검색 함수 (상세 디버깅)**
-                function tryImprovedFindAnchorElement(anchor, anchorIndex) {
-                    const result = {
-                        element: null,
-                        usedSelector: null,
-                        error: null,
-                        searchAttempts: []
-                    };
-                    
-                    if (!anchor) {
-                        result.error = 'null 앵커 데이터';
-                        return result;
-                    }
-                    
-                    // 🔧 **다중 selector 전략 (우선순위 적용)**
-                    const selectorsToTry = [];
-                    
-                    // 1순위: 주 selector
-                    if (anchor.selector) {
-                        selectorsToTry.push({
-                            selector: anchor.selector,
-                            priority: 1,
-                            source: 'primary'
-                        });
-                    }
-                    
-                    // 2순위: 보조 selectors 배열
-                    if (anchor.selectors && Array.isArray(anchor.selectors)) {
-                        anchor.selectors.forEach((sel, idx) => {
-                            if (sel && sel !== anchor.selector) {
-                                selectorsToTry.push({
-                                    selector: sel,
-                                    priority: 2 + idx,
-                                    source: `secondary_${idx}`
-                                });
-                            }
-                        });
-                    }
-                    
-                    // 3순위: ID 기반 fallback
-                    if (anchor.id) {
-                        selectorsToTry.push({
-                            selector: `#${anchor.id}`,
-                            priority: 100,
-                            source: 'id_fallback'
-                        });
-                    }
-                    
-                    // 4순위: 태그명 + 클래스 fallback
-                    if (anchor.tagName && anchor.className) {
-                        const firstClass = anchor.className.split(' ')[0];
-                        if (firstClass) {
-                            selectorsToTry.push({
-                                selector: `${anchor.tagName}.${firstClass}`,
-                                priority: 200,
-                                source: 'tag_class_fallback'
-                            });
-                        }
-                    }
-                    
-                    console.log(`🔍 앵커 ${anchorIndex} selector 시도 목록:`, selectorsToTry.map(s => s.selector));
-                    
-                    // 우선순위순으로 시도
-                    for (const selectorInfo of selectorsToTry) {
-                        const attempt = {
-                            selector: selectorInfo.selector,
-                            source: selectorInfo.source,
-                            priority: selectorInfo.priority,
-                            error: null,
-                            elementCount: 0
-                        };
-                        
-                        try {
-                            const elements = document.querySelectorAll(selectorInfo.selector);
-                            attempt.elementCount = elements.length;
-                            
-                            if (elements.length > 0) {
-                                // 첫 번째 요소 반환 (추후 더 정교한 선택 로직 추가 가능)
-                                result.element = elements[0];
-                                result.usedSelector = selectorInfo.selector;
-                                attempt.success = true;
-                                result.searchAttempts.push(attempt);
-                                
-                                console.log(`✅ 앵커 ${anchorIndex} selector 성공:`, {
-                                    selector: selectorInfo.selector,
-                                    source: selectorInfo.source,
-                                    elementCount: elements.length
-                                });
-                                
-                                return result;
-                            } else {
-                                attempt.error = '요소 없음';
-                            }
-                        } catch(e) {
-                            attempt.error = e.message;
-                            console.warn(`⚠️ 앵커 ${anchorIndex} selector 오류: ${selectorInfo.selector} - ${e.message}`);
-                        }
-                        
-                        result.searchAttempts.push(attempt);
-                    }
-                    
-                    result.error = `모든 selector 실패 (${selectorsToTry.length}개 시도)`;
-                    console.log(`❌ 앵커 ${anchorIndex} 모든 selector 실패:`, result.searchAttempts);
-                    
-                    return result;
                 }
                 
                 // 🎯 **Tier별 특화 폴백 전략**
@@ -1034,7 +939,7 @@ struct BFCacheSnapshot: Codable {
                         
                         // 사용된 Tier의 허용 오차 적용
                         const tierConfig = usedTier > 0 ? TIER_CONFIG[`tier${usedTier}`] : null;
-                        const tolerance = tierConfig ? tierConfig.tolerance : 100;
+                        const tolerance = tierConfig ? tierConfig.tolerance : 100; // 🎯 **수정: 기본 허용 오차 증가**
                         
                         verificationResult = {
                             target: [targetX, targetY],
@@ -1113,6 +1018,85 @@ struct BFCacheSnapshot: Codable {
             }
             
             // 🔧 **헬퍼 함수들**
+            
+            // 🎯 **수정: 앵커 요소 찾기 함수 개선 (다중 selector 지원 강화)**
+            function tryFindAnchorElement(anchor) {
+                if (!anchor) {
+                    console.warn('🔍 tryFindAnchorElement: null anchor');
+                    return null;
+                }
+                
+                // 🎯 **수정: selector와 selectors 모두 처리**
+                let selectorsToTry = [];
+                
+                // 1. selectors 배열이 있으면 우선 사용
+                if (anchor.selectors && Array.isArray(anchor.selectors) && anchor.selectors.length > 0) {
+                    selectorsToTry = anchor.selectors.filter(sel => sel && typeof sel === 'string' && sel.trim().length > 0);
+                }
+                
+                // 2. 기본 selector도 추가 (중복 제거)
+                if (anchor.selector && typeof anchor.selector === 'string' && anchor.selector.trim().length > 0) {
+                    if (!selectorsToTry.includes(anchor.selector)) {
+                        selectorsToTry.push(anchor.selector);
+                    }
+                }
+                
+                // 3. 백업 selector들 생성 (앵커 데이터에서)
+                const backupSelectors = [];
+                if (anchor.id) {
+                    backupSelectors.push(`#${anchor.id}`);
+                }
+                if (anchor.tagName && anchor.className) {
+                    const firstClass = anchor.className.split(' ')[0];
+                    if (firstClass) {
+                        backupSelectors.push(`${anchor.tagName.toLowerCase()}.${firstClass}`);
+                        backupSelectors.push(`.${firstClass}`);
+                    }
+                }
+                if (anchor.tagName) {
+                    backupSelectors.push(anchor.tagName.toLowerCase());
+                }
+                
+                // 백업 selector들을 끝에 추가 (중복 제거)
+                for (const backup of backupSelectors) {
+                    if (!selectorsToTry.includes(backup)) {
+                        selectorsToTry.push(backup);
+                    }
+                }
+                
+                console.log(`🔍 tryFindAnchorElement: ${selectorsToTry.length}개 selector 시도`, {
+                    primary: selectorsToTry.slice(0, 3),
+                    total: selectorsToTry.length,
+                    anchorType: anchor.anchorType || 'unknown'
+                });
+                
+                if (selectorsToTry.length === 0) {
+                    console.warn('🔍 tryFindAnchorElement: 유효한 selector 없음', anchor);
+                    return null;
+                }
+                
+                // 🎯 **수정: 각 selector 순차 시도 (유효성 검증 포함)**
+                for (let i = 0; i < selectorsToTry.length; i++) {
+                    const selector = selectorsToTry[i];
+                    try {
+                        console.log(`🔍 selector ${i + 1}/${selectorsToTry.length} 시도: "${selector}"`);
+                        
+                        const elements = document.querySelectorAll(selector);
+                        if (elements.length > 0) {
+                            console.log(`✅ selector 성공: "${selector}" - ${elements.length}개 요소 발견`);
+                            return elements[0]; // 첫 번째 요소 반환
+                        } else {
+                            console.log(`❌ selector 요소 없음: "${selector}"`);
+                        }
+                    } catch(e) {
+                        console.warn(`❌ selector 오류: "${selector}" - ${e.message}`);
+                        continue; // 다음 selector 시도
+                    }
+                }
+                
+                console.warn(`🔍 tryFindAnchorElement: 모든 selector 실패 (${selectorsToTry.length}개 시도)`);
+                return null;
+            }
             
             // 통합된 스크롤 실행 함수
             function performScrollTo(x, y) {
@@ -2220,6 +2204,7 @@ extension BFCacheTransitionSystem {
                             };
                         }
                         
+                       
                         // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
                         function detectIframeScrolls() {
                             const iframes = [];
@@ -2279,3 +2264,242 @@ extension BFCacheTransitionSystem {
                                     console.log('🌐 Cross-origin iframe 기록:', iframe.src);
                                 }
                             }
+                            
+                            console.log('🖼️ iframe 스크롤 감지 완료:', iframes.length, '개');
+                            return iframes;
+                        }
+                        
+                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응 (기존 로직 유지)
+                        function generateBestSelector(element) {
+                            if (!element || element.nodeType !== 1) return null;
+                            
+                            // 1순위: ID가 있으면 ID 사용
+                            if (element.id) {
+                                return `#${element.id}`;
+                            }
+                            
+                            // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
+                            const dataAttrs = Array.from(element.attributes)
+                                .filter(attr => attr.name.startsWith('data-'))
+                                .map(attr => `[${attr.name}="${attr.value}"]`);
+                            if (dataAttrs.length > 0) {
+                                const attrSelector = element.tagName.toLowerCase() + dataAttrs.join('');
+                                if (document.querySelectorAll(attrSelector).length === 1) {
+                                    return attrSelector;
+                                }
+                            }
+                            
+                            // 3순위: 고유한 클래스 조합
+                            if (element.className) {
+                                const classes = element.className.trim().split(/\\s+/);
+                                const uniqueClasses = classes.filter(cls => {
+                                    const elements = document.querySelectorAll(`.${cls}`);
+                                    return elements.length === 1 && elements[0] === element;
+                                });
+                                
+                                if (uniqueClasses.length > 0) {
+                                    return `.${uniqueClasses.join('.')}`;
+                                }
+                                
+                                // 클래스 조합으로 고유성 확보
+                                if (classes.length > 0) {
+                                    const classSelector = `.${classes.join('.')}`;
+                                    if (document.querySelectorAll(classSelector).length === 1) {
+                                        return classSelector;
+                                    }
+                                }
+                            }
+                            
+                            // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
+                            let path = [];
+                            let current = element;
+                            while (current && current !== document.documentElement) {
+                                let selector = current.tagName.toLowerCase();
+                                if (current.id) {
+                                    path.unshift(`#${current.id}`);
+                                    break;
+                                }
+                                if (current.className) {
+                                    const classes = current.className.trim().split(/\\s+/).join('.');
+                                    selector += `.${classes}`;
+                                }
+                                path.unshift(selector);
+                                current = current.parentElement;
+                                
+                                // 경로가 너무 길어지면 중단
+                                if (path.length > 5) break;
+                            }
+                            return path.join(' > ');
+                        }
+                        
+                        // 🎯 **메인 실행 - 4계층 강화된 앵커 기반 데이터 수집**
+                        const anchorData = identifyFourTierAnchors(); // 🎯 **4계층 앵커 시스템**
+                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 유지**
+                        
+                        // 메인 스크롤 위치도 parseFloat 정밀도 적용 
+                        const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
+                        const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
+                        
+                        // 뷰포트 및 콘텐츠 크기 정밀 계산 (실제 크기 포함)
+                        const viewportWidth = parseFloat(window.innerWidth) || 0;
+                        const viewportHeight = parseFloat(window.innerHeight) || 0;
+                        const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
+                        const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
+                        
+                        // 실제 스크롤 가능 크기 계산 (최대한 정확하게)
+                        const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
+                        const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
+                        
+                        console.log(`🎯 4계층 강화된 앵커 기반 감지 완료:`);
+                        console.log(`   주앵커: ${anchorData.primaryAnchor ? 1 : 0}개`);
+                        console.log(`   보조앵커: ${anchorData.auxiliaryAnchors.length}개`);
+                        console.log(`   랜드마크앵커: ${anchorData.landmarkAnchors.length}개`);
+                        console.log(`   구조적앵커: ${anchorData.structuralAnchors.length}개`);
+                        console.log(`   iframe: ${iframeScrolls.length}개`);
+                        console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight})`);
+                        console.log(`🎯 콘텐츠: (${contentWidth}, ${contentHeight}) 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
+                        
+                        // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
+                        resolve({
+                            viewportAnchor: anchorData.primaryAnchor,           // 🎯 **주 뷰포트 앵커 (Tier1)**
+                            auxiliaryAnchors: anchorData.auxiliaryAnchors,      // 🎯 **보조 앵커들 (Tier2)** 
+                            landmarkAnchors: anchorData.landmarkAnchors,        // 🆕 **랜드마크 앵커들 (Tier3)**
+                            structuralAnchors: anchorData.structuralAnchors,    // 🆕 **구조적 앵커들 (Tier4)**
+                            scroll: { 
+                                x: mainScrollX, 
+                                y: mainScrollY
+                            },
+                            iframes: iframeScrolls, // 🖼️ **iframe은 유지**
+                            href: window.location.href,
+                            title: document.title,
+                            timestamp: Date.now(),
+                            userAgent: navigator.userAgent,
+                            viewport: {
+                                width: viewportWidth,
+                                height: viewportHeight
+                            },
+                            content: {
+                                width: contentWidth,
+                                height: contentHeight
+                            },
+                            actualScrollable: { 
+                                width: actualScrollableWidth,
+                                height: actualScrollableHeight
+                            },
+                            tierResults: anchorData.tierResults // 🎯 **4계층 결과 상세 정보**
+                        });
+                    } catch(e) { 
+                        console.error('🎯 4계층 강화된 앵커 기반 감지 실패:', e);
+                        // 🚫 **수정: Swift 호환 반환값**
+                        resolve({
+                            viewportAnchor: null,
+                            auxiliaryAnchors: [],
+                            landmarkAnchors: [],
+                            structuralAnchors: [],
+                            scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
+                            iframes: [],
+                            href: window.location.href,
+                            title: document.title,
+                            actualScrollable: { width: 0, height: 0 },
+                            error: e.message
+                        });
+                    }
+                }
+
+                // 🎯 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
+                if (document.readyState === 'complete') {
+                    waitForDynamicContent(captureFourTierScrollData);
+                } else {
+                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureFourTierScrollData));
+                }
+            });
+        })()
+        """
+    }
+    
+    internal func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
+        let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
+        return renderer.image { context in
+            webView.layer.render(in: context.cgContext)
+        }
+    }
+    
+    // MARK: - 🌐 JavaScript 스크립트
+    
+    static func makeBFCacheScript() -> WKUserScript {
+        let scriptSource = """
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted) {
+                console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
+                
+                // 🌐 동적 콘텐츠 새로고침 (필요시)
+                if (window.location.pathname.includes('/feed') ||
+                    window.location.pathname.includes('/timeline') ||
+                    window.location.hostname.includes('twitter') ||
+                    window.location.hostname.includes('facebook') ||
+                    window.location.hostname.includes('dcinside') ||
+                    window.location.hostname.includes('cafe.naver')) {
+                    if (window.refreshDynamicContent) {
+                        window.refreshDynamicContent();
+                    }
+                }
+            }
+        });
+        
+        window.addEventListener('pagehide', function(event) {
+            if (event.persisted) {
+                console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
+            }
+        });
+        
+        // 🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원 리스너
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'restoreScroll') {
+                try {
+                    const targetX = parseFloat(event.data.scrollX) || 0;
+                    const targetY = parseFloat(event.data.scrollY) || 0;
+                    const browserBlockingWorkaround = event.data.browserBlockingWorkaround || false;
+                    
+                    console.log('🚫 Cross-origin iframe 브라우저 차단 대응 스크롤 복원:', targetX, targetY, browserBlockingWorkaround ? '(브라우저 차단 대응 모드)' : '');
+                    
+                    // 🚫 브라우저 차단 대응 스크롤 설정
+                    if (browserBlockingWorkaround) {
+                        // 점진적 스크롤 시도
+                        let attempts = 0;
+                        const maxAttempts = 10;
+                        
+                        const tryScroll = () => {
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.documentElement.scrollLeft = targetX;
+                            document.body.scrollTop = targetY;
+                            document.body.scrollLeft = targetX;
+                            
+                            const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            
+                            if ((Math.abs(currentX - targetX) > 10 || Math.abs(currentY - targetY) > 10) && attempts < maxAttempts) {
+                                attempts++;
+                                setTimeout(tryScroll, 150);
+                            }
+                        };
+                        
+                        tryScroll();
+                    } else {
+                        // 기본 스크롤
+                        window.scrollTo(targetX, targetY);
+                        document.documentElement.scrollTop = targetY;
+                        document.documentElement.scrollLeft = targetX;
+                        document.body.scrollTop = targetY;
+                        document.body.scrollLeft = targetX;
+                    }
+                    
+                } catch(e) {
+                    console.error('Cross-origin iframe 스크롤 복원 실패:', e);
+                }
+            }
+        });
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+}
