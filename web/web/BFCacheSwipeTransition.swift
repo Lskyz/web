@@ -9,6 +9,7 @@
 //  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
 //  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
 //  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
+//  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
 //
 
 import UIKit
@@ -136,6 +137,47 @@ struct BFCacheSnapshot: Codable {
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 4계층 강화된 DOM 요소 기반 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
+        // 🔥 **캡처된 jsState 상세 검증 및 로깅**
+        if let jsState = self.jsState {
+            TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키 확인: \(Array(jsState.keys))")
+            
+            if let primaryAnchor = jsState["viewportAnchor"] as? [String: Any] {
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 주앵커 전체 키: \(Array(primaryAnchor.keys))")
+                if let selector = primaryAnchor["selector"] as? String {
+                    TabPersistenceManager.debugMessages.append("🔥 주앵커 selector: \(selector)")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 주앵커 selector 키 없음")
+                }
+                if let selectors = primaryAnchor["selectors"] as? [String] {
+                    TabPersistenceManager.debugMessages.append("🔥 주앵커 selectors 배열: \(selectors.count)개")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 주앵커 selectors 배열 없음")
+                }
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 주앵커 데이터 없음 - viewportAnchor 키 누락")
+            }
+            
+            if let auxiliaryAnchors = jsState["auxiliaryAnchors"] as? [[String: Any]] {
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 보조앵커: \(auxiliaryAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 보조앵커 데이터 없음")
+            }
+            
+            if let landmarkAnchors = jsState["landmarkAnchors"] as? [[String: Any]] {
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 랜드마크앵커: \(landmarkAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 랜드마크앵커 데이터 없음")
+            }
+            
+            if let structuralAnchors = jsState["structuralAnchors"] as? [[String: Any]] {
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 구조적앵커: \(structuralAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 구조적앵커 데이터 없음")
+            }
+        } else {
+            TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
+        }
+        
         // 🎯 **1단계: 4계층 강화된 DOM 요소 기반 스크롤 복원 우선 실행**
         performFourTierElementBasedScrollRestore(to: webView)
         
@@ -216,7 +258,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🎯 4계층 강화된 DOM 요소 기반 1단계 복원 완료")
     }
     
-    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화) - 🎯 앵커 복원 로직 수정**
+    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화) - 🔥 앵커 우선순위 강화**
     private func generateFourTierElementBasedRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -362,28 +404,38 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **Tier별 복원 시도 함수**
+                // 🎯 **Tier별 복원 시도 함수 - 🔥 앵커 우선순위 강화**
                 function tryTierRestore(tierNum, config, targetX, targetY) {
                     try {
                         console.log(`🔄 Tier ${tierNum} 복원 로직 실행`);
                         
-                        // Tier별 특화 앵커 처리
+                        // 🔥 **앵커 기반 복원 우선 시도 (fallback 전에 반드시 실행)**
                         if (config.anchors && config.anchors.length > 0) {
-                            // 🔧 **기존 다중 앵커 시스템 활용**
-                            const anchorResult = tryMultipleAnchors(config.anchors, targetX, targetY, config.tolerance);
+                            console.log(`🔥 Tier ${tierNum} 앵커 기반 복원 우선 시도 (${config.anchors.length}개 앵커)`);
+                            
+                            const anchorResult = tryMultipleAnchorsEnhanced(config.anchors, targetX, targetY, config.tolerance, tierNum);
+                            
                             if (anchorResult.success) {
+                                console.log(`✅ Tier ${tierNum} 앵커 기반 복원 성공:`, anchorResult);
                                 return {
                                     success: true,
                                     method: `tier${tierNum}_anchor`,
                                     anchorInfo: `${config.name}(${anchorResult.anchorInfo})`,
                                     debug: anchorResult.debug
                                 };
+                            } else {
+                                console.log(`❌ Tier ${tierNum} 앵커 기반 복원 실패:`, anchorResult.error);
+                                debugInfo[`tier${tierNum}_anchor_failed`] = anchorResult.error;
                             }
+                        } else {
+                            console.log(`⚠️ Tier ${tierNum} 앵커 없음 - fallback으로 즉시 이동`);
                         }
                         
-                        // Tier별 폴백 전략
+                        // 🔥 **앵커 실패 시에만 fallback 시도**
+                        console.log(`🔄 Tier ${tierNum} fallback 시도 (앵커 실패 후)`);
                         const fallbackResult = tryTierFallback(tierNum, config, targetX, targetY);
                         if (fallbackResult.success) {
+                            console.log(`✅ Tier ${tierNum} fallback 성공:`, fallbackResult);
                             return {
                                 success: true,
                                 method: `tier${tierNum}_fallback`,
@@ -394,7 +446,7 @@ struct BFCacheSnapshot: Codable {
                         
                         return {
                             success: false,
-                            error: `Tier ${tierNum} 모든 전략 실패`,
+                            error: `Tier ${tierNum} 앵커/fallback 모두 실패`,
                             debug: { anchorAttempted: config.anchors.length, fallbackTried: true }
                         };
                         
@@ -407,20 +459,23 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **수정: 다중 앵커 복원 함수 (앵커 처리 로직 개선)**
-                function tryMultipleAnchors(anchors, targetX, targetY, tolerance) {
+                // 🎯 **수정: 다중 앵커 복원 함수 강화 (상세 로깅)**
+                function tryMultipleAnchorsEnhanced(anchors, targetX, targetY, tolerance, tierNum) {
                     let successfulAnchor = null;
                     let anchorElement = null;
                     let anchorDebug = { 
                         attempts: [],
                         validAnchors: 0,
-                        selectorTests: []
+                        selectorTests: [],
+                        tierNum: tierNum
                     };
                     
+                    console.log(`🔥 Tier ${tierNum} 다중 앵커 복원 강화 시작: ${anchors.length}개 앵커`);
+                    
                     // 🎯 **수정: 앵커 데이터 유효성 사전 검증**
-                    const validAnchors = anchors.filter(anchor => {
+                    const validAnchors = anchors.filter((anchor, index) => {
                         if (!anchor) {
-                            anchorDebug.attempts.push({ anchor: 'null', result: 'invalid_anchor_object' });
+                            anchorDebug.attempts.push({ anchorNum: index + 1, result: 'invalid_anchor_object' });
                             return false;
                         }
                         
@@ -430,7 +485,7 @@ struct BFCacheSnapshot: Codable {
                         
                         if (!hasSelector && !hasSelectors) {
                             anchorDebug.attempts.push({ 
-                                anchor: anchor.anchorType || 'unknown',
+                                anchorNum: index + 1,
                                 result: 'no_valid_selector',
                                 selectorValue: anchor.selector,
                                 selectorsValue: anchor.selectors
@@ -442,28 +497,30 @@ struct BFCacheSnapshot: Codable {
                         return true;
                     });
                     
-                    console.log(`🔍 앵커 유효성 검증: ${validAnchors.length}/${anchors.length}개 유효`);
+                    console.log(`🔥 Tier ${tierNum} 앵커 유효성 검증: ${validAnchors.length}/${anchors.length}개 유효`);
                     
                     if (validAnchors.length === 0) {
                         return {
                             success: false,
-                            error: '유효한 앵커 없음',
+                            error: 'Tier ${tierNum} 유효한 앵커 없음',
                             debug: anchorDebug
                         };
                     }
                     
-                    // 🎯 **수정: 유효한 앵커들에 대해 순차 시도**
+                    // 🎯 **수정: 유효한 앵커들에 대해 순차 시도 (상세 로깅)**
                     for (let i = 0; i < validAnchors.length; i++) {
                         const anchor = validAnchors[i];
-                        console.log(`🔍 앵커 ${i + 1}/${validAnchors.length} 시도:`, {
+                        const anchorNum = i + 1;
+                        
+                        console.log(`🔍 Tier ${tierNum} 앵커 ${anchorNum}/${validAnchors.length} 시도:`, {
                             type: anchor.anchorType || 'unknown',
                             selector: anchor.selector || null,
                             selectors: anchor.selectors || null
                         });
                         
-                        const attemptResult = tryFindAnchorElement(anchor);
+                        const attemptResult = tryFindAnchorElementEnhanced(anchor, anchorNum, tierNum);
                         anchorDebug.attempts.push({
-                            anchorIndex: i + 1,
+                            anchorNum: anchorNum,
                             anchorType: anchor.anchorType || 'unknown',
                             primarySelector: anchor.selector || null,
                             selectorsCount: anchor.selectors ? anchor.selectors.length : 0,
@@ -473,8 +530,8 @@ struct BFCacheSnapshot: Codable {
                         if (attemptResult) {
                             anchorElement = attemptResult;
                             successfulAnchor = anchor;
-                            anchorDebug.usedAnchor = `anchor_${i + 1}`;
-                            console.log(`✅ 앵커 ${i + 1} 성공: ${anchor.anchorType || 'unknown'}`);
+                            anchorDebug.usedAnchor = `tier${tierNum}_anchor_${anchorNum}`;
+                            console.log(`✅ Tier ${tierNum} 앵커 ${anchorNum} 성공: ${anchor.anchorType || 'unknown'}`);
                             break;
                         }
                     }
@@ -522,8 +579,9 @@ struct BFCacheSnapshot: Codable {
                             const withinTolerance = withinToleranceXY || withinToleranceOverall;
                             
                             anchorDebug.calculation = {
+                                tierNum: tierNum,
                                 anchorType: anchorDebug.usedAnchor,
-                                selector: anchor.selector || (anchor.selectors ? anchor.selectors[0] : null),
+                                selector: successfulAnchor.selector || (successfulAnchor.selectors ? successfulAnchor.selectors[0] : null),
                                 elementPosition: [elementLeft, elementTop],
                                 savedOffset: [offsetX, offsetY],
                                 restorePosition: [restoreX, restoreY],
@@ -538,7 +596,7 @@ struct BFCacheSnapshot: Codable {
                             };
                             
                             if (withinTolerance) {
-                                console.log('🎯 다중 앵커 복원 성공:', anchorDebug.calculation);
+                                console.log(`🎯 Tier ${tierNum} 다중 앵커 복원 성공:`, anchorDebug.calculation);
                                 
                                 // 앵커 기반 스크롤
                                 performScrollTo(restoreX, restoreY);
@@ -549,10 +607,10 @@ struct BFCacheSnapshot: Codable {
                                     debug: anchorDebug
                                 };
                             } else {
-                                console.log(`❌ 앵커 허용 오차 초과:`, anchorDebug.calculation);
+                                console.log(`❌ Tier ${tierNum} 앵커 허용 오차 초과:`, anchorDebug.calculation);
                                 return {
                                     success: false,
-                                    error: `허용 오차 초과: 전체거리=${Math.round(overallDistance)}px > ${tolerance}px`,
+                                    error: `Tier ${tierNum} 허용 오차 초과: 전체거리=${Math.round(overallDistance)}px > ${tolerance}px`,
                                     debug: anchorDebug
                                 };
                             }
@@ -560,7 +618,7 @@ struct BFCacheSnapshot: Codable {
                             anchorDebug.calculationError = calcError.message;
                             return {
                                 success: false,
-                                error: `앵커 계산 오류: ${calcError.message}`,
+                                error: `Tier ${tierNum} 앵커 계산 오류: ${calcError.message}`,
                                 debug: anchorDebug
                             };
                         }
@@ -568,9 +626,88 @@ struct BFCacheSnapshot: Codable {
                     
                     return {
                         success: false,
-                        error: '모든 앵커 요소 검색 실패',
+                        error: `Tier ${tierNum} 모든 앵커 요소 검색 실패`,
                         debug: anchorDebug
                     };
+                }
+                
+                // 🔥 **강화된 앵커 요소 찾기 함수 (상세 로깅)**
+                function tryFindAnchorElementEnhanced(anchor, anchorNum, tierNum) {
+                    if (!anchor) {
+                        console.warn(`🔍 Tier ${tierNum} 앵커 ${anchorNum}: null anchor`);
+                        return null;
+                    }
+                    
+                    // 🎯 **수정: selector와 selectors 모두 처리**
+                    let selectorsToTry = [];
+                    
+                    // 1. selectors 배열이 있으면 우선 사용
+                    if (anchor.selectors && Array.isArray(anchor.selectors) && anchor.selectors.length > 0) {
+                        selectorsToTry = anchor.selectors.filter(sel => sel && typeof sel === 'string' && sel.trim().length > 0);
+                    }
+                    
+                    // 2. 기본 selector도 추가 (중복 제거)
+                    if (anchor.selector && typeof anchor.selector === 'string' && anchor.selector.trim().length > 0) {
+                        if (!selectorsToTry.includes(anchor.selector)) {
+                            selectorsToTry.push(anchor.selector);
+                        }
+                    }
+                    
+                    // 3. 백업 selector들 생성 (앵커 데이터에서)
+                    const backupSelectors = [];
+                    if (anchor.id) {
+                        backupSelectors.push(`#${anchor.id}`);
+                    }
+                    if (anchor.tagName && anchor.className) {
+                        const firstClass = anchor.className.split(' ')[0];
+                        if (firstClass) {
+                            backupSelectors.push(`${anchor.tagName.toLowerCase()}.${firstClass}`);
+                            backupSelectors.push(`.${firstClass}`);
+                        }
+                    }
+                    if (anchor.tagName) {
+                        backupSelectors.push(anchor.tagName.toLowerCase());
+                    }
+                    
+                    // 백업 selector들을 끝에 추가 (중복 제거)
+                    for (const backup of backupSelectors) {
+                        if (!selectorsToTry.includes(backup)) {
+                            selectorsToTry.push(backup);
+                        }
+                    }
+                    
+                    console.log(`🔍 Tier ${tierNum} 앵커 ${anchorNum}: ${selectorsToTry.length}개 selector 시도`, {
+                        primary: selectorsToTry.slice(0, 3),
+                        total: selectorsToTry.length,
+                        anchorType: anchor.anchorType || 'unknown'
+                    });
+                    
+                    if (selectorsToTry.length === 0) {
+                        console.warn(`🔍 Tier ${tierNum} 앵커 ${anchorNum}: 유효한 selector 없음`, anchor);
+                        return null;
+                    }
+                    
+                    // 🎯 **수정: 각 selector 순차 시도 (유효성 검증 포함)**
+                    for (let i = 0; i < selectorsToTry.length; i++) {
+                        const selector = selectorsToTry[i];
+                        try {
+                            console.log(`🔍 Tier ${tierNum} 앵커 ${anchorNum} selector ${i + 1}/${selectorsToTry.length} 시도: "${selector}"`);
+                            
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                console.log(`✅ Tier ${tierNum} 앵커 ${anchorNum} selector 성공: "${selector}" - ${elements.length}개 요소 발견`);
+                                return elements[0]; // 첫 번째 요소 반환
+                            } else {
+                                console.log(`❌ Tier ${tierNum} 앵커 ${anchorNum} selector 요소 없음: "${selector}"`);
+                            }
+                        } catch(e) {
+                            console.warn(`❌ Tier ${tierNum} 앵커 ${anchorNum} selector 오류: "${selector}" - ${e.message}`);
+                            continue; // 다음 selector 시도
+                        }
+                    }
+                    
+                    console.warn(`🔍 Tier ${tierNum} 앵커 ${anchorNum}: 모든 selector 실패 (${selectorsToTry.length}개 시도)`);
+                    return null;
                 }
                 
                 // 🎯 **Tier별 특화 폴백 전략**
@@ -1018,85 +1155,6 @@ struct BFCacheSnapshot: Codable {
             }
             
             // 🔧 **헬퍼 함수들**
-            
-            // 🎯 **수정: 앵커 요소 찾기 함수 개선 (다중 selector 지원 강화)**
-            function tryFindAnchorElement(anchor) {
-                if (!anchor) {
-                    console.warn('🔍 tryFindAnchorElement: null anchor');
-                    return null;
-                }
-                
-                // 🎯 **수정: selector와 selectors 모두 처리**
-                let selectorsToTry = [];
-                
-                // 1. selectors 배열이 있으면 우선 사용
-                if (anchor.selectors && Array.isArray(anchor.selectors) && anchor.selectors.length > 0) {
-                    selectorsToTry = anchor.selectors.filter(sel => sel && typeof sel === 'string' && sel.trim().length > 0);
-                }
-                
-                // 2. 기본 selector도 추가 (중복 제거)
-                if (anchor.selector && typeof anchor.selector === 'string' && anchor.selector.trim().length > 0) {
-                    if (!selectorsToTry.includes(anchor.selector)) {
-                        selectorsToTry.push(anchor.selector);
-                    }
-                }
-                
-                // 3. 백업 selector들 생성 (앵커 데이터에서)
-                const backupSelectors = [];
-                if (anchor.id) {
-                    backupSelectors.push(`#${anchor.id}`);
-                }
-                if (anchor.tagName && anchor.className) {
-                    const firstClass = anchor.className.split(' ')[0];
-                    if (firstClass) {
-                        backupSelectors.push(`${anchor.tagName.toLowerCase()}.${firstClass}`);
-                        backupSelectors.push(`.${firstClass}`);
-                    }
-                }
-                if (anchor.tagName) {
-                    backupSelectors.push(anchor.tagName.toLowerCase());
-                }
-                
-                // 백업 selector들을 끝에 추가 (중복 제거)
-                for (const backup of backupSelectors) {
-                    if (!selectorsToTry.includes(backup)) {
-                        selectorsToTry.push(backup);
-                    }
-                }
-                
-                console.log(`🔍 tryFindAnchorElement: ${selectorsToTry.length}개 selector 시도`, {
-                    primary: selectorsToTry.slice(0, 3),
-                    total: selectorsToTry.length,
-                    anchorType: anchor.anchorType || 'unknown'
-                });
-                
-                if (selectorsToTry.length === 0) {
-                    console.warn('🔍 tryFindAnchorElement: 유효한 selector 없음', anchor);
-                    return null;
-                }
-                
-                // 🎯 **수정: 각 selector 순차 시도 (유효성 검증 포함)**
-                for (let i = 0; i < selectorsToTry.length; i++) {
-                    const selector = selectorsToTry[i];
-                    try {
-                        console.log(`🔍 selector ${i + 1}/${selectorsToTry.length} 시도: "${selector}"`);
-                        
-                        const elements = document.querySelectorAll(selector);
-                        if (elements.length > 0) {
-                            console.log(`✅ selector 성공: "${selector}" - ${elements.length}개 요소 발견`);
-                            return elements[0]; // 첫 번째 요소 반환
-                        } else {
-                            console.log(`❌ selector 요소 없음: "${selector}"`);
-                        }
-                    } catch(e) {
-                        console.warn(`❌ selector 오류: "${selector}" - ${e.message}`);
-                        continue; // 다음 selector 시도
-                    }
-                }
-                
-                console.warn(`🔍 tryFindAnchorElement: 모든 selector 실패 (${selectorsToTry.length}개 시도)`);
-                return null;
-            }
             
             // 통합된 스크롤 실행 함수
             function performScrollTo(x, y) {
@@ -1627,21 +1685,44 @@ extension BFCacheTransitionSystem {
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 🌐 캡처된 jsState 로그
+        // 🔥 **캡처된 jsState 상세 로깅**
         if let jsState = captureResult.snapshot.jsState {
-            TabPersistenceManager.debugMessages.append("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
+            TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
+            
             if let primaryAnchor = jsState["viewportAnchor"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🎯 캡처된 주 뷰포트 앵커: \(primaryAnchor["selector"] as? String ?? "none")")
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 주앵커 전체 키: \(Array(primaryAnchor.keys))")
+                if let selector = primaryAnchor["selector"] as? String {
+                    TabPersistenceManager.debugMessages.append("🔥 캡처된 주앵커 selector: \(selector)")
+                }
+                if let selectors = primaryAnchor["selectors"] as? [String] {
+                    TabPersistenceManager.debugMessages.append("🔥 캡처된 주앵커 selectors: \(selectors.count)개")
+                    if selectors.count > 0 {
+                        TabPersistenceManager.debugMessages.append("🔥 첫 번째 selector: \(selectors[0])")
+                    }
+                }
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 주앵커 데이터 캡처 실패")
             }
+            
             if let auxiliaryAnchors = jsState["auxiliaryAnchors"] as? [[String: Any]] {
-                TabPersistenceManager.debugMessages.append("🎯 캡처된 보조 앵커 개수: \(auxiliaryAnchors.count)개")
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 보조앵커 개수: \(auxiliaryAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 보조앵커 데이터 캡처 실패")
             }
+            
             if let landmarkAnchors = jsState["landmarkAnchors"] as? [[String: Any]] {
-                TabPersistenceManager.debugMessages.append("🎯 캡처된 랜드마크 앵커 개수: \(landmarkAnchors.count)개")
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 랜드마크앵커 개수: \(landmarkAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 랜드마크앵커 데이터 캡처 실패")
             }
+            
             if let structuralAnchors = jsState["structuralAnchors"] as? [[String: Any]] {
-                TabPersistenceManager.debugMessages.append("🎯 캡처된 구조적 앵커 개수: \(structuralAnchors.count)개")
+                TabPersistenceManager.debugMessages.append("🔥 캡처된 구조적앵커 개수: \(structuralAnchors.count)개")
+            } else {
+                TabPersistenceManager.debugMessages.append("🔥 구조적앵커 데이터 캡처 실패")
             }
+        } else {
+            TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
         
         // 캡처 완료 후 저장
