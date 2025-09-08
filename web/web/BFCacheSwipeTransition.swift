@@ -10,6 +10,7 @@
 //  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
 //  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
 //  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
+//  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
 //
 
 import UIKit
@@ -1831,14 +1832,19 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. 🎯 **4계층 강화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** - 🔧 기존 캡처 타임아웃 유지 (2초)
+        // 3. ✅ **수정: Promise 제거한 4계층 강화된 DOM 요소 기반 스크롤 감지 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.sync {
-            let jsScript = generateFourTierScrollCaptureScript()
+            let jsScript = generateFourTierScrollCaptureScriptFixed() // ✅ 수정된 스크립트 사용
             
             webView.evaluateJavaScript(jsScript) { result, error in
-                if let data = result as? [String: Any] {
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
+                } else if let data = result as? [String: Any] {
                     jsState = data
+                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
                 }
                 jsSemaphore.signal()
             }
@@ -1896,435 +1902,383 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (무한스크롤 특화) - ✅ selector 문법 수정**
-    private func generateFourTierScrollCaptureScript() -> String {
+    // ✅ **수정: Promise 제거한 4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성**
+    private func generateFourTierScrollCaptureScriptFixed() -> String {
         return """
         (function() {
-            return new Promise(resolve => {
-                // 🎯 **동적 콘텐츠 로딩 안정화 대기 (MutationObserver 활용) - 🔧 기존 타이밍 유지**
-                function waitForDynamicContent(callback) {
-                    let stabilityCount = 0;
-                    const requiredStability = 3; // 3번 연속 안정되면 완료
-                    let timeout;
+            try {
+                console.log('🎯 4계층 강화된 다중 앵커 + iframe 스크롤 감지 시작 (동기 실행)');
+                
+                // 🎯 **1단계: 4계층 앵커 요소 식별 시스템**
+                function identifyFourTierAnchors() {
+                    const viewportHeight = window.innerHeight;
+                    const viewportWidth = window.innerWidth;
+                    const scrollY = window.scrollY || window.pageYOffset || 0;
+                    const scrollX = window.scrollX || window.pageXOffset || 0;
                     
-                    const observer = new MutationObserver(() => {
-                        stabilityCount = 0; // 변화가 있으면 카운트 리셋
-                        clearTimeout(timeout);
-                        timeout = setTimeout(() => {
-                            stabilityCount++;
-                            if (stabilityCount >= requiredStability) {
-                                observer.disconnect();
-                                callback();
-                            }
-                        }, 300); // 🔧 기존 300ms 유지
+                    console.log('🎯 4계층 앵커 식별 시작:', {
+                        viewport: [viewportWidth, viewportHeight],
+                        scroll: [scrollX, scrollY]
                     });
                     
-                    observer.observe(document.body, { childList: true, subtree: true });
-                    
-                    // 최대 대기 시간 설정
-                    setTimeout(() => {
-                        observer.disconnect();
-                        callback();
-                    }, 4000); // 🔧 기존 4000ms 유지
-                }
-
-                function captureFourTierScrollData() {
-                    try {
-                        console.log('🎯 4계층 강화된 다중 앵커 + iframe 스크롤 감지 시작');
-                        
-                        // 🎯 **1단계: 4계층 앵커 요소 식별 시스템**
-                        function identifyFourTierAnchors() {
-                            const viewportHeight = window.innerHeight;
-                            const viewportWidth = window.innerWidth;
-                            const scrollY = window.scrollY || window.pageYOffset || 0;
-                            const scrollX = window.scrollX || window.pageXOffset || 0;
-                            
-                            console.log('🎯 4계층 앵커 식별 시작:', {
-                                viewport: [viewportWidth, viewportHeight],
-                                scroll: [scrollX, scrollY]
-                            });
-                            
-                            // 🎯 **4계층 구성 정의 - ✅ 유효한 CSS selector만 사용**
-                            const TIER_CONFIGS = {
-                                tier1: {
-                                    name: '정밀앵커',
-                                    maxDistance: viewportHeight * 2,     // 0-2화면
-                                    tolerance: 50,                        // 50px 허용 오차
-                                    selectors: [
-                                        // ID를 가진 요소들
-                                        '[id]',
-                                        // 특정 data 속성들
-                                        '[data-testid]', '[data-id]', '[data-key]',
-                                        '[data-item-id]', '[data-article-id]', '[data-post-id]',
-                                        '[data-comment-id]', '[data-user-id]', '[data-content-id]',
-                                        '[data-thread-id]', '[data-message-id]',
-                                        '[data-component-id]', '[data-widget-id]', '[data-module-id]',
-                                        '[data-entry-id]', '[data-slug]', '[data-permalink]',
-                                        // React 관련
-                                        '[data-reactid]', '[key]'
-                                    ],
-                                    priority: 10,
-                                    maxCandidates: 30
-                                },
-                                tier2: {
-                                    name: '보조앵커', 
-                                    maxDistance: viewportHeight * 10,    // 2-10화면
-                                    tolerance: 50,                        // 50px 허용 오차
-                                    selectors: [
-                                        // 기본 HTML 요소들
-                                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-                                        'p', 'div', 'span', 'a', 'button',
-                                        'li', 'tr', 'td', 'th', 'dt', 'dd',
-                                        'ul', 'ol', 'dl',
-                                        'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
-                                        'img', 'video', 'iframe', 'canvas', 'svg',
-                                        'form', 'input', 'textarea', 'select',
-                                        'table', 'thead', 'tbody', 'tfoot',
-                                        'pre', 'code', 'blockquote',
-                                        
-                                        // 클래스 패턴 (구체적인 클래스명)
-                                        '.item', '.list-item', '.card', '.post', '.article',
-                                        '.content', '.box', '.container', '.row', '.cell',
-                                        '.comment', '.reply', '.feed', '.thread', '.message',
-                                        '.product', '.news', '.media',
-                                        '.load-more', '.show-more', '.infinite-scroll',
-                                        
-                                        // role 속성들
-                                        '[role="article"]', '[role="main"]', '[role="button"]',
-                                        '[role="navigation"]', '[role="contentinfo"]',
-                                        '[role="listitem"]', '[role="menuitem"]',
-                                        
-                                        // ARIA 속성들
-                                        '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
-                                        '[aria-expanded]', '[aria-selected]', '[aria-checked]',
-                                        
-                                        // data 속성들 (구체적인 것만)
-                                        '[data-component]', '[data-widget]', '[data-module]',
-                                        '[data-type]', '[data-category]', '[data-index]',
-                                        '[data-role]', '[data-action]'
-                                    ],
-                                    priority: 7,
-                                    maxCandidates: 50
-                                },
-                                tier3: {
-                                    name: '랜드마크앵커',
-                                    maxDistance: viewportHeight * 50,    // 10-50화면
-                                    tolerance: 50,                        // 50px 허용 오차
-                                    selectors: [
-                                        // Tier2와 동일한 selector 사용 (거리로만 구분)
-                                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-                                        'p', 'div', 'span', 'a', 'button',
-                                        'li', 'tr', 'td', 'th', 'dt', 'dd',
-                                        'ul', 'ol', 'dl',
-                                        'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
-                                        'img', 'video', 'iframe',
-                                        '.item', '.list-item', '.card', '.post', '.article',
-                                        '.content', '.box', '.container',
-                                        '[role="article"]', '[role="main"]',
-                                        '[aria-label]',
-                                        '[data-component]', '[data-widget]', '[data-module]'
-                                    ],
-                                    priority: 5,
-                                    maxCandidates: 30
-                                },
-                                tier4: {
-                                    name: '구조적앵커',
-                                    maxDistance: Infinity,                // 50화면+
-                                    tolerance: 50,                        // 50px 허용 오차
-                                    selectors: [
-                                        // 가장 기본적인 요소들만
-                                        'h1', 'h2', 'h3',
-                                        'p', 'div', 'span',
-                                        'article', 'section',
-                                        'img',
-                                        '.item', '.content', '.container',
-                                        '[role="main"]'
-                                    ],
-                                    priority: 3,
-                                    maxCandidates: 20
-                                }
-                            };
-                            
-                            // 🔧 **계층별 앵커 수집**
-                            const tierResults = {};
-                            const allAnchors = {
-                                tier1: [], tier2: [], tier3: [], tier4: []
-                            };
-                            
-                            for (const [tierKey, config] of Object.entries(TIER_CONFIGS)) {
-                                try {
-                                    console.log(`🔍 ${config.name} 앵커 수집 시작 (${config.selectors.length}개 selector)`);
-                                    
-                                    let tierCandidates = [];
-                                    let selectorStats = {};
-                                    let successCount = 0;
-                                    let errorCount = 0;
-                                    
-                                    // 각 selector에서 요소 수집
-                                    for (const selector of config.selectors) {
-                                        try {
-                                            const elements = document.querySelectorAll(selector);
-                                            if (elements.length > 0) {
-                                                selectorStats[selector] = elements.length;
-                                                tierCandidates.push(...Array.from(elements));
-                                                successCount++;
-                                            }
-                                        } catch(e) {
-                                            selectorStats[selector] = `error: ${e.message}`;
-                                            errorCount++;
-                                            console.warn(`Selector 오류: ${selector} - ${e.message}`);
-                                        }
-                                    }
-                                    
-                                    console.log(`${config.name} selector 결과:`, {
-                                        success: successCount,
-                                        error: errorCount,
-                                        totalElements: tierCandidates.length
-                                    });
-                                    
-                                    // 뷰포트 기준 거리 계산 및 필터링
-                                    let scoredCandidates = [];
-                                    
-                                    for (const element of tierCandidates.slice(0, config.maxCandidates * 2)) {
-                                        try {
-                                            const rect = element.getBoundingClientRect();
-                                            const elementY = scrollY + rect.top;
-                                            const elementX = scrollX + rect.left;
-                                            
-                                            // 거리 계산
-                                            const distance = Math.sqrt(
-                                                Math.pow(elementX - scrollX, 2) + 
-                                                Math.pow(elementY - scrollY, 2)
-                                            );
-                                            
-                                            // 계층별 거리 제한 체크
-                                            if (distance <= config.maxDistance) {
-                                                // 요소 품질 점수 계산
-                                                let qualityScore = config.priority;
-                                                
-                                                // 고유성 보너스
-                                                if (element.id) qualityScore += 3;
-                                                if (element.getAttribute('data-testid')) qualityScore += 2;
-                                                if (element.className && element.className.trim()) qualityScore += 1;
-                                                
-                                                // 크기 적절성 보너스
-                                                const elementArea = rect.width * rect.height;
-                                                const viewportArea = viewportWidth * viewportHeight;
-                                                const sizeRatio = elementArea / viewportArea;
-                                                if (sizeRatio > 0.01 && sizeRatio < 0.8) qualityScore += 2;
-                                                
-                                                // 텍스트 내용 보너스
-                                                const textContent = (element.textContent || '').trim();
-                                                if (textContent.length > 10 && textContent.length < 200) qualityScore += 1;
-                                                
-                                                // 가시성 보너스
-                                                if (element.offsetParent !== null) qualityScore += 1;
-                                                
-                                                // 최종 점수 = 품질 점수 / (거리 + 1)
-                                                const finalScore = qualityScore / (distance + 1);
-                                                
-                                                scoredCandidates.push({
-                                                    // 🚫 **수정: DOM 요소 대신 기본 타입만 저장**
-                                                    elementData: {
-                                                        tag: element.tagName.toLowerCase(),
-                                                        id: element.id || null,
-                                                        className: (element.className || '').split(' ')[0] || null,
-                                                        textPreview: textContent.substring(0, 30)
-                                                    },
-                                                    score: finalScore,
-                                                    distance: distance,
-                                                    qualityScore: qualityScore,
-                                                    tier: tierKey,
-                                                    // 내부 처리용 (반환하지 않음)
-                                                    _element: element
-                                                });
-                                            }
-                                        } catch(e) {
-                                            // 개별 요소 오류는 무시
-                                        }
-                                    }
-                                    
-                                    // 점수순 정렬 및 상위 후보 선택
-                                    scoredCandidates.sort((a, b) => b.score - a.score);
-                                    const selectedCandidates = scoredCandidates.slice(0, config.maxCandidates);
-                                    
-                                    tierResults[tierKey] = {
-                                        total: tierCandidates.length,
-                                        filtered: scoredCandidates.length,
-                                        selected: selectedCandidates.length,
-                                        selectorStats: selectorStats,
-                                        successCount: successCount,
-                                        errorCount: errorCount
-                                    };
-                                    
-                                    // 앵커 데이터 생성
-                                    for (const candidate of selectedCandidates) {
-                                        const anchorData = createEnhancedAnchorData(candidate);
-                                        if (anchorData) {
-                                            allAnchors[tierKey].push(anchorData);
-                                        }
-                                    }
-                                    
-                                    console.log(`✅ ${config.name} 완료: ${selectedCandidates.length}개 선택 (${successCount}개 selector 성공)`);
-                                    
-                                } catch(e) {
-                                    console.error(`❌ ${config.name} 실패:`, e.message);
-                                    tierResults[tierKey] = { error: e.message };
-                                    allAnchors[tierKey] = [];
-                                }
-                            }
-                            
-                            function createEnhancedAnchorData(candidate) {
-                                try {
-                                    const element = candidate._element;
-                                    const rect = element.getBoundingClientRect();
-                                    const absoluteTop = scrollY + rect.top;
-                                    const absoluteLeft = scrollX + rect.left;
-                                    
-                                    // 뷰포트 기준 오프셋 계산
-                                    const offsetFromTop = scrollY - absoluteTop;
-                                    const offsetFromLeft = scrollX - absoluteLeft;
-                                    
-                                    // 🔧 **강화된 다중 selector 생성 전략 (유효한 것만)**
-                                    const selectors = [];
-                                    
-                                    // ID 기반 selector (최우선)
-                                    if (element.id) {
-                                        selectors.push('#' + element.id);
-                                    }
-                                    
-                                    // 데이터 속성 기반 (구체적인 속성명 사용)
-                                    const dataAttrs = Array.from(element.attributes)
-                                        .filter(attr => attr.name.startsWith('data-'))
-                                        .slice(0, 3)
-                                        .map(attr => `[${attr.name}="${attr.value}"]`);
-                                    if (dataAttrs.length > 0) {
-                                        selectors.push(element.tagName.toLowerCase() + dataAttrs.join(''));
-                                    }
-                                    
-                                    // 클래스 기반 selector
-                                    if (element.className) {
-                                        const classes = element.className.trim().split(/\\s+/).filter(c => c);
-                                        if (classes.length > 0) {
-                                            selectors.push('.' + classes.join('.'));
-                                            selectors.push('.' + classes[0]);
-                                            selectors.push(element.tagName.toLowerCase() + '.' + classes[0]);
-                                        }
-                                    }
-                                    
-                                    // nth-child 기반
-                                    try {
-                                        const parent = element.parentElement;
-                                        if (parent) {
-                                            const siblings = Array.from(parent.children);
-                                            const index = siblings.indexOf(element) + 1;
-                                            if (index > 0 && siblings.length < 20) {
-                                                const nthSelector = `${parent.tagName.toLowerCase()} > ${element.tagName.toLowerCase()}:nth-child(${index})`;
-                                                selectors.push(nthSelector);
-                                            }
-                                        }
-                                    } catch(e) {
-                                        // nth-child 생성 실패는 무시
-                                    }
-                                    
-                                    // 최종 fallback: 태그명만
-                                    selectors.push(element.tagName.toLowerCase());
-                                    
-                                    const textContent = (element.textContent || '').trim();
-                                    
-                                    // 🚫 **수정: DOM 요소 대신 기본 타입만 반환**
-                                    return {
-                                        selector: generateBestSelector(element),
-                                        selectors: selectors,
-                                        tier: candidate.tier,
-                                        score: candidate.score,
-                                        qualityScore: candidate.qualityScore,
-                                        distance: candidate.distance,
-                                        tagName: element.tagName.toLowerCase(),
-                                        className: element.className || '',
-                                        id: element.id || '',
-                                        textContent: textContent.substring(0, 100),
-                                        absolutePosition: {
-                                            top: absoluteTop,
-                                            left: absoluteLeft
-                                        },
-                                        viewportPosition: {
-                                            top: rect.top,
-                                            left: rect.left
-                                        },
-                                        offsetFromTop: offsetFromTop,
-                                        offsetFromLeft: offsetFromLeft,
-                                        size: {
-                                            width: rect.width,
-                                            height: rect.height
-                                        },
-                                        anchorType: 'fourTier',
-                                        captureTimestamp: Date.now()
-                                    };
-                                } catch(e) {
-                                    console.error('앵커 데이터 생성 실패:', e);
-                                    return null;
-                                }
-                            }
-                            
-                            console.log('🎯 4계층 앵커 식별 완료:', {
-                                tier1Count: allAnchors.tier1.length,
-                                tier2Count: allAnchors.tier2.length, 
-                                tier3Count: allAnchors.tier3.length,
-                                tier4Count: allAnchors.tier4.length,
-                                totalAnchors: allAnchors.tier1.length + allAnchors.tier2.length + allAnchors.tier3.length + allAnchors.tier4.length,
-                                tierResults: tierResults
-                            });
-                            
-                            return {
-                                primaryAnchor: allAnchors.tier1[0] || null,     // 최고 점수 Tier1 앵커
-                                auxiliaryAnchors: allAnchors.tier2,             // Tier2 앵커들 
-                                landmarkAnchors: allAnchors.tier3,              // Tier3 랜드마크 앵커들
-                                structuralAnchors: allAnchors.tier4,            // Tier4 구조적 앵커들
-                                tierResults: tierResults
-                            };
+                    // 🎯 **4계층 구성 정의 - ✅ 유효한 CSS selector만 사용**
+                    const TIER_CONFIGS = {
+                        tier1: {
+                            name: '정밀앵커',
+                            maxDistance: viewportHeight * 2,     // 0-2화면
+                            tolerance: 50,                        // 50px 허용 오차
+                            selectors: [
+                                // ID를 가진 요소들
+                                '[id]',
+                                // 특정 data 속성들
+                                '[data-testid]', '[data-id]', '[data-key]',
+                                '[data-item-id]', '[data-article-id]', '[data-post-id]',
+                                '[data-comment-id]', '[data-user-id]', '[data-content-id]',
+                                '[data-thread-id]', '[data-message-id]',
+                                '[data-component-id]', '[data-widget-id]', '[data-module-id]',
+                                '[data-entry-id]', '[data-slug]', '[data-permalink]',
+                                // React 관련
+                                '[data-reactid]', '[key]'
+                            ],
+                            priority: 10,
+                            maxCandidates: 30
+                        },
+                        tier2: {
+                            name: '보조앵커', 
+                            maxDistance: viewportHeight * 10,    // 2-10화면
+                            tolerance: 50,                        // 50px 허용 오차
+                            selectors: [
+                                // 기본 HTML 요소들
+                                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                'p', 'div', 'span', 'a', 'button',
+                                'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                'ul', 'ol', 'dl',
+                                'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                                'img', 'video', 'iframe', 'canvas', 'svg',
+                                'form', 'input', 'textarea', 'select',
+                                'table', 'thead', 'tbody', 'tfoot',
+                                'pre', 'code', 'blockquote',
+                                
+                                // 클래스 패턴 (구체적인 클래스명)
+                                '.item', '.list-item', '.card', '.post', '.article',
+                                '.content', '.box', '.container', '.row', '.cell',
+                                '.comment', '.reply', '.feed', '.thread', '.message',
+                                '.product', '.news', '.media',
+                                '.load-more', '.show-more', '.infinite-scroll',
+                                
+                                // role 속성들
+                                '[role="article"]', '[role="main"]', '[role="button"]',
+                                '[role="navigation"]', '[role="contentinfo"]',
+                                '[role="listitem"]', '[role="menuitem"]',
+                                
+                                // ARIA 속성들
+                                '[aria-label]', '[aria-labelledby]', '[aria-describedby]',
+                                '[aria-expanded]', '[aria-selected]', '[aria-checked]',
+                                
+                                // data 속성들 (구체적인 것만)
+                                '[data-component]', '[data-widget]', '[data-module]',
+                                '[data-type]', '[data-category]', '[data-index]',
+                                '[data-role]', '[data-action]'
+                            ],
+                            priority: 7,
+                            maxCandidates: 50
+                        },
+                        tier3: {
+                            name: '랜드마크앵커',
+                            maxDistance: viewportHeight * 50,    // 10-50화면
+                            tolerance: 50,                        // 50px 허용 오차
+                            selectors: [
+                                // Tier2와 동일한 selector 사용 (거리로만 구분)
+                                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                'p', 'div', 'span', 'a', 'button',
+                                'li', 'tr', 'td', 'th', 'dt', 'dd',
+                                'ul', 'ol', 'dl',
+                                'article', 'section', 'aside', 'header', 'footer', 'nav', 'main',
+                                'img', 'video', 'iframe',
+                                '.item', '.list-item', '.card', '.post', '.article',
+                                '.content', '.box', '.container',
+                                '[role="article"]', '[role="main"]',
+                                '[aria-label]',
+                                '[data-component]', '[data-widget]', '[data-module]'
+                            ],
+                            priority: 5,
+                            maxCandidates: 30
+                        },
+                        tier4: {
+                            name: '구조적앵커',
+                            maxDistance: Infinity,                // 50화면+
+                            tolerance: 50,                        // 50px 허용 오차
+                            selectors: [
+                                // 가장 기본적인 요소들만
+                                'h1', 'h2', 'h3',
+                                'p', 'div', 'span',
+                                'article', 'section',
+                                'img',
+                                '.item', '.content', '.container',
+                                '[role="main"]'
+                            ],
+                            priority: 3,
+                            maxCandidates: 20
                         }
-                        
-                       
-                        // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
-                        function detectIframeScrolls() {
-                            const iframes = [];
-                            const iframeElements = document.querySelectorAll('iframe');
+                    };
+                    
+                    // 🔧 **계층별 앵커 수집**
+                    const tierResults = {};
+                    const allAnchors = {
+                        tier1: [], tier2: [], tier3: [], tier4: []
+                    };
+                    
+                    for (const [tierKey, config] of Object.entries(TIER_CONFIGS)) {
+                        try {
+                            console.log(`🔍 ${config.name} 앵커 수집 시작 (${config.selectors.length}개 selector)`);
                             
-                            console.log('🖼️ iframe 스크롤 감지 시작:', iframeElements.length, '개 iframe');
+                            let tierCandidates = [];
+                            let selectorStats = {};
+                            let successCount = 0;
+                            let errorCount = 0;
                             
-                            for (const iframe of iframeElements) {
+                            // 각 selector에서 요소 수집
+                            for (const selector of config.selectors) {
                                 try {
-                                    const contentWindow = iframe.contentWindow;
-                                    if (contentWindow && contentWindow.location) {
-                                        const scrollX = parseFloat(contentWindow.scrollX) || 0;
-                                        const scrollY = parseFloat(contentWindow.scrollY) || 0;
-                                        
-                                        // 🎯 **0.1px 이상이면 모두 저장**
-                                        if (scrollX > 0.1 || scrollY > 0.1) {
-                                            // 🌐 동적 속성 수집
-                                            const dynamicAttrs = {};
-                                            for (const attr of iframe.attributes) {
-                                                if (attr.name.startsWith('data-')) {
-                                                    dynamicAttrs[attr.name] = attr.value;
-                                                }
-                                            }
-                                            
-                                            iframes.push({
-                                                selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
-                                                scrollX: scrollX,
-                                                scrollY: scrollY,
-                                                src: iframe.src || '',
-                                                id: iframe.id || '',
-                                                className: iframe.className || '',
-                                                dynamicAttrs: dynamicAttrs
-                                            });
-                                            
-                                            console.log('🖼️ iframe 스크롤 발견:', iframe.src, [scrollX, scrollY]);
-                                        }
+                                    const elements = document.querySelectorAll(selector);
+                                    if (elements.length > 0) {
+                                        selectorStats[selector] = elements.length;
+                                        tierCandidates.push(...Array.from(elements));
+                                        successCount++;
                                     }
                                 } catch(e) {
-                                    // 🌐 Cross-origin iframe도 기본 정보 저장
+                                    selectorStats[selector] = `error: ${e.message}`;
+                                    errorCount++;
+                                    console.warn(`Selector 오류: ${selector} - ${e.message}`);
+                                }
+                            }
+                            
+                            console.log(`${config.name} selector 결과:`, {
+                                success: successCount,
+                                error: errorCount,
+                                totalElements: tierCandidates.length
+                            });
+                            
+                            // 뷰포트 기준 거리 계산 및 필터링
+                            let scoredCandidates = [];
+                            
+                            for (const element of tierCandidates.slice(0, config.maxCandidates * 2)) {
+                                try {
+                                    const rect = element.getBoundingClientRect();
+                                    const elementY = scrollY + rect.top;
+                                    const elementX = scrollX + rect.left;
+                                    
+                                    // 거리 계산
+                                    const distance = Math.sqrt(
+                                        Math.pow(elementX - scrollX, 2) + 
+                                        Math.pow(elementY - scrollY, 2)
+                                    );
+                                    
+                                    // 계층별 거리 제한 체크
+                                    if (distance <= config.maxDistance) {
+                                        // 요소 품질 점수 계산
+                                        let qualityScore = config.priority;
+                                        
+                                        // 고유성 보너스
+                                        if (element.id) qualityScore += 3;
+                                        if (element.getAttribute('data-testid')) qualityScore += 2;
+                                        if (element.className && element.className.trim()) qualityScore += 1;
+                                        
+                                        // 크기 적절성 보너스
+                                        const elementArea = rect.width * rect.height;
+                                        const viewportArea = viewportWidth * viewportHeight;
+                                        const sizeRatio = elementArea / viewportArea;
+                                        if (sizeRatio > 0.01 && sizeRatio < 0.8) qualityScore += 2;
+                                        
+                                        // 텍스트 내용 보너스
+                                        const textContent = (element.textContent || '').trim();
+                                        if (textContent.length > 10 && textContent.length < 200) qualityScore += 1;
+                                        
+                                        // 가시성 보너스
+                                        if (element.offsetParent !== null) qualityScore += 1;
+                                        
+                                        // 최종 점수 = 품질 점수 / (거리 + 1)
+                                        const finalScore = qualityScore / (distance + 1);
+                                        
+                                        scoredCandidates.push({
+                                            // 🚫 **수정: DOM 요소 대신 기본 타입만 저장**
+                                            elementData: {
+                                                tag: element.tagName.toLowerCase(),
+                                                id: element.id || null,
+                                                className: (element.className || '').split(' ')[0] || null,
+                                                textPreview: textContent.substring(0, 30)
+                                            },
+                                            score: finalScore,
+                                            distance: distance,
+                                            qualityScore: qualityScore,
+                                            tier: tierKey,
+                                            // 내부 처리용 (반환하지 않음)
+                                            _element: element
+                                        });
+                                    }
+                                } catch(e) {
+                                    // 개별 요소 오류는 무시
+                                }
+                            }
+                            
+                            // 점수순 정렬 및 상위 후보 선택
+                            scoredCandidates.sort((a, b) => b.score - a.score);
+                            const selectedCandidates = scoredCandidates.slice(0, config.maxCandidates);
+                            
+                            tierResults[tierKey] = {
+                                total: tierCandidates.length,
+                                filtered: scoredCandidates.length,
+                                selected: selectedCandidates.length,
+                                selectorStats: selectorStats,
+                                successCount: successCount,
+                                errorCount: errorCount
+                            };
+                            
+                            // 앵커 데이터 생성
+                            for (const candidate of selectedCandidates) {
+                                const anchorData = createEnhancedAnchorData(candidate);
+                                if (anchorData) {
+                                    allAnchors[tierKey].push(anchorData);
+                                }
+                            }
+                            
+                            console.log(`✅ ${config.name} 완료: ${selectedCandidates.length}개 선택 (${successCount}개 selector 성공)`);
+                            
+                        } catch(e) {
+                            console.error(`❌ ${config.name} 실패:`, e.message);
+                            tierResults[tierKey] = { error: e.message };
+                            allAnchors[tierKey] = [];
+                        }
+                    }
+                    
+                    function createEnhancedAnchorData(candidate) {
+                        try {
+                            const element = candidate._element;
+                            const rect = element.getBoundingClientRect();
+                            const absoluteTop = scrollY + rect.top;
+                            const absoluteLeft = scrollX + rect.left;
+                            
+                            // 뷰포트 기준 오프셋 계산
+                            const offsetFromTop = scrollY - absoluteTop;
+                            const offsetFromLeft = scrollX - absoluteLeft;
+                            
+                            // 🔧 **강화된 다중 selector 생성 전략 (유효한 것만)**
+                            const selectors = [];
+                            
+                            // ID 기반 selector (최우선)
+                            if (element.id) {
+                                selectors.push('#' + element.id);
+                            }
+                            
+                            // 데이터 속성 기반 (구체적인 속성명 사용)
+                            const dataAttrs = Array.from(element.attributes)
+                                .filter(attr => attr.name.startsWith('data-'))
+                                .slice(0, 3)
+                                .map(attr => `[${attr.name}="${attr.value}"]`);
+                            if (dataAttrs.length > 0) {
+                                selectors.push(element.tagName.toLowerCase() + dataAttrs.join(''));
+                            }
+                            
+                            // 클래스 기반 selector
+                            if (element.className) {
+                                const classes = element.className.trim().split(/\\s+/).filter(c => c);
+                                if (classes.length > 0) {
+                                    selectors.push('.' + classes.join('.'));
+                                    selectors.push('.' + classes[0]);
+                                    selectors.push(element.tagName.toLowerCase() + '.' + classes[0]);
+                                }
+                            }
+                            
+                            // nth-child 기반
+                            try {
+                                const parent = element.parentElement;
+                                if (parent) {
+                                    const siblings = Array.from(parent.children);
+                                    const index = siblings.indexOf(element) + 1;
+                                    if (index > 0 && siblings.length < 20) {
+                                        const nthSelector = `${parent.tagName.toLowerCase()} > ${element.tagName.toLowerCase()}:nth-child(${index})`;
+                                        selectors.push(nthSelector);
+                                    }
+                                }
+                            } catch(e) {
+                                // nth-child 생성 실패는 무시
+                            }
+                            
+                            // 최종 fallback: 태그명만
+                            selectors.push(element.tagName.toLowerCase());
+                            
+                            const textContent = (element.textContent || '').trim();
+                            
+                            // 🚫 **수정: DOM 요소 대신 기본 타입만 반환**
+                            return {
+                                selector: generateBestSelector(element),
+                                selectors: selectors,
+                                tier: candidate.tier,
+                                score: candidate.score,
+                                qualityScore: candidate.qualityScore,
+                                distance: candidate.distance,
+                                tagName: element.tagName.toLowerCase(),
+                                className: element.className || '',
+                                id: element.id || '',
+                                textContent: textContent.substring(0, 100),
+                                absolutePosition: {
+                                    top: absoluteTop,
+                                    left: absoluteLeft
+                                },
+                                viewportPosition: {
+                                    top: rect.top,
+                                    left: rect.left
+                                },
+                                offsetFromTop: offsetFromTop,
+                                offsetFromLeft: offsetFromLeft,
+                                size: {
+                                    width: rect.width,
+                                    height: rect.height
+                                },
+                                anchorType: 'fourTier',
+                                captureTimestamp: Date.now()
+                            };
+                        } catch(e) {
+                            console.error('앵커 데이터 생성 실패:', e);
+                            return null;
+                        }
+                    }
+                    
+                    console.log('🎯 4계층 앵커 식별 완료:', {
+                        tier1Count: allAnchors.tier1.length,
+                        tier2Count: allAnchors.tier2.length, 
+                        tier3Count: allAnchors.tier3.length,
+                        tier4Count: allAnchors.tier4.length,
+                        totalAnchors: allAnchors.tier1.length + allAnchors.tier2.length + allAnchors.tier3.length + allAnchors.tier4.length,
+                        tierResults: tierResults
+                    });
+                    
+                    return {
+                        primaryAnchor: allAnchors.tier1[0] || null,     // 최고 점수 Tier1 앵커
+                        auxiliaryAnchors: allAnchors.tier2,             // Tier2 앵커들 
+                        landmarkAnchors: allAnchors.tier3,              // Tier3 랜드마크 앵커들
+                        structuralAnchors: allAnchors.tier4,            // Tier4 구조적 앵커들
+                        tierResults: tierResults
+                    };
+                }
+                
+                // 🖼️ **2단계: iframe 스크롤 감지 (기존 유지)**
+                function detectIframeScrolls() {
+                    const iframes = [];
+                    const iframeElements = document.querySelectorAll('iframe');
+                    
+                    console.log('🖼️ iframe 스크롤 감지 시작:', iframeElements.length, '개 iframe');
+                    
+                    for (const iframe of iframeElements) {
+                        try {
+                            const contentWindow = iframe.contentWindow;
+                            if (contentWindow && contentWindow.location) {
+                                const scrollX = parseFloat(contentWindow.scrollX) || 0;
+                                const scrollY = parseFloat(contentWindow.scrollY) || 0;
+                                
+                                // 🎯 **0.1px 이상이면 모두 저장**
+                                if (scrollX > 0.1 || scrollY > 0.1) {
+                                    // 🌐 동적 속성 수집
                                     const dynamicAttrs = {};
                                     for (const attr of iframe.attributes) {
                                         if (attr.name.startsWith('data-')) {
@@ -2333,167 +2287,180 @@ extension BFCacheTransitionSystem {
                                     }
                                     
                                     iframes.push({
-                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop() || 'unknown'}"]`,
-                                        scrollX: 0,
-                                        scrollY: 0,
+                                        selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop()}"]`,
+                                        scrollX: scrollX,
+                                        scrollY: scrollY,
                                         src: iframe.src || '',
                                         id: iframe.id || '',
                                         className: iframe.className || '',
-                                        dynamicAttrs: dynamicAttrs,
-                                        crossOrigin: true
+                                        dynamicAttrs: dynamicAttrs
                                     });
-                                    console.log('🌐 Cross-origin iframe 기록:', iframe.src);
+                                    
+                                    console.log('🖼️ iframe 스크롤 발견:', iframe.src, [scrollX, scrollY]);
+                                }
+                            }
+                        } catch(e) {
+                            // 🌐 Cross-origin iframe도 기본 정보 저장
+                            const dynamicAttrs = {};
+                            for (const attr of iframe.attributes) {
+                                if (attr.name.startsWith('data-')) {
+                                    dynamicAttrs[attr.name] = attr.value;
                                 }
                             }
                             
-                            console.log('🖼️ iframe 스크롤 감지 완료:', iframes.length, '개');
-                            return iframes;
+                            iframes.push({
+                                selector: generateBestSelector(iframe) || `iframe[src*="${iframe.src.split('/').pop() || 'unknown'}"]`,
+                                scrollX: 0,
+                                scrollY: 0,
+                                src: iframe.src || '',
+                                id: iframe.id || '',
+                                className: iframe.className || '',
+                                dynamicAttrs: dynamicAttrs,
+                                crossOrigin: true
+                            });
+                            console.log('🌐 Cross-origin iframe 기록:', iframe.src);
                         }
-                        
-                        // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응 (기존 로직 유지)
-                        function generateBestSelector(element) {
-                            if (!element || element.nodeType !== 1) return null;
-                            
-                            // 1순위: ID가 있으면 ID 사용
-                            if (element.id) {
-                                return `#${element.id}`;
-                            }
-                            
-                            // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
-                            const dataAttrs = Array.from(element.attributes)
-                                .filter(attr => attr.name.startsWith('data-'))
-                                .map(attr => `[${attr.name}="${attr.value}"]`);
-                            if (dataAttrs.length > 0) {
-                                const attrSelector = element.tagName.toLowerCase() + dataAttrs.join('');
-                                if (document.querySelectorAll(attrSelector).length === 1) {
-                                    return attrSelector;
-                                }
-                            }
-                            
-                            // 3순위: 고유한 클래스 조합
-                            if (element.className) {
-                                const classes = element.className.trim().split(/\\s+/);
-                                const uniqueClasses = classes.filter(cls => {
-                                    const elements = document.querySelectorAll(`.${cls}`);
-                                    return elements.length === 1 && elements[0] === element;
-                                });
-                                
-                                if (uniqueClasses.length > 0) {
-                                    return `.${uniqueClasses.join('.')}`;
-                                }
-                                
-                                // 클래스 조합으로 고유성 확보
-                                if (classes.length > 0) {
-                                    const classSelector = `.${classes.join('.')}`;
-                                    if (document.querySelectorAll(classSelector).length === 1) {
-                                        return classSelector;
-                                    }
-                                }
-                            }
-                            
-                            // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
-                            let path = [];
-                            let current = element;
-                            while (current && current !== document.documentElement) {
-                                let selector = current.tagName.toLowerCase();
-                                if (current.id) {
-                                    path.unshift(`#${current.id}`);
-                                    break;
-                                }
-                                if (current.className) {
-                                    const classes = current.className.trim().split(/\\s+/).join('.');
-                                    selector += `.${classes}`;
-                                }
-                                path.unshift(selector);
-                                current = current.parentElement;
-                                
-                                // 경로가 너무 길어지면 중단
-                                if (path.length > 5) break;
-                            }
-                            return path.join(' > ');
-                        }
-                        
-                        // 🎯 **메인 실행 - 4계층 강화된 앵커 기반 데이터 수집**
-                        const anchorData = identifyFourTierAnchors(); // 🎯 **4계층 앵커 시스템**
-                        const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 유지**
-                        
-                        // 메인 스크롤 위치도 parseFloat 정밀도 적용 
-                        const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
-                        const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
-                        
-                        // 뷰포트 및 콘텐츠 크기 정밀 계산 (실제 크기 포함)
-                        const viewportWidth = parseFloat(window.innerWidth) || 0;
-                        const viewportHeight = parseFloat(window.innerHeight) || 0;
-                        const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
-                        const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
-                        
-                        // 실제 스크롤 가능 크기 계산 (최대한 정확하게)
-                        const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
-                        const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
-                        
-                        console.log(`🎯 4계층 강화된 앵커 기반 감지 완료:`);
-                        console.log(`   주앵커: ${anchorData.primaryAnchor ? 1 : 0}개`);
-                        console.log(`   보조앵커: ${anchorData.auxiliaryAnchors.length}개`);
-                        console.log(`   랜드마크앵커: ${anchorData.landmarkAnchors.length}개`);
-                        console.log(`   구조적앵커: ${anchorData.structuralAnchors.length}개`);
-                        console.log(`   iframe: ${iframeScrolls.length}개`);
-                        console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight})`);
-                        console.log(`🎯 콘텐츠: (${contentWidth}, ${contentHeight}) 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
-                        
-                        // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
-                        resolve({
-                            viewportAnchor: anchorData.primaryAnchor,           // 🎯 **주 뷰포트 앵커 (Tier1)**
-                            auxiliaryAnchors: anchorData.auxiliaryAnchors,      // 🎯 **보조 앵커들 (Tier2)** 
-                            landmarkAnchors: anchorData.landmarkAnchors,        // 🆕 **랜드마크 앵커들 (Tier3)**
-                            structuralAnchors: anchorData.structuralAnchors,    // 🆕 **구조적 앵커들 (Tier4)**
-                            scroll: { 
-                                x: mainScrollX, 
-                                y: mainScrollY
-                            },
-                            iframes: iframeScrolls, // 🖼️ **iframe은 유지**
-                            href: window.location.href,
-                            title: document.title,
-                            timestamp: Date.now(),
-                            userAgent: navigator.userAgent,
-                            viewport: {
-                                width: viewportWidth,
-                                height: viewportHeight
-                            },
-                            content: {
-                                width: contentWidth,
-                                height: contentHeight
-                            },
-                            actualScrollable: { 
-                                width: actualScrollableWidth,
-                                height: actualScrollableHeight
-                            },
-                            tierResults: anchorData.tierResults // 🎯 **4계층 결과 상세 정보**
-                        });
-                    } catch(e) { 
-                        console.error('🎯 4계층 강화된 앵커 기반 감지 실패:', e);
-                        // 🚫 **수정: Swift 호환 반환값**
-                        resolve({
-                            viewportAnchor: null,
-                            auxiliaryAnchors: [],
-                            landmarkAnchors: [],
-                            structuralAnchors: [],
-                            scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
-                            iframes: [],
-                            href: window.location.href,
-                            title: document.title,
-                            actualScrollable: { width: 0, height: 0 },
-                            error: e.message
-                        });
                     }
+                    
+                    console.log('🖼️ iframe 스크롤 감지 완료:', iframes.length, '개');
+                    return iframes;
                 }
-
-                // 🎯 동적 콘텐츠 완료 대기 후 캡처 (기존 타이밍 유지)
-                if (document.readyState === 'complete') {
-                    waitForDynamicContent(captureFourTierScrollData);
-                } else {
-                    document.addEventListener('DOMContentLoaded', () => waitForDynamicContent(captureFourTierScrollData));
+                
+                // 🌐 **개선된 셀렉터 생성** - 동적 사이트 대응 (기존 로직 유지)
+                function generateBestSelector(element) {
+                    if (!element || element.nodeType !== 1) return null;
+                    
+                    // 1순위: ID가 있으면 ID 사용
+                    if (element.id) {
+                        return `#${element.id}`;
+                    }
+                    
+                    // 🌐 2순위: 데이터 속성 기반 (동적 사이트에서 중요)
+                    const dataAttrs = Array.from(element.attributes)
+                        .filter(attr => attr.name.startsWith('data-'))
+                        .map(attr => `[${attr.name}="${attr.value}"]`);
+                    if (dataAttrs.length > 0) {
+                        const attrSelector = element.tagName.toLowerCase() + dataAttrs.join('');
+                        if (document.querySelectorAll(attrSelector).length === 1) {
+                            return attrSelector;
+                        }
+                    }
+                    
+                    // 3순위: 고유한 클래스 조합
+                    if (element.className) {
+                        const classes = element.className.trim().split(/\\s+/);
+                        const uniqueClasses = classes.filter(cls => {
+                            const elements = document.querySelectorAll(`.${cls}`);
+                            return elements.length === 1 && elements[0] === element;
+                        });
+                        
+                        if (uniqueClasses.length > 0) {
+                            return `.${uniqueClasses.join('.')}`;
+                        }
+                        
+                        // 클래스 조합으로 고유성 확보
+                        if (classes.length > 0) {
+                            const classSelector = `.${classes.join('.')}`;
+                            if (document.querySelectorAll(classSelector).length === 1) {
+                                return classSelector;
+                            }
+                        }
+                    }
+                    
+                    // 🌐 4순위: 상위 경로 포함 (동적 사이트의 복잡한 DOM 구조 대응)
+                    let path = [];
+                    let current = element;
+                    while (current && current !== document.documentElement) {
+                        let selector = current.tagName.toLowerCase();
+                        if (current.id) {
+                            path.unshift(`#${current.id}`);
+                            break;
+                        }
+                        if (current.className) {
+                            const classes = current.className.trim().split(/\\s+/).join('.');
+                            selector += `.${classes}`;
+                        }
+                        path.unshift(selector);
+                        current = current.parentElement;
+                        
+                        // 경로가 너무 길어지면 중단
+                        if (path.length > 5) break;
+                    }
+                    return path.join(' > ');
                 }
-            });
+                
+                // 🎯 **메인 실행 - 4계층 강화된 앵커 기반 데이터 수집**
+                const anchorData = identifyFourTierAnchors(); // 🎯 **4계층 앵커 시스템**
+                const iframeScrolls = detectIframeScrolls(); // 🖼️ **iframe은 유지**
+                
+                // 메인 스크롤 위치도 parseFloat 정밀도 적용 
+                const mainScrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
+                const mainScrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
+                
+                // 뷰포트 및 콘텐츠 크기 정밀 계산 (실제 크기 포함)
+                const viewportWidth = parseFloat(window.innerWidth) || 0;
+                const viewportHeight = parseFloat(window.innerHeight) || 0;
+                const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
+                const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
+                
+                // 실제 스크롤 가능 크기 계산 (최대한 정확하게)
+                const actualScrollableWidth = Math.max(contentWidth, window.innerWidth, document.body.scrollWidth || 0);
+                const actualScrollableHeight = Math.max(contentHeight, window.innerHeight, document.body.scrollHeight || 0);
+                
+                console.log(`🎯 4계층 강화된 앵커 기반 감지 완료:`);
+                console.log(`   주앵커: ${anchorData.primaryAnchor ? 1 : 0}개`);
+                console.log(`   보조앵커: ${anchorData.auxiliaryAnchors.length}개`);
+                console.log(`   랜드마크앵커: ${anchorData.landmarkAnchors.length}개`);
+                console.log(`   구조적앵커: ${anchorData.structuralAnchors.length}개`);
+                console.log(`   iframe: ${iframeScrolls.length}개`);
+                console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight})`);
+                console.log(`🎯 콘텐츠: (${contentWidth}, ${contentHeight}) 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
+                
+                // ✅ **수정: Promise 없이 직접 반환**
+                return {
+                    viewportAnchor: anchorData.primaryAnchor,           // 🎯 **주 뷰포트 앵커 (Tier1)**
+                    auxiliaryAnchors: anchorData.auxiliaryAnchors,      // 🎯 **보조 앵커들 (Tier2)** 
+                    landmarkAnchors: anchorData.landmarkAnchors,        // 🆕 **랜드마크 앵커들 (Tier3)**
+                    structuralAnchors: anchorData.structuralAnchors,    // 🆕 **구조적 앵커들 (Tier4)**
+                    scroll: { 
+                        x: mainScrollX, 
+                        y: mainScrollY
+                    },
+                    iframes: iframeScrolls, // 🖼️ **iframe은 유지**
+                    href: window.location.href,
+                    title: document.title,
+                    timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
+                    viewport: {
+                        width: viewportWidth,
+                        height: viewportHeight
+                    },
+                    content: {
+                        width: contentWidth,
+                        height: contentHeight
+                    },
+                    actualScrollable: { 
+                        width: actualScrollableWidth,
+                        height: actualScrollableHeight
+                    },
+                    tierResults: anchorData.tierResults // 🎯 **4계층 결과 상세 정보**
+                };
+            } catch(e) { 
+                console.error('🎯 4계층 강화된 앵커 기반 감지 실패:', e);
+                // ✅ **수정: Promise 없이 직접 반환**
+                return {
+                    viewportAnchor: null,
+                    auxiliaryAnchors: [],
+                    landmarkAnchors: [],
+                    structuralAnchors: [],
+                    scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
+                    iframes: [],
+                    href: window.location.href,
+                    title: document.title,
+                    actualScrollable: { width: 0, height: 0 },
+                    error: e.message
+                };
+            }
         })()
         """
     }
