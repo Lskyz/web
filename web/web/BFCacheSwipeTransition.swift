@@ -6,6 +6,7 @@
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🌐 **무한스크롤 특화** - 극거리(1만px+) 복원 지원
 //  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
+//  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
 //
 
 import UIKit
@@ -179,10 +180,11 @@ struct BFCacheSnapshot: Codable {
                 return
             }
             
-            let success = (result as? Bool) ?? false
-            TabPersistenceManager.debugMessages.append("🎯 4계층 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
-            
+            // 🚫 **수정: 안전한 타입 체크로 변경**
+            var success = false
             if let resultDict = result as? [String: Any] {
+                success = (resultDict["success"] as? Bool) ?? false
+                
                 if let tier = resultDict["tier"] as? Int {
                     TabPersistenceManager.debugMessages.append("🎯 사용된 복원 계층: Tier \(tier)")
                 }
@@ -205,12 +207,14 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("🎯 복원 검증 결과: \(verificationResult)")
                 }
             }
+            
+            TabPersistenceManager.debugMessages.append("🎯 4계층 DOM 요소 기반 복원: \(success ? "성공" : "실패")")
         }
         
         TabPersistenceManager.debugMessages.append("🎯 4계층 강화된 DOM 요소 기반 1단계 복원 완료")
     }
     
-    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화)**
+    // 🎯 **핵심: 4계층 강화된 DOM 요소 기반 복원 JavaScript 생성 (무한스크롤 특화) - 🚫 반환값 타입 수정**
     private func generateFourTierElementBasedRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -732,12 +736,17 @@ struct BFCacheSnapshot: Codable {
                                 
                                 if (distance <= tolerance) {
                                     scoredElements.push({
-                                        element: element,
+                                        // 🚫 **수정: DOM 요소 대신 기본 타입으로 저장**
+                                        elementId: element.id || null,
+                                        elementTagName: element.tagName || 'UNKNOWN',
+                                        elementClassName: (element.className || '').split(' ')[0] || null,
                                         distance: distance,
                                         position: [elementX, elementY],
                                         tag: element.tagName,
                                         id: element.id || null,
-                                        className: (element.className || '').split(' ')[0] || null
+                                        className: (element.className || '').split(' ')[0] || null,
+                                        // 실제 요소는 별도 변수로 유지 (반환하지 않음)
+                                        _element: element  // 내부 처리용
                                     });
                                 }
                             } catch(e) {
@@ -760,15 +769,16 @@ struct BFCacheSnapshot: Codable {
                         scoredElements.sort((a, b) => a.distance - b.distance);
                         const closest = scoredElements[0];
                         
-                        // 해당 요소로 스크롤
-                        closest.element.scrollIntoView({ 
+                        // 해당 요소로 스크롤 (내부 요소 사용)
+                        const element = closest._element;
+                        element.scrollIntoView({ 
                             behavior: 'auto', 
                             block: 'start',
                             inline: 'start'
                         });
                         
                         // 미세 조정
-                        const rect = closest.element.getBoundingClientRect();
+                        const rect = element.getBoundingClientRect();
                         const currentY = window.scrollY + rect.top;
                         const currentX = window.scrollX + rect.left;
                         const adjustmentY = targetY - currentY;
@@ -780,12 +790,24 @@ struct BFCacheSnapshot: Codable {
                         
                         const finalInfo = `${closest.tag}${closest.id ? '#' + closest.id : ''}${closest.className ? '.' + closest.className : ''}`;
                         
+                        // 🚫 **수정: _element 제거하고 반환 (Swift 호환성)**
+                        const returnClosest = {
+                            elementId: closest.elementId,
+                            elementTagName: closest.elementTagName,
+                            elementClassName: closest.elementClassName,
+                            distance: closest.distance,
+                            position: closest.position,
+                            tag: closest.tag,
+                            id: closest.id,
+                            className: closest.className
+                        };
+                        
                         return {
                             success: true,
                             anchorInfo: `${finalInfo}_dist(${Math.round(closest.distance)})`,
                             debug: {
                                 candidateCount: scoredElements.length,
-                                closestElement: closest,
+                                closestElement: returnClosest,
                                 adjustment: [adjustmentX, adjustmentY],
                                 selectorStats
                             }
@@ -929,6 +951,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }, 100);
                 
+                // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
                 return {
                     success: true,
                     tier: usedTier,
@@ -943,6 +966,7 @@ struct BFCacheSnapshot: Codable {
                 
             } catch(e) { 
                 console.error('🎯 4계층 강화된 DOM 요소 기반 복원 실패:', e);
+                // 🚫 **수정: Swift 호환 반환값**
                 return {
                     success: false,
                     tier: 0,
@@ -1696,7 +1720,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 **4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (무한스크롤 특화) - 상세 디버깅 추가**
+    // 🎯 **4계층 강화된 DOM 요소 기반 스크롤 감지 JavaScript 생성 (무한스크롤 특화) - 🚫 반환값 타입 수정**
     private func generateFourTierScrollCaptureScript() -> String {
         return """
         (function() {
@@ -2139,17 +2163,19 @@ extension BFCacheTransitionSystem {
                                                 const finalScore = qualityScore / (distance + 1);
                                                 
                                                 scoredCandidates.push({
-                                                    element: element,
-                                                    score: finalScore,
-                                                    distance: distance,
-                                                    qualityScore: qualityScore,
-                                                    tier: tierKey,
-                                                    elementInfo: {
+                                                    // 🚫 **수정: DOM 요소 대신 기본 타입만 저장**
+                                                    elementData: {
                                                         tag: element.tagName.toLowerCase(),
                                                         id: element.id || null,
                                                         className: (element.className || '').split(' ')[0] || null,
                                                         textPreview: textContent.substring(0, 30)
-                                                    }
+                                                    },
+                                                    score: finalScore,
+                                                    distance: distance,
+                                                    qualityScore: qualityScore,
+                                                    tier: tierKey,
+                                                    // 내부 처리용 (반환하지 않음)
+                                                    _element: element
                                                 });
                                             }
                                         } catch(e) {
@@ -2187,7 +2213,7 @@ extension BFCacheTransitionSystem {
                             
                             function createEnhancedAnchorData(candidate) {
                                 try {
-                                    const element = candidate.element;
+                                    const element = candidate._element;
                                     const rect = element.getBoundingClientRect();
                                     const absoluteTop = scrollY + rect.top;
                                     const absoluteLeft = scrollX + rect.left;
@@ -2243,6 +2269,7 @@ extension BFCacheTransitionSystem {
                                     
                                     const textContent = (element.textContent || '').trim();
                                     
+                                    // 🚫 **수정: DOM 요소 대신 기본 타입만 반환**
                                     return {
                                         selector: generateBestSelector(element),
                                         selectors: selectors,
@@ -2449,6 +2476,7 @@ extension BFCacheTransitionSystem {
                         console.log(`🎯 위치: (${mainScrollX}, ${mainScrollY}) 뷰포트: (${viewportWidth}, ${viewportHeight})`);
                         console.log(`🎯 콘텐츠: (${contentWidth}, ${contentHeight}) 실제 스크롤 가능: (${actualScrollableWidth}, ${actualScrollableHeight})`);
                         
+                        // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
                         resolve({
                             viewportAnchor: anchorData.primaryAnchor,           // 🎯 **주 뷰포트 앵커 (Tier1)**
                             auxiliaryAnchors: anchorData.auxiliaryAnchors,      // 🎯 **보조 앵커들 (Tier2)** 
@@ -2479,6 +2507,7 @@ extension BFCacheTransitionSystem {
                         });
                     } catch(e) { 
                         console.error('🎯 4계층 강화된 앵커 기반 감지 실패:', e);
+                        // 🚫 **수정: Swift 호환 반환값**
                         resolve({
                             viewportAnchor: null,
                             auxiliaryAnchors: [],
