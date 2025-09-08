@@ -954,7 +954,7 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("✅ 3단계 JavaScript 실행 오류: \(error.localizedDescription)")
                     }
                     
-                    var success = true // 🚫 브라우저 차단 대응은 관대하게
+                    let success = true // 🚫 브라우저 차단 대응은 관대하게
                     if let resultDict = result as? [String: Any] {
                         if let withinTolerance = resultDict["withinTolerance"] as? Bool {
                             TabPersistenceManager.debugMessages.append("✅ 3단계 허용 오차 내: \(withinTolerance)")
@@ -1091,19 +1091,16 @@ extension BFCacheTransitionSystem {
         let requestedAt: Date = Date()
     }
     
-    // 중복 방지를 위한 진행 중인 캡처 추적
-    private var pendingCaptures: Set<UUID> = []
-    
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
-            dbg("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
         }
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        dbg("🎯 강화된 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1114,26 +1111,18 @@ extension BFCacheTransitionSystem {
     private func performAtomicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
-        // 중복 캡처 방지 (진행 중인 것만)
-        guard !pendingCaptures.contains(pageID) else {
-            dbg("⏸️ 중복 캡처 방지: \(task.pageRecord.title)")
-            return
-        }
-        
         guard let webView = task.webView else {
-            dbg("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
             return
         }
         
-        // 진행 중 표시
-        pendingCaptures.insert(pageID)
-        dbg("🎯 강화된 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🎯 강화된 DOM 요소 기반 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
-                self.dbg("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
+                TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
                 return nil
             }
             
@@ -1152,7 +1141,6 @@ extension BFCacheTransitionSystem {
         }
         
         guard let data = captureData else {
-            pendingCaptures.remove(pageID)
             return
         }
         
@@ -1166,12 +1154,12 @@ extension BFCacheTransitionSystem {
         
         // 🌐 캡처된 jsState 로그
         if let jsState = captureResult.snapshot.jsState {
-            dbg("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
+            TabPersistenceManager.debugMessages.append("🎯 캡처된 jsState 키: \(Array(jsState.keys))")
             if let primaryAnchor = jsState["viewportAnchor"] as? [String: Any] {
-                dbg("🎯 캡처된 주 뷰포트 앵커: \(primaryAnchor["selector"] as? String ?? "none")")
+                TabPersistenceManager.debugMessages.append("🎯 캡처된 주 뷰포트 앵커: \(primaryAnchor["selector"] as? String ?? "none")")
             }
             if let auxiliaryAnchors = jsState["auxiliaryAnchors"] as? [[String: Any]] {
-                dbg("🎯 캡처된 보조 앵커 개수: \(auxiliaryAnchors.count)개")
+                TabPersistenceManager.debugMessages.append("🎯 캡처된 보조 앵커 개수: \(auxiliaryAnchors.count)개")
             }
         }
         
@@ -1182,9 +1170,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        // 진행 중 해제
-        pendingCaptures.remove(pageID)
-        dbg("✅ 강화된 DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 강화된 DOM 요소 기반 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1205,13 +1191,13 @@ extension BFCacheTransitionSystem {
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    dbg("🔄 재시도 후 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    TabPersistenceManager.debugMessages.append("🔄 재시도 후 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
                 }
                 return result
             }
             
             // 재시도 전 잠시 대기 - 🔧 기존 80ms 유지
-            dbg("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
             Thread.sleep(forTimeInterval: 0.08) // 🔧 기존 80ms 유지
         }
         
@@ -1233,7 +1219,7 @@ extension BFCacheTransitionSystem {
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    self.dbg("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
                     // Fallback: layer 렌더링
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
@@ -1246,7 +1232,7 @@ extension BFCacheTransitionSystem {
         // ⚡ 캡처 타임아웃 유지 (3초)
         let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
-            dbg("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
@@ -1834,7 +1820,7 @@ extension BFCacheTransitionSystem {
         """
     }
     
-    private func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
+    internal func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
