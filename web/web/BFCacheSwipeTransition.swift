@@ -1,21 +1,17 @@
-//
+\//
 //  BFCacheSnapshotManager.swift
 //  📸 **5단계 무한스크롤 특화 BFCache 페이지 스냅샷 및 복원 시스템**
 //  🎯 **5단계 순차 시도 방식** - 고유식별자 → 콘텐츠지문 → 상대인덱스 → 기존셀렉터 → 무한스크롤트리거
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
-//  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
-//  🌐 **무한스크롤 특화** - 동적 콘텐츠 로드 대응 복원 지원
-//  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
-//  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
-//  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
-//  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
-//  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
-//  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
 //  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
 //  📊 **세세한 과정로그 추가** - 앵커 px 지점 및 긴페이지 어긋남 원인 상세 추적
+//  🧹 **의미없는 텍스트 필터링** - 에러메시지, 로딩메시지 등 제외
+//  🔄 **데이터 프리로딩 모드** - 복원 전 저장시점까지 콘텐츠 선로딩
+//  📦 **배치 로딩 시스템** - 연속적 더보기 호출로 충분한 콘텐츠 확보
+//  🐛 **스코프 에러 수정** - JavaScript 변수 정의 순서 개선
 
 import UIKit
 import WebKit
@@ -35,6 +31,27 @@ struct BFCacheSnapshot: Codable {
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
     let version: Int
+    
+    // 🔄 **새 추가: 데이터 프리로딩 설정**
+    let preloadingConfig: PreloadingConfig
+    
+    struct PreloadingConfig: Codable {
+        let enableDataPreloading: Bool          // 🔄 데이터 프리로딩 활성화
+        let enableBatchLoading: Bool            // 📦 배치 로딩 활성화  
+        let targetContentHeight: CGFloat        // 🎯 목표 콘텐츠 높이
+        let maxPreloadAttempts: Int            // ⚡ 최대 프리로딩 시도 횟수
+        let preloadBatchSize: Int              // 📦 배치 크기
+        let preloadTimeoutSeconds: Int         // ⏰ 프리로딩 타임아웃
+        
+        static let `default` = PreloadingConfig(
+            enableDataPreloading: true,
+            enableBatchLoading: true,
+            targetContentHeight: 0,
+            maxPreloadAttempts: 10,
+            preloadBatchSize: 5,
+            preloadTimeoutSeconds: 30
+        )
+    }
     
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
@@ -57,6 +74,7 @@ struct BFCacheSnapshot: Codable {
         case webViewSnapshotPath
         case captureStatus
         case version
+        case preloadingConfig
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -69,6 +87,7 @@ struct BFCacheSnapshot: Codable {
         contentSize = try container.decodeIfPresent(CGSize.self, forKey: .contentSize) ?? CGSize.zero
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
+        preloadingConfig = try container.decodeIfPresent(PreloadingConfig.self, forKey: .preloadingConfig) ?? PreloadingConfig.default
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -90,6 +109,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(contentSize, forKey: .contentSize)
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
+        try container.encode(preloadingConfig, forKey: .preloadingConfig)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -115,7 +135,8 @@ struct BFCacheSnapshot: Codable {
          timestamp: Date, 
          webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, 
-         version: Int = 1) {
+         version: Int = 1,
+         preloadingConfig: PreloadingConfig = PreloadingConfig.default) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -128,6 +149,14 @@ struct BFCacheSnapshot: Codable {
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
         self.version = version
+        self.preloadingConfig = PreloadingConfig(
+            enableDataPreloading: preloadingConfig.enableDataPreloading,
+            enableBatchLoading: preloadingConfig.enableBatchLoading,
+            targetContentHeight: max(actualScrollableSize.height, contentSize.height),
+            maxPreloadAttempts: preloadingConfig.maxPreloadAttempts,
+            preloadBatchSize: preloadingConfig.preloadBatchSize,
+            preloadTimeoutSeconds: preloadingConfig.preloadTimeoutSeconds
+        )
     }
     
     // 이미지 로드 메서드
@@ -138,7 +167,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원**
+    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원 + 데이터 프리로딩**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
@@ -149,6 +178,13 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 캡처된 뷰포트 크기: \(String(format: "%.0f", viewportSize.width)) x \(String(format: "%.0f", viewportSize.height))")
         TabPersistenceManager.debugMessages.append("📊 실제 스크롤 가능 크기: \(String(format: "%.0f", actualScrollableSize.width)) x \(String(format: "%.0f", actualScrollableSize.height))")
         
+        // 🔄 **새 추가: 프리로딩 설정 로깅**
+        TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩: \(preloadingConfig.enableDataPreloading ? "활성화" : "비활성화")")
+        TabPersistenceManager.debugMessages.append("📦 배치 로딩: \(preloadingConfig.enableBatchLoading ? "활성화" : "비활성화")")
+        TabPersistenceManager.debugMessages.append("🎯 목표 콘텐츠 높이: \(String(format: "%.0f", preloadingConfig.targetContentHeight))px")
+        TabPersistenceManager.debugMessages.append("⚡ 최대 프리로딩 시도: \(preloadingConfig.maxPreloadAttempts)회")
+        TabPersistenceManager.debugMessages.append("📦 배치 크기: \(preloadingConfig.preloadBatchSize)개")
+        
         // 🔥 **캡처된 jsState 상세 검증 및 로깅**
         if let jsState = self.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키 확인: \(Array(jsState.keys))")
@@ -157,36 +193,39 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("🚀 무한스크롤 데이터 확인: \(Array(infiniteScrollData.keys))")
                 
                 if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커: \(anchors.count)개 발견")
+                    let qualityAnchors = anchors.filter { anchor in
+                        if let qualityScore = anchor["qualityScore"] as? Int {
+                            return qualityScore >= 15  // 🧹 품질 점수 15점 이상만
+                        }
+                        return false
+                    }
                     
-                    // 📊 **앵커별 상세 정보 로깅**
-                    for (index, anchor) in anchors.prefix(3).enumerated() { // 처음 3개만 상세 로깅
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커: \(anchors.count)개 발견 (품질 앵커: \(qualityAnchors.count)개)")
+                    
+                    // 📊 **품질 앵커별 상세 정보 로깅**
+                    for (index, anchor) in qualityAnchors.prefix(3).enumerated() {
                         if let absolutePos = anchor["absolutePosition"] as? [String: Any] {
                             let top = absolutePos["top"] as? Double ?? 0
                             let left = absolutePos["left"] as? Double ?? 0
-                            TabPersistenceManager.debugMessages.append("📊 앵커[\(index)] 절대위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
+                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 절대위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
                         }
                         
                         if let offsetFromTop = anchor["offsetFromTop"] as? Double {
-                            TabPersistenceManager.debugMessages.append("📊 앵커[\(index)] 목표점에서 오프셋: \(String(format: "%.1f", offsetFromTop))px")
+                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 목표점에서 오프셋: \(String(format: "%.1f", offsetFromTop))px")
                         }
                         
                         if let textContent = anchor["textContent"] as? String {
                             let preview = textContent.prefix(30)
-                            TabPersistenceManager.debugMessages.append("📊 앵커[\(index)] 텍스트: \"\(preview)...\"")
+                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 텍스트: \"\(preview)...\"")
                         }
                         
-                        if let tagName = anchor["tagName"] as? String {
-                            TabPersistenceManager.debugMessages.append("📊 앵커[\(index)] 태그: <\(tagName)>")
-                        }
-                        
-                        if let uniqueIds = anchor["uniqueIdentifiers"] as? [String: Any] {
-                            TabPersistenceManager.debugMessages.append("📊 앵커[\(index)] 고유식별자: \(Array(uniqueIds.keys))")
+                        if let qualityScore = anchor["qualityScore"] as? Int {
+                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 품질점수: \(qualityScore)점")
                         }
                     }
                     
-                    if anchors.count > 3 {
-                        TabPersistenceManager.debugMessages.append("📊 나머지 \(anchors.count - 3)개 앵커 생략...")
+                    if qualityAnchors.count > 3 {
+                        TabPersistenceManager.debugMessages.append("📊 나머지 \(qualityAnchors.count - 3)개 품질 앵커 생략...")
                     }
                 } else {
                     TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 없음")
@@ -202,10 +241,332 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
         
-        // 🚀 **1단계: 5단계 무한스크롤 특화 복원 우선 실행**
-        performFiveStageInfiniteScrollRestore(to: webView)
+        // 🔄 **1단계: 데이터 프리로딩 실행 (복원 전에)**
+        if preloadingConfig.enableDataPreloading {
+            performDataPreloading(to: webView) { [weak self] preloadSuccess in
+                guard let self = self else { return }
+                TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 완료: \(preloadSuccess ? "성공" : "실패")")
+                
+                // 🚀 **2단계: 5단계 무한스크롤 특화 복원 실행**
+                self.performFiveStageInfiniteScrollRestore(to: webView)
+                
+                // 🔧 **3단계: 기존 상태별 분기 로직**
+                self.handleCaptureStatusBasedRestore(to: webView, completion: completion)
+            }
+        } else {
+            // 프리로딩 비활성화 시 바로 복원
+            TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 비활성화 - 바로 복원")
+            performFiveStageInfiniteScrollRestore(to: webView)
+            handleCaptureStatusBasedRestore(to: webView, completion: completion)
+        }
+    }
+    
+    // 🔄 **새 추가: 데이터 프리로딩 메서드**
+    private func performDataPreloading(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 시작")
         
-        // 🔧 **기존 상태별 분기 로직 유지**
+        let preloadingJS = generateDataPreloadingScript()
+        
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(preloadingJS) { result, error in
+                var success = false
+                
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 JS 오류: \(error.localizedDescription)")
+                } else if let resultDict = result as? [String: Any] {
+                    success = (resultDict["success"] as? Bool) ?? false
+                    
+                    if let loadedContentHeight = resultDict["loadedContentHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 후 콘텐츠 높이: \(String(format: "%.1f", loadedContentHeight))px")
+                    }
+                    
+                    if let loadingAttempts = resultDict["loadingAttempts"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 시도 횟수: \(loadingAttempts)회")
+                    }
+                    
+                    if let batchResults = resultDict["batchResults"] as? [[String: Any]] {
+                        TabPersistenceManager.debugMessages.append("📦 배치 로딩 결과: \(batchResults.count)개 배치")
+                    }
+                    
+                    if let detailedLogs = resultDict["detailedLogs"] as? [String] {
+                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 상세 로그:")
+                        for log in detailedLogs.prefix(10) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
+                    
+                    if let errorMsg = resultDict["error"] as? String {
+                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 오류: \(errorMsg)")
+                    }
+                }
+                
+                TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 결과: \(success ? "성공" : "실패")")
+                completion(success)
+            }
+        }
+    }
+    
+    // 🔄 **새 추가: 데이터 프리로딩 JavaScript 생성**
+    private func generateDataPreloadingScript() -> String {
+        let targetHeight = preloadingConfig.targetContentHeight
+        let maxAttempts = preloadingConfig.maxPreloadAttempts
+        let batchSize = preloadingConfig.preloadBatchSize
+        let timeoutSeconds = preloadingConfig.timeoutSeconds
+        let enableBatchLoading = preloadingConfig.enableBatchLoading
+        
+        return """
+        (function() {
+            try {
+                console.log('🔄 데이터 프리로딩 시작');
+                
+                const detailedLogs = [];
+                const batchResults = [];
+                let loadingAttempts = 0;
+                const targetContentHeight = parseFloat('\(targetHeight)');
+                const maxAttempts = parseInt('\(maxAttempts)');
+                const batchSize = parseInt('\(batchSize)');
+                const enableBatchLoading = \(enableBatchLoading);
+                
+                detailedLogs.push('🔄 데이터 프리로딩 설정');
+                detailedLogs.push(`목표 높이: ${targetContentHeight.toFixed(1)}px`);
+                detailedLogs.push(`최대 시도: ${maxAttempts}회`);
+                detailedLogs.push(`배치 크기: ${batchSize}개`);
+                detailedLogs.push(`배치 로딩: ${enableBatchLoading ? '활성화' : '비활성화'}`);
+                
+                console.log('🔄 데이터 프리로딩 설정:', {
+                    targetContentHeight: targetContentHeight,
+                    maxAttempts: maxAttempts,
+                    batchSize: batchSize,
+                    enableBatchLoading: enableBatchLoading
+                });
+                
+                // 📊 **현재 페이지 상태 확인**
+                function getCurrentPageState() {
+                    const currentHeight = Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight
+                    );
+                    const viewportHeight = window.innerHeight;
+                    const currentScrollY = window.scrollY || window.pageYOffset || 0;
+                    const maxScrollY = Math.max(0, currentHeight - viewportHeight);
+                    
+                    return {
+                        currentHeight: currentHeight,
+                        viewportHeight: viewportHeight,
+                        currentScrollY: currentScrollY,
+                        maxScrollY: maxScrollY,
+                        needsMore: currentHeight < targetContentHeight
+                    };
+                }
+                
+                // 🔄 **무한스크롤 트리거 메서드들**
+                function triggerInfiniteScroll() {
+                    const triggers = [];
+                    
+                    // 1. 페이지 하단 스크롤
+                    const state = getCurrentPageState();
+                    const bottomY = state.maxScrollY;
+                    window.scrollTo(0, bottomY);
+                    triggers.push({ method: 'scroll_bottom', scrollY: bottomY });
+                    
+                    // 2. 스크롤 이벤트 발생
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                    triggers.push({ method: 'scroll_events', events: 2 });
+                    
+                    // 3. 더보기 버튼 검색 및 클릭
+                    const loadMoreButtons = document.querySelectorAll(
+                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger, ' +
+                        '[onclick*="more"], [onclick*="load"], button[class*="more"], ' +
+                        'a[href*="more"], .btn-more, .more-btn, .load-btn, .btn-load'
+                    );
+                    
+                    let clickedButtons = 0;
+                    loadMoreButtons.forEach((btn, index) => {
+                        if (btn && typeof btn.click === 'function') {
+                            try {
+                                btn.click();
+                                clickedButtons++;
+                                detailedLogs.push(`더보기 버튼[${index}] 클릭: ${btn.className || btn.tagName}`);
+                            } catch(e) {
+                                detailedLogs.push(`더보기 버튼[${index}] 클릭 실패: ${e.message}`);
+                            }
+                        }
+                    });
+                    triggers.push({ method: 'load_more_buttons', found: loadMoreButtons.length, clicked: clickedButtons });
+                    
+                    // 4. AJAX 요청 감지 및 대기
+                    let ajaxRequests = 0;
+                    if (window.XMLHttpRequest && window.XMLHttpRequest.prototype.open) {
+                        // AJAX 요청이 있을 가능성 체크
+                        ajaxRequests = 1; // 가정
+                    }
+                    triggers.push({ method: 'ajax_detection', estimated: ajaxRequests });
+                    
+                    // 5. 터치 이벤트 (모바일)
+                    try {
+                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                        document.dispatchEvent(touchEvent);
+                        triggers.push({ method: 'touch_events', success: true });
+                    } catch(e) {
+                        triggers.push({ method: 'touch_events', success: false, error: e.message });
+                    }
+                    
+                    return triggers;
+                }
+                
+                // 📦 **배치 로딩 실행**
+                async function performBatchLoading() {
+                    const batchStartTime = Date.now();
+                    let totalTriggered = 0;
+                    let heightIncreased = false;
+                    
+                    for (let batch = 0; batch < batchSize && loadingAttempts < maxAttempts; batch++) {
+                        const beforeState = getCurrentPageState();
+                        
+                        detailedLogs.push(`배치[${batch + 1}/${batchSize}] 시작: 현재 높이=${beforeState.currentHeight.toFixed(1)}px`);
+                        
+                        // 무한스크롤 트리거 실행
+                        const triggers = triggerInfiniteScroll();
+                        totalTriggered += triggers.length;
+                        loadingAttempts++;
+                        
+                        // 잠시 대기 (콘텐츠 로딩 시간 확보)
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        const afterState = getCurrentPageState();
+                        const heightDiff = afterState.currentHeight - beforeState.currentHeight;
+                        
+                        detailedLogs.push(`배치[${batch + 1}] 완료: 높이 변화=${heightDiff.toFixed(1)}px`);
+                        
+                        if (heightDiff > 50) { // 50px 이상 증가하면 성공
+                            heightIncreased = true;
+                            detailedLogs.push(`배치[${batch + 1}] 높이 증가 감지: ${heightDiff.toFixed(1)}px`);
+                        }
+                        
+                        batchResults.push({
+                            batchIndex: batch + 1,
+                            beforeHeight: beforeState.currentHeight,
+                            afterHeight: afterState.currentHeight,
+                            heightDiff: heightDiff,
+                            triggersUsed: triggers.length,
+                            success: heightDiff > 50
+                        });
+                        
+                        // 목표 높이 달성 시 중단
+                        if (afterState.currentHeight >= targetContentHeight) {
+                            detailedLogs.push(`목표 높이 달성: ${afterState.currentHeight.toFixed(1)}px >= ${targetContentHeight.toFixed(1)}px`);
+                            break;
+                        }
+                    }
+                    
+                    const batchEndTime = Date.now();
+                    const batchDuration = batchEndTime - batchStartTime;
+                    
+                    return {
+                        totalBatches: batchResults.length,
+                        totalTriggered: totalTriggered,
+                        heightIncreased: heightIncreased,
+                        duration: batchDuration,
+                        finalState: getCurrentPageState()
+                    };
+                }
+                
+                // 🔄 **메인 프리로딩 로직**
+                async function executePreloading() {
+                    const startTime = Date.now();
+                    const initialState = getCurrentPageState();
+                    
+                    detailedLogs.push(`초기 상태: 높이=${initialState.currentHeight.toFixed(1)}px, 필요=${initialState.needsMore ? '예' : '아니오'}`);
+                    
+                    if (!initialState.needsMore) {
+                        detailedLogs.push('목표 높이 이미 달성 - 프리로딩 불필요');
+                        return {
+                            success: true,
+                            reason: 'already_sufficient',
+                            loadedContentHeight: initialState.currentHeight,
+                            loadingAttempts: 0
+                        };
+                    }
+                    
+                    let finalResult = null;
+                    
+                    if (enableBatchLoading) {
+                        detailedLogs.push('📦 배치 로딩 모드 시작');
+                        finalResult = await performBatchLoading();
+                    } else {
+                        detailedLogs.push('🔄 단일 로딩 모드 시작');
+                        // 단일 로딩 모드
+                        const beforeState = getCurrentPageState();
+                        const triggers = triggerInfiniteScroll();
+                        loadingAttempts = 1;
+                        
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        const afterState = getCurrentPageState();
+                        finalResult = {
+                            totalBatches: 1,
+                            totalTriggered: triggers.length,
+                            heightIncreased: afterState.currentHeight > beforeState.currentHeight + 50,
+                            duration: 2000,
+                            finalState: afterState
+                        };
+                    }
+                    
+                    const endTime = Date.now();
+                    const totalDuration = endTime - startTime;
+                    
+                    detailedLogs.push(`프리로딩 완료: ${totalDuration}ms 소요`);
+                    detailedLogs.push(`최종 높이: ${finalResult.finalState.currentHeight.toFixed(1)}px`);
+                    detailedLogs.push(`높이 증가: ${finalResult.heightIncreased ? '성공' : '실패'}`);
+                    
+                    return {
+                        success: finalResult.heightIncreased || finalResult.finalState.currentHeight >= targetContentHeight * 0.8, // 80% 달성도 성공
+                        reason: finalResult.heightIncreased ? 'height_increased' : 'no_height_change',
+                        loadedContentHeight: finalResult.finalState.currentHeight,
+                        loadingAttempts: loadingAttempts,
+                        batchResults: batchResults,
+                        totalDuration: totalDuration,
+                        initialHeight: initialState.currentHeight,
+                        targetHeight: targetContentHeight,
+                        detailedLogs: detailedLogs
+                    };
+                }
+                
+                // 프리로딩 실행 (타임아웃 적용)
+                const timeoutPromise = new Promise((resolve) => {
+                    setTimeout(() => resolve({
+                        success: false,
+                        reason: 'timeout',
+                        loadedContentHeight: getCurrentPageState().currentHeight,
+                        loadingAttempts: loadingAttempts,
+                        error: `프리로딩 타임아웃 (${timeoutSeconds}초)`,
+                        detailedLogs: detailedLogs
+                    }), \(timeoutSeconds) * 1000);
+                });
+                
+                const preloadingPromise = executePreloading();
+                
+                return await Promise.race([preloadingPromise, timeoutPromise]);
+                
+            } catch(e) {
+                console.error('🔄 데이터 프리로딩 실패:', e);
+                return {
+                    success: false,
+                    reason: 'exception',
+                    error: e.message,
+                    loadedContentHeight: getCurrentPageState ? getCurrentPageState().currentHeight : 0,
+                    loadingAttempts: loadingAttempts,
+                    detailedLogs: [`프리로딩 실패: ${e.message}`]
+                };
+            }
+        })()
+        """
+    }
+    
+    // 🔧 **기존 상태별 분기 로직 분리**
+    private func handleCaptureStatusBasedRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         switch captureStatus {
         case .failed:
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 5단계 무한스크롤 복원만 수행")
@@ -301,7 +662,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
     }
     
-    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (모든 사이트 범용 대응)**
+    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (개선된 텍스트 필터링)**
     private func generateFiveStageInfiniteScrollRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -328,6 +689,13 @@ struct BFCacheSnapshot: Codable {
                 const detailedLogs = [];
                 const pageAnalysis = {};
                 const anchorAnalysis = {};
+                let actualRestoreSuccess = false;  // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let practicalSuccess = false;      // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let finalCurrentY = 0;             // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let finalCurrentX = 0;             // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let finalDiffY = 0;                // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let finalDiffX = 0;                // 🐛 **스코프 에러 수정: 변수 미리 정의**
+                let finalWithinTolerance = false;  // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 
                 detailedLogs.push('🚀 5단계 무한스크롤 특화 복원 시작');
                 detailedLogs.push(`📊 목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
@@ -401,6 +769,46 @@ struct BFCacheSnapshot: Codable {
                     anchorsCount: infiniteScrollData?.anchors?.length || 0,
                     pageAnalysis: pageAnalysis
                 });
+                
+                // 🧹 **의미없는 텍스트 필터링 함수**
+                function isQualityText(text) {
+                    if (!text || typeof text !== 'string') return false;
+                    
+                    const cleanText = text.trim();
+                    if (cleanText.length < 5) return false; // 너무 짧은 텍스트
+                    
+                    // 🧹 **의미없는 텍스트 패턴들**
+                    const meaninglessPatterns = [
+                        /^(투표는|표시되지|않습니다|네트워크|문제로|연결되지|잠시|후에|다시|시도)/,
+                        /^(로딩|loading|wait|please|기다려|잠시만)/i,
+                        /^(오류|에러|error|fail|실패|죄송|sorry)/i,
+                        /^(확인|ok|yes|no|취소|cancel|닫기|close)/i,
+                        /^(더보기|more|load|next|이전|prev|previous)/i,
+                        /^(클릭|click|tap|터치|touch|선택)/i,
+                        /^(답글|댓글|reply|comment|쓰기|작성)/i,
+                        /^[\s\.\-_=+]{2,}$/, // 특수문자만
+                        /^[0-9\s\.\/\-:]{3,}$/, // 숫자와 특수문자만 (날짜/시간 제외)
+                        /^(am|pm|오전|오후|시|분|초)$/i,
+                    ];
+                    
+                    for (const pattern of meaninglessPatterns) {
+                        if (pattern.test(cleanText)) {
+                            return false;
+                        }
+                    }
+                    
+                    // 너무 반복적인 문자 (같은 문자 70% 이상)
+                    const charCounts = {};
+                    for (const char of cleanText) {
+                        charCounts[char] = (charCounts[char] || 0) + 1;
+                    }
+                    const maxCharCount = Math.max(...Object.values(charCounts));
+                    if (maxCharCount / cleanText.length > 0.7) {
+                        return false;
+                    }
+                    
+                    return true;
+                }
                 
                 // 🚀 **5단계 무한스크롤 복원 시스템 구성**
                 const STAGE_CONFIG = {
@@ -541,17 +949,27 @@ struct BFCacheSnapshot: Codable {
                         
                         const anchors = infiniteScrollData.anchors;
                         detailedLogs.push(`   총 ${anchors.length}개 앵커에서 고유식별자 검색`);
+                        
+                        // 🧹 **품질 앵커 필터링**
+                        const qualityAnchors = anchors.filter(anchor => {
+                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
+                            const hasQualityScore = (anchor.qualityScore || 0) >= 15;
+                            return hasQualityText && hasQualityScore;
+                        });
+                        
+                        detailedLogs.push(`   품질 앵커 필터링: ${qualityAnchors.length}개 (전체 ${anchors.length}개)`);
+                        
                         let foundElement = null;
                         let matchedAnchor = null;
                         let searchResults = [];
                         
                         // 고유 식별자 우선순위: href → data-post-id → data-article-id → data-id → id
-                        for (let anchorIndex = 0; anchorIndex < anchors.length; anchorIndex++) {
-                            const anchor = anchors[anchorIndex];
+                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
+                            const anchor = qualityAnchors[anchorIndex];
                             if (!anchor.uniqueIdentifiers) continue;
                             
                             const identifiers = anchor.uniqueIdentifiers;
-                            detailedLogs.push(`   앵커[${anchorIndex}] 고유식별자 키: ${Object.keys(identifiers)}`);
+                            detailedLogs.push(`   품질앵커[${anchorIndex}] 고유식별자 키: ${Object.keys(identifiers)}`);
                             
                             // href 패턴 매칭
                             if (identifiers.href) {
@@ -665,7 +1083,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🚀 **Stage 2: 콘텐츠 지문 기반 복원**
+                // 🚀 **Stage 2: 콘텐츠 지문 기반 복원 (품질 개선)**
                 function tryContentFingerprintRestore(config, targetX, targetY, infiniteScrollData) {
                     try {
                         detailedLogs.push('🚀 Stage 2: 콘텐츠 지문 기반 복원 시작');
@@ -676,17 +1094,26 @@ struct BFCacheSnapshot: Codable {
                         }
                         
                         const anchors = infiniteScrollData.anchors;
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 콘텐츠 지문 검색`);
+                        
+                        // 🧹 **품질 앵커 필터링 (Stage 2용)**
+                        const qualityAnchors = anchors.filter(anchor => {
+                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
+                            const hasContentFingerprint = anchor.contentFingerprint && anchor.contentFingerprint.textSignature;
+                            const hasQualityScore = (anchor.qualityScore || 0) >= 10; // Stage 2는 좀 더 관대
+                            return hasQualityText && hasContentFingerprint && hasQualityScore;
+                        });
+                        
+                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 콘텐츠 지문 검색: ${qualityAnchors.length}개`);
                         let foundElement = null;
                         let matchedAnchor = null;
                         let searchResults = [];
                         
-                        for (let anchorIndex = 0; anchorIndex < anchors.length; anchorIndex++) {
-                            const anchor = anchors[anchorIndex];
+                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
+                            const anchor = qualityAnchors[anchorIndex];
                             if (!anchor.contentFingerprint) continue;
                             
                             const fingerprint = anchor.contentFingerprint;
-                            detailedLogs.push(`   앵커[${anchorIndex}] 지문 키: ${Object.keys(fingerprint)}`);
+                            detailedLogs.push(`   품질앵커[${anchorIndex}] 지문 키: ${Object.keys(fingerprint)}`);
                             
                             // 텍스트 패턴으로 요소 찾기
                             if (fingerprint.textSignature) {
@@ -698,6 +1125,10 @@ struct BFCacheSnapshot: Codable {
                                 let matchingElements = 0;
                                 for (const element of allElements) {
                                     const elementText = (element.textContent || '').trim();
+                                    
+                                    // 🧹 **품질 텍스트 확인**
+                                    if (!isQualityText(elementText)) continue;
+                                    
                                     if (elementText.includes(textPattern)) {
                                         matchingElements++;
                                         
@@ -808,17 +1239,26 @@ struct BFCacheSnapshot: Codable {
                         }
                         
                         const anchors = infiniteScrollData.anchors;
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 상대적 인덱스 검색`);
+                        
+                        // 🧹 **품질 앵커 필터링**
+                        const qualityAnchors = anchors.filter(anchor => {
+                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
+                            const hasRelativeIndex = anchor.relativeIndex;
+                            const hasQualityScore = (anchor.qualityScore || 0) >= 8; // Stage 3는 더 관대
+                            return hasQualityText && hasRelativeIndex && hasQualityScore;
+                        });
+                        
+                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 상대적 인덱스 검색: ${qualityAnchors.length}개`);
                         let foundElement = null;
                         let matchedAnchor = null;
                         let searchResults = [];
                         
-                        for (let anchorIndex = 0; anchorIndex < anchors.length; anchorIndex++) {
-                            const anchor = anchors[anchorIndex];
+                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
+                            const anchor = qualityAnchors[anchorIndex];
                             if (!anchor.relativeIndex) continue;
                             
                             const relativeIndex = anchor.relativeIndex;
-                            detailedLogs.push(`   앵커[${anchorIndex}] 상대인덱스: 컨테이너="${relativeIndex.containerSelector}", 인덱스=${relativeIndex.indexInContainer}`);
+                            detailedLogs.push(`   품질앵커[${anchorIndex}] 상대인덱스: 컨테이너="${relativeIndex.containerSelector}", 인덱스=${relativeIndex.indexInContainer}`);
                             
                             // 상대적 위치 기반으로 요소 찾기
                             if (relativeIndex.containerSelector && typeof relativeIndex.indexInContainer === 'number') {
@@ -835,11 +1275,11 @@ struct BFCacheSnapshot: Codable {
                                     if (targetIndex >= 0 && targetIndex < items.length) {
                                         const candidateElement = items[targetIndex];
                                         
-                                        // 추가 검증: 텍스트 일치
+                                        // 추가 검증: 텍스트 일치 + 품질 텍스트 확인
                                         let isMatch = true;
                                         if (relativeIndex.textPreview) {
                                             const elementText = (candidateElement.textContent || '').trim();
-                                            const textMatch = elementText.includes(relativeIndex.textPreview);
+                                            const textMatch = isQualityText(elementText) && elementText.includes(relativeIndex.textPreview);
                                             detailedLogs.push(`   텍스트 검증: "${relativeIndex.textPreview.substring(0, 30)}..." 매치=${textMatch}`);
                                             if (!textMatch) isMatch = false;
                                         }
@@ -928,17 +1368,26 @@ struct BFCacheSnapshot: Codable {
                         }
                         
                         const anchors = infiniteScrollData.anchors;
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 기존 셀렉터 검색`);
+                        
+                        // 🧹 **품질 앵커 필터링**
+                        const qualityAnchors = anchors.filter(anchor => {
+                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
+                            const hasSelectors = anchor.selectors && Array.isArray(anchor.selectors);
+                            const hasQualityScore = (anchor.qualityScore || 0) >= 5; // Stage 4는 가장 관대
+                            return hasQualityText && hasSelectors && hasQualityScore;
+                        });
+                        
+                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 기존 셀렉터 검색: ${qualityAnchors.length}개`);
                         let foundElement = null;
                         let matchedAnchor = null;
                         let searchResults = [];
                         
-                        for (let anchorIndex = 0; anchorIndex < anchors.length; anchorIndex++) {
-                            const anchor = anchors[anchorIndex];
+                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
+                            const anchor = qualityAnchors[anchorIndex];
                             if (!anchor.selectors || !Array.isArray(anchor.selectors)) continue;
                             
                             const selectors = anchor.selectors;
-                            detailedLogs.push(`   앵커[${anchorIndex}] 셀렉터 수: ${selectors.length}개`);
+                            detailedLogs.push(`   품질앵커[${anchorIndex}] 셀렉터 수: ${selectors.length}개`);
                             
                             // 각 셀렉터 순차 시도
                             for (let selectorIndex = 0; selectorIndex < selectors.length; selectorIndex++) {
@@ -950,16 +1399,25 @@ struct BFCacheSnapshot: Codable {
                                     detailedLogs.push(`   셀렉터 매칭 결과: ${elements.length}개 요소`);
                                     
                                     if (elements.length > 0) {
-                                        foundElement = elements[0];
-                                        matchedAnchor = anchor;
-                                        searchResults.push({
-                                            method: 'existingSelector',
-                                            selector: selector,
-                                            selectorIndex: selectorIndex,
-                                            matchCount: elements.length
+                                        // 🧹 **품질 요소 확인**
+                                        const qualityElements = Array.from(elements).filter(element => {
+                                            const elementText = (element.textContent || '').trim();
+                                            return isQualityText(elementText);
                                         });
-                                        detailedLogs.push(`   ✅ 기존 셀렉터로 요소 발견: "${selector}"`);
-                                        break;
+                                        
+                                        if (qualityElements.length > 0) {
+                                            foundElement = qualityElements[0];
+                                            matchedAnchor = anchor;
+                                            searchResults.push({
+                                                method: 'existingSelector',
+                                                selector: selector,
+                                                selectorIndex: selectorIndex,
+                                                matchCount: elements.length,
+                                                qualityMatchCount: qualityElements.length
+                                            });
+                                            detailedLogs.push(`   ✅ 기존 셀렉터로 품질 요소 발견: "${selector}" (${qualityElements.length}개 중 선택)`);
+                                            break;
+                                        }
                                     }
                                 } catch(e) {
                                     detailedLogs.push(`   셀렉터 오류 (건너뜀): ${e.message}`);
@@ -1175,10 +1633,10 @@ struct BFCacheSnapshot: Codable {
                 // 🔧 **복원 후 위치 검증 및 보정**
                 setTimeout(() => {
                     try {
-                        const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        const diffY = Math.abs(finalY - targetY);
-                        const diffX = Math.abs(finalX - targetX);
+                        finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        finalDiffY = Math.abs(finalY - targetY);
+                        finalDiffX = Math.abs(finalX - targetX);
                         
                         // 사용된 Stage의 허용 오차 적용
                         const stageConfig = usedStage > 0 ? STAGE_CONFIG[`stage${usedStage}`] : null;
@@ -1187,40 +1645,47 @@ struct BFCacheSnapshot: Codable {
                         detailedLogs.push('🔧 복원 후 위치 검증 시작');
                         detailedLogs.push(`   최종 위치: X=${finalX.toFixed(1)}px, Y=${finalY.toFixed(1)}px`);
                         detailedLogs.push(`   목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
-                        detailedLogs.push(`   위치 차이: X=${diffX.toFixed(1)}px, Y=${diffY.toFixed(1)}px`);
+                        detailedLogs.push(`   위치 차이: X=${finalDiffX.toFixed(1)}px, Y=${finalDiffY.toFixed(1)}px`);
                         detailedLogs.push(`   허용 오차: ${tolerance}px (Stage ${usedStage} 기준)`);
-                        detailedLogs.push(`   허용 오차 내: ${diffX <= tolerance && diffY <= tolerance ? '예' : '아니오'}`);
+                        detailedLogs.push(`   허용 오차 내: ${finalDiffX <= tolerance && finalDiffY <= tolerance ? '예' : '아니오'}`);
+                        
+                        finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
                         
                         verificationResult = {
                             target: [targetX, targetY],
                             final: [finalX, finalY],
-                            diff: [diffX, diffY],
+                            diff: [finalDiffX, finalDiffY],
                             stage: usedStage,
                             method: usedMethod,
                             tolerance: tolerance,
-                            withinTolerance: diffX <= tolerance && diffY <= tolerance,
+                            withinTolerance: finalWithinTolerance,
                             stageBased: restoredByStage,
-                            actualRestoreDistance: Math.sqrt(diffX * diffX + diffY * diffY),
-                            actualRestoreSuccess: diffY <= 50 // 50px 이내면 실제 성공으로 간주
+                            actualRestoreDistance: Math.sqrt(finalDiffX * finalDiffX + finalDiffY * finalDiffY),
+                            actualRestoreSuccess: finalDiffY <= 50 // 50px 이내면 실제 성공으로 간주
                         };
                         
+                        // 🐛 **스코프 에러 수정: 변수 할당**
+                        actualRestoreSuccess = verificationResult.actualRestoreSuccess;
+                        practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
+                        
                         detailedLogs.push(`   실제 복원 거리: ${verificationResult.actualRestoreDistance.toFixed(1)}px`);
-                        detailedLogs.push(`   실제 복원 성공: ${verificationResult.actualRestoreSuccess ? '예' : '아니오'} (50px 기준)`);
+                        detailedLogs.push(`   실제 복원 성공: ${actualRestoreSuccess ? '예' : '아니오'} (50px 기준)`);
+                        detailedLogs.push(`   실용적 복원 성공: ${practicalSuccess ? '예' : '아니오'} (100px 기준)`);
                         
                         console.log('🚀 5단계 복원 검증:', verificationResult);
                         
-                        if (verificationResult.actualRestoreSuccess) {
-                            detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${diffY.toFixed(1)}px`);
+                        if (actualRestoreSuccess) {
+                            detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
                         } else {
-                            detailedLogs.push(`❌ 실제 복원 실패: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${diffY.toFixed(1)}px`);
+                            detailedLogs.push(`❌ 실제 복원 실패: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
                         }
                         
                         // 🔧 **허용 오차 초과 시 점진적 보정**
-                        if (!verificationResult.withinTolerance && (diffY > tolerance || diffX > tolerance)) {
+                        if (!finalWithinTolerance && (finalDiffY > tolerance || finalDiffX > tolerance)) {
                             detailedLogs.push('🔧 허용 오차 초과 - 점진적 보정 시작');
                             detailedLogs.push(`   보정 필요 거리: X=${(targetX - finalX).toFixed(1)}px, Y=${(targetY - finalY).toFixed(1)}px`);
                             
-                            const maxDiff = Math.max(diffX, diffY);
+                            const maxDiff = Math.max(finalDiffX, finalDiffY);
                             const steps = Math.min(5, Math.max(2, Math.ceil(maxDiff / 1000)));
                             const stepX = (targetX - finalX) / steps;
                             const stepY = (targetY - finalY) / steps;
@@ -1732,7 +2197,7 @@ struct BFCacheSnapshot: Codable {
         
         // ✅ **iframe 복원 단계 제거됨**
         
-        // **2단계: 최종 확인 및 보정**
+        // **2단계: 최종 확인 및 보정 (🐛 스코프 에러 수정)**
         TabPersistenceManager.debugMessages.append("✅ 2단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((2, { stepCompletion in
@@ -1745,6 +2210,15 @@ struct BFCacheSnapshot: Codable {
                     try {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
+                        
+                        // 🐛 **스코프 에러 수정: 모든 변수 미리 정의**
+                        let actualRestoreSuccess = false;
+                        let practicalSuccess = false;
+                        let finalCurrentY = 0;
+                        let finalCurrentX = 0;
+                        let finalDiffY = 0;
+                        let finalDiffX = 0;
+                        let finalWithinTolerance = false;
                         
                         // 📊 **상세 로그 수집**
                         const detailedLogs = [];
@@ -1862,15 +2336,16 @@ struct BFCacheSnapshot: Codable {
                         
                         // ✅ **최종 위치 정확 측정 및 기록**
                         setTimeout(() => {
-                            const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            const finalDiffX = Math.abs(finalCurrentX - targetX);
-                            const finalDiffY = Math.abs(finalCurrentY - targetY);
-                            const finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
+                            // 🐛 **스코프 에러 수정: 변수 할당**
+                            finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            finalDiffX = Math.abs(finalCurrentX - targetX);
+                            finalDiffY = Math.abs(finalCurrentY - targetY);
+                            finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
                             
                             // ✅ **실제 복원 성공 여부 정확히 판단**
-                            const actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
-                            const practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
+                            actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
+                            practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
                             
                             verificationData.finalResult = {
                                 final: { x: finalCurrentX, y: finalCurrentY },
@@ -2024,7 +2499,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 5단계 무한스크롤 특화 캡처)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 5단계 무한스크롤 특화 캡처 + 의미없는 텍스트 필터링)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -2103,26 +2578,37 @@ extension BFCacheTransitionSystem {
                 TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 데이터 키: \(Array(infiniteScrollData.keys))")
                 
                 if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                    TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 개수: \(anchors.count)개")
-                    if anchors.count > 0 {
-                        let firstAnchor = anchors[0]
-                        TabPersistenceManager.debugMessages.append("🚀 첫 번째 앵커 키: \(Array(firstAnchor.keys))")
+                    // 🧹 **품질 앵커 필터링 후 로깅**
+                    let qualityAnchors = anchors.filter { anchor in
+                        if let qualityScore = anchor["qualityScore"] as? Int {
+                            return qualityScore >= 15
+                        }
+                        return false
+                    }
+                    
+                    TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 개수: \(anchors.count)개 (품질 앵커: \(qualityAnchors.count)개)")
+                    if qualityAnchors.count > 0 {
+                        let firstAnchor = qualityAnchors[0]
+                        TabPersistenceManager.debugMessages.append("🚀 첫 번째 품질 앵커 키: \(Array(firstAnchor.keys))")
                         
-                        // 📊 **첫 번째 앵커 상세 정보 로깅**
+                        // 📊 **첫 번째 품질 앵커 상세 정보 로깅**
                         if let absolutePos = firstAnchor["absolutePosition"] as? [String: Any] {
                             let top = (absolutePos["top"] as? Double) ?? 0
                             let left = (absolutePos["left"] as? Double) ?? 0
-                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
+                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
                         }
                         if let offsetFromTop = firstAnchor["offsetFromTop"] as? Double {
-                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 오프셋: \(String(format: "%.1f", offsetFromTop))px")
+                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 오프셋: \(String(format: "%.1f", offsetFromTop))px")
                         }
                         if let textContent = firstAnchor["textContent"] as? String {
                             let preview = textContent.prefix(50)
-                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 텍스트: \"\(preview)\"")
+                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 텍스트: \"\(preview)\"")
                         }
                         if let tagName = firstAnchor["tagName"] as? String {
-                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 태그: <\(tagName)>")
+                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 태그: <\(tagName)>")
+                        }
+                        if let qualityScore = firstAnchor["qualityScore"] as? Int {
+                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 품질점수: \(qualityScore)점")
                         }
                     }
                 } else {
@@ -2255,7 +2741,7 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: Promise 제거한 5단계 무한스크롤 특화 JS 상태 캡처** 
+        // 3. ✅ **수정: Promise 제거한 5단계 무한스크롤 특화 JS 상태 캡처 (의미없는 텍스트 필터링 포함)** 
         let jsSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 JS 상태 캡처 시작")
         
@@ -2272,7 +2758,13 @@ extension BFCacheTransitionSystem {
                     // 📊 **상세 캡처 결과 로깅**
                     if let infiniteScrollData = data["infiniteScrollData"] as? [String: Any] {
                         if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: \(anchors.count)개")
+                            let qualityAnchors = anchors.filter { anchor in
+                                if let qualityScore = anchor["qualityScore"] as? Int {
+                                    return qualityScore >= 15
+                                }
+                                return false
+                            }
+                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: \(anchors.count)개 (품질 앵커: \(qualityAnchors.count)개)")
                         }
                         if let stats = infiniteScrollData["stats"] as? [String: Any] {
                             TabPersistenceManager.debugMessages.append("📊 JS 캡처 통계: \(stats)")
@@ -2324,6 +2816,16 @@ extension BFCacheTransitionSystem {
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         
+        // 🔄 **프리로딩 설정 생성 (저장된 콘텐츠 높이 기반)**
+        let preloadingConfig = BFCacheSnapshot.PreloadingConfig(
+            enableDataPreloading: true,
+            enableBatchLoading: true, 
+            targetContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            maxPreloadAttempts: 10,
+            preloadBatchSize: 5,
+            preloadTimeoutSeconds: 30
+        )
+        
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -2336,13 +2838,14 @@ extension BFCacheTransitionSystem {
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
-            version: version
+            version: version,
+            preloadingConfig: preloadingConfig
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **새로운: 5단계 무한스크롤 특화 캡처 JavaScript 생성**
+    // 🚀 **새로운: 5단계 무한스크롤 특화 캡처 JavaScript 생성 (의미없는 텍스트 필터링 포함)**
     private func generateFiveStageInfiniteScrollCaptureScript() -> String {
         return """
         (function() {
@@ -2377,7 +2880,49 @@ extension BFCacheTransitionSystem {
                     content: [contentWidth, contentHeight]
                 });
                 
-                // 🚀 **5단계 무한스크롤 특화 앵커 수집**
+                // 🧹 **의미없는 텍스트 필터링 함수**
+                function isQualityText(text) {
+                    if (!text || typeof text !== 'string') return false;
+                    
+                    const cleanText = text.trim();
+                    if (cleanText.length < 5) return false; // 너무 짧은 텍스트
+                    
+                    // 🧹 **의미없는 텍스트 패턴들**
+                    const meaninglessPatterns = [
+                        /^(투표는|표시되지|않습니다|네트워크|문제로|연결되지|잠시|후에|다시|시도)/,
+                        /^(로딩|loading|wait|please|기다려|잠시만)/i,
+                        /^(오류|에러|error|fail|실패|죄송|sorry)/i,
+                        /^(확인|ok|yes|no|취소|cancel|닫기|close)/i,
+                        /^(더보기|more|load|next|이전|prev|previous)/i,
+                        /^(클릭|click|tap|터치|touch|선택)/i,
+                        /^(답글|댓글|reply|comment|쓰기|작성)/i,
+                        /^[\s\.\-_=+]{2,}$/, // 특수문자만
+                        /^[0-9\s\.\/\-:]{3,}$/, // 숫자와 특수문자만 (날짜/시간 제외)
+                        /^(am|pm|오전|오후|시|분|초)$/i,
+                    ];
+                    
+                    for (const pattern of meaninglessPatterns) {
+                        if (pattern.test(cleanText)) {
+                            return false;
+                        }
+                    }
+                    
+                    // 너무 반복적인 문자 (같은 문자 70% 이상)
+                    const charCounts = {};
+                    for (const char of cleanText) {
+                        charCounts[char] = (charCounts[char] || 0) + 1;
+                    }
+                    const maxCharCount = Math.max(...Object.values(charCounts));
+                    if (maxCharCount / cleanText.length > 0.7) {
+                        return false;
+                    }
+                    
+                    return true;
+                }
+                
+                detailedLogs.push('🧹 의미없는 텍스트 필터링 함수 로드 완료');
+                
+                // 🚀 **5단계 무한스크롤 특화 앵커 수집 (품질 필터링 포함)**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
                     const viewportRect = {
@@ -2455,6 +3000,7 @@ extension BFCacheTransitionSystem {
                     
                     let nearbyElements = [];
                     let processingErrors = 0;
+                    let qualityFilteredCount = 0;
                     
                     for (const element of candidateElements) {
                         try {
@@ -2464,13 +3010,18 @@ extension BFCacheTransitionSystem {
                             
                             // 확장된 뷰포트 범위 내에 있는지 확인
                             if (elementBottom >= extendedTop && elementTop <= extendedBottom) {
-                                nearbyElements.push({
-                                    element: element,
-                                    rect: rect,
-                                    absoluteTop: elementTop,
-                                    absoluteLeft: scrollX + rect.left,
-                                    distanceFromViewport: Math.abs(elementTop - scrollY)
-                                });
+                                // 🧹 **품질 텍스트 필터링 추가**
+                                const elementText = (element.textContent || '').trim();
+                                if (isQualityText(elementText)) {
+                                    nearbyElements.push({
+                                        element: element,
+                                        rect: rect,
+                                        absoluteTop: elementTop,
+                                        absoluteLeft: scrollX + rect.left,
+                                        distanceFromViewport: Math.abs(elementTop - scrollY)
+                                    });
+                                    qualityFilteredCount++;
+                                }
                             }
                         } catch(e) {
                             processingErrors++;
@@ -2479,10 +3030,11 @@ extension BFCacheTransitionSystem {
                     
                     captureStats.nearbyElements = nearbyElements.length;
                     captureStats.processingErrors = processingErrors;
+                    captureStats.qualityFilteredCount = qualityFilteredCount;
                     
-                    detailedLogs.push(`뷰포트 근처 요소 필터링: ${nearbyElements.length}개 (오류: ${processingErrors}개)`);
+                    detailedLogs.push(`뷰포트 근처 요소 필터링: ${nearbyElements.length}개 (오류: ${processingErrors}개, 품질 필터링: ${qualityFilteredCount}개)`);
                     
-                    console.log('🚀 뷰포트 근처 요소:', nearbyElements.length, '개');
+                    console.log('🚀 뷰포트 근처 품질 요소:', nearbyElements.length, '개');
                     
                     // 거리순으로 정렬하여 상위 30개만 선택
                     nearbyElements.sort((a, b) => a.distanceFromViewport - b.distanceFromViewport);
@@ -2491,7 +3043,7 @@ extension BFCacheTransitionSystem {
                     captureStats.selectedElements = selectedElements.length;
                     detailedLogs.push(`거리 기준 정렬 후 상위 ${selectedElements.length}개 선택`);
                     
-                    console.log('🚀 선택된 요소:', selectedElements.length, '개');
+                    console.log('🚀 선택된 품질 요소:', selectedElements.length, '개');
                     
                     // 각 요소에 대해 5단계 정보 수집
                     let anchorCreationErrors = 0;
@@ -2510,8 +3062,8 @@ extension BFCacheTransitionSystem {
                     captureStats.anchorCreationErrors = anchorCreationErrors;
                     captureStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push(`앵커 생성 완료: ${anchors.length}개 (실패: ${anchorCreationErrors}개)`);
-                    console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
+                    detailedLogs.push(`품질 앵커 생성 완료: ${anchors.length}개 (실패: ${anchorCreationErrors}개)`);
+                    console.log('🚀 무한스크롤 품질 앵커 수집 완료:', anchors.length, '개');
                     
                     return {
                         anchors: anchors,
@@ -2519,7 +3071,7 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🚀 **개별 무한스크롤 앵커 생성 (5단계 정보 포함)**
+                // 🚀 **개별 무한스크롤 앵커 생성 (5단계 정보 포함 + 품질 점수 강화)**
                 function createInfiniteScrollAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
@@ -2532,6 +3084,13 @@ extension BFCacheTransitionSystem {
                         const offsetFromLeft = scrollX - absoluteLeft;
                         
                         detailedLogs.push(`앵커[${index}] 생성: 위치 Y=${absoluteTop.toFixed(1)}px, 오프셋=${offsetFromTop.toFixed(1)}px`);
+                        
+                        // 🧹 **품질 텍스트 재확인**
+                        const textContent = (element.textContent || '').trim();
+                        if (!isQualityText(textContent)) {
+                            detailedLogs.push(`   앵커[${index}] 품질 텍스트 검증 실패: "${textContent.substring(0, 30)}"`);
+                            return null;
+                        }
                         
                         // 🚀 **1단계: 고유 식별자 수집**
                         const uniqueIdentifiers = {};
@@ -2588,7 +3147,6 @@ extension BFCacheTransitionSystem {
                         }
                         
                         // 🚀 **2단계: 콘텐츠 지문 생성**
-                        const textContent = (element.textContent || '').trim();
                         const contentFingerprint = {};
                         let fingerprintCount = 0;
                         
@@ -2692,9 +3250,21 @@ extension BFCacheTransitionSystem {
                         
                         detailedLogs.push(`  5단계 무한스크롤: 문서내위치=${(infiniteScrollContext.relativePosition * 100).toFixed(1)}%, 뷰포트거리=${infiniteScrollContext.distanceFromViewport.toFixed(1)}px`);
                         
-                        // 📊 **앵커 품질 점수 계산**
-                        const qualityScore = identifierCount * 10 + fingerprintCount * 5 + indexCount * 3 + selectors.length;
-                        detailedLogs.push(`  앵커[${index}] 품질점수: ${qualityScore}점 (식별자=${identifierCount*10}, 지문=${fingerprintCount*5}, 인덱스=${indexCount*3}, 셀렉터=${selectors.length})`);
+                        // 📊 **품질 점수 강화 계산 (품질 텍스트 가산점 추가)**
+                        let qualityScore = identifierCount * 10 + fingerprintCount * 5 + indexCount * 3 + selectors.length;
+                        
+                        // 🧹 **품질 텍스트 보너스**
+                        if (textContent.length >= 20) qualityScore += 5; // 충분한 길이
+                        if (textContent.length >= 50) qualityScore += 5; // 더 긴 텍스트
+                        if (!/^(답글|댓글|더보기|클릭|선택)/.test(textContent)) qualityScore += 3; // 의미있는 텍스트
+                        
+                        detailedLogs.push(`  앵커[${index}] 품질점수: ${qualityScore}점 (식별자=${identifierCount*10}, 지문=${fingerprintCount*5}, 인덱스=${indexCount*3}, 셀렉터=${selectors.length}, 텍스트보너스=추가)`);
+                        
+                        // 🧹 **품질 점수 15점 미만은 제외**
+                        if (qualityScore < 15) {
+                            detailedLogs.push(`  앵커[${index}] 품질점수 부족으로 제외: ${qualityScore}점 < 15점`);
+                            return null;
+                        }
                         
                         // 🚫 **수정: DOM 요소 대신 기본 타입만 반환**
                         return {
@@ -2728,7 +3298,7 @@ extension BFCacheTransitionSystem {
                             infiniteScrollContext: infiniteScrollContext,
                             
                             // 메타 정보
-                            anchorType: 'infiniteScroll',
+                            anchorType: 'infiniteScrollQuality',
                             captureTimestamp: Date.now(),
                             qualityScore: qualityScore,
                             anchorIndex: index
@@ -2816,7 +3386,7 @@ extension BFCacheTransitionSystem {
                     return path.join(' > ');
                 }
                 
-                // 🚀 **메인 실행 - 5단계 무한스크롤 특화 데이터 수집**
+                // 🚀 **메인 실행 - 5단계 무한스크롤 특화 데이터 수집 (품질 필터링 포함)**
                 const startTime = Date.now();
                 const infiniteScrollData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
@@ -2828,12 +3398,12 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: infiniteScrollData.anchors.length > 0 ? (infiniteScrollData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push(`=== 캡처 완료 (${captureTime}ms) ===`);
-                detailedLogs.push(`최종 앵커: ${infiniteScrollData.anchors.length}개`);
+                detailedLogs.push(`=== 품질 캡처 완료 (${captureTime}ms) ===`);
+                detailedLogs.push(`최종 품질 앵커: ${infiniteScrollData.anchors.length}개`);
                 detailedLogs.push(`처리 성능: ${pageAnalysis.capturePerformance.anchorsPerSecond} 앵커/초`);
                 
-                console.log('🚀 5단계 무한스크롤 특화 캡처 완료:', {
-                    anchorsCount: infiniteScrollData.anchors.length,
+                console.log('🚀 5단계 무한스크롤 특화 품질 캡처 완료:', {
+                    qualityAnchorsCount: infiniteScrollData.anchors.length,
                     stats: infiniteScrollData.stats,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
@@ -2870,7 +3440,7 @@ extension BFCacheTransitionSystem {
                     captureTime: captureTime              // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
-                console.error('🚀 5단계 무한스크롤 특화 캡처 실패:', e);
+                console.error('🚀 5단계 무한스크롤 특화 품질 캡처 실패:', e);
                 return {
                     infiniteScrollData: { anchors: [], stats: {} },
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
@@ -2878,7 +3448,7 @@ extension BFCacheTransitionSystem {
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: [`캡처 실패: ${e.message}`],
+                    detailedLogs: [`품질 캡처 실패: ${e.message}`],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
