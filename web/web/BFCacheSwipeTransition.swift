@@ -15,6 +15,7 @@
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
+//  🔥 **중복 복원 방지** - 5단계 성공시 브라우저 차단 대응에서는 검증만 수행
 
 import UIKit
 import WebKit
@@ -137,7 +138,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원**
+    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원 (중복 방지 추가)**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
@@ -161,7 +162,11 @@ struct BFCacheSnapshot: Codable {
         }
         
         // 🚀 **1단계: 5단계 무한스크롤 특화 복원 우선 실행**
-        performFiveStageInfiniteScrollRestore(to: webView)
+        var fiveStageRestoreSuccess = false
+        performFiveStageInfiniteScrollRestore(to: webView) { success in
+            fiveStageRestoreSuccess = success
+            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 결과: \(success ? "성공" : "실패")")
+        }
         
         // 🔧 **기존 상태별 분기 로직 유지**
         switch captureStatus {
@@ -182,14 +187,14 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🌐 5단계 무한스크롤 복원 후 브라우저 차단 대응 시작")
         
-        // 🔧 **무한스크롤 복원 후 브라우저 차단 대응 단계 실행**
+        // 🔧 **무한스크롤 복원 후 브라우저 차단 대응 단계 실행 (중복 방지 포함)**
         DispatchQueue.main.async {
-            self.performBrowserBlockingWorkaround(to: webView, completion: completion)
+            self.performBrowserBlockingWorkaround(to: webView, alreadyRestoredByFiveStage: fiveStageRestoreSuccess, completion: completion)
         }
     }
     
-    // 🚀 **새로 추가: 5단계 무한스크롤 특화 1단계 복원 메서드**
-    private func performFiveStageInfiniteScrollRestore(to webView: WKWebView) {
+    // 🚀 **수정: 5단계 무한스크롤 특화 1단계 복원 메서드 - 성공 여부 반환**
+    private func performFiveStageInfiniteScrollRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 시작")
         
         // 1. 네이티브 스크롤뷰 기본 설정 (백업용)
@@ -203,13 +208,16 @@ struct BFCacheSnapshot: Codable {
         webView.evaluateJavaScript(fiveStageRestoreJS) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 JS 실행 오류: \(error.localizedDescription)")
+                completion(false)
                 return
             }
             
             // 🚫 **수정: 안전한 타입 체크로 변경**
             var success = false
+            var stageBased = false
             if let resultDict = result as? [String: Any] {
                 success = (resultDict["success"] as? Bool) ?? false
+                stageBased = (resultDict["stageBased"] as? Bool) ?? false
                 
                 if let stage = resultDict["stage"] as? Int {
                     TabPersistenceManager.debugMessages.append("🚀 사용된 복원 단계: Stage \(stage)")
@@ -235,9 +243,11 @@ struct BFCacheSnapshot: Codable {
             }
             
             TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
+            
+            // 🔥 **stage 기반 복원 성공 여부 반환**
+            completion(stageBased)
         }
-        
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
     }
     
     // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (모든 사이트 범용 대응)**
@@ -912,211 +922,284 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤) - ✅ iframe 복원 제거**
-    private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤) - 🔥 중복 복원 방지 추가**
+    private func performBrowserBlockingWorkaround(to webView: WKWebView, alreadyRestoredByFiveStage: Bool, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
         let startTime = Date()
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작 (5단계 복원: \(alreadyRestoredByFiveStage ? "이미 성공" : "실패"))")
         
-        // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결) - 상세 디버깅**
-        restoreSteps.append((1, { stepCompletion in
-            let progressiveDelay: TimeInterval = 0.1
-            TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
+        // 🔥 **5단계 복원이 이미 성공한 경우, 스크롤 대신 검증만 수행**
+        if alreadyRestoredByFiveStage {
+            TabPersistenceManager.debugMessages.append("🔥 5단계 복원 이미 성공 - 검증 모드로 전환")
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
-                let progressiveScrollJS = """
-                (function() {
-                    try {
-                        const targetX = parseFloat('\(self.scrollPosition.x)');
-                        const targetY = parseFloat('\(self.scrollPosition.y)');
-                        const tolerance = 50.0;
+            // **검증 모드: 위치 확인만**
+            restoreSteps.append((1, { stepCompletion in
+                let verifyDelay: TimeInterval = 0.2
+                TabPersistenceManager.debugMessages.append("🔥 검증 모드: 위치 확인만 수행 (대기: \(String(format: "%.0f", verifyDelay * 1000))ms)")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + verifyDelay) {
+                    let verifyOnlyJS = """
+                    (function() {
+                        try {
+                            const targetX = parseFloat('\(self.scrollPosition.x)');
+                            const targetY = parseFloat('\(self.scrollPosition.y)');
+                            
+                            const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            
+                            const diffX = Math.abs(currentX - targetX);
+                            const diffY = Math.abs(currentY - targetY);
+                            const tolerance = 50.0;
+                            
+                            const withinTolerance = diffX <= tolerance && diffY <= tolerance;
+                            
+                            console.log('🔥 5단계 성공 후 위치 검증:', {
+                                target: [targetX, targetY],
+                                current: [currentX, currentY],
+                                diff: [diffX, diffY],
+                                withinTolerance: withinTolerance
+                            });
+                            
+                            return {
+                                success: withinTolerance,
+                                current: [currentX, currentY],
+                                target: [targetX, targetY],
+                                diff: [diffX, diffY],
+                                mode: 'verify_only'
+                            };
+                        } catch(e) {
+                            console.error('🔥 검증 모드 오류:', e);
+                            return {
+                                success: false,
+                                error: e.message,
+                                mode: 'verify_only'
+                            };
+                        }
+                    })()
+                    """
+                    
+                    webView.evaluateJavaScript(verifyOnlyJS) { result, error in
+                        var success = false
                         
-                        console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
-                        
-                        // 🚫 **브라우저 차단 대응: 점진적 스크롤 - 상세 디버깅**
-                        let attempts = 0;
-                        const maxAttempts = 15;
-                        const debugLog = [];
-                        
-                        function performScrollAttempt() {
-                            try {
-                                attempts++;
-                                
-                                // 현재 위치 확인
-                                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                
-                                const diffX = Math.abs(currentX - targetX);
-                                const diffY = Math.abs(currentY - targetY);
-                                
-                                debugLog.push({
-                                    attempt: attempts,
-                                    current: [currentX, currentY],
-                                    target: [targetX, targetY],
-                                    diff: [diffX, diffY],
-                                    withinTolerance: diffX <= tolerance && diffY <= tolerance
-                                });
-                                
-                                // 목표 도달 확인
-                                if (diffX <= tolerance && diffY <= tolerance) {
-                                    console.log('🚫 점진적 스크롤 성공:', {
-                                        current: [currentX, currentY], 
-                                        attempts: attempts,
-                                        finalDiff: [diffX, diffY]
-                                    });
-                                    return 'progressive_success';
-                                }
-                                
-                                // 스크롤 한계 확인 (더 이상 스크롤할 수 없음)
-                                const maxScrollY = Math.max(
-                                    document.documentElement.scrollHeight - window.innerHeight,
-                                    document.body.scrollHeight - window.innerHeight,
-                                    0
-                                );
-                                const maxScrollX = Math.max(
-                                    document.documentElement.scrollWidth - window.innerWidth,
-                                    document.body.scrollWidth - window.innerWidth,
-                                    0
-                                );
-                                
-                                debugLog[debugLog.length - 1].scrollLimits = {
-                                    maxX: maxScrollX,
-                                    maxY: maxScrollY,
-                                    atLimitX: currentX >= maxScrollX,
-                                    atLimitY: currentY >= maxScrollY
-                                };
-                                
-                                if (currentY >= maxScrollY && targetY > maxScrollY) {
-                                    console.log('🚫 Y축 스크롤 한계 도달:', {current: currentY, max: maxScrollY, target: targetY});
-                                    
-                                    // 🚫 **무한 스크롤 트리거 시도**
-                                    console.log('🚫 무한 스크롤 트리거 시도');
-                                    
-                                    // 스크롤 이벤트 강제 발생
-                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
-                                    
-                                    // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
-                                    try {
-                                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
-                                        document.dispatchEvent(touchEvent);
-                                        debugLog[debugLog.length - 1].infiniteScrollTrigger = 'touchEvent_attempted';
-                                    } catch(e) {
-                                        debugLog[debugLog.length - 1].infiniteScrollTrigger = 'touchEvent_unsupported';
-                                    }
-                                    
-                                    // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
-                                    const loadMoreButtons = document.querySelectorAll(
-                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
-                                    );
-                                    
-                                    let clickedButtons = 0;
-                                    loadMoreButtons.forEach(btn => {
-                                        if (btn && typeof btn.click === 'function') {
-                                            try {
-                                                btn.click();
-                                                clickedButtons++;
-                                                console.log('🚫 "더보기" 버튼 클릭:', btn.className);
-                                            } catch(e) {
-                                                // 클릭 실패는 무시
-                                            }
-                                        }
-                                    });
-                                    
-                                    debugLog[debugLog.length - 1].loadMoreButtons = {
-                                        found: loadMoreButtons.length,
-                                        clicked: clickedButtons
-                                    };
-                                }
-                                
-                                // 스크롤 시도 - 여러 방법으로
-                                try {
-                                    window.scrollTo(targetX, targetY);
-                                    document.documentElement.scrollTop = targetY;
-                                    document.documentElement.scrollLeft = targetX;
-                                    document.body.scrollTop = targetY;
-                                    document.body.scrollLeft = targetX;
-                                    
-                                    if (document.scrollingElement) {
-                                        document.scrollingElement.scrollTop = targetY;
-                                        document.scrollingElement.scrollLeft = targetX;
-                                    }
-                                    
-                                    debugLog[debugLog.length - 1].scrollAttempt = 'completed';
-                                } catch(scrollError) {
-                                    debugLog[debugLog.length - 1].scrollAttempt = 'error: ' + scrollError.message;
-                                }
-                                
-                                // 최대 시도 확인
-                                if (attempts >= maxAttempts) {
-                                    console.log('🚫 점진적 스크롤 최대 시도 도달:', {
-                                        target: [targetX, targetY],
-                                        final: [currentX, currentY],
-                                        attempts: maxAttempts,
-                                        debugLog: debugLog
-                                    });
-                                    return 'progressive_maxAttempts';
-                                }
-                                
-                                // 다음 시도를 위한 대기
-                                setTimeout(() => {
-                                    const result = performScrollAttempt();
-                                    if (result) {
-                                        // 재귀 완료
-                                    }
-                                }, 200);
-                                
-                                return null; // 계속 진행
-                                
-                            } catch(attemptError) {
-                                console.error('🚫 점진적 스크롤 시도 오류:', attemptError);
-                                debugLog.push({
-                                    attempt: attempts,
-                                    error: attemptError.message
-                                });
-                                return 'progressive_attemptError: ' + attemptError.message;
+                        if let error = error {
+                            TabPersistenceManager.debugMessages.append("🔥 검증 모드 JS 실행 오류: \(error.localizedDescription)")
+                        } else if let resultDict = result as? [String: Any] {
+                            success = (resultDict["success"] as? Bool) ?? false
+                            
+                            if let current = resultDict["current"] as? [Double],
+                               let target = resultDict["target"] as? [Double],
+                               let diff = resultDict["diff"] as? [Double] {
+                                TabPersistenceManager.debugMessages.append("🔥 검증 결과: 목표=(\(String(format: "%.0f", target[0])), \(String(format: "%.0f", target[1]))) → 현재=(\(String(format: "%.0f", current[0])), \(String(format: "%.0f", current[1]))) 차이=(\(String(format: "%.1f", diff[0])), \(String(format: "%.1f", diff[1])))")
                             }
                         }
                         
-                        // 첫 번째 시도 시작
-                        const result = performScrollAttempt();
-                        return result || 'progressive_inProgress';
-                        
-                    } catch(e) { 
-                        console.error('🚫 점진적 스크롤 전체 실패:', e);
-                        return 'progressive_error: ' + e.message; 
+                        TabPersistenceManager.debugMessages.append("🔥 검증 모드 완료: \(success ? "성공" : "실패")")
+                        stepCompletion(success)
                     }
-                })()
-                """
-                
-                webView.evaluateJavaScript(progressiveScrollJS) { result, error in
-                    var resultString = "progressive_unknown"
-                    var success = false
-                    
-                    if let error = error {
-                        resultString = "progressive_jsError: \(error.localizedDescription)"
-                        TabPersistenceManager.debugMessages.append("🚫 1단계 JavaScript 실행 오류: \(error.localizedDescription)")
-                    } else if let result = result as? String {
-                        resultString = result
-                        success = result.contains("success") || result.contains("partial") || result.contains("maxAttempts")
-                    } else {
-                        resultString = "progressive_invalidResult"
-                    }
-                    
-                    TabPersistenceManager.debugMessages.append("🚫 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
-                    stepCompletion(success)
                 }
-            }
-        }))
+            }))
+            
+        } else {
+            // **기존 복원 모드: 5단계가 실패한 경우 기존 로직 수행**
+            
+            // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결) - 상세 디버깅**
+            restoreSteps.append((1, { stepCompletion in
+                let progressiveDelay: TimeInterval = 0.1
+                TabPersistenceManager.debugMessages.append("🚫 1단계: 점진적 스크롤 복원 (대기: \(String(format: "%.0f", progressiveDelay * 1000))ms)")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + progressiveDelay) {
+                    let progressiveScrollJS = """
+                    (function() {
+                        try {
+                            const targetX = parseFloat('\(self.scrollPosition.x)');
+                            const targetY = parseFloat('\(self.scrollPosition.y)');
+                            const tolerance = 50.0;
+                            
+                            console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
+                            
+                            // 🚫 **브라우저 차단 대응: 점진적 스크롤 - 상세 디버깅**
+                            let attempts = 0;
+                            const maxAttempts = 15;
+                            const debugLog = [];
+                            
+                            function performScrollAttempt() {
+                                try {
+                                    attempts++;
+                                    
+                                    // 현재 위치 확인
+                                    const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                                    const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                                    
+                                    const diffX = Math.abs(currentX - targetX);
+                                    const diffY = Math.abs(currentY - targetY);
+                                    
+                                    debugLog.push({
+                                        attempt: attempts,
+                                        current: [currentX, currentY],
+                                        target: [targetX, targetY],
+                                        diff: [diffX, diffY],
+                                        withinTolerance: diffX <= tolerance && diffY <= tolerance
+                                    });
+                                    
+                                    // 목표 도달 확인
+                                    if (diffX <= tolerance && diffY <= tolerance) {
+                                        console.log('🚫 점진적 스크롤 성공:', {
+                                            current: [currentX, currentY], 
+                                            attempts: attempts,
+                                            finalDiff: [diffX, diffY]
+                                        });
+                                        return 'progressive_success';
+                                    }
+                                    
+                                    // 스크롤 한계 확인 (더 이상 스크롤할 수 없음)
+                                    const maxScrollY = Math.max(
+                                        document.documentElement.scrollHeight - window.innerHeight,
+                                        document.body.scrollHeight - window.innerHeight,
+                                        0
+                                    );
+                                    const maxScrollX = Math.max(
+                                        document.documentElement.scrollWidth - window.innerWidth,
+                                        document.body.scrollWidth - window.innerWidth,
+                                        0
+                                    );
+                                    
+                                    debugLog[debugLog.length - 1].scrollLimits = {
+                                        maxX: maxScrollX,
+                                        maxY: maxScrollY,
+                                        atLimitX: currentX >= maxScrollX,
+                                        atLimitY: currentY >= maxScrollY
+                                    };
+                                    
+                                    if (currentY >= maxScrollY && targetY > maxScrollY) {
+                                        console.log('🚫 Y축 스크롤 한계 도달:', {current: currentY, max: maxScrollY, target: targetY});
+                                        
+                                        // 🚫 **무한 스크롤 트리거 시도**
+                                        console.log('🚫 무한 스크롤 트리거 시도');
+                                        
+                                        // 스크롤 이벤트 강제 발생
+                                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                        window.dispatchEvent(new Event('resize', { bubbles: true }));
+                                        
+                                        // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
+                                        try {
+                                            const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                                            document.dispatchEvent(touchEvent);
+                                            debugLog[debugLog.length - 1].infiniteScrollTrigger = 'touchEvent_attempted';
+                                        } catch(e) {
+                                            debugLog[debugLog.length - 1].infiniteScrollTrigger = 'touchEvent_unsupported';
+                                        }
+                                        
+                                        // 하단 영역 클릭 시뮬레이션 (일부 사이트의 "더보기" 버튼)
+                                        const loadMoreButtons = document.querySelectorAll(
+                                            '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                                            '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
+                                        );
+                                        
+                                        let clickedButtons = 0;
+                                        loadMoreButtons.forEach(btn => {
+                                            if (btn && typeof btn.click === 'function') {
+                                                try {
+                                                    btn.click();
+                                                    clickedButtons++;
+                                                    console.log('🚫 "더보기" 버튼 클릭:', btn.className);
+                                                } catch(e) {
+                                                    // 클릭 실패는 무시
+                                                }
+                                            }
+                                        });
+                                        
+                                        debugLog[debugLog.length - 1].loadMoreButtons = {
+                                            found: loadMoreButtons.length,
+                                            clicked: clickedButtons
+                                        };
+                                    }
+                                    
+                                    // 스크롤 시도 - 여러 방법으로
+                                    try {
+                                        window.scrollTo(targetX, targetY);
+                                        document.documentElement.scrollTop = targetY;
+                                        document.documentElement.scrollLeft = targetX;
+                                        document.body.scrollTop = targetY;
+                                        document.body.scrollLeft = targetX;
+                                        
+                                        if (document.scrollingElement) {
+                                            document.scrollingElement.scrollTop = targetY;
+                                            document.scrollingElement.scrollLeft = targetX;
+                                        }
+                                        
+                                        debugLog[debugLog.length - 1].scrollAttempt = 'completed';
+                                    } catch(scrollError) {
+                                        debugLog[debugLog.length - 1].scrollAttempt = 'error: ' + scrollError.message;
+                                    }
+                                    
+                                    // 최대 시도 확인
+                                    if (attempts >= maxAttempts) {
+                                        console.log('🚫 점진적 스크롤 최대 시도 도달:', {
+                                            target: [targetX, targetY],
+                                            final: [currentX, currentY],
+                                            attempts: maxAttempts,
+                                            debugLog: debugLog
+                                        });
+                                        return 'progressive_maxAttempts';
+                                    }
+                                    
+                                    // 다음 시도를 위한 대기
+                                    setTimeout(() => {
+                                        const result = performScrollAttempt();
+                                        if (result) {
+                                            // 재귀 완료
+                                        }
+                                    }, 200);
+                                    
+                                    return null; // 계속 진행
+                                    
+                                } catch(attemptError) {
+                                    console.error('🚫 점진적 스크롤 시도 오류:', attemptError);
+                                    debugLog.push({
+                                        attempt: attempts,
+                                        error: attemptError.message
+                                    });
+                                    return 'progressive_attemptError: ' + attemptError.message;
+                                }
+                            }
+                            
+                            // 첫 번째 시도 시작
+                            const result = performScrollAttempt();
+                            return result || 'progressive_inProgress';
+                            
+                        } catch(e) { 
+                            console.error('🚫 점진적 스크롤 전체 실패:', e);
+                            return 'progressive_error: ' + e.message; 
+                        }
+                    })()
+                    """
+                    
+                    webView.evaluateJavaScript(progressiveScrollJS) { result, error in
+                        var resultString = "progressive_unknown"
+                        var success = false
+                        
+                        if let error = error {
+                            resultString = "progressive_jsError: \(error.localizedDescription)"
+                            TabPersistenceManager.debugMessages.append("🚫 1단계 JavaScript 실행 오류: \(error.localizedDescription)")
+                        } else if let result = result as? String {
+                            resultString = result
+                            success = result.contains("success") || result.contains("partial") || result.contains("maxAttempts")
+                        } else {
+                            resultString = "progressive_invalidResult"
+                        }
+                        
+                        TabPersistenceManager.debugMessages.append("🚫 1단계 완료: \(success ? "성공" : "실패") (\(resultString))")
+                        stepCompletion(success)
+                    }
+                }
+            }))
+        }
         
-        // ✅ **iframe 복원 단계 제거됨**
-        
-        // **2단계: 최종 확인 및 보정**
+        // **2단계: 최종 확인 및 보정 (모든 경우에 수행)**
         TabPersistenceManager.debugMessages.append("✅ 2단계 최종 보정 단계 추가 (필수)")
         
         restoreSteps.append((2, { stepCompletion in
@@ -1147,8 +1230,11 @@ struct BFCacheSnapshot: Codable {
                             withinTolerance: isWithinTolerance
                         });
                         
+                        // 🔥 **5단계가 이미 성공한 경우 추가 보정 안 함**
+                        const alreadyRestoredByFiveStage = \(alreadyRestoredByFiveStage ? "true" : "false");
+                        
                         // 최종 보정 (필요시)
-                        if (!isWithinTolerance) {
+                        if (!isWithinTolerance && !alreadyRestoredByFiveStage) {
                             console.log('✅ 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, targetY]});
                             
                             // 강력한 최종 보정 
@@ -1163,6 +1249,8 @@ struct BFCacheSnapshot: Codable {
                                 document.scrollingElement.scrollTop = targetY;
                                 document.scrollingElement.scrollLeft = targetX;
                             }
+                        } else if (alreadyRestoredByFiveStage) {
+                            console.log('🔥 5단계 이미 성공 - 최종 보정 스킵');
                         }
                         
                         // ✅ **최종 위치 정확 측정 및 기록**
@@ -1178,7 +1266,8 @@ struct BFCacheSnapshot: Codable {
                             diff: [finalDiffX, finalDiffY],
                             tolerance: tolerance,
                             isWithinTolerance: finalWithinTolerance,
-                            note: '브라우저차단대응'
+                            note: '브라우저차단대응',
+                            alreadyRestoredByFiveStage: alreadyRestoredByFiveStage
                         });
                         
                         // ✅ **수정: 실제 복원 성공 여부 정확히 반환**
@@ -1190,7 +1279,8 @@ struct BFCacheSnapshot: Codable {
                             finalDiff: [finalDiffX, finalDiffY],
                             actualTarget: [targetX, targetY],
                             actualFinal: [finalCurrentX, finalCurrentY],
-                            actualRestoreSuccess: actualRestoreSuccess
+                            actualRestoreSuccess: actualRestoreSuccess,
+                            alreadyRestoredByFiveStage: alreadyRestoredByFiveStage
                         };
                     } catch(e) { 
                         console.error('✅ 브라우저 차단 대응 최종보정 실패:', e);
@@ -1224,6 +1314,9 @@ struct BFCacheSnapshot: Codable {
                         }
                         if let actualRestoreSuccess = resultDict["actualRestoreSuccess"] as? Bool {
                             TabPersistenceManager.debugMessages.append("✅ 2단계 실제 복원 성공: \(actualRestoreSuccess)")
+                        }
+                        if let alreadyRestoredByFiveStage = resultDict["alreadyRestoredByFiveStage"] as? Bool {
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 5단계 이미 성공 여부: \(alreadyRestoredByFiveStage)")
                         }
                         if let errorMsg = resultDict["error"] as? String {
                             TabPersistenceManager.debugMessages.append("✅ 2단계 오류: \(errorMsg)")
