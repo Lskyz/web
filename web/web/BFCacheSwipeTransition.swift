@@ -16,6 +16,7 @@
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
 //  🎯 **정밀 복원 개선** - 상대적 위치 기반 정확한 복원과 엄격한 검증
+//  🔥 **스크롤 위치 캡처 수정** - JavaScript로 직접 읽기
 
 import UIKit
 import WebKit
@@ -1568,6 +1569,7 @@ extension BFCacheTransitionSystem {
         }
     }
     
+    // 🔥 **수정: JavaScript로 스크롤 위치 직접 읽기**
     private func performAtomicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
         
@@ -1578,29 +1580,121 @@ extension BFCacheTransitionSystem {
         
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
-        // 메인 스레드에서 웹뷰 상태 확인
-        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+        // 🔥 **JavaScript로 실제 스크롤 위치 읽기**
+        let semaphore = DispatchSemaphore(value: 0)
+        var captureData: CaptureData?
+        
+        DispatchQueue.main.sync {
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
                 TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
-                return nil
+                semaphore.signal()
+                return
             }
             
-            // 실제 스크롤 가능한 최대 크기 감지
-            let actualScrollableWidth = max(webView.scrollView.contentSize.width, webView.scrollView.bounds.width)
-            let actualScrollableHeight = max(webView.scrollView.contentSize.height, webView.scrollView.bounds.height)
+            // 🔥 **JavaScript로 정확한 스크롤 위치 읽기**
+            let scrollMetricsJS = """
+            (function() {
+                const scrollY = parseFloat(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
+                const scrollX = parseFloat(window.scrollX || window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0);
+                
+                const documentHeight = Math.max(
+                    document.documentElement.scrollHeight || 0,
+                    document.body.scrollHeight || 0,
+                    document.documentElement.offsetHeight || 0,
+                    document.body.offsetHeight || 0
+                );
+                
+                const documentWidth = Math.max(
+                    document.documentElement.scrollWidth || 0,
+                    document.body.scrollWidth || 0,
+                    document.documentElement.offsetWidth || 0,
+                    document.body.offsetWidth || 0
+                );
+                
+                const viewportHeight = parseFloat(window.innerHeight || document.documentElement.clientHeight || 0);
+                const viewportWidth = parseFloat(window.innerWidth || document.documentElement.clientWidth || 0);
+                
+                console.log('🔥 JavaScript 스크롤 위치 읽기:', {
+                    scroll: [scrollX, scrollY],
+                    document: [documentWidth, documentHeight],
+                    viewport: [viewportWidth, viewportHeight]
+                });
+                
+                return {
+                    scrollX: scrollX,
+                    scrollY: scrollY,
+                    contentWidth: documentWidth,
+                    contentHeight: documentHeight,
+                    viewportWidth: viewportWidth,
+                    viewportHeight: viewportHeight
+                };
+            })()
+            """
             
-            return CaptureData(
-                scrollPosition: webView.scrollView.contentOffset,
-                contentSize: webView.scrollView.contentSize,
-                viewportSize: webView.bounds.size,
-                actualScrollableSize: CGSize(width: actualScrollableWidth, height: actualScrollableHeight),
-                bounds: webView.bounds,
-                isLoading: webView.isLoading
-            )
+            webView.evaluateJavaScript(scrollMetricsJS) { result, error in
+                defer { semaphore.signal() }
+                
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🔥 스크롤 위치 읽기 실패: \(error.localizedDescription)")
+                    // Fallback: WebView scrollView 사용
+                    let actualScrollableWidth = max(webView.scrollView.contentSize.width, webView.scrollView.bounds.width)
+                    let actualScrollableHeight = max(webView.scrollView.contentSize.height, webView.scrollView.bounds.height)
+                    
+                    captureData = CaptureData(
+                        scrollPosition: webView.scrollView.contentOffset,
+                        contentSize: webView.scrollView.contentSize,
+                        viewportSize: webView.bounds.size,
+                        actualScrollableSize: CGSize(width: actualScrollableWidth, height: actualScrollableHeight),
+                        bounds: webView.bounds,
+                        isLoading: webView.isLoading
+                    )
+                    return
+                }
+                
+                if let metrics = result as? [String: Any] {
+                    let scrollX = CGFloat((metrics["scrollX"] as? Double) ?? 0)
+                    let scrollY = CGFloat((metrics["scrollY"] as? Double) ?? 0)
+                    let contentWidth = CGFloat((metrics["contentWidth"] as? Double) ?? 0)
+                    let contentHeight = CGFloat((metrics["contentHeight"] as? Double) ?? 0)
+                    let viewportWidth = CGFloat((metrics["viewportWidth"] as? Double) ?? 0)
+                    let viewportHeight = CGFloat((metrics["viewportHeight"] as? Double) ?? 0)
+                    
+                    TabPersistenceManager.debugMessages.append("🔥 JavaScript 스크롤 위치: X=\(scrollX), Y=\(scrollY)")
+                    TabPersistenceManager.debugMessages.append("🔥 콘텐츠 크기: \(contentWidth)x\(contentHeight)")
+                    TabPersistenceManager.debugMessages.append("🔥 뷰포트 크기: \(viewportWidth)x\(viewportHeight)")
+                    
+                    captureData = CaptureData(
+                        scrollPosition: CGPoint(x: scrollX, y: scrollY),
+                        contentSize: CGSize(width: contentWidth, height: contentHeight),
+                        viewportSize: CGSize(width: viewportWidth, height: viewportHeight),
+                        actualScrollableSize: CGSize(width: max(contentWidth, viewportWidth), height: max(contentHeight, viewportHeight)),
+                        bounds: webView.bounds,
+                        isLoading: webView.isLoading
+                    )
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 JavaScript 결과 파싱 실패")
+                    // Fallback
+                    let actualScrollableWidth = max(webView.scrollView.contentSize.width, webView.scrollView.bounds.width)
+                    let actualScrollableHeight = max(webView.scrollView.contentSize.height, webView.scrollView.bounds.height)
+                    
+                    captureData = CaptureData(
+                        scrollPosition: webView.scrollView.contentOffset,
+                        contentSize: webView.scrollView.contentSize,
+                        viewportSize: webView.bounds.size,
+                        actualScrollableSize: CGSize(width: actualScrollableWidth, height: actualScrollableHeight),
+                        bounds: webView.bounds,
+                        isLoading: webView.isLoading
+                    )
+                }
+            }
         }
         
+        // JavaScript 실행 대기
+        _ = semaphore.wait(timeout: .now() + 1.0)
+        
         guard let data = captureData else {
+            TabPersistenceManager.debugMessages.append("❌ 캡처 데이터 없음 - 캡처 취소: \(task.pageRecord.title)")
             return
         }
         
@@ -1813,6 +1907,8 @@ extension BFCacheTransitionSystem {
             captureStatus: captureStatus,
             version: version
         )
+        
+        TabPersistenceManager.debugMessages.append("🔥 최종 캡처 스크롤 위치: X=\(captureData.scrollPosition.x), Y=\(captureData.scrollPosition.y)")
         
         return (snapshot, visualSnapshot)
     }
@@ -2275,8 +2371,8 @@ extension BFCacheTransitionSystem {
                     window.location.pathname.includes('/timeline') ||
                     window.location.hostname.includes('twitter') ||
                     window.location.hostname.includes('facebook') ||
-                    window.location.hostname.includes('dcinside') ||
-                    window.location.hostname.includes('cafe.naver')) {
+                    window.location.hostname.includes('instagram') ||
+                    window.location.hostname.includes('youtube')) {
                     if (window.refreshDynamicContent) {
                         window.refreshDynamicContent();
                     }
@@ -2300,4 +2396,3 @@ extension BFCacheTransitionSystem {
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
-}
