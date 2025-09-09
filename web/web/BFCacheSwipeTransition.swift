@@ -186,13 +186,16 @@ struct BFCacheSnapshot: Codable {
         }
         
         TabPersistenceManager.debugMessages.append("🌐 5단계 무한스크롤 복원 후 브라우저 차단 대응 시작")
-        
-        // 🔧 **무한스크롤 복원 후 브라우저 차단 대응 단계 실행**
+
+        // 🔧 **무한스크롤 복원 후 DOM 높이 재측정 및 최종 스크롤 조정**
         DispatchQueue.main.async {
-            self.performBrowserBlockingWorkaround(to: webView, completion: completion)
+            self.recalculateScrollPositionForCurrentDOM(to: webView) {
+                // 🔧 **무한스크롤 복원 후 브라우저 차단 대응 단계 실행**
+                self.performBrowserBlockingWorkaround(to: webView, completion: completion)
+            }
         }
     }
-    
+
     // 🚀 **새로 추가: 5단계 무한스크롤 특화 1단계 복원 메서드**
     private func performFiveStageInfiniteScrollRestore(to webView: WKWebView) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 시작")
@@ -243,6 +246,34 @@ struct BFCacheSnapshot: Codable {
         }
         
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
+    }
+
+    // 🔄 **DOM 높이 재측정 후 스크롤 위치 보정**
+    private func recalculateScrollPositionForCurrentDOM(to webView: WKWebView, completion: @escaping () -> Void) {
+        let script = """
+        (function() {
+            try {
+                const d = document.documentElement;
+                return { w: d.scrollWidth || 0, h: d.scrollHeight || 0 };
+            } catch(e) { return null; }
+        })();
+        """
+
+        webView.evaluateJavaScript(script) { result, _ in
+            if let dict = result as? [String: Any],
+               let w = dict["w"] as? Double,
+               let h = dict["h"] as? Double {
+                let viewport = webView.scrollView.bounds.size
+                let maxX = max(CGFloat(w) - viewport.width, 0)
+                let maxY = max(CGFloat(h) - viewport.height, 0)
+                let target = CGPoint(
+                    x: maxX * (self.scrollPositionPercent.x / 100.0),
+                    y: maxY * (self.scrollPositionPercent.y / 100.0)
+                )
+                webView.scrollView.setContentOffset(target, animated: false)
+            }
+            completion()
+        }
     }
     
     // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (문제점 수정)**
@@ -1718,6 +1749,46 @@ extension BFCacheTransitionSystem {
         weak var webView: WKWebView?
         let requestedAt: Date = Date()
     }
+
+    // 📏 **DOM 크기 측정 (scrollWidth/scrollHeight)**
+    private func measureDOMSizeSync(in webView: WKWebView) -> CGSize {
+        var size = webView.scrollView.contentSize
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            let script = """
+            (function(){
+                try {
+                    const d = document.documentElement;
+                    return { w: d.scrollWidth || 0, h: d.scrollHeight || 0 };
+                } catch(e) { return null; }
+            })();
+            """
+            webView.evaluateJavaScript(script) { result, _ in
+                if let dict = result as? [String: Any],
+                   let w = dict["w"] as? Double,
+                   let h = dict["h"] as? Double {
+                    size = CGSize(width: w, height: h)
+                }
+                semaphore.signal()
+            }
+        }
+        _ = semaphore.wait(timeout: .now() + 1.0)
+        return size
+    }
+
+    // ⏱️ **DOM 크기 안정화 대기**
+    private func waitForStableDOMSize(in webView: WKWebView, initial: CGSize) -> CGSize {
+        var last = initial
+        for _ in 0..<5 {
+            Thread.sleep(forTimeInterval: 0.1)
+            let current = measureDOMSizeSync(in: webView)
+            if abs(current.width - last.width) < 1 && abs(current.height - last.height) < 1 {
+                return current
+            }
+            last = current
+        }
+        return last
+    }
     
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
@@ -1747,7 +1818,7 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
-        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+        var captureData = DispatchQueue.main.sync { () -> CaptureData? in
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
                 TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
@@ -1768,10 +1839,25 @@ extension BFCacheTransitionSystem {
             )
         }
         
-        guard let data = captureData else {
+        guard var data = captureData else {
             return
         }
-        
+
+        // 📏 **캡처 직전 DOM 크기 변동 감지 및 갱신**
+        let domSize = waitForStableDOMSize(in: webView, initial: data.actualScrollableSize)
+        if abs(domSize.width - data.actualScrollableSize.width) >= 1 || abs(domSize.height - data.actualScrollableSize.height) >= 1 {
+            TabPersistenceManager.debugMessages.append("📐 DOM 크기 변화 감지: \(domSize)")
+            let newOffset = DispatchQueue.main.sync { webView.scrollView.contentOffset }
+            data = CaptureData(
+                scrollPosition: newOffset,
+                contentSize: CGSize(width: domSize.width, height: domSize.height),
+                viewportSize: data.viewportSize,
+                actualScrollableSize: domSize,
+                bounds: data.bounds,
+                isLoading: data.isLoading
+            )
+        }
+
         // 🔧 **개선된 캡처 로직 - 실패 시 재시도 (기존 타이밍 유지)**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
