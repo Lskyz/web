@@ -15,7 +15,7 @@
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
-//  🚫 **5단계 복원 성공시 브라우저 차단 대응 스킵** - 정확한 복원 보장
+//  ✅ **5단계 복원 성공시 브라우저 차단 대응 생략** - 중복 처리 방지
 
 import UIKit
 import WebKit
@@ -168,42 +168,40 @@ struct BFCacheSnapshot: Codable {
                 return
             }
             
-            // 🚫 **핵심 수정: 5단계 복원 성공시 브라우저 차단 대응 스킵**
+            // ✅ **핵심 수정: 5단계 복원이 성공했으면 브라우저 차단 대응 생략**
             if fiveStageSuccess {
-                TabPersistenceManager.debugMessages.append("✅ 5단계 무한스크롤 복원 성공 - 브라우저 차단 대응 스킵")
+                TabPersistenceManager.debugMessages.append("✅ 5단계 무한스크롤 복원 성공 - 브라우저 차단 대응 생략")
                 completion(true)
                 return
             }
             
             // 🔧 **5단계 복원 실패시에만 기존 상태별 분기 로직 실행**
-            TabPersistenceManager.debugMessages.append("🚀 5단계 복원 실패 - 기존 복원 로직으로 폴백")
+            TabPersistenceManager.debugMessages.append("❌ 5단계 무한스크롤 복원 실패 - 브라우저 차단 대응 실행")
             
             switch self.captureStatus {
             case .failed:
-                TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 복원 실패")
-                completion(false)
-                return
+                TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 브라우저 차단 대응만 수행")
                 
             case .visualOnly:
-                TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 브라우저 차단 대응 실행")
+                TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 브라우저 차단 대응 + 최종보정")
                 
             case .partial:
-                TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 브라우저 차단 대응 실행")
+                TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 브라우저 차단 대응")
                 
             case .complete:
-                TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 브라우저 차단 대응 실행")
+                TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 브라우저 차단 대응")
             }
             
-            TabPersistenceManager.debugMessages.append("🌐 브라우저 차단 대응 단계 시작 (5단계 복원 실패 후)")
+            TabPersistenceManager.debugMessages.append("🌐 5단계 무한스크롤 복원 실패 후 브라우저 차단 대응 시작")
             
-            // 🔧 **5단계 복원 실패시에만 브라우저 차단 대응 실행**
+            // 🔧 **5단계 실패시에만 브라우저 차단 대응 단계 실행**
             DispatchQueue.main.async {
                 self.performBrowserBlockingWorkaround(to: webView, completion: completion)
             }
         }
     }
     
-    // 🚀 **수정: 5단계 무한스크롤 특화 1단계 복원 메서드 - 성공 여부 콜백 추가**
+    // 🚀 **수정: 5단계 무한스크롤 특화 1단계 복원 메서드 - 성공/실패 콜백 추가**
     private func performFiveStageInfiniteScrollRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 시작")
         
@@ -214,7 +212,7 @@ struct BFCacheSnapshot: Codable {
         // 2. 🚀 **5단계 무한스크롤 특화 복원 JavaScript 실행**
         let fiveStageRestoreJS = generateFiveStageInfiniteScrollRestoreScript()
         
-        // JavaScript 실행 (콜백 포함)
+        // 동기적 JavaScript 실행 (즉시)
         webView.evaluateJavaScript(fiveStageRestoreJS) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 JS 실행 오류: \(error.localizedDescription)")
@@ -253,16 +251,13 @@ struct BFCacheSnapshot: Codable {
                 }
             }
             
-            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(success ? "성공" : "실패") (단계기반: \(stageBased))")
+            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(success ? "성공" : "실패") (stageBased: \(stageBased))")
+            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
             
-            // 🚫 **핵심: stageBased가 true이고 success가 true인 경우만 진짜 성공으로 간주**
+            // ✅ **핵심 수정: stageBased가 true면 실제 5단계 복원 성공으로 간주**
             let actualSuccess = success && stageBased
-            TabPersistenceManager.debugMessages.append("🚀 5단계 복원 실제 성공 여부: \(actualSuccess)")
-            
             completion(actualSuccess)
         }
-        
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 JavaScript 실행 완료")
     }
     
     // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (모든 사이트 범용 대응)**
@@ -2065,3 +2060,4 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
+
