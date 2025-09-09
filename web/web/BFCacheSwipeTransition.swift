@@ -20,6 +20,8 @@
 //  🚀 **레이아웃 안정화 강화** - 충분한 대기시간과 재검증
 //  📐 **퍼센트 기반 복원 활용** - 실제 스크롤 범위 대비 퍼센트 사용
 //  🔍 **앵커 매칭 신뢰성 강화** - 동형 컨텐츠 오매칭 방지
+//  🚫 **JavaScript async/await 예외 수정** - 동기적 처리로 변경
+//  ⚡ **레이아웃 안정화 최적화** - 1.5초 → 0.1초 단축
 
 import UIKit
 import WebKit
@@ -276,7 +278,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (문제점 수정)**
+    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (🚫 async/await 예외 수정)**
     private func generateFiveStageInfiniteScrollRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -957,7 +959,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🚀 **Stage 5: 퍼센트 기반 복원 + 무한스크롤 트리거 (핵심 수정)**
+                // 🚀 **Stage 5: 퍼센트 기반 복원 + 무한스크롤 트리거 (🚫 async/await 제거)**
                 function tryPercentBasedRestore(config, targetX, targetY, targetPercentX, targetPercentY, realScrollContainer, stickyInfo) {
                     try {
                         console.log('🚀 Stage 5: 퍼센트 기반 복원 + 무한스크롤 트리거 시작');
@@ -988,18 +990,21 @@ struct BFCacheSnapshot: Codable {
                         
                         console.log('🚀 Stage 5: 현재 페이지 높이:', currentHeight, 'px, 목표 Y:', calculatedTargetY, 'px, 최대 스크롤:', maxScrollY, 'px');
                         
-                        // 🚀 **레이아웃 안정화 강화: 충분한 무한스크롤 트리거**
+                        // 🚫 **수정: async/await 제거하고 동기적 처리**
                         if (calculatedTargetY > maxScrollY - viewportHeight * 0.1) { // 하단 90% 이상이면 트리거
                             console.log('🚀 Stage 5: 무한스크롤 트리거 필요 - 콘텐츠 로드 시도');
                             
-                            // 무한스크롤 트리거 강화
-                            const triggerSuccess = await performInfiniteScrollTrigger(currentContainer, calculatedTargetY);
+                            // 🚫 **수정: 동기적 무한스크롤 트리거**
+                            const triggerSuccess = performInfiniteScrollTrigger(currentContainer, calculatedTargetY);
                             
                             if (triggerSuccess) {
-                                console.log('🚀 Stage 5: 무한스크롤 트리거 후 대기 시작');
+                                console.log('🚀 Stage 5: 무한스크롤 트리거 후 동기 대기 시작');
                                 
-                                // 🚀 **레이아웃 안정화 대기 부족 해결: 충분한 대기 시간**
-                                await new Promise(resolve => setTimeout(resolve, 2000)); // 2초 대기
+                                // 🚫 **수정: 동기적 대기 (setTimeout 대신 동기 루프)**
+                                const waitStart = Date.now();
+                                while (Date.now() - waitStart < 2000) {
+                                    // 2초 대기 (동기적)
+                                }
                                 
                                 // 재계산된 높이로 다시 시도
                                 const newHeight = Math.max(
@@ -1044,8 +1049,8 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🚀 **무한스크롤 트리거 강화 함수**
-                async function performInfiniteScrollTrigger(container, targetY) {
+                // 🚫 **수정: 동기적 무한스크롤 트리거 함수**
+                function performInfiniteScrollTrigger(container, targetY) {
                     try {
                         let triggeredMethods = 0;
                         
@@ -1054,7 +1059,9 @@ struct BFCacheSnapshot: Codable {
                         performScrollToPosition(currentMaxY, 0, container, {totalOffset: 0});
                         triggeredMethods++;
                         
-                        await new Promise(resolve => setTimeout(resolve, 300));
+                        // 🚫 **수정: 동기 대기**
+                        const wait1Start = Date.now();
+                        while (Date.now() - wait1Start < 300) {}
                         
                         // 2. 스크롤 이벤트 강제 발생
                         window.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -1094,7 +1101,10 @@ struct BFCacheSnapshot: Codable {
                         // 5. 인공 스크롤 반복 (일부 사이트는 스크롤 양에 반응)
                         for (let i = 0; i < 3; i++) {
                             performScrollToPosition(currentMaxY - 100 + (i * 50), 0, container, {totalOffset: 0});
-                            await new Promise(resolve => setTimeout(resolve, 200));
+                            
+                            // 🚫 **수정: 동기 대기**
+                            const waitStart = Date.now();
+                            while (Date.now() - waitStart < 200) {}
                         }
                         
                         console.log('🚀 무한스크롤 트리거 완료:', triggeredMethods + '개 방법 시도');
@@ -1295,7 +1305,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **브라우저 차단 대응 시스템 (레이아웃 안정화 강화)**
+    // 🚫 **브라우저 차단 대응 시스템 (⚡ 레이아웃 안정화 0.1초로 단축)**
     private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -1305,10 +1315,10 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
         
-        // **1단계: 레이아웃 안정화 대기 강화**
+        // **1단계: 레이아웃 안정화 대기 단축 (⚡ 1.5초 → 0.1초)**
         restoreSteps.append((1, { stepCompletion in
-            let stabilizationDelay: TimeInterval = 1.5 // 🚀 **대기시간 증가: 0.1초 → 1.5초**
-            TabPersistenceManager.debugMessages.append("🚀 1단계: 레이아웃 안정화 대기 강화 (대기: \(String(format: "%.1f", stabilizationDelay))초)")
+            let stabilizationDelay: TimeInterval = 0.1 // ⚡ **대기시간 단축: 1.5초 → 0.1초**
+            TabPersistenceManager.debugMessages.append("⚡ 1단계: 레이아웃 안정화 대기 단축 (대기: \(String(format: "%.1f", stabilizationDelay))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + stabilizationDelay) {
                 let stabilizationJS = """
@@ -1318,9 +1328,9 @@ struct BFCacheSnapshot: Codable {
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         const targetPercentY = parseFloat('\(self.scrollPositionPercent.y)');
                         
-                        console.log('🚀 레이아웃 안정화 대기 후 재검증:', {target: [targetX, targetY], percent: targetPercentY});
+                        console.log('⚡ 레이아웃 안정화 대기 후 재검증:', {target: [targetX, targetY], percent: targetPercentY});
                         
-                        // 🚀 **레이아웃 안정화 후 실제 컨테이너 재확인**
+                        // ⚡ **레이아웃 안정화 후 실제 컨테이너 재확인**
                         function redetectScrollContainer() {
                             const scrollContainerSelectors = [
                                 '#content-area', '.content_area', '.main-content', '.list_container',
@@ -1376,7 +1386,7 @@ struct BFCacheSnapshot: Codable {
                             }
                         });
                         
-                        console.log('🚀 레이아웃 안정화 상태:', {
+                        console.log('⚡ 레이아웃 안정화 상태:', {
                             container: isDocumentContainer ? 'document' : container.tagName,
                             containerHeight: containerHeight,
                             current: [currentX, currentY],
@@ -1384,13 +1394,13 @@ struct BFCacheSnapshot: Codable {
                             target: [targetX, targetY]
                         });
                         
-                        // 🚀 **최종 위치 계산 (퍼센트 우선 사용)**
+                        // ⚡ **최종 위치 계산 (퍼센트 우선 사용)**
                         let finalTargetY = targetY;
                         if (targetPercentY > 0) {
                             const maxScrollY = Math.max(0, containerHeight - window.innerHeight);
                             if (maxScrollY > 0) {
                                 finalTargetY = (targetPercentY / 100.0) * maxScrollY;
-                                console.log('🚀 퍼센트 기반 최종 계산:', {
+                                console.log('⚡ 퍼센트 기반 최종 계산:', {
                                     percent: targetPercentY + '%',
                                     maxScrollY: maxScrollY,
                                     calculated: finalTargetY,
@@ -1418,7 +1428,7 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         
-                        console.log('🚀 레이아웃 안정화 후 스크롤 완료:', [adjustedTargetX, adjustedTargetY]);
+                        console.log('⚡ 레이아웃 안정화 후 스크롤 완료:', [adjustedTargetX, adjustedTargetY]);
                         
                         return {
                             success: true,
@@ -1430,7 +1440,7 @@ struct BFCacheSnapshot: Codable {
                         };
                         
                     } catch(e) { 
-                        console.error('🚀 레이아웃 안정화 실패:', e);
+                        console.error('⚡ 레이아웃 안정화 실패:', e);
                         return {
                             success: false,
                             error: e.message
@@ -1443,39 +1453,39 @@ struct BFCacheSnapshot: Codable {
                     var success = false
                     
                     if let error = error {
-                        TabPersistenceManager.debugMessages.append("🚀 1단계 JavaScript 실행 오류: \(error.localizedDescription)")
+                        TabPersistenceManager.debugMessages.append("⚡ 1단계 JavaScript 실행 오류: \(error.localizedDescription)")
                     } else if let resultDict = result as? [String: Any] {
                         success = (resultDict["success"] as? Bool) ?? false
                         
                         if let method = resultDict["method"] as? String {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 사용된 방법: \(method)")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 사용된 방법: \(method)")
                         }
                         if let containerType = resultDict["containerType"] as? String {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 컨테이너 타입: \(containerType)")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 컨테이너 타입: \(containerType)")
                         }
                         if let containerHeight = resultDict["containerHeight"] as? Double {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 컨테이너 높이: \(String(format: "%.0f", containerHeight))px")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 컨테이너 높이: \(String(format: "%.0f", containerHeight))px")
                         }
                         if let finalTarget = resultDict["finalTarget"] as? [Double] {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 최종 타겟: X=\(String(format: "%.0f", finalTarget[0]))px, Y=\(String(format: "%.0f", finalTarget[1]))px")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 최종 타겟: X=\(String(format: "%.0f", finalTarget[0]))px, Y=\(String(format: "%.0f", finalTarget[1]))px")
                         }
                         if let stickyOffset = resultDict["stickyOffset"] as? Double {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 스티키 오프셋: \(String(format: "%.0f", stickyOffset))px")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 스티키 오프셋: \(String(format: "%.0f", stickyOffset))px")
                         }
                         if let errorMsg = resultDict["error"] as? String {
-                            TabPersistenceManager.debugMessages.append("🚀 1단계 오류: \(errorMsg)")
+                            TabPersistenceManager.debugMessages.append("⚡ 1단계 오류: \(errorMsg)")
                         }
                     }
                     
-                    TabPersistenceManager.debugMessages.append("🚀 1단계 레이아웃 안정화 완료: \(success ? "성공" : "실패")")
+                    TabPersistenceManager.debugMessages.append("⚡ 1단계 레이아웃 안정화 완료: \(success ? "성공" : "실패")")
                     stepCompletion(success)
                 }
             }
         }))
         
-        // **2단계: 최종 확인 및 보정 (동적 허용치 적용)**
+        // **2단계: 최종 확인 및 보정 (동적 허용치 적용) - 기존 1.2초 유지**
         restoreSteps.append((2, { stepCompletion in
-            let waitTime: TimeInterval = 1.2 // 🚀 **대기시간 증가: 0.8초 → 1.2초**
+            let waitTime: TimeInterval = 1.2 // 🔧 **대기시간 유지: 1.2초**
             TabPersistenceManager.debugMessages.append("✅ 2단계: 최종 보정 강화 (대기: \(String(format: "%.1f", waitTime))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
