@@ -5,15 +5,6 @@
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🌐 **무한스크롤 특화** - 동적 콘텐츠 로드 대응 복원 지원
-//  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
-//  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
-//  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
-//  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
-//  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
-//  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
-//  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
-//  🔧 **iframe 복원 제거** - 불필요한 단계 제거
-//  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
 //  🎯 **정밀 복원 개선** - 상대적 위치 기반 정확한 복원과 엄격한 검증
 //  🔥 **스크롤 위치 캡처 수정** - JavaScript로 직접 읽기
@@ -1441,7 +1432,7 @@ struct BFCacheSnapshot: Codable {
                             documentState: {
                                 height: documentHeight,
                                 maxScrollY: maxScrollY
-                            },
+                            };
                             measurementResults: positionData.allResults
                         };
                     } catch(e) { 
