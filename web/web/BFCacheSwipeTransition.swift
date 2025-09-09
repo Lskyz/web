@@ -15,7 +15,7 @@
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
-//  🚫 **5단계 복원 성공시 브라우저 차단 대응 스킵** - 간섭 완전 제거
+//  🚫 **5단계 복원 성공시 브라우저 차단 대응 스킵** - 정확한 복원 보장
 
 import UIKit
 import WebKit
@@ -138,7 +138,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원 - 간섭 제거**
+    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 BFCache 복원 시작 - 상태: \(captureStatus.rawValue)")
         
@@ -162,50 +162,48 @@ struct BFCacheSnapshot: Codable {
         }
         
         // 🚀 **1단계: 5단계 무한스크롤 특화 복원 우선 실행**
-        performFiveStageInfiniteScrollRestore(to: webView) { [weak self] success in
+        performFiveStageInfiniteScrollRestore(to: webView) { [weak self] fiveStageSuccess in
             guard let self = self else {
                 completion(false)
                 return
             }
             
-            // 🚫 **핵심 수정: 5단계 복원 성공 시 브라우저 차단 대응 완전 스킵**
-            if success {
-                TabPersistenceManager.debugMessages.append("✅ 5단계 복원 성공 - 브라우저 차단 대응 스킵 (간섭 방지)")
+            // 🚫 **핵심 수정: 5단계 복원 성공시 브라우저 차단 대응 스킵**
+            if fiveStageSuccess {
+                TabPersistenceManager.debugMessages.append("✅ 5단계 무한스크롤 복원 성공 - 브라우저 차단 대응 스킵")
                 completion(true)
                 return
             }
             
-            // 5단계 복원 실패 시에만 브라우저 차단 대응 실행
-            TabPersistenceManager.debugMessages.append("❌ 5단계 복원 실패 - 브라우저 차단 대응 실행")
+            // 🔧 **5단계 복원 실패시에만 기존 상태별 분기 로직 실행**
+            TabPersistenceManager.debugMessages.append("🚀 5단계 복원 실패 - 기존 복원 로직으로 폴백")
             
-            // 🔧 **기존 상태별 분기 로직 유지**
             switch self.captureStatus {
             case .failed:
-                TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 긴급 폴백만 수행")
-                self.performEmergencyFallback(to: webView)
+                TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 복원 실패")
                 completion(false)
                 return
                 
             case .visualOnly:
-                TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 브라우저 차단 대응")
+                TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 브라우저 차단 대응 실행")
                 
             case .partial:
-                TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 브라우저 차단 대응")
+                TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 브라우저 차단 대응 실행")
                 
             case .complete:
-                TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 브라우저 차단 대응")
+                TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 브라우저 차단 대응 실행")
             }
             
-            TabPersistenceManager.debugMessages.append("🌐 5단계 복원 실패 후 브라우저 차단 대응 시작")
+            TabPersistenceManager.debugMessages.append("🌐 브라우저 차단 대응 단계 시작 (5단계 복원 실패 후)")
             
-            // 🔧 **5단계 복원 실패 시에만 브라우저 차단 대응 실행**
+            // 🔧 **5단계 복원 실패시에만 브라우저 차단 대응 실행**
             DispatchQueue.main.async {
                 self.performBrowserBlockingWorkaround(to: webView, completion: completion)
             }
         }
     }
     
-    // 🚀 **새로 추가: 5단계 무한스크롤 특화 1단계 복원 메서드 - 콜백 추가**
+    // 🚀 **수정: 5단계 무한스크롤 특화 1단계 복원 메서드 - 성공 여부 콜백 추가**
     private func performFiveStageInfiniteScrollRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 시작")
         
@@ -216,7 +214,7 @@ struct BFCacheSnapshot: Codable {
         // 2. 🚀 **5단계 무한스크롤 특화 복원 JavaScript 실행**
         let fiveStageRestoreJS = generateFiveStageInfiniteScrollRestoreScript()
         
-        // JavaScript 실행 후 결과 확인
+        // JavaScript 실행 (콜백 포함)
         webView.evaluateJavaScript(fiveStageRestoreJS) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 JS 실행 오류: \(error.localizedDescription)")
@@ -224,7 +222,7 @@ struct BFCacheSnapshot: Codable {
                 return
             }
             
-            // 🚫 **수정: 안전한 타입 체크로 변경 + 성공 여부 정확히 판단**
+            // 🚫 **수정: 안전한 타입 체크로 변경**
             var success = false
             var stageBased = false
             
@@ -255,14 +253,16 @@ struct BFCacheSnapshot: Codable {
                 }
             }
             
-            // 🚫 **핵심 수정: Stage 기반 복원 성공 시에만 true 반환**
-            let finalSuccess = success && stageBased
+            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(success ? "성공" : "실패") (단계기반: \(stageBased))")
             
-            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(finalSuccess ? "성공" : "실패") (Stage기반: \(stageBased))")
-            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
+            // 🚫 **핵심: stageBased가 true이고 success가 true인 경우만 진짜 성공으로 간주**
+            let actualSuccess = success && stageBased
+            TabPersistenceManager.debugMessages.append("🚀 5단계 복원 실제 성공 여부: \(actualSuccess)")
             
-            completion(finalSuccess)
+            completion(actualSuccess)
         }
+        
+        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 JavaScript 실행 완료")
     }
     
     // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (모든 사이트 범용 대응)**
@@ -823,65 +823,73 @@ struct BFCacheSnapshot: Codable {
                     errorMsg = '모든 5단계 복원 실패';
                 }
                 
-                // 🔧 **복원 후 위치 검증 및 보정 (Stage 기반 복원 성공 시에만)**
-                if (restoredByStage) {
-                    setTimeout(() => {
-                        try {
-                            const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            const diffY = Math.abs(finalY - targetY);
-                            const diffX = Math.abs(finalX - targetX);
+                // 🔧 **복원 후 위치 검증 및 보정**
+                setTimeout(() => {
+                    try {
+                        const finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        const finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        const diffY = Math.abs(finalY - targetY);
+                        const diffX = Math.abs(finalX - targetX);
+                        
+                        // 사용된 Stage의 허용 오차 적용
+                        const stageConfig = usedStage > 0 ? STAGE_CONFIG[`stage${usedStage}`] : null;
+                        const tolerance = stageConfig ? stageConfig.tolerance : 100;
+                        
+                        verificationResult = {
+                            target: [targetX, targetY],
+                            final: [finalX, finalY],
+                            diff: [diffX, diffY],
+                            stage: usedStage,
+                            method: usedMethod,
+                            tolerance: tolerance,
+                            withinTolerance: diffX <= tolerance && diffY <= tolerance,
+                            stageBased: restoredByStage,
+                            actualRestoreDistance: Math.sqrt(diffX * diffX + diffY * diffY),
+                            actualRestoreSuccess: diffY <= 50 // 50px 이내면 실제 성공으로 간주
+                        };
+                        
+                        console.log('🚀 5단계 복원 검증:', verificationResult);
+                        
+                        if (verificationResult.actualRestoreSuccess) {
+                            console.log(`✅ 실제 복원 성공: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
+                        } else {
+                            console.log(`❌ 실제 복원 실패: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
+                        }
+                        
+                        // 🔧 **허용 오차 초과 시 점진적 보정**
+                        if (!verificationResult.withinTolerance && (diffY > tolerance || diffX > tolerance)) {
+                            console.log('🔧 허용 오차 초과 - 점진적 보정 시작:', verificationResult);
                             
-                            // 사용된 Stage의 허용 오차 적용
-                            const stageConfig = usedStage > 0 ? STAGE_CONFIG[`stage${usedStage}`] : null;
-                            const tolerance = stageConfig ? stageConfig.tolerance : 100;
+                            const maxDiff = Math.max(diffX, diffY);
+                            const steps = Math.min(5, Math.max(2, Math.ceil(maxDiff / 1000)));
+                            const stepX = (targetX - finalX) / steps;
+                            const stepY = (targetY - finalY) / steps;
                             
-                            verificationResult = {
-                                target: [targetX, targetY],
-                                final: [finalX, finalY],
-                                diff: [diffX, diffY],
-                                stage: usedStage,
-                                method: usedMethod,
-                                tolerance: tolerance,
-                                withinTolerance: diffX <= tolerance && diffY <= tolerance,
-                                stageBased: restoredByStage,
-                                actualRestoreDistance: Math.sqrt(diffX * diffX + diffY * diffY),
-                                actualRestoreSuccess: diffY <= 50 // 50px 이내면 실제 성공으로 간주
-                            };
-                            
-                            console.log('🚀 5단계 복원 검증:', verificationResult);
-                            
-                            if (verificationResult.actualRestoreSuccess) {
-                                console.log(`✅ 실제 복원 성공: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
-                            } else {
-                                console.log(`❌ 실제 복원 실패: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
-                                
-                                // 🚫 **Stage 기반 복원에서 허용 오차 초과 시 한 번만 미세 보정**
-                                if (!verificationResult.withinTolerance && diffY > tolerance) {
-                                    console.log('🔧 Stage 기반 복원 허용 오차 초과 - 한 번만 미세 보정:', verificationResult);
-                                    
-                                    setTimeout(() => {
-                                        performScrollTo(targetX, targetY);
-                                        console.log('🔧 Stage 기반 복원 미세 보정 완료');
-                                    }, 100);
-                                    
-                                    verificationResult.stageBasedCorrection = {
-                                        reason: 'stage_tolerance_exceeded',
-                                        correctionApplied: true
-                                    };
-                                }
+                            for (let i = 1; i <= steps; i++) {
+                                setTimeout(() => {
+                                    const stepTargetX = finalX + stepX * i;
+                                    const stepTargetY = finalY + stepY * i;
+                                    performScrollTo(stepTargetX, stepTargetY);
+                                    console.log(`🔧 점진적 보정 ${i}/${steps}:`, [stepTargetX, stepTargetY]);
+                                }, i * 150);
                             }
                             
-                        } catch(verifyError) {
-                            verificationResult = {
-                                error: verifyError.message,
-                                stage: usedStage,
-                                method: usedMethod
+                            verificationResult.progressiveCorrection = {
+                                steps: steps,
+                                stepSize: [stepX, stepY],
+                                reason: 'tolerance_exceeded'
                             };
-                            console.error('🚀 5단계 복원 검증 실패:', verifyError);
                         }
-                    }, 100);
-                }
+                        
+                    } catch(verifyError) {
+                        verificationResult = {
+                            error: verifyError.message,
+                            stage: usedStage,
+                            method: usedMethod
+                        };
+                        console.error('🚀 5단계 복원 검증 실패:', verifyError);
+                    }
+                }, 100);
                 
                 // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
                 return {
@@ -929,49 +937,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **긴급 폴백 메서드 (5단계 모두 실패 시)**
-    private func performEmergencyFallback(to webView: WKWebView) {
-        TabPersistenceManager.debugMessages.append("🚨 긴급 폴백 실행: 기본 좌표 복원")
-        
-        let targetPos = self.scrollPosition
-        
-        DispatchQueue.main.async {
-            // 네이티브 스크롤뷰 복원
-            webView.scrollView.setContentOffset(targetPos, animated: false)
-            
-            // JavaScript 좌표 복원
-            let emergencyJS = """
-            (function() {
-                const targetX = parseFloat('\(targetPos.x)');
-                const targetY = parseFloat('\(targetPos.y)');
-                
-                window.scrollTo(targetX, targetY);
-                document.documentElement.scrollTop = targetY;
-                document.documentElement.scrollLeft = targetX;
-                document.body.scrollTop = targetY;
-                document.body.scrollLeft = targetX;
-                
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = targetY;
-                    document.scrollingElement.scrollLeft = targetX;
-                }
-                
-                console.log('🚨 긴급 폴백 좌표 복원:', [targetX, targetY]);
-                return true;
-            })()
-            """
-            
-            webView.evaluateJavaScript(emergencyJS) { _, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("🚨 긴급 폴백 JS 실행 실패: \(error.localizedDescription)")
-                } else {
-                    TabPersistenceManager.debugMessages.append("🚨 긴급 폴백 완료")
-                }
-            }
-        }
-    }
-    
-    // 🚫 **브라우저 차단 대응 시스템 (5단계 복원 실패 시에만 실행)**
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤) - ✅ iframe 복원 제거**
     private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -979,7 +945,7 @@ struct BFCacheSnapshot: Codable {
         
         var restoreSteps: [(step: Int, action: (@escaping (Bool) -> Void) -> Void)] = []
         
-        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작 (5단계 복원 실패 후)")
+        TabPersistenceManager.debugMessages.append("🚫 브라우저 차단 대응 단계 구성 시작")
         
         // **1단계: 점진적 스크롤 복원 (브라우저 차단 해결) - 상세 디버깅**
         restoreSteps.append((1, { stepCompletion in
@@ -1172,6 +1138,8 @@ struct BFCacheSnapshot: Codable {
                 }
             }
         }))
+        
+        // ✅ **iframe 복원 단계 제거됨**
         
         // **2단계: 최종 확인 및 보정**
         TabPersistenceManager.debugMessages.append("✅ 2단계 최종 보정 단계 추가 (필수)")
