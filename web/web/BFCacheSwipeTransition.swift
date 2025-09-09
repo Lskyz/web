@@ -1286,7 +1286,6 @@ struct BFCacheSnapshot: Codable {
                         const targetX = parseFloat('\(self.scrollPosition.x)');
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         const targetPercentY = parseFloat('\(self.scrollPositionPercent.y)');
-                        const tolerance = 50.0;
                         
                         console.log('🚀 레이아웃 안정화 대기 후 재검증:', {target: [targetX, targetY], percent: targetPercentY});
                         
@@ -1443,7 +1442,7 @@ struct BFCacheSnapshot: Codable {
             }
         }))
         
-        // **2단계: 최종 확인 및 보정 (대기시간 증가)**
+        // **2단계: 최종 확인 및 보정 (동적 허용치 적용)**
         restoreSteps.append((2, { stepCompletion in
             let waitTime: TimeInterval = 1.2 // 🚀 **대기시간 증가: 0.8초 → 1.2초**
             TabPersistenceManager.debugMessages.append("✅ 2단계: 최종 보정 강화 (대기: \(String(format: "%.1f", waitTime))초)")
@@ -1456,7 +1455,7 @@ struct BFCacheSnapshot: Codable {
                         const targetY = parseFloat('\(self.scrollPosition.y)');
                         const targetPercentY = parseFloat('\(self.scrollPositionPercent.y)');
                         
-                        // 실제 컨테이너 재감지
+                        // 실제 컨테이너 재감지 (보강: scrollingElement 우선)
                         function getFinalScrollContainer() {
                             const candidates = document.querySelectorAll('#content-area, .content_area, .main-content, .list_container, .scroll-container, [class*="scroll"]');
                             
@@ -1468,40 +1467,61 @@ struct BFCacheSnapshot: Codable {
                                 }
                             }
                             
-                            return document.documentElement;
+                            // 보강: scrollingElement 우선
+                            return document.scrollingElement || document.documentElement;
                         }
                         
                         const container = getFinalScrollContainer();
-                        const isDocumentContainer = (container === document.documentElement);
+                        const isDocumentContainer = (container === document.documentElement || container === document.scrollingElement);
                         
                         // ✅ **수정: 실제 스크롤 위치 정확 측정**
+                        const dpr = window.devicePixelRatio || 1;
+                        const viewportH = (window.visualViewport?.height || window.innerHeight) || 0;
+                        const scrollingEl = document.scrollingElement || document.documentElement;
+                        const containerHeight = isDocumentContainer
+                          ? (scrollingEl?.scrollHeight || document.documentElement.scrollHeight || 0)
+                          : (container.scrollHeight || 0);
+                        
                         const currentX = isDocumentContainer ? 
                             parseFloat(window.scrollX || window.pageXOffset || 0) : 
                             parseFloat(container.scrollLeft || 0);
                         const currentY = isDocumentContainer ? 
                             parseFloat(window.scrollY || window.pageYOffset || 0) : 
                             parseFloat(container.scrollTop || 0);
-                            
-                        const tolerance = 30.0; // 🚫 브라우저 차단 고려하여 관대한 허용 오차
                         
-                        // 퍼센트 기반 타겟 재계산
+                        // 동적 허용 오차 계산
+                        const rangeY = Math.max(0, containerHeight - viewportH);
+                        
+                        // 최소 2px*dpr, 최대 12px*dpr, 기본은 전체 범위의 0.5% 한도
+                        const tolerance = Math.max(2*dpr, Math.min(0.005 * rangeY, 12*dpr));
+                        
+                        console.log('✅ 동적 허용 오차 계산:', {
+                            dpr: dpr,
+                            viewportH: viewportH,
+                            containerHeight: containerHeight,
+                            rangeY: rangeY,
+                            tolerance: tolerance
+                        });
+                        
+                        // 퍼센트 기반 타겟 재계산 (정확화)
                         let effectiveTargetY = targetY;
                         if (targetPercentY > 0) {
-                            const containerHeight = Math.max(
-                                container.scrollHeight || 0,
-                                isDocumentContainer ? document.documentElement.scrollHeight || 0 : 0
-                            );
-                            const maxScrollY = Math.max(0, containerHeight - window.innerHeight);
+                            const totalH = isDocumentContainer
+                                ? (scrollingEl?.scrollHeight || document.documentElement.scrollHeight || 0)
+                                : (container.scrollHeight || 0);
+                            const maxScrollY = Math.max(0, totalH - viewportH);
                             if (maxScrollY > 0) {
-                                effectiveTargetY = (targetPercentY / 100.0) * maxScrollY;
+                                effectiveTargetY = Math.max(0, Math.min(maxScrollY, (targetPercentY / 100) * maxScrollY));
                             }
                         }
                         
-                        const diffX = Math.abs(currentX - targetX);
-                        const diffY = Math.abs(currentY - effectiveTargetY);
+                        // 서브픽셀 반올림 보정
+                        const roundPx = v => Math.round(v * dpr) / dpr;
+                        const diffX = Math.abs(roundPx(currentX) - roundPx(targetX));
+                        const diffY = Math.abs(roundPx(currentY) - roundPx(effectiveTargetY));
                         const isWithinTolerance = diffX <= tolerance && diffY <= tolerance;
                         
-                        console.log('✅ 최종 검증 (실제 컨테이너 기준):', {
+                        console.log('✅ 최종 검증 (동적 허용치):', {
                             container: isDocumentContainer ? 'document' : container.tagName,
                             target: [targetX, effectiveTargetY],
                             current: [currentX, currentY],
@@ -1514,37 +1534,42 @@ struct BFCacheSnapshot: Codable {
                         if (!isWithinTolerance) {
                             console.log('✅ 최종 보정 실행:', {current: [currentX, currentY], target: [targetX, effectiveTargetY]});
                             
-                            // 스티키 재계산
+                            // 스티키 재계산 (과잉합산 방지)
                             let finalStickyOffset = 0;
-                            document.querySelectorAll('[style*="position: sticky"], [style*="position:sticky"], [style*="position: fixed"], [style*="position:fixed"]').forEach(el => {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.top >= 0 && rect.top <= 50 && rect.height > 0) {
-                                    finalStickyOffset += rect.height;
+                            document.querySelectorAll('*').forEach(el => {
+                                const style = window.getComputedStyle(el);
+                                const pos = style.position;
+                                if (pos === 'sticky' || pos === 'fixed') {
+                                    const r = el.getBoundingClientRect();
+                                    const visible = r.height > 0 && r.top <= 0 && r.bottom > 0;
+                                    if (visible) finalStickyOffset = Math.max(finalStickyOffset, r.height);
                                 }
                             });
                             
                             const finalY = Math.max(0, effectiveTargetY - finalStickyOffset);
                             const finalX = Math.max(0, targetX);
                             
-                            // 강력한 최종 보정 
-                            if (isDocumentContainer) {
-                                window.scrollTo(finalX, finalY);
-                                document.documentElement.scrollTop = finalY;
-                                document.documentElement.scrollLeft = finalX;
-                                document.body.scrollTop = finalY;
-                                document.body.scrollLeft = finalX;
-                                
-                                if (document.scrollingElement) {
-                                    document.scrollingElement.scrollTop = finalY;
-                                    document.scrollingElement.scrollLeft = finalX;
+                            // 즉시모드 스크롤 적용
+                            const applyScroll = (y) => {
+                                if (isDocumentContainer) {
+                                    (window.scrollTo || window.scroll)(0, y); // instant
+                                } else {
+                                    container.scrollTop = y;
                                 }
-                            } else {
-                                container.scrollTop = finalY;
-                                container.scrollLeft = finalX;
-                                if (container.scrollTo) {
-                                    container.scrollTo(finalX, finalY);
+                            };
+                            
+                            applyScroll(finalY);
+                            
+                            // 재검증 루프
+                            let retry = 2;
+                            const verify = () => {
+                                const nowY = isDocumentContainer ? (window.scrollY || window.pageYOffset || 0) : (container.scrollTop || 0);
+                                if (Math.abs(roundPx(nowY) - roundPx(finalY)) > Math.max(1, 1*dpr) && retry-- > 0) {
+                                    applyScroll(finalY);
+                                    requestAnimationFrame(verify);
                                 }
-                            }
+                            };
+                            requestAnimationFrame(verify);
                         }
                         
                         // ✅ **최종 위치 정확 측정 및 기록**
@@ -1554,8 +1579,8 @@ struct BFCacheSnapshot: Codable {
                         const finalCurrentX = isDocumentContainer ? 
                             parseFloat(window.scrollX || window.pageXOffset || 0) : 
                             parseFloat(container.scrollLeft || 0);
-                        const finalDiffX = Math.abs(finalCurrentX - targetX);
-                        const finalDiffY = Math.abs(finalCurrentY - effectiveTargetY);
+                        const finalDiffX = Math.abs(roundPx(finalCurrentX) - roundPx(targetX));
+                        const finalDiffY = Math.abs(roundPx(finalCurrentY) - roundPx(effectiveTargetY));
                         const finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
                         
                         console.log('✅ 최종보정 완료:', {
@@ -1568,7 +1593,7 @@ struct BFCacheSnapshot: Codable {
                         });
                         
                         // ✅ **수정: 실제 복원 성공 여부 정확히 반환**
-                        const actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
+                        const actualRestoreSuccess = finalDiffY <= tolerance; // 동적 허용치 이내면 성공
                         
                         return {
                             success: actualRestoreSuccess, // ✅ 실제 복원 성공 여부
@@ -1577,7 +1602,9 @@ struct BFCacheSnapshot: Codable {
                             actualTarget: [targetX, effectiveTargetY],
                             actualFinal: [finalCurrentX, finalCurrentY],
                             actualRestoreSuccess: actualRestoreSuccess,
-                            containerType: isDocumentContainer ? 'document' : 'internal'
+                            containerType: isDocumentContainer ? 'document' : 'internal',
+                            tolerance: tolerance,
+                            dpr: dpr
                         };
                     } catch(e) { 
                         console.error('✅ 최종보정 실패:', e);
@@ -1611,6 +1638,12 @@ struct BFCacheSnapshot: Codable {
                         }
                         if let actualRestoreSuccess = resultDict["actualRestoreSuccess"] as? Bool {
                             TabPersistenceManager.debugMessages.append("✅ 2단계 실제 복원 성공: \(actualRestoreSuccess)")
+                        }
+                        if let tolerance = resultDict["tolerance"] as? Double {
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 동적 허용치: \(String(format: "%.2f", tolerance))px")
+                        }
+                        if let dpr = resultDict["dpr"] as? Double {
+                            TabPersistenceManager.debugMessages.append("✅ 2단계 DPR: \(String(format: "%.1f", dpr))")
                         }
                         if let containerType = resultDict["containerType"] as? String {
                             TabPersistenceManager.debugMessages.append("✅ 2단계 최종 컨테이너: \(containerType)")
