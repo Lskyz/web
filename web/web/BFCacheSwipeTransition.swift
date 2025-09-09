@@ -162,12 +162,7 @@ struct BFCacheSnapshot: Codable {
         }
         
         // 🚀 **1단계: 5단계 무한스크롤 특화 복원 우선 실행**
-        performFiveStageInfiniteScrollRestore(to: webView) { [weak self] fiveStageSuccess in
-            guard let self = self else {
-                completion(false)
-                return
-            }
-            
+        performFiveStageInfiniteScrollRestore(to: webView) { fiveStageSuccess in
             // ✅ **핵심 수정: 5단계 복원이 성공했으면 브라우저 차단 대응 생략**
             if fiveStageSuccess {
                 TabPersistenceManager.debugMessages.append("✅ 5단계 무한스크롤 복원 성공 - 브라우저 차단 대응 생략")
@@ -2060,4 +2055,3 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
-
