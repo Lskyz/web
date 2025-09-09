@@ -3,6 +3,14 @@
 //  📸 **5단계 무한스크롤 특화 BFCache 페이지 스냅샷 및 복원 시스템**
 //  🎯 **5단계 순차 시도 방식** - 고유식별자 → 콘텐츠지문 → 상대인덱스 → 기존셀렉터 → 무한스크롤트리거
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
+//  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
+//  🌐 **무한스크롤 특화** - 동적 콘텐츠 로드 대응 복원 지원
+//  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
+//  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
+//  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
+//  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
+//  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
+//  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
 //  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
@@ -243,7 +251,8 @@ struct BFCacheSnapshot: Codable {
         
         // 🔄 **1단계: 데이터 프리로딩 실행 (복원 전에)**
         if preloadingConfig.enableDataPreloading {
-            performDataPreloading(to: webView) { preloadSuccess in
+            performDataPreloading(to: webView) { [weak self] preloadSuccess in
+                guard let self = self else { return }
                 TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 완료: \(preloadSuccess ? "성공" : "실패")")
                 
                 // 🚀 **2단계: 5단계 무한스크롤 특화 복원 실행**
@@ -310,7 +319,7 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = preloadingConfig.targetContentHeight
         let maxAttempts = preloadingConfig.maxPreloadAttempts
         let batchSize = preloadingConfig.preloadBatchSize
-        let timeoutSeconds = preloadingConfig.preloadTimeoutSeconds
+        let timeoutSeconds = preloadingConfig.timeoutSeconds
         let enableBatchLoading = preloadingConfig.enableBatchLoading
         
         return """
@@ -1940,7 +1949,10 @@ struct BFCacheSnapshot: Codable {
                                         const touchEvent = new TouchEvent('touchend', { bubbles: true });
                                         document.dispatchEvent(touchEvent);
                                         attemptData.infiniteScrollTrigger = 'touchEvent_attempted';
- 이벤트 트리거 실패');
+                                        detailedLogs.push('터치 이벤트 트리거 성공');
+                                    } catch(e) {
+                                        attemptData.infiniteScrollTrigger = 'touchEvent_unsupported';
+                                        detailedLogs.push('터치 이벤트 트리거 실패');
                                     }
                                     
                                     // 📊 **더보기 버튼 검색 및 클릭**
@@ -2149,8 +2161,8 @@ struct BFCacheSnapshot: Codable {
                             // 처음과 마지막 몇 개만 로그
                             let logCount = min(3, scrollAttempts.count)
                             for i in 0..<logCount {
-                                let attempt = scrollAttempts[i]
-                                if let attemptNum = attempt["attempt"] as? Int,
+                                if let attempt = scrollAttempts[i] as? [String: Any],
+                                   let attemptNum = attempt["attempt"] as? Int,
                                    let current = attempt["current"] as? [String: Any],
                                    let diff = attempt["diff"] as? [String: Any] {
                                     let currentY = (current["y"] as? Double) ?? 0
@@ -2164,8 +2176,8 @@ struct BFCacheSnapshot: Codable {
                                 
                                 // 마지막 3개
                                 for i in max(logCount, scrollAttempts.count - 3)..<scrollAttempts.count {
-                                    let attempt = scrollAttempts[i]
-                                    if let attemptNum = attempt["attempt"] as? Int,
+                                    if let attempt = scrollAttempts[i] as? [String: Any],
+                                       let attemptNum = attempt["attempt"] as? Int,
                                        let current = attempt["current"] as? [String: Any],
                                        let diff = attempt["diff"] as? [String: Any] {
                                         let currentY = (current["y"] as? Double) ?? 0
@@ -2190,6 +2202,8 @@ struct BFCacheSnapshot: Codable {
                 }
             }
         }))
+        
+        // ✅ **iframe 복원 단계 제거됨**
         
         // **2단계: 최종 확인 및 보정 (🐛 스코프 에러 수정)**
         TabPersistenceManager.debugMessages.append("✅ 2단계 최종 보정 단계 추가 (필수)")
@@ -2704,6 +2718,13 @@ extension BFCacheTransitionSystem {
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
+                    
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
+                        el.classList.remove(...Array.from(el.classList).filter(c => 
+                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
+                        ));
+                    });
                     
                     // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
@@ -3458,6 +3479,18 @@ extension BFCacheTransitionSystem {
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
                 console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
+                
+                // 🌐 동적 콘텐츠 새로고침 (필요시)
+                if (window.location.pathname.includes('/feed') ||
+                    window.location.pathname.includes('/timeline') ||
+                    window.location.hostname.includes('twitter') ||
+                    window.location.hostname.includes('facebook') ||
+                    window.location.hostname.includes('dcinside') ||
+                    window.location.hostname.includes('cafe.naver')) {
+                    if (window.refreshDynamicContent) {
+                        window.refreshDynamicContent();
+                    }
+                }
             }
         });
         
@@ -3466,6 +3499,15 @@ extension BFCacheTransitionSystem {
                 console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
             }
         });
+        
+        // ✅ **Cross-origin iframe 리스너는 유지하되 복원에서는 사용하지 않음**
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'restoreScroll') {
+                console.log('🖼️ Cross-origin iframe 스크롤 복원 요청 수신 (현재 사용 안 함)');
+                // 현재는 iframe 복원을 사용하지 않으므로 로그만 남김
+            }
+        });
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
+}
