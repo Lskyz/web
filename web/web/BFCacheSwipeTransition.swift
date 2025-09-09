@@ -1809,8 +1809,8 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
-            self?.performAtomicCapture(task)
+        serialQueue.async {
+            self.performAtomicCapture(task)
         }
     }
     
@@ -2032,8 +2032,7 @@ extension BFCacheTransitionSystem {
         }
         
         // 버전 증가 (스레드 안전)
-        let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
-            guard let self = self else { return 1 }
+        let version: Int = cacheAccessQueue.sync(flags: .barrier) {
             let currentVersion = self._cacheVersion[pageRecord.id] ?? 0
             let newVersion = currentVersion + 1
             self._cacheVersion[pageRecord.id] = newVersion
