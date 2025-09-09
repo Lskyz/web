@@ -1,31 +1,20 @@
 //
 //  BFCacheSnapshotManager.swift
-//  📸 **5단계 무한스크롤 특화 BFCache 페이지 스냅샷 및 복원 시스템**
-//  🎯 **5단계 순차 시도 방식** - 고유식별자 → 콘텐츠지문 → 상대인덱스 → 기존셀렉터 → 무한스크롤트리거
-//  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
-//  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
-//  🌐 **무한스크롤 특화** - 동적 콘텐츠 로드 대응 복원 지원
-//  🔧 **범용 selector 확장** - 모든 사이트 호환 selector 패턴
-//  🚫 **JavaScript 반환값 타입 오류 수정** - Swift 호환성 보장
-//  ✅ **selector 문법 오류 수정** - 유효한 CSS selector만 사용
-//  🎯 **앵커 복원 로직 수정** - 선택자 처리 및 허용 오차 개선
-//  🔥 **앵커 우선순위 강화** - fallback 전에 앵커 먼저 시도
-//  ✅ **Promise 제거** - 직접 실행으로 jsState 캡처 수정
-//  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
 //  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
-//  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
+//  🚀 **4요소 패키지 앵커** - 모든 사이트 범용 대응
 //  📊 **세세한 과정로그 추가** - 앵커 px 지점 및 긴페이지 어긋남 원인 상세 추적
 //  🧹 **의미없는 텍스트 필터링** - 에러메시지, 로딩메시지 등 제외
 //  🔄 **데이터 프리로딩 모드** - 복원 전 저장시점까지 콘텐츠 선로딩
 //  📦 **배치 로딩 시스템** - 연속적 더보기 호출로 충분한 콘텐츠 확보
 //  🐛 **스코프 에러 수정** - JavaScript 변수 정의 순서 개선
+//  🎯 **4요소 패키지 앵커** - id+type+ts+kw 패키지로 정확한 복원
 
 import UIKit
 import WebKit
 import SwiftUI
 
-// MARK: - 📸 **5단계 무한스크롤 특화 BFCache 페이지 스냅샷**
+// MARK: - 📸 **4요소 패키지 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -175,9 +164,9 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 5단계 무한스크롤 특화 복원 + 데이터 프리로딩**
+    // 🚀 **핵심 개선: 4요소 패키지 조합 복원 + 데이터 프리로딩**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 조합 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 캡처 상태: \(captureStatus.rawValue)")
         TabPersistenceManager.debugMessages.append("📊 목표 스크롤: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
@@ -197,53 +186,56 @@ struct BFCacheSnapshot: Codable {
         if let jsState = self.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키 확인: \(Array(jsState.keys))")
             
-            if let infiniteScrollData = jsState["infiniteScrollData"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🚀 무한스크롤 데이터 확인: \(Array(infiniteScrollData.keys))")
+            if let packageAnchors = jsState["fourElementPackageAnchors"] as? [String: Any] {
+                TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 앵커 데이터 확인: \(Array(packageAnchors.keys))")
                 
-                if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                    let qualityAnchors = anchors.filter { anchor in
-                        if let qualityScore = anchor["qualityScore"] as? Int {
-                            return qualityScore >= 15  // 🧹 품질 점수 15점 이상만
+                if let anchors = packageAnchors["anchors"] as? [[String: Any]] {
+                    let validPackageAnchors = anchors.filter { anchor in
+                        if let package = anchor["fourElementPackage"] as? [String: Any] {
+                            let hasId = package["id"] != nil
+                            let hasType = package["type"] != nil
+                            let hasTs = package["ts"] != nil
+                            let hasKw = package["kw"] != nil
+                            return hasId && hasType && hasTs && hasKw
                         }
                         return false
                     }
                     
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커: \(anchors.count)개 발견 (품질 앵커: \(qualityAnchors.count)개)")
+                    TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 앵커: \(anchors.count)개 발견 (완전 패키지: \(validPackageAnchors.count)개)")
                     
-                    // 📊 **품질 앵커별 상세 정보 로깅**
-                    for (index, anchor) in qualityAnchors.prefix(3).enumerated() {
+                    // 📊 **완전 패키지 앵커별 상세 정보 로깅**
+                    for (index, anchor) in validPackageAnchors.prefix(3).enumerated() {
+                        if let package = anchor["fourElementPackage"] as? [String: Any] {
+                            let id = package["id"] as? String ?? "unknown"
+                            let type = package["type"] as? String ?? "unknown"
+                            let ts = package["ts"] as? String ?? "unknown"
+                            let kw = package["kw"] as? String ?? "unknown"
+                            TabPersistenceManager.debugMessages.append("📊 완전패키지앵커[\(index)] 4요소: id=\(id), type=\(type), ts=\(ts), kw=\(kw)")
+                        }
+                        
                         if let absolutePos = anchor["absolutePosition"] as? [String: Any] {
                             let top = absolutePos["top"] as? Double ?? 0
                             let left = absolutePos["left"] as? Double ?? 0
-                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 절대위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
-                        }
-                        
-                        if let offsetFromTop = anchor["offsetFromTop"] as? Double {
-                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 목표점에서 오프셋: \(String(format: "%.1f", offsetFromTop))px")
-                        }
-                        
-                        if let textContent = anchor["textContent"] as? String {
-                            let preview = textContent.prefix(30)
-                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 텍스트: \"\(preview)...\"")
+                            TabPersistenceManager.debugMessages.append("📊 완전패키지앵커[\(index)] 절대위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
                         }
                         
                         if let qualityScore = anchor["qualityScore"] as? Int {
-                            TabPersistenceManager.debugMessages.append("📊 품질앵커[\(index)] 품질점수: \(qualityScore)점")
+                            TabPersistenceManager.debugMessages.append("📊 완전패키지앵커[\(index)] 품질점수: \(qualityScore)점")
                         }
                     }
                     
-                    if qualityAnchors.count > 3 {
-                        TabPersistenceManager.debugMessages.append("📊 나머지 \(qualityAnchors.count - 3)개 품질 앵커 생략...")
+                    if validPackageAnchors.count > 3 {
+                        TabPersistenceManager.debugMessages.append("📊 나머지 \(validPackageAnchors.count - 3)개 완전 패키지 앵커 생략...")
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 없음")
+                    TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 앵커 없음")
                 }
                 
-                if let stats = infiniteScrollData["stats"] as? [String: Any] {
+                if let stats = packageAnchors["stats"] as? [String: Any] {
                     TabPersistenceManager.debugMessages.append("📊 수집 통계: \(stats)")
                 }
             } else {
-                TabPersistenceManager.debugMessages.append("🚀 무한스크롤 데이터 없음")
+                TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 데이터 없음")
             }
         } else {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
@@ -254,8 +246,8 @@ struct BFCacheSnapshot: Codable {
             performDataPreloading(to: webView) { preloadSuccess in
                 TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 완료: \(preloadSuccess ? "성공" : "실패")")
                 
-                // 🚀 **2단계: 5단계 무한스크롤 특화 복원 실행**
-                self.performFiveStageInfiniteScrollRestore(to: webView)
+                // 🚀 **2단계: 4요소 패키지 복원 실행**
+                self.performFourElementPackageRestore(to: webView)
                 
                 // 🔧 **3단계: 기존 상태별 분기 로직**
                 self.handleCaptureStatusBasedRestore(to: webView, completion: completion)
@@ -263,7 +255,7 @@ struct BFCacheSnapshot: Codable {
         } else {
             // 프리로딩 비활성화 시 바로 복원
             TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 비활성화 - 바로 복원")
-            performFiveStageInfiniteScrollRestore(to: webView)
+            performFourElementPackageRestore(to: webView)
             handleCaptureStatusBasedRestore(to: webView, completion: completion)
         }
     }
@@ -576,46 +568,46 @@ struct BFCacheSnapshot: Codable {
     private func handleCaptureStatusBasedRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         switch captureStatus {
         case .failed:
-            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 5단계 무한스크롤 복원만 수행")
+            TabPersistenceManager.debugMessages.append("❌ 캡처 실패 상태 - 4요소 패키지 복원만 수행")
             completion(true)
             return
             
         case .visualOnly:
-            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 5단계 무한스크롤 복원 + 최종보정")
+            TabPersistenceManager.debugMessages.append("🖼️ 이미지만 캡처된 상태 - 4요소 패키지 복원 + 최종보정")
             
         case .partial:
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 5단계 무한스크롤 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응")
             
         case .complete:
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 5단계 무한스크롤 복원 + 브라우저 차단 대응")
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응")
         }
         
-        TabPersistenceManager.debugMessages.append("🌐 5단계 무한스크롤 복원 후 브라우저 차단 대응 시작")
+        TabPersistenceManager.debugMessages.append("🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작")
         
-        // 🔧 **무한스크롤 복원 후 브라우저 차단 대응 단계 실행**
+        // 🔧 **4요소 패키지 복원 후 브라우저 차단 대응 단계 실행**
         DispatchQueue.main.async {
             self.performBrowserBlockingWorkaround(to: webView, completion: completion)
         }
     }
     
-    // 🚀 **새로 추가: 5단계 무한스크롤 특화 1단계 복원 메서드**
-    private func performFiveStageInfiniteScrollRestore(to webView: WKWebView) {
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 시작")
+    // 🚀 **새로 추가: 4요소 패키지 1단계 복원 메서드**
+    private func performFourElementPackageRestore(to webView: WKWebView) {
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 1단계 복원 시작")
         
         // 1. 네이티브 스크롤뷰 기본 설정 (백업용)
         let targetPos = self.scrollPosition
         TabPersistenceManager.debugMessages.append("📊 네이티브 스크롤뷰 백업 설정: X=\(String(format: "%.1f", targetPos.x))px, Y=\(String(format: "%.1f", targetPos.y))px")
         webView.scrollView.setContentOffset(targetPos, animated: false)
         
-        // 2. 🚀 **5단계 무한스크롤 특화 복원 JavaScript 실행**
-        let fiveStageRestoreJS = generateFiveStageInfiniteScrollRestoreScript()
+        // 2. 🚀 **4요소 패키지 복원 JavaScript 실행**
+        let fourElementPackageRestoreJS = generateFourElementPackageRestoreScript()
         
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 JavaScript 실행 중...")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 복원 JavaScript 실행 중...")
         
         // 동기적 JavaScript 실행 (즉시)
-        webView.evaluateJavaScript(fiveStageRestoreJS) { result, error in
+        webView.evaluateJavaScript(fourElementPackageRestoreJS) { result, error in
             if let error = error {
-                TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원 JS 실행 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 복원 JS 실행 오류: \(error.localizedDescription)")
                 return
             }
             
@@ -624,9 +616,6 @@ struct BFCacheSnapshot: Codable {
             if let resultDict = result as? [String: Any] {
                 success = (resultDict["success"] as? Bool) ?? false
                 
-                if let stage = resultDict["stage"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🚀 사용된 복원 단계: Stage \(stage)")
-                }
                 if let method = resultDict["method"] as? String {
                     TabPersistenceManager.debugMessages.append("🚀 사용된 복원 방법: \(method)")
                 }
@@ -634,13 +623,10 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("🚀 앵커 정보: \(anchorInfo)")
                 }
                 if let errorMsg = resultDict["error"] as? String {
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 복원 오류: \(errorMsg)")
+                    TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 복원 오류: \(errorMsg)")
                 }
                 if let debugInfo = resultDict["debug"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 복원 디버그: \(debugInfo)")
-                }
-                if let stageResults = resultDict["stageResults"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("🚀 단계별 결과: \(stageResults)")
+                    TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 복원 디버그: \(debugInfo)")
                 }
                 if let verificationResult = resultDict["verification"] as? [String: Any] {
                     TabPersistenceManager.debugMessages.append("🚀 복원 검증 결과: \(verificationResult)")
@@ -658,29 +644,29 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("📊 페이지 분석 결과: \(pageAnalysis)")
                 }
                 
-                if let anchorAnalysis = resultDict["anchorAnalysis"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("📊 앵커 분석 결과: \(anchorAnalysis)")
+                if let packageAnalysis = resultDict["packageAnalysis"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("📊 패키지 분석 결과: \(packageAnalysis)")
                 }
             }
             
-            TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 복원: \(success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 복원: \(success ? "성공" : "실패")")
         }
         
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 1단계 복원 완료")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 1단계 복원 완료")
     }
     
-    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (개선된 텍스트 필터링)**
-    private func generateFiveStageInfiniteScrollRestoreScript() -> String {
+    // 🚀 **핵심: 4요소 패키지 복원 JavaScript 생성**
+    private func generateFourElementPackageRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
         
-        // jsState에서 무한스크롤 데이터 추출
-        var infiniteScrollDataJSON = "null"
+        // jsState에서 4요소 패키지 데이터 추출
+        var fourElementPackageDataJSON = "null"
         
         if let jsState = self.jsState,
-           let infiniteScrollData = jsState["infiniteScrollData"] as? [String: Any],
-           let dataJSON = convertToJSONString(infiniteScrollData) {
-            infiniteScrollDataJSON = dataJSON
+           let fourElementPackageData = jsState["fourElementPackageAnchors"] as? [String: Any],
+           let dataJSON = convertToJSONString(fourElementPackageData) {
+            fourElementPackageDataJSON = dataJSON
         }
         
         return """
@@ -690,12 +676,12 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetPos.y)');
                 const targetPercentX = parseFloat('\(targetPercent.x)');
                 const targetPercentY = parseFloat('\(targetPercent.y)');
-                const infiniteScrollData = \(infiniteScrollDataJSON);
+                const fourElementPackageData = \(fourElementPackageDataJSON);
                 
                 // 📊 **상세 로그 수집 배열**
                 const detailedLogs = [];
                 const pageAnalysis = {};
-                const anchorAnalysis = {};
+                const packageAnalysis = {};
                 let actualRestoreSuccess = false;  // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 let practicalSuccess = false;      // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 let finalCurrentY = 0;             // 🐛 **스코프 에러 수정: 변수 미리 정의**
@@ -704,11 +690,11 @@ struct BFCacheSnapshot: Codable {
                 let finalDiffX = 0;                // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 let finalWithinTolerance = false;  // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 
-                detailedLogs.push('🚀 5단계 무한스크롤 특화 복원 시작');
+                detailedLogs.push('🚀 4요소 패키지 복원 시작');
                 detailedLogs.push(`📊 목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
                 detailedLogs.push(`📊 목표 백분율: X=${targetPercentX.toFixed(2)}%, Y=${targetPercentY.toFixed(2)}%`);
-                detailedLogs.push(`📊 무한스크롤 데이터 존재: ${!!infiniteScrollData}`);
-                detailedLogs.push(`📊 앵커 개수: ${infiniteScrollData?.anchors?.length || 0}개`);
+                detailedLogs.push(`📊 4요소 패키지 데이터 존재: ${!!fourElementPackageData}`);
+                detailedLogs.push(`📊 앵커 개수: ${fourElementPackageData?.anchors?.length || 0}개`);
                 
                 // 📊 **현재 페이지 상태 상세 분석**
                 const currentScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
@@ -730,50 +716,11 @@ struct BFCacheSnapshot: Codable {
                 detailedLogs.push(`📊 현재 콘텐츠: ${currentContentWidth.toFixed(0)} x ${currentContentHeight.toFixed(0)}`);
                 detailedLogs.push(`📊 현재 최대 스크롤: X=${currentMaxScrollX.toFixed(1)}px, Y=${currentMaxScrollY.toFixed(1)}px`);
                 
-                // 📊 **목표 위치와 현재 상태 비교 분석**
-                const scrollDiffY = targetY - currentScrollY;
-                const scrollDiffX = targetX - currentScrollX;
-                const contentHeightDiff = currentContentHeight - parseFloat('\(contentSize.height)');
-                const viewportHeightDiff = currentViewportHeight - parseFloat('\(viewportSize.height)');
-                
-                pageAnalysis.differences = {
-                    scrollDiff: { x: scrollDiffX, y: scrollDiffY },
-                    contentHeightDiff: contentHeightDiff,
-                    viewportHeightDiff: viewportHeightDiff
-                };
-                
-                detailedLogs.push(`📊 스크롤 차이: X=${scrollDiffX.toFixed(1)}px, Y=${scrollDiffY.toFixed(1)}px`);
-                detailedLogs.push(`📊 콘텐츠 높이 변화: ${contentHeightDiff.toFixed(1)}px (${contentHeightDiff > 0 ? '증가' : '감소'})`);
-                detailedLogs.push(`📊 뷰포트 높이 변화: ${viewportHeightDiff.toFixed(1)}px`);
-                
-                // 📊 **긴 페이지에서 어긋날 수 있는 원인 분석**
-                const longPageIssues = [];
-                if (currentContentHeight > 10000) {
-                    longPageIssues.push('매우 긴 페이지 (10000px+)');
-                }
-                if (Math.abs(contentHeightDiff) > 500) {
-                    longPageIssues.push(`콘텐츠 높이 큰 변화 (${contentHeightDiff.toFixed(1)}px)`);
-                }
-                if (targetY > currentMaxScrollY + 100) {
-                    longPageIssues.push(`목표 위치가 스크롤 범위 초과 (${(targetY - currentMaxScrollY).toFixed(1)}px 초과)`);
-                }
-                if (Math.abs(viewportHeightDiff) > 100) {
-                    longPageIssues.push(`뷰포트 크기 변화 (${viewportHeightDiff.toFixed(1)}px)`);
-                }
-                
-                pageAnalysis.longPageIssues = longPageIssues;
-                
-                if (longPageIssues.length > 0) {
-                    detailedLogs.push(`🚨 긴 페이지 이슈 발견: ${longPageIssues.join(', ')}`);
-                } else {
-                    detailedLogs.push(`✅ 긴 페이지 이슈 없음`);
-                }
-                
-                console.log('🚀 5단계 무한스크롤 특화 복원 시작:', {
+                console.log('🚀 4요소 패키지 복원 시작:', {
                     target: [targetX, targetY],
                     percent: [targetPercentX, targetPercentY],
-                    hasInfiniteScrollData: !!infiniteScrollData,
-                    anchorsCount: infiniteScrollData?.anchors?.length || 0,
+                    hasFourElementPackageData: !!fourElementPackageData,
+                    anchorsCount: fourElementPackageData?.anchors?.length || 0,
                     pageAnalysis: pageAnalysis
                 });
                 
@@ -817,219 +764,196 @@ struct BFCacheSnapshot: Codable {
                     return true;
                 }
                 
-                // 🚀 **5단계 무한스크롤 복원 시스템 구성**
-                const STAGE_CONFIG = {
-                    stage1: {
-                        name: '고유식별자',
-                        description: '고유 식별자 기반 복원 (href, data-* 속성)',
-                        priority: 10,
-                        tolerance: 50
-                    },
-                    stage2: {
-                        name: '콘텐츠지문',
-                        description: '콘텐츠 지문 기반 복원 (텍스트 + 구조 조합)',
-                        priority: 8,
-                        tolerance: 100
-                    },
-                    stage3: {
-                        name: '상대인덱스',
-                        description: '상대적 인덱스 기반 복원 (뷰포트 내 위치)',
-                        priority: 6,
-                        tolerance: 150
-                    },
-                    stage4: {
-                        name: '기존셀렉터',
-                        description: '기존 셀렉터 기반 복원 (CSS selector)',
-                        priority: 4,
-                        tolerance: 200
-                    },
-                    stage5: {
-                        name: '무한스크롤트리거',
-                        description: '무한스크롤 트리거 후 재시도',
-                        priority: 2,
-                        tolerance: 300
-                    }
-                };
-                
-                let restoredByStage = false;
-                let usedStage = 0;
+                // 🎯 **4요소 패키지 기반 복원 시스템**
+                let restoredByPackage = false;
                 let usedMethod = 'fallback';
                 let anchorInfo = 'none';
                 let debugInfo = {};
                 let errorMsg = null;
                 let verificationResult = {};
-                let stageResults = {};
                 
-                // 🚀 **5단계 순차 시도 시스템**
-                const stages = ['stage1', 'stage2', 'stage3', 'stage4', 'stage5'];
-                
-                for (let i = 0; i < stages.length && !restoredByStage; i++) {
-                    const stageKey = stages[i];
-                    const stageConfig = STAGE_CONFIG[stageKey];
-                    const stageNum = i + 1;
+                // 4요소 패키지 앵커 데이터가 있는 경우 우선 시도
+                if (fourElementPackageData && fourElementPackageData.anchors && fourElementPackageData.anchors.length > 0) {
+                    detailedLogs.push('🎯 4요소 패키지 앵커 복원 시도 시작');
                     
-                    detailedLogs.push(`🚀 Stage ${stageNum} (${stageConfig.name}) 시도 시작`);
-                    detailedLogs.push(`   우선순위: ${stageConfig.priority}, 허용오차: ${stageConfig.tolerance}px`);
-                    detailedLogs.push(`   설명: ${stageConfig.description}`);
+                    const anchors = fourElementPackageData.anchors;
                     
-                    console.log(`🚀 Stage ${stageNum} (${stageConfig.name}) 시도 시작:`, {
-                        priority: stageConfig.priority,
-                        tolerance: stageConfig.tolerance,
-                        description: stageConfig.description
+                    // 🧹 **완전한 4요소 패키지 앵커 필터링**
+                    const completePackageAnchors = anchors.filter(anchor => {
+                        if (!anchor.fourElementPackage) return false;
+                        const pkg = anchor.fourElementPackage;
+                        const hasCompletePackage = pkg.id && pkg.type && pkg.ts && pkg.kw;
+                        const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
+                        const hasQualityScore = (anchor.qualityScore || 0) >= 40; // 4요소 패키지는 40점 이상
+                        return hasCompletePackage && hasQualityText && hasQualityScore;
                     });
                     
-                    try {
-                        const stageResult = tryStageRestore(stageNum, stageConfig, targetX, targetY, infiniteScrollData);
-                        stageResults[`stage${stageNum}`] = stageResult;
+                    detailedLogs.push(`   완전한 4요소 패키지 앵커: ${completePackageAnchors.length}개 (전체 ${anchors.length}개)`);
+                    packageAnalysis.completePackageAnchors = completePackageAnchors.length;
+                    packageAnalysis.totalAnchors = anchors.length;
+                    
+                    // 완전한 패키지 앵커부터 시도
+                    for (let anchorIndex = 0; anchorIndex < completePackageAnchors.length; anchorIndex++) {
+                        const anchor = completePackageAnchors[anchorIndex];
+                        const pkg = anchor.fourElementPackage; // 4요소 패키지: {id, type, ts, kw}
                         
-                        detailedLogs.push(`   Stage ${stageNum} 결과: ${stageResult.success ? '성공' : '실패'}`);
-                        if (stageResult.success) {
-                            detailedLogs.push(`   복원 방법: ${stageResult.method}`);
-                            detailedLogs.push(`   앵커 정보: ${stageResult.anchorInfo}`);
-                            if (stageResult.elementInfo) {
-                                detailedLogs.push(`   요소 정보: ${JSON.stringify(stageResult.elementInfo)}`);
-                            }
-                        } else {
-                            detailedLogs.push(`   실패 원인: ${stageResult.error}`);
-                        }
-                        
-                        if (stageResult.success) {
-                            restoredByStage = true;
-                            usedStage = stageNum;
-                            usedMethod = stageResult.method;
-                            anchorInfo = stageResult.anchorInfo;
-                            debugInfo[`stage${stageNum}_success`] = stageResult.debug;
-                            
-                            console.log(`✅ Stage ${stageNum} (${stageConfig.name}) 복원 성공:`, stageResult);
-                            break;
-                        } else {
-                            console.log(`❌ Stage ${stageNum} (${stageConfig.name}) 복원 실패:`, stageResult.error);
-                            debugInfo[`stage${stageNum}_failed`] = stageResult.error;
-                        }
-                    } catch(e) {
-                        const stageError = `Stage ${stageNum} 예외: ${e.message}`;
-                        console.error(stageError);
-                        stageResults[`stage${stageNum}`] = { success: false, error: stageError };
-                        debugInfo[`stage${stageNum}_exception`] = e.message;
-                        detailedLogs.push(`   Stage ${stageNum} 예외: ${e.message}`);
-                    }
-                }
-                
-                // 🚀 **Stage별 복원 시도 함수**
-                function tryStageRestore(stageNum, config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push(`🔄 Stage ${stageNum} 복원 로직 실행`);
-                        
-                        switch(stageNum) {
-                            case 1:
-                                return tryUniqueIdentifierRestore(config, targetX, targetY, infiniteScrollData);
-                            case 2:
-                                return tryContentFingerprintRestore(config, targetX, targetY, infiniteScrollData);
-                            case 3:
-                                return tryRelativeIndexRestore(config, targetX, targetY, infiniteScrollData);
-                            case 4:
-                                return tryExistingSelectorRestore(config, targetX, targetY, infiniteScrollData);
-                            case 5:
-                                return tryInfiniteScrollTriggerRestore(config, targetX, targetY, infiniteScrollData);
-                            default:
-                                return { success: false, error: '알 수 없는 Stage' };
-                        }
-                        
-                    } catch(e) {
-                        return {
-                            success: false,
-                            error: `Stage ${stageNum} 예외: ${e.message}`,
-                            debug: { exception: e.message }
-                        };
-                    }
-                }
-                
-                // 🚀 **Stage 1: 고유 식별자 기반 복원**
-                function tryUniqueIdentifierRestore(config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push('🚀 Stage 1: 고유 식별자 기반 복원 시작');
-                        
-                        if (!infiniteScrollData || !infiniteScrollData.anchors) {
-                            detailedLogs.push('   무한스크롤 앵커 데이터 없음');
-                            return { success: false, error: '무한스크롤 앵커 데이터 없음' };
-                        }
-                        
-                        const anchors = infiniteScrollData.anchors;
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 고유식별자 검색`);
-                        
-                        // 🧹 **품질 앵커 필터링**
-                        const qualityAnchors = anchors.filter(anchor => {
-                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
-                            const hasQualityScore = (anchor.qualityScore || 0) >= 15;
-                            return hasQualityText && hasQualityScore;
-                        });
-                        
-                        detailedLogs.push(`   품질 앵커 필터링: ${qualityAnchors.length}개 (전체 ${anchors.length}개)`);
+                        detailedLogs.push(`🎯 완전패키지앵커[${anchorIndex}] 4요소 패키지 시도`);
+                        detailedLogs.push(`   패키지: id="${pkg.id}", type="${pkg.type}", ts="${pkg.ts}", kw="${pkg.kw}"`);
+                        detailedLogs.push(`   품질점수: ${anchor.qualityScore}점`);
                         
                         let foundElement = null;
-                        let matchedAnchor = null;
-                        let searchResults = [];
+                        let matchMethod = null;
+                        let matchDetails = {};
                         
-                        // 고유 식별자 우선순위: href → data-post-id → data-article-id → data-id → id
-                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
-                            const anchor = qualityAnchors[anchorIndex];
-                            if (!anchor.uniqueIdentifiers) continue;
+                        // 🎯 **4요소 패키지 통합 매칭 (동시에 활용)**
+                        detailedLogs.push(`   4요소 패키지 통합 매칭 시작: id+type+ts+kw`);
+                        
+                        // ① **고유 ID 기반 DOM 검색 (최우선)**
+                        if (pkg.id && pkg.id !== 'unknown') {
+                            detailedLogs.push(`   1순위: 고유ID 검색 "${pkg.id}"`);
                             
-                            const identifiers = anchor.uniqueIdentifiers;
-                            detailedLogs.push(`   품질앵커[${anchorIndex}] 고유식별자 키: ${Object.keys(identifiers)}`);
-                            
-                            // href 패턴 매칭
-                            if (identifiers.href) {
-                                const hrefPattern = identifiers.href;
-                                detailedLogs.push(`   href 패턴 검색: "${hrefPattern}"`);
-                                const elements = document.querySelectorAll(`a[href*="${hrefPattern}"]`);
-                                detailedLogs.push(`   href 패턴 매칭 결과: ${elements.length}개 요소`);
-                                if (elements.length > 0) {
-                                    foundElement = elements[0];
-                                    matchedAnchor = anchor;
-                                    searchResults.push({ method: 'href', pattern: hrefPattern, matches: elements.length });
-                                    detailedLogs.push(`   ✅ href 패턴으로 요소 발견: ${hrefPattern}`);
-                                    break;
-                                }
+                            // ID 속성 검색
+                            const elementById = document.getElementById(pkg.id);
+                            if (elementById) {
+                                foundElement = elementById;
+                                matchMethod = 'package_id_element';
+                                matchDetails.method = 'getElementById';
+                                matchDetails.selector = `#${pkg.id}`;
+                                detailedLogs.push(`   ✅ ID 요소로 발견: #${pkg.id}`);
                             }
                             
-                            // data-* 속성 매칭
-                            if (identifiers.dataAttributes) {
-                                detailedLogs.push(`   data-* 속성 검색: ${Object.keys(identifiers.dataAttributes)}`);
-                                for (const [attr, value] of Object.entries(identifiers.dataAttributes)) {
-                                    detailedLogs.push(`   data 속성 검색: [${attr}="${value}"]`);
-                                    const elements = document.querySelectorAll(`[${attr}="${value}"]`);
-                                    detailedLogs.push(`   data 속성 매칭 결과: ${elements.length}개 요소`);
-                                    if (elements.length > 0) {
-                                        foundElement = elements[0];
-                                        matchedAnchor = anchor;
-                                        searchResults.push({ method: 'dataAttr', attr: attr, value: value, matches: elements.length });
-                                        detailedLogs.push(`   ✅ ${attr} 속성으로 요소 발견: ${value}`);
-                                        break;
+                            // data-* 속성 검색 (타입 고려)
+                            if (!foundElement) {
+                                const dataSelectors = [
+                                    `[data-id="${pkg.id}"]`,
+                                    `[data-${pkg.type}-id="${pkg.id}"]`, // 타입별 특화
+                                    `[data-item-id="${pkg.id}"]`,
+                                    `[data-post-id="${pkg.id}"]`,
+                                    `[data-comment-id="${pkg.id}"]`,
+                                    `[data-article-id="${pkg.id}"]`,
+                                    `[data-review-id="${pkg.id}"]`,
+                                    `[data-key="${pkg.id}"]`
+                                ];
+                                
+                                for (const selector of dataSelectors) {
+                                    try {
+                                        const elements = document.querySelectorAll(selector);
+                                        if (elements.length > 0) {
+                                            foundElement = elements[0];
+                                            matchMethod = 'package_id_data_attr';
+                                            matchDetails.method = 'data_attribute';
+                                            matchDetails.selector = selector;
+                                            detailedLogs.push(`   ✅ 데이터 속성으로 발견: ${selector}`);
+                                            break;
+                                        }
+                                    } catch(e) {
+                                        detailedLogs.push(`   셀렉터 오류: ${selector} - ${e.message}`);
                                     }
                                 }
-                                if (foundElement) break;
                             }
                             
-                            // id 매칭
-                            if (identifiers.id) {
-                                detailedLogs.push(`   id 검색: "${identifiers.id}"`);
-                                const element = document.getElementById(identifiers.id);
-                                if (element) {
-                                    foundElement = element;
-                                    matchedAnchor = anchor;
-                                    searchResults.push({ method: 'id', id: identifiers.id });
-                                    detailedLogs.push(`   ✅ id로 요소 발견: ${identifiers.id}`);
-                                    break;
-                                } else {
-                                    detailedLogs.push(`   id 검색 실패: ${identifiers.id}`);
+                            // href 패턴 검색
+                            if (!foundElement && pkg.id.match(/^[0-9]+$/)) {
+                                try {
+                                    const hrefElements = document.querySelectorAll(`a[href*="${pkg.id}"]`);
+                                    if (hrefElements.length > 0) {
+                                        foundElement = hrefElements[0];
+                                        matchMethod = 'package_id_href';
+                                        matchDetails.method = 'href_pattern';
+                                        matchDetails.pattern = pkg.id;
+                                        detailedLogs.push(`   ✅ href 패턴으로 발견: href*="${pkg.id}"`);
+                                    }
+                                } catch(e) {
+                                    detailedLogs.push(`   href 검색 오류: ${e.message}`);
                                 }
                             }
                         }
                         
-                        anchorAnalysis.stage1_searchResults = searchResults;
+                        // ② **타입+키워드 조합 검증 (ID로 찾은 경우 확인용, 못 찾은 경우 대체 검색)**
+                        if (foundElement && pkg.type && pkg.kw) {
+                            detailedLogs.push(`   2순위: 타입+키워드 검증 "${pkg.type}" + "${pkg.kw}"`);
+                            
+                            // 찾은 요소에 키워드가 포함되어 있는지 확인
+                            const elementText = (foundElement.textContent || '').trim();
+                            const keywordMatch = elementText.includes(pkg.kw);
+                            const typeTagMatch = foundElement.tagName.toLowerCase() === getPreferredTag(pkg.type);
+                            
+                            detailedLogs.push(`   타입 태그 매칭: ${typeTagMatch} (기대: ${getPreferredTag(pkg.type)}, 실제: ${foundElement.tagName.toLowerCase()})`);
+                            detailedLogs.push(`   키워드 매칭: ${keywordMatch} ("${pkg.kw}" in 텍스트)`);
+                            
+                            if (!keywordMatch && !typeTagMatch) {
+                                detailedLogs.push(`   ⚠️ ID로 찾았지만 타입+키워드 검증 실패 - 다른 요소 탐색`);
+                                foundElement = null; // 무효화하고 다른 방법 시도
+                                matchMethod = null;
+                                matchDetails = {};
+                            } else {
+                                matchDetails.typeVerified = typeTagMatch;
+                                matchDetails.keywordVerified = keywordMatch;
+                                detailedLogs.push(`   ✅ 타입+키워드 검증 통과`);
+                            }
+                        }
                         
-                        if (foundElement && matchedAnchor) {
+                        // ID로 못 찾은 경우 타입+키워드 조합으로 검색
+                        if (!foundElement && pkg.type && pkg.kw) {
+                            detailedLogs.push(`   2순위 대체: 타입+키워드 조합 검색 "${pkg.type}" + "${pkg.kw}"`);
+                            
+                            const preferredTags = getPreferredTags(pkg.type);
+                            detailedLogs.push(`   타입 "${pkg.type}" 선호 태그: [${preferredTags.join(', ')}]`);
+                            
+                            // 키워드 포함 요소들 찾기
+                            const keywordElements = Array.from(document.querySelectorAll('*')).filter(el => {
+                                const text = (el.textContent || '').trim();
+                                return isQualityText(text) && text.includes(pkg.kw);
+                            });
+                            
+                            detailedLogs.push(`   키워드 "${pkg.kw}" 포함 요소: ${keywordElements.length}개`);
+                            
+                            // 선호 태그 우선순위로 찾기
+                            for (const tag of preferredTags) {
+                                const tagMatchElements = keywordElements.filter(el => el.tagName.toLowerCase() === tag);
+                                if (tagMatchElements.length > 0) {
+                                    foundElement = tagMatchElements[0];
+                                    matchMethod = 'package_type_keyword';
+                                    matchDetails.method = 'type_keyword_combo';
+                                    matchDetails.preferredTag = tag;
+                                    matchDetails.keywordMatched = true;
+                                    detailedLogs.push(`   ✅ 타입+키워드로 발견: <${tag}> with "${pkg.kw}"`);
+                                    break;
+                                }
+                            }
+                            
+                            // 태그 관계없이 키워드 매칭 요소 중 첫 번째
+                            if (!foundElement && keywordElements.length > 0) {
+                                foundElement = keywordElements[0];
+                                matchMethod = 'package_keyword_only';
+                                matchDetails.method = 'keyword_only';
+                                matchDetails.foundTag = foundElement.tagName.toLowerCase();
+                                detailedLogs.push(`   ✅ 키워드만으로 발견: <${foundElement.tagName.toLowerCase()}> with "${pkg.kw}"`);
+                            }
+                        }
+                        
+                        // ③ **타임스탬프 추가 검증 (시간 정보 일치 확인)**
+                        if (foundElement && pkg.ts) {
+                            detailedLogs.push(`   3순위: 타임스탬프 검증 "${pkg.ts}"`);
+                            
+                            const elementText = (foundElement.textContent || '').trim();
+                            const tsPattern = pkg.ts.split('T')[0]; // 날짜 부분 (2025-09-09)
+                            const timeMatch = elementText.includes(tsPattern) || elementText.includes(pkg.ts);
+                            
+                            matchDetails.timestampVerified = timeMatch;
+                            detailedLogs.push(`   타임스탬프 검증: ${timeMatch} ("${tsPattern}" in 텍스트)`);
+                            
+                            if (!timeMatch) {
+                                detailedLogs.push(`   ⚠️ 타임스탬프 불일치 - 경고만 (계속 진행)`);
+                            }
+                        }
+                        
+                        // 요소를 찾았으면 스크롤 실행
+                        if (foundElement) {
+                            detailedLogs.push(`🎯 4요소 패키지 앵커 발견 - 스크롤 실행`);
+                            detailedLogs.push(`   매칭 방법: ${matchMethod}`);
+                            detailedLogs.push(`   매칭 상세: ${JSON.stringify(matchDetails)}`);
+                            
                             // 📊 **발견된 요소의 정확한 위치 분석**
                             const elementRect = foundElement.getBoundingClientRect();
                             const elementScrollY = currentScrollY + elementRect.top;
@@ -1037,12 +961,12 @@ struct BFCacheSnapshot: Codable {
                             
                             detailedLogs.push(`   발견된 요소 위치: X=${elementScrollX.toFixed(1)}px, Y=${elementScrollY.toFixed(1)}px`);
                             detailedLogs.push(`   요소 크기: ${elementRect.width.toFixed(1)} x ${elementRect.height.toFixed(1)}`);
-                            detailedLogs.push(`   뷰포트 기준: top=${elementRect.top.toFixed(1)}px, left=${elementRect.left.toFixed(1)}px`);
+                            detailedLogs.push(`   요소 태그: <${foundElement.tagName.toLowerCase()}>`);
                             
-                            // 오프셋 정보 확인
+                            // 오프셋 정보 확인 (기존 앵커 데이터에서)
                             let offsetY = 0;
-                            if (matchedAnchor.offsetFromTop) {
-                                offsetY = parseFloat(matchedAnchor.offsetFromTop) || 0;
+                            if (anchor.offsetFromTop) {
+                                offsetY = parseFloat(anchor.offsetFromTop) || 0;
                                 detailedLogs.push(`   캡처된 오프셋: ${offsetY.toFixed(1)}px`);
                             }
                             
@@ -1062,579 +986,42 @@ struct BFCacheSnapshot: Codable {
                             detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
                             detailedLogs.push(`   목표와 차이: X=${Math.abs(afterScrollX - targetX).toFixed(1)}px, Y=${Math.abs(afterScrollY - targetY).toFixed(1)}px`);
                             
-                            return {
-                                success: true,
-                                method: 'unique_identifier',
-                                anchorInfo: `identifier_${matchedAnchor.uniqueIdentifiers?.href || matchedAnchor.uniqueIdentifiers?.id || 'unknown'}`,
-                                debug: { 
-                                    matchedIdentifier: matchedAnchor.uniqueIdentifiers,
-                                    elementPosition: { x: elementScrollX, y: elementScrollY },
-                                    afterPosition: { x: afterScrollX, y: afterScrollY }
-                                },
-                                elementInfo: {
-                                    tagName: foundElement.tagName,
-                                    id: foundElement.id,
-                                    className: foundElement.className,
-                                    position: { x: elementScrollX, y: elementScrollY },
-                                    size: { width: elementRect.width, height: elementRect.height }
-                                }
+                            restoredByPackage = true;
+                            usedMethod = matchMethod;
+                            anchorInfo = `package_${pkg.id || 'unknown'}_${pkg.type}_${pkg.kw}`;
+                            debugInfo.matchedPackage = pkg;
+                            debugInfo.matchDetails = matchDetails;
+                            debugInfo.elementPosition = { x: elementScrollX, y: elementScrollY };
+                            debugInfo.afterPosition = { x: afterScrollX, y: afterScrollY };
+                            
+                            packageAnalysis.successfulAnchor = {
+                                index: anchorIndex,
+                                package: pkg,
+                                matchMethod: matchMethod,
+                                matchDetails: matchDetails
                             };
-                        }
-                        
-                        detailedLogs.push('   고유 식별자로 요소를 찾을 수 없음');
-                        return { success: false, error: '고유 식별자로 요소를 찾을 수 없음' };
-                        
-                    } catch(e) {
-                        detailedLogs.push(`   Stage 1 예외: ${e.message}`);
-                        return { success: false, error: `Stage 1 예외: ${e.message}` };
-                    }
-                }
-                
-                // 🚀 **Stage 2: 콘텐츠 지문 기반 복원 (품질 개선)**
-                function tryContentFingerprintRestore(config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push('🚀 Stage 2: 콘텐츠 지문 기반 복원 시작');
-                        
-                        if (!infiniteScrollData || !infiniteScrollData.anchors) {
-                            detailedLogs.push('   무한스크롤 앵커 데이터 없음');
-                            return { success: false, error: '무한스크롤 앵커 데이터 없음' };
-                        }
-                        
-                        const anchors = infiniteScrollData.anchors;
-                        
-                        // 🧹 **품질 앵커 필터링 (Stage 2용)**
-                        const qualityAnchors = anchors.filter(anchor => {
-                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
-                            const hasContentFingerprint = anchor.contentFingerprint && anchor.contentFingerprint.textSignature;
-                            const hasQualityScore = (anchor.qualityScore || 0) >= 10; // Stage 2는 좀 더 관대
-                            return hasQualityText && hasContentFingerprint && hasQualityScore;
-                        });
-                        
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 콘텐츠 지문 검색: ${qualityAnchors.length}개`);
-                        let foundElement = null;
-                        let matchedAnchor = null;
-                        let searchResults = [];
-                        
-                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
-                            const anchor = qualityAnchors[anchorIndex];
-                            if (!anchor.contentFingerprint) continue;
                             
-                            const fingerprint = anchor.contentFingerprint;
-                            detailedLogs.push(`   품질앵커[${anchorIndex}] 지문 키: ${Object.keys(fingerprint)}`);
-                            
-                            // 텍스트 패턴으로 요소 찾기
-                            if (fingerprint.textSignature) {
-                                const textPattern = fingerprint.textSignature;
-                                detailedLogs.push(`   텍스트 시그니처 검색: "${textPattern.substring(0, 30)}..."`);
-                                const allElements = document.querySelectorAll('*');
-                                detailedLogs.push(`   전체 DOM 요소 수: ${allElements.length}개`);
-                                
-                                let matchingElements = 0;
-                                for (const element of allElements) {
-                                    const elementText = (element.textContent || '').trim();
-                                    
-                                    // 🧹 **품질 텍스트 확인**
-                                    if (!isQualityText(elementText)) continue;
-                                    
-                                    if (elementText.includes(textPattern)) {
-                                        matchingElements++;
-                                        
-                                        // 추가 검증: 태그명, 클래스명이 일치하는지
-                                        let isMatch = true;
-                                        let verificationResults = [];
-                                        
-                                        if (fingerprint.tagName) {
-                                            const tagMatch = element.tagName.toLowerCase() === fingerprint.tagName.toLowerCase();
-                                            verificationResults.push(`tagName: ${tagMatch}`);
-                                            if (!tagMatch) isMatch = false;
-                                        }
-                                        
-                                        if (fingerprint.className) {
-                                            const classMatch = element.className.includes(fingerprint.className);
-                                            verificationResults.push(`className: ${classMatch}`);
-                                            if (!classMatch) isMatch = false;
-                                        }
-                                        
-                                        detailedLogs.push(`   텍스트 매치 요소 검증: ${verificationResults.join(', ')}`);
-                                        
-                                        if (isMatch) {
-                                            foundElement = element;
-                                            matchedAnchor = anchor;
-                                            searchResults.push({ 
-                                                method: 'contentFingerprint', 
-                                                textPattern: textPattern.substring(0, 50),
-                                                matchingElements: matchingElements,
-                                                verification: verificationResults
-                                            });
-                                            detailedLogs.push(`   ✅ 콘텐츠 지문으로 요소 발견: "${textPattern.substring(0, 30)}..."`);
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                detailedLogs.push(`   텍스트 매칭 요소 수: ${matchingElements}개`);
-                                if (foundElement) break;
-                            }
-                        }
-                        
-                        anchorAnalysis.stage2_searchResults = searchResults;
-                        
-                        if (foundElement && matchedAnchor) {
-                            // 📊 **발견된 요소의 정확한 위치 분석**
-                            const elementRect = foundElement.getBoundingClientRect();
-                            const elementScrollY = currentScrollY + elementRect.top;
-                            const elementScrollX = currentScrollX + elementRect.left;
-                            
-                            detailedLogs.push(`   발견된 요소 위치: X=${elementScrollX.toFixed(1)}px, Y=${elementScrollY.toFixed(1)}px`);
-                            detailedLogs.push(`   요소 크기: ${elementRect.width.toFixed(1)} x ${elementRect.height.toFixed(1)}`);
-                            
-                            // 오프셋 정보 확인
-                            let offsetY = 0;
-                            if (matchedAnchor.offsetFromTop) {
-                                offsetY = parseFloat(matchedAnchor.offsetFromTop) || 0;
-                                detailedLogs.push(`   캡처된 오프셋: ${offsetY.toFixed(1)}px`);
-                            }
-                            
-                            // 요소로 스크롤
-                            foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-                            
-                            // 오프셋 보정
-                            if (offsetY !== 0) {
-                                detailedLogs.push(`   오프셋 보정: ${-offsetY.toFixed(1)}px`);
-                                window.scrollBy(0, -offsetY);
-                            }
-                            
-                            // 📊 **복원 후 위치 확인**
-                            const afterScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const afterScrollX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
-                            
-                            return {
-                                success: true,
-                                method: 'content_fingerprint',
-                                anchorInfo: `fingerprint_${matchedAnchor.contentFingerprint?.textSignature?.substring(0, 20) || 'unknown'}`,
-                                debug: { 
-                                    matchedFingerprint: matchedAnchor.contentFingerprint,
-                                    elementPosition: { x: elementScrollX, y: elementScrollY },
-                                    afterPosition: { x: afterScrollX, y: afterScrollY }
-                                },
-                                elementInfo: {
-                                    tagName: foundElement.tagName,
-                                    position: { x: elementScrollX, y: elementScrollY },
-                                    textContent: (foundElement.textContent || '').substring(0, 100)
-                                }
-                            };
-                        }
-                        
-                        detailedLogs.push('   콘텐츠 지문으로 요소를 찾을 수 없음');
-                        return { success: false, error: '콘텐츠 지문으로 요소를 찾을 수 없음' };
-                        
-                    } catch(e) {
-                        detailedLogs.push(`   Stage 2 예외: ${e.message}`);
-                        return { success: false, error: `Stage 2 예외: ${e.message}` };
-                    }
-                }
-                
-                // 🚀 **Stage 3: 상대적 인덱스 기반 복원**
-                function tryRelativeIndexRestore(config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push('🚀 Stage 3: 상대적 인덱스 기반 복원 시작');
-                        
-                        if (!infiniteScrollData || !infiniteScrollData.anchors) {
-                            detailedLogs.push('   무한스크롤 앵커 데이터 없음');
-                            return { success: false, error: '무한스크롤 앵커 데이터 없음' };
-                        }
-                        
-                        const anchors = infiniteScrollData.anchors;
-                        
-                        // 🧹 **품질 앵커 필터링**
-                        const qualityAnchors = anchors.filter(anchor => {
-                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
-                            const hasRelativeIndex = anchor.relativeIndex;
-                            const hasQualityScore = (anchor.qualityScore || 0) >= 8; // Stage 3는 더 관대
-                            return hasQualityText && hasRelativeIndex && hasQualityScore;
-                        });
-                        
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 상대적 인덱스 검색: ${qualityAnchors.length}개`);
-                        let foundElement = null;
-                        let matchedAnchor = null;
-                        let searchResults = [];
-                        
-                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
-                            const anchor = qualityAnchors[anchorIndex];
-                            if (!anchor.relativeIndex) continue;
-                            
-                            const relativeIndex = anchor.relativeIndex;
-                            detailedLogs.push(`   품질앵커[${anchorIndex}] 상대인덱스: 컨테이너="${relativeIndex.containerSelector}", 인덱스=${relativeIndex.indexInContainer}`);
-                            
-                            // 상대적 위치 기반으로 요소 찾기
-                            if (relativeIndex.containerSelector && typeof relativeIndex.indexInContainer === 'number') {
-                                const containers = document.querySelectorAll(relativeIndex.containerSelector);
-                                detailedLogs.push(`   컨테이너 검색 결과: ${containers.length}개`);
-                                
-                                for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
-                                    const container = containers[containerIndex];
-                                    const items = container.querySelectorAll(relativeIndex.itemSelector || '*');
-                                    const targetIndex = relativeIndex.indexInContainer;
-                                    
-                                    detailedLogs.push(`   컨테이너[${containerIndex}] 아이템 수: ${items.length}개, 목표 인덱스: ${targetIndex}`);
-                                    
-                                    if (targetIndex >= 0 && targetIndex < items.length) {
-                                        const candidateElement = items[targetIndex];
-                                        
-                                        // 추가 검증: 텍스트 일치 + 품질 텍스트 확인
-                                        let isMatch = true;
-                                        if (relativeIndex.textPreview) {
-                                            const elementText = (candidateElement.textContent || '').trim();
-                                            const textMatch = isQualityText(elementText) && elementText.includes(relativeIndex.textPreview);
-                                            detailedLogs.push(`   텍스트 검증: "${relativeIndex.textPreview.substring(0, 30)}..." 매치=${textMatch}`);
-                                            if (!textMatch) isMatch = false;
-                                        }
-                                        
-                                        if (isMatch) {
-                                            foundElement = candidateElement;
-                                            matchedAnchor = anchor;
-                                            searchResults.push({
-                                                method: 'relativeIndex',
-                                                containerIndex: containerIndex,
-                                                itemIndex: targetIndex,
-                                                totalItems: items.length,
-                                                textVerified: !!relativeIndex.textPreview
-                                            });
-                                            detailedLogs.push(`   ✅ 상대적 인덱스로 요소 발견: 컨테이너[${containerIndex}], 아이템[${targetIndex}]`);
-                                            break;
-                                        }
-                                    } else {
-                                        detailedLogs.push(`   인덱스 범위 초과: ${targetIndex} >= ${items.length}`);
-                                    }
-                                }
-                                
-                                if (foundElement) break;
-                            }
-                        }
-                        
-                        anchorAnalysis.stage3_searchResults = searchResults;
-                        
-                        if (foundElement && matchedAnchor) {
-                            // 📊 **발견된 요소의 정확한 위치 분석**
-                            const elementRect = foundElement.getBoundingClientRect();
-                            const elementScrollY = currentScrollY + elementRect.top;
-                            const elementScrollX = currentScrollX + elementRect.left;
-                            
-                            detailedLogs.push(`   발견된 요소 위치: X=${elementScrollX.toFixed(1)}px, Y=${elementScrollY.toFixed(1)}px`);
-                            
-                            // 오프셋 정보 확인
-                            let offsetY = 0;
-                            if (matchedAnchor.offsetFromTop) {
-                                offsetY = parseFloat(matchedAnchor.offsetFromTop) || 0;
-                                detailedLogs.push(`   캡처된 오프셋: ${offsetY.toFixed(1)}px`);
-                            }
-                            
-                            // 요소로 스크롤
-                            foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-                            
-                            // 오프셋 보정
-                            if (offsetY !== 0) {
-                                window.scrollBy(0, -offsetY);
-                            }
-                            
-                            // 📊 **복원 후 위치 확인**
-                            const afterScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const afterScrollX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
-                            
-                            return {
-                                success: true,
-                                method: 'relative_index',
-                                anchorInfo: `index_${matchedAnchor.relativeIndex?.indexInContainer || 'unknown'}`,
-                                debug: { 
-                                    matchedIndex: matchedAnchor.relativeIndex,
-                                    elementPosition: { x: elementScrollX, y: elementScrollY },
-                                    afterPosition: { x: afterScrollX, y: afterScrollY }
-                                }
-                            };
-                        }
-                        
-                        detailedLogs.push('   상대적 인덱스로 요소를 찾을 수 없음');
-                        return { success: false, error: '상대적 인덱스로 요소를 찾을 수 없음' };
-                        
-                    } catch(e) {
-                        detailedLogs.push(`   Stage 3 예외: ${e.message}`);
-                        return { success: false, error: `Stage 3 예외: ${e.message}` };
-                    }
-                }
-                
-                // 🚀 **Stage 4: 기존 셀렉터 기반 복원**
-                function tryExistingSelectorRestore(config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push('🚀 Stage 4: 기존 셀렉터 기반 복원 시작');
-                        
-                        if (!infiniteScrollData || !infiniteScrollData.anchors) {
-                            detailedLogs.push('   무한스크롤 앵커 데이터 없음');
-                            return { success: false, error: '무한스크롤 앵커 데이터 없음' };
-                        }
-                        
-                        const anchors = infiniteScrollData.anchors;
-                        
-                        // 🧹 **품질 앵커 필터링**
-                        const qualityAnchors = anchors.filter(anchor => {
-                            const hasQualityText = anchor.textContent && isQualityText(anchor.textContent);
-                            const hasSelectors = anchor.selectors && Array.isArray(anchor.selectors);
-                            const hasQualityScore = (anchor.qualityScore || 0) >= 5; // Stage 4는 가장 관대
-                            return hasQualityText && hasSelectors && hasQualityScore;
-                        });
-                        
-                        detailedLogs.push(`   총 ${anchors.length}개 앵커에서 품질 기존 셀렉터 검색: ${qualityAnchors.length}개`);
-                        let foundElement = null;
-                        let matchedAnchor = null;
-                        let searchResults = [];
-                        
-                        for (let anchorIndex = 0; anchorIndex < qualityAnchors.length; anchorIndex++) {
-                            const anchor = qualityAnchors[anchorIndex];
-                            if (!anchor.selectors || !Array.isArray(anchor.selectors)) continue;
-                            
-                            const selectors = anchor.selectors;
-                            detailedLogs.push(`   품질앵커[${anchorIndex}] 셀렉터 수: ${selectors.length}개`);
-                            
-                            // 각 셀렉터 순차 시도
-                            for (let selectorIndex = 0; selectorIndex < selectors.length; selectorIndex++) {
-                                const selector = selectors[selectorIndex];
-                                detailedLogs.push(`   셀렉터[${selectorIndex}] 시도: "${selector}"`);
-                                
-                                try {
-                                    const elements = document.querySelectorAll(selector);
-                                    detailedLogs.push(`   셀렉터 매칭 결과: ${elements.length}개 요소`);
-                                    
-                                    if (elements.length > 0) {
-                                        // 🧹 **품질 요소 확인**
-                                        const qualityElements = Array.from(elements).filter(element => {
-                                            const elementText = (element.textContent || '').trim();
-                                            return isQualityText(elementText);
-                                        });
-                                        
-                                        if (qualityElements.length > 0) {
-                                            foundElement = qualityElements[0];
-                                            matchedAnchor = anchor;
-                                            searchResults.push({
-                                                method: 'existingSelector',
-                                                selector: selector,
-                                                selectorIndex: selectorIndex,
-                                                matchCount: elements.length,
-                                                qualityMatchCount: qualityElements.length
-                                            });
-                                            detailedLogs.push(`   ✅ 기존 셀렉터로 품질 요소 발견: "${selector}" (${qualityElements.length}개 중 선택)`);
-                                            break;
-                                        }
-                                    }
-                                } catch(e) {
-                                    detailedLogs.push(`   셀렉터 오류 (건너뜀): ${e.message}`);
-                                    continue;
-                                }
-                            }
-                            
-                            if (foundElement) break;
-                        }
-                        
-                        anchorAnalysis.stage4_searchResults = searchResults;
-                        
-                        if (foundElement && matchedAnchor) {
-                            // 📊 **발견된 요소의 정확한 위치 분석**
-                            const elementRect = foundElement.getBoundingClientRect();
-                            const elementScrollY = currentScrollY + elementRect.top;
-                            const elementScrollX = currentScrollX + elementRect.left;
-                            
-                            detailedLogs.push(`   발견된 요소 위치: X=${elementScrollX.toFixed(1)}px, Y=${elementScrollY.toFixed(1)}px`);
-                            
-                            // 오프셋 정보 확인
-                            let offsetY = 0;
-                            if (matchedAnchor.offsetFromTop) {
-                                offsetY = parseFloat(matchedAnchor.offsetFromTop) || 0;
-                                detailedLogs.push(`   캡처된 오프셋: ${offsetY.toFixed(1)}px`);
-                            }
-                            
-                            // 요소로 스크롤
-                            foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-                            
-                            // 오프셋 보정
-                            if (offsetY !== 0) {
-                                window.scrollBy(0, -offsetY);
-                            }
-                            
-                            // 📊 **복원 후 위치 확인**
-                            const afterScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const afterScrollX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
-                            
-                            return {
-                                success: true,
-                                method: 'existing_selector',
-                                anchorInfo: `selector_${matchedAnchor.selectors?.[0] || 'unknown'}`,
-                                debug: { 
-                                    matchedSelectors: matchedAnchor.selectors,
-                                    elementPosition: { x: elementScrollX, y: elementScrollY },
-                                    afterPosition: { x: afterScrollX, y: afterScrollY }
-                                }
-                            };
-                        }
-                        
-                        detailedLogs.push('   기존 셀렉터로 요소를 찾을 수 없음');
-                        return { success: false, error: '기존 셀렉터로 요소를 찾을 수 없음' };
-                        
-                    } catch(e) {
-                        detailedLogs.push(`   Stage 4 예외: ${e.message}`);
-                        return { success: false, error: `Stage 4 예외: ${e.message}` };
-                    }
-                }
-                
-                // 🚀 **Stage 5: 무한스크롤 트리거 후 재시도**
-                function tryInfiniteScrollTriggerRestore(config, targetX, targetY, infiniteScrollData) {
-                    try {
-                        detailedLogs.push('🚀 Stage 5: 무한스크롤 트리거 후 재시도 시작');
-                        
-                        // 현재 페이지 높이 확인
-                        const currentHeight = Math.max(
-                            document.documentElement.scrollHeight,
-                            document.body.scrollHeight
-                        );
-                        
-                        detailedLogs.push(`   현재 페이지 높이: ${currentHeight.toFixed(1)}px, 목표 Y: ${targetY.toFixed(1)}px`);
-                        detailedLogs.push(`   뷰포트 높이: ${currentViewportHeight.toFixed(1)}px`);
-                        detailedLogs.push(`   최대 스크롤 가능: ${(currentHeight - currentViewportHeight).toFixed(1)}px`);
-                        
-                        // 목표 위치가 현재 페이지를 벗어났는지 확인
-                        const needsMoreContent = targetY > currentHeight - currentViewportHeight;
-                        detailedLogs.push(`   무한스크롤 필요: ${needsMoreContent ? '예' : '아니오'}`);
-                        
-                        if (needsMoreContent) {
-                            detailedLogs.push('   무한스크롤 트리거 필요 - 콘텐츠 로드 시도');
-                            
-                            // 무한스크롤 트리거 방법들
-                            const triggerMethods = [
-                                // 1. 페이지 하단으로 스크롤
-                                () => {
-                                    const bottomY = currentHeight - currentViewportHeight;
-                                    detailedLogs.push(`   트리거 1: 하단 스크롤 (Y=${bottomY.toFixed(1)}px)`);
-                                    window.scrollTo(0, bottomY);
-                                    return true;
-                                },
-                                
-                                // 2. 스크롤 이벤트 발생
-                                () => {
-                                    detailedLogs.push('   트리거 2: 스크롤 이벤트 발생');
-                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
-                                    return true;
-                                },
-                                
-                                // 3. 더보기 버튼 클릭
-                                () => {
-                                    const loadMoreButtons = document.querySelectorAll(
-                                        '.load-more, .show-more, .infinite-scroll-trigger, ' +
-                                        '[data-testid*="load"], [class*="load"], [class*="more"]'
-                                    );
-                                    
-                                    detailedLogs.push(`   트리거 3: 더보기 버튼 검색, ${loadMoreButtons.length}개 발견`);
-                                    
-                                    let clicked = 0;
-                                    loadMoreButtons.forEach((btn, index) => {
-                                        if (btn && typeof btn.click === 'function') {
-                                            try {
-                                                btn.click();
-                                                clicked++;
-                                                detailedLogs.push(`   버튼[${index}] 클릭 성공: ${btn.className || btn.tagName}`);
-                                            } catch(e) {
-                                                detailedLogs.push(`   버튼[${index}] 클릭 실패: ${e.message}`);
-                                            }
-                                        }
-                                    });
-                                    
-                                    detailedLogs.push(`   더보기 버튼 클릭: ${clicked}개`);
-                                    return clicked > 0;
-                                },
-                                
-                                // 4. 터치 이벤트 시뮬레이션 (모바일)
-                                () => {
-                                    try {
-                                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
-                                        document.dispatchEvent(touchEvent);
-                                        detailedLogs.push('   트리거 4: 터치 이벤트 발생 성공');
-                                        return true;
-                                    } catch(e) {
-                                        detailedLogs.push(`   트리거 4: 터치 이벤트 지원 안됨 - ${e.message}`);
-                                        return false;
-                                    }
-                                }
-                            ];
-                            
-                            // 모든 트리거 방법 시도
-                            let triggeredMethods = 0;
-                            let triggerResults = [];
-                            
-                            for (let i = 0; i < triggerMethods.length; i++) {
-                                try {
-                                    const result = triggerMethods[i]();
-                                    triggerResults.push({ method: i + 1, success: result });
-                                    if (result !== false) triggeredMethods++;
-                                } catch(e) {
-                                    triggerResults.push({ method: i + 1, success: false, error: e.message });
-                                    detailedLogs.push(`   트리거 ${i + 1} 실패: ${e.message}`);
-                                }
-                            }
-                            
-                            detailedLogs.push(`   총 ${triggeredMethods}개 트리거 방법 실행`);
-                            
-                            // 잠시 대기 후 좌표 기반 복원
-                            setTimeout(() => {
-                                detailedLogs.push('   무한스크롤 트리거 후 좌표 복원 실행');
-                                window.scrollTo(targetX, targetY);
-                            }, 500);
-                            
-                            return {
-                                success: true,
-                                method: 'infinite_scroll_trigger',
-                                anchorInfo: `trigger_${triggeredMethods}_methods`,
-                                debug: { 
-                                    triggeredMethods: triggeredMethods,
-                                    currentHeight: currentHeight,
-                                    targetY: targetY,
-                                    triggerResults: triggerResults
-                                }
-                            };
+                            break; // 성공했으므로 더 이상 시도하지 않음
                         } else {
-                            detailedLogs.push('   무한스크롤 트리거 불필요 - 직접 좌표 복원');
-                            window.scrollTo(targetX, targetY);
-                            
-                            // 📊 **복원 후 위치 확인**
-                            const afterScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            const afterScrollX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
-                            
-                            return {
-                                success: true,
-                                method: 'coordinate_fallback',
-                                anchorInfo: `coords_${targetX.toFixed(1)}_${targetY.toFixed(1)}`,
-                                debug: { 
-                                    method: 'coordinate_only',
-                                    afterPosition: { x: afterScrollX, y: afterScrollY }
-                                }
-                            };
+                            detailedLogs.push(`   완전패키지앵커[${anchorIndex}] 4요소 패키지 매칭 실패`);
+                            detailedLogs.push(`   실패 원인: ID="${pkg.id}" 검색 실패, 타입+키워드 대체 검색도 실패`);
                         }
-                        
-                    } catch(e) {
-                        detailedLogs.push(`   Stage 5 예외: ${e.message}`);
-                        return { success: false, error: `Stage 5 예외: ${e.message}` };
                     }
+                    
+                    packageAnalysis.restoredByPackage = restoredByPackage;
+                } else {
+                    detailedLogs.push('🎯 4요소 패키지 데이터 없음 - 패키지 복원 스킵');
+                    packageAnalysis.noPackageData = true;
                 }
                 
-                // 🔧 **최종 결과 처리**
-                if (!restoredByStage) {
-                    // 모든 단계 실패 - 긴급 폴백
-                    detailedLogs.push('🚨 모든 5단계 실패 - 긴급 좌표 폴백');
+                // 4요소 패키지 복원 실패 시 좌표 기반 폴백
+                if (!restoredByPackage) {
+                    detailedLogs.push('🚨 4요소 패키지 복원 실패 - 좌표 기반 폴백');
                     performScrollTo(targetX, targetY);
-                    usedStage = 0;
-                    usedMethod = 'emergency_coordinate';
-                    anchorInfo = 'emergency';
-                    errorMsg = '모든 5단계 복원 실패';
+                    usedMethod = 'coordinate_fallback';
+                    anchorInfo = 'fallback';
+                    errorMsg = '4요소 패키지 복원 실패';
+                    packageAnalysis.fallbackUsed = true;
                 }
                 
                 // 🔧 **복원 후 위치 검증 및 보정**
@@ -1645,41 +1032,38 @@ struct BFCacheSnapshot: Codable {
                         finalDiffY = Math.abs(finalCurrentY - targetY);
                         finalDiffX = Math.abs(finalCurrentX - targetX);
                         
-                        // 사용된 Stage의 허용 오차 적용
-                        const stageConfig = usedStage > 0 ? STAGE_CONFIG[`stage${usedStage}`] : null;
-                        const tolerance = stageConfig ? stageConfig.tolerance : 100;
+                        // 4요소 패키지는 더 엄격한 허용 오차 (25px)
+                        const tolerance = 25;
+                        finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
                         
                         detailedLogs.push('🔧 복원 후 위치 검증 시작');
                         detailedLogs.push(`   최종 위치: X=${finalCurrentX.toFixed(1)}px, Y=${finalCurrentY.toFixed(1)}px`);
                         detailedLogs.push(`   목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
                         detailedLogs.push(`   위치 차이: X=${finalDiffX.toFixed(1)}px, Y=${finalDiffY.toFixed(1)}px`);
-                        detailedLogs.push(`   허용 오차: ${tolerance}px (Stage ${usedStage} 기준)`);
-                        detailedLogs.push(`   허용 오차 내: ${finalDiffX <= tolerance && finalDiffY <= tolerance ? '예' : '아니오'}`);
-                        
-                        finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
+                        detailedLogs.push(`   허용 오차: ${tolerance}px (4요소 패키지 기준)`);
+                        detailedLogs.push(`   허용 오차 내: ${finalWithinTolerance ? '예' : '아니오'}`);
                         
                         verificationResult = {
                             target: [targetX, targetY],
                             final: [finalCurrentX, finalCurrentY],
                             diff: [finalDiffX, finalDiffY],
-                            stage: usedStage,
                             method: usedMethod,
                             tolerance: tolerance,
                             withinTolerance: finalWithinTolerance,
-                            stageBased: restoredByStage,
+                            packageBased: restoredByPackage,
                             actualRestoreDistance: Math.sqrt(finalDiffX * finalDiffX + finalDiffY * finalDiffY),
-                            actualRestoreSuccess: finalDiffY <= 50 // 50px 이내면 실제 성공으로 간주
+                            actualRestoreSuccess: finalDiffY <= 25 // 25px 이내면 실제 성공으로 간주
                         };
                         
                         // 🐛 **스코프 에러 수정: 변수 할당**
                         actualRestoreSuccess = verificationResult.actualRestoreSuccess;
-                        practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
+                        practicalSuccess = finalDiffY <= 40; // 40px 이내면 실용적 성공
                         
                         detailedLogs.push(`   실제 복원 거리: ${verificationResult.actualRestoreDistance.toFixed(1)}px`);
-                        detailedLogs.push(`   실제 복원 성공: ${actualRestoreSuccess ? '예' : '아니오'} (50px 기준)`);
-                        detailedLogs.push(`   실용적 복원 성공: ${practicalSuccess ? '예' : '아니오'} (100px 기준)`);
+                        detailedLogs.push(`   실제 복원 성공: ${actualRestoreSuccess ? '예' : '아니오'} (25px 기준)`);
+                        detailedLogs.push(`   실용적 복원 성공: ${practicalSuccess ? '예' : '아니오'} (40px 기준)`);
                         
-                        console.log('🚀 5단계 복원 검증:', verificationResult);
+                        console.log('🚀 4요소 패키지 복원 검증:', verificationResult);
                         
                         if (actualRestoreSuccess) {
                             detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalCurrentY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
@@ -1705,7 +1089,7 @@ struct BFCacheSnapshot: Codable {
                                     const stepTargetY = finalCurrentY + stepY * i;
                                     performScrollTo(stepTargetX, stepTargetY);
                                     detailedLogs.push(`   점진적 보정 ${i}/${steps}: X=${stepTargetX.toFixed(1)}px, Y=${stepTargetY.toFixed(1)}px`);
-                                }, i * 150);
+                                }, i * 100);
                             }
                             
                             verificationResult.progressiveCorrection = {
@@ -1718,46 +1102,42 @@ struct BFCacheSnapshot: Codable {
                     } catch(verifyError) {
                         verificationResult = {
                             error: verifyError.message,
-                            stage: usedStage,
                             method: usedMethod
                         };
-                        detailedLogs.push(`🚀 5단계 복원 검증 실패: ${verifyError.message}`);
-                        console.error('🚀 5단계 복원 검증 실패:', verifyError);
+                        detailedLogs.push(`🚀 4요소 패키지 복원 검증 실패: ${verifyError.message}`);
+                        console.error('🚀 4요소 패키지 복원 검증 실패:', verifyError);
                     }
                 }, 100);
                 
                 // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
                 return {
                     success: true,
-                    stage: usedStage,
                     method: usedMethod,
                     anchorInfo: anchorInfo,
-                    stageBased: restoredByStage,
+                    packageBased: restoredByPackage,
                     debug: debugInfo,
-                    stageResults: stageResults,
                     error: errorMsg,
                     verification: verificationResult,
-                    detailedLogs: detailedLogs,  // 📊 **상세 로그 배열 추가**
-                    pageAnalysis: pageAnalysis,   // 📊 **페이지 분석 결과 추가**
-                    anchorAnalysis: anchorAnalysis // 📊 **앵커 분석 결과 추가**
+                    detailedLogs: detailedLogs,       // 📊 **상세 로그 배열 추가**
+                    pageAnalysis: pageAnalysis,       // 📊 **페이지 분석 결과 추가**
+                    packageAnalysis: packageAnalysis  // 📊 **패키지 분석 결과 추가**
                 };
                 
             } catch(e) { 
-                console.error('🚀 5단계 무한스크롤 특화 복원 실패:', e);
+                console.error('🚀 4요소 패키지 복원 실패:', e);
                 detailedLogs.push(`🚀 전체 복원 실패: ${e.message}`);
                 
                 // 🚫 **수정: Swift 호환 반환값**
                 return {
                     success: false,
-                    stage: 0,
                     method: 'error',
                     anchorInfo: e.message,
-                    stageBased: false,
+                    packageBased: false,
                     error: e.message,
                     debug: { globalError: e.message },
                     detailedLogs: detailedLogs,
                     pageAnalysis: pageAnalysis,
-                    anchorAnalysis: anchorAnalysis
+                    packageAnalysis: packageAnalysis
                 };
             }
             
@@ -1776,6 +1156,34 @@ struct BFCacheSnapshot: Codable {
                     document.scrollingElement.scrollTop = y;
                     document.scrollingElement.scrollLeft = x;
                 }
+            }
+            
+            // 콘텐츠 타입별 선호 태그 반환
+            function getPreferredTag(contentType) {
+                const typeTagMap = {
+                    'article': 'article',
+                    'post': 'div',
+                    'comment': 'div',
+                    'reply': 'div',
+                    'review': 'div',
+                    'news': 'article',
+                    'blog': 'article'
+                };
+                return typeTagMap[contentType] || 'div';
+            }
+            
+            // 콘텐츠 타입별 선호 태그들 반환 (우선순위 배열)
+            function getPreferredTags(contentType) {
+                const typeTagsMap = {
+                    'article': ['article', 'div', 'section'],
+                    'post': ['div', 'article', 'section'],
+                    'comment': ['div', 'li', 'section'],
+                    'reply': ['div', 'li', 'p'],
+                    'review': ['div', 'li', 'article'],
+                    'news': ['article', 'div', 'section'],
+                    'blog': ['article', 'div', 'section']
+                };
+                return typeTagsMap[contentType] || ['div', 'section', 'article'];
             }
         })()
         """
@@ -2506,7 +1914,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 5단계 무한스크롤 특화 캡처 + 의미없는 텍스트 필터링)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 4요소 패키지 캡처 + 의미없는 텍스트 필터링)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -2525,7 +1933,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -2541,7 +1949,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 특화 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -2581,52 +1989,61 @@ extension BFCacheTransitionSystem {
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
             
-            if let infiniteScrollData = jsState["infiniteScrollData"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 데이터 키: \(Array(infiniteScrollData.keys))")
+            if let packageAnchors = jsState["fourElementPackageAnchors"] as? [String: Any] {
+                TabPersistenceManager.debugMessages.append("🎯 캡처된 4요소 패키지 데이터 키: \(Array(packageAnchors.keys))")
                 
-                if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                    // 🧹 **품질 앵커 필터링 후 로깅**
-                    let qualityAnchors = anchors.filter { anchor in
-                        if let qualityScore = anchor["qualityScore"] as? Int {
-                            return qualityScore >= 15
+                if let anchors = packageAnchors["anchors"] as? [[String: Any]] {
+                    // 🧹 **완전 패키지 필터링 후 로깅**
+                    let completePackageAnchors = anchors.filter { anchor in
+                        if let pkg = anchor["fourElementPackage"] as? [String: Any] {
+                            let hasId = pkg["id"] != nil
+                            let hasType = pkg["type"] != nil  
+                            let hasTs = pkg["ts"] != nil
+                            let hasKw = pkg["kw"] != nil
+                            return hasId && hasType && hasTs && hasKw
                         }
                         return false
                     }
                     
-                    TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 개수: \(anchors.count)개 (품질 앵커: \(qualityAnchors.count)개)")
-                    if qualityAnchors.count > 0 {
-                        let firstAnchor = qualityAnchors[0]
-                        TabPersistenceManager.debugMessages.append("🚀 첫 번째 품질 앵커 키: \(Array(firstAnchor.keys))")
+                    TabPersistenceManager.debugMessages.append("🎯 캡처된 4요소 패키지 앵커 개수: \(anchors.count)개 (완전 패키지: \(completePackageAnchors.count)개)")
+                    
+                    if completePackageAnchors.count > 0 {
+                        let firstPackageAnchor = completePackageAnchors[0]
+                        TabPersistenceManager.debugMessages.append("🎯 첫 번째 완전 패키지 앵커 키: \(Array(firstPackageAnchor.keys))")
                         
-                        // 📊 **첫 번째 품질 앵커 상세 정보 로깅**
-                        if let absolutePos = firstAnchor["absolutePosition"] as? [String: Any] {
+                        // 📊 **첫 번째 완전 패키지 앵커 상세 정보 로깅**
+                        if let pkg = firstPackageAnchor["fourElementPackage"] as? [String: Any] {
+                            let id = pkg["id"] as? String ?? "unknown"
+                            let type = pkg["type"] as? String ?? "unknown"
+                            let ts = pkg["ts"] as? String ?? "unknown"  
+                            let kw = pkg["kw"] as? String ?? "unknown"
+                            TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 4요소: id=\(id), type=\(type), ts=\(ts), kw=\(kw)")
+                        }
+                        if let absolutePos = firstPackageAnchor["absolutePosition"] as? [String: Any] {
                             let top = (absolutePos["top"] as? Double) ?? 0
                             let left = (absolutePos["left"] as? Double) ?? 0
-                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
+                            TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
                         }
-                        if let offsetFromTop = firstAnchor["offsetFromTop"] as? Double {
-                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 오프셋: \(String(format: "%.1f", offsetFromTop))px")
+                        if let offsetFromTop = firstPackageAnchor["offsetFromTop"] as? Double {
+                            TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 오프셋: \(String(format: "%.1f", offsetFromTop))px")
                         }
-                        if let textContent = firstAnchor["textContent"] as? String {
+                        if let textContent = firstPackageAnchor["textContent"] as? String {
                             let preview = textContent.prefix(50)
-                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 텍스트: \"\(preview)\"")
+                            TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 텍스트: \"\(preview)\"")
                         }
-                        if let tagName = firstAnchor["tagName"] as? String {
-                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 태그: <\(tagName)>")
-                        }
-                        if let qualityScore = firstAnchor["qualityScore"] as? Int {
-                            TabPersistenceManager.debugMessages.append("📊 첫 품질앵커 품질점수: \(qualityScore)점")
+                        if let qualityScore = firstPackageAnchor["qualityScore"] as? Int {
+                            TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 품질점수: \(qualityScore)점")
                         }
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
+                    TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 앵커 데이터 캡처 실패")
                 }
                 
-                if let stats = infiniteScrollData["stats"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("📊 무한스크롤 수집 통계: \(stats)")
+                if let stats = packageAnchors["stats"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("📊 4요소 패키지 수집 통계: \(stats)")
                 }
             } else {
-                TabPersistenceManager.debugMessages.append("🚀 무한스크롤 데이터 캡처 실패")
+                TabPersistenceManager.debugMessages.append("🎯 4요소 패키지 데이터 캡처 실패")
             }
         } else {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
@@ -2639,7 +2056,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 5단계 무한스크롤 특화 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 4요소 패키지 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -2748,12 +2165,12 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: Promise 제거한 5단계 무한스크롤 특화 JS 상태 캡처 (의미없는 텍스트 필터링 포함)** 
+        // 3. ✅ **수정: Promise 제거한 4요소 패키지 JS 상태 캡처 (의미없는 텍스트 필터링 포함)** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🚀 5단계 무한스크롤 JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateFiveStageInfiniteScrollCaptureScript() // 🚀 새로운 5단계 캡처 스크립트 사용
+            let jsScript = generateFourElementPackageCaptureScript() // 🚀 새로운 4요소 패키지 캡처 스크립트 사용
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -2763,17 +2180,21 @@ extension BFCacheTransitionSystem {
                     TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                     
                     // 📊 **상세 캡처 결과 로깅**
-                    if let infiniteScrollData = data["infiniteScrollData"] as? [String: Any] {
-                        if let anchors = infiniteScrollData["anchors"] as? [[String: Any]] {
-                            let qualityAnchors = anchors.filter { anchor in
-                                if let qualityScore = anchor["qualityScore"] as? Int {
-                                    return qualityScore >= 15
+                    if let packageAnchors = data["fourElementPackageAnchors"] as? [String: Any] {
+                        if let anchors = packageAnchors["anchors"] as? [[String: Any]] {
+                            let completePackageAnchors = anchors.filter { anchor in
+                                if let pkg = anchor["fourElementPackage"] as? [String: Any] {
+                                    let hasId = pkg["id"] != nil
+                                    let hasType = pkg["type"] != nil
+                                    let hasTs = pkg["ts"] != nil  
+                                    let hasKw = pkg["kw"] != nil
+                                    return hasId && hasType && hasTs && hasKw
                                 }
                                 return false
                             }
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: \(anchors.count)개 (품질 앵커: \(qualityAnchors.count)개)")
+                            TabPersistenceManager.debugMessages.append("🎯 JS 캡처된 앵커: \(anchors.count)개 (완전 패키지: \(completePackageAnchors.count)개)")
                         }
-                        if let stats = infiniteScrollData["stats"] as? [String: Any] {
+                        if let stats = packageAnchors["stats"] as? [String: Any] {
                             TabPersistenceManager.debugMessages.append("📊 JS 캡처 통계: \(stats)")
                         }
                     }
@@ -2852,12 +2273,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **새로운: 5단계 무한스크롤 특화 캡처 JavaScript 생성 (의미없는 텍스트 필터링 포함)**
-    private func generateFiveStageInfiniteScrollCaptureScript() -> String {
+    // 🚀 **새로운: 4요소 패키지 캡처 JavaScript 생성 (의미없는 텍스트 필터링 포함)**
+    private func generateFourElementPackageCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 5단계 무한스크롤 특화 캡처 시작');
+                console.log('🚀 4요소 패키지 캡처 시작');
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
@@ -2872,7 +2293,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                 const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                 
-                detailedLogs.push('🚀 5단계 무한스크롤 특화 캡처 시작');
+                detailedLogs.push('🚀 4요소 패키지 캡처 시작');
                 detailedLogs.push(`스크롤 위치: X=${scrollX.toFixed(1)}px, Y=${scrollY.toFixed(1)}px`);
                 detailedLogs.push(`뷰포트 크기: ${viewportWidth.toFixed(0)} x ${viewportHeight.toFixed(0)}`);
                 detailedLogs.push(`콘텐츠 크기: ${contentWidth.toFixed(0)} x ${contentHeight.toFixed(0)}`);
@@ -2929,8 +2350,8 @@ extension BFCacheTransitionSystem {
                 
                 detailedLogs.push('🧹 의미없는 텍스트 필터링 함수 로드 완료');
                 
-                // 🚀 **5단계 무한스크롤 특화 앵커 수집 (품질 필터링 포함)**
-                function collectInfiniteScrollAnchors() {
+                // 🚀 **4요소 패키지 앵커 수집 (품질 필터링 포함)**
+                function collectFourElementPackageAnchors() {
                     const anchors = [];
                     const viewportRect = {
                         top: scrollY,
@@ -2942,8 +2363,8 @@ extension BFCacheTransitionSystem {
                     detailedLogs.push(`뷰포트 영역: top=${viewportRect.top.toFixed(1)}, bottom=${viewportRect.bottom.toFixed(1)}`);
                     console.log('🚀 뷰포트 영역:', viewportRect);
                     
-                    // 🚀 **범용 무한스크롤 요소 패턴 (모든 사이트 대응)**
-                    const infiniteScrollSelectors = [
+                    // 🚀 **범용 콘텐츠 요소 패턴 (모든 사이트 대응)**
+                    const contentSelectors = [
                         // 기본 컨텐츠 아이템
                         'li', 'tr', 'td',
                         '.item', '.list-item', '.card', '.post', '.article',
@@ -2969,10 +2390,10 @@ extension BFCacheTransitionSystem {
                     let candidateElements = [];
                     let selectorStats = {};
                     
-                    detailedLogs.push(`총 ${infiniteScrollSelectors.length}개 selector 패턴으로 요소 수집 시작`);
+                    detailedLogs.push(`총 ${contentSelectors.length}개 selector 패턴으로 요소 수집 시작`);
                     
                     // 모든 selector에서 요소 수집
-                    for (const selector of infiniteScrollSelectors) {
+                    for (const selector of contentSelectors) {
                         try {
                             const elements = document.querySelectorAll(selector);
                             if (elements.length > 0) {
@@ -3052,11 +2473,11 @@ extension BFCacheTransitionSystem {
                     
                     console.log('🚀 선택된 품질 요소:', selectedElements.length, '개');
                     
-                    // 각 요소에 대해 5단계 정보 수집
+                    // 각 요소에 대해 4요소 패키지 정보 수집
                     let anchorCreationErrors = 0;
                     for (let i = 0; i < selectedElements.length; i++) {
                         try {
-                            const anchor = createInfiniteScrollAnchor(selectedElements[i], i);
+                            const anchor = createFourElementPackageAnchor(selectedElements[i], i);
                             if (anchor) {
                                 anchors.push(anchor);
                             }
@@ -3069,8 +2490,8 @@ extension BFCacheTransitionSystem {
                     captureStats.anchorCreationErrors = anchorCreationErrors;
                     captureStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push(`품질 앵커 생성 완료: ${anchors.length}개 (실패: ${anchorCreationErrors}개)`);
-                    console.log('🚀 무한스크롤 품질 앵커 수집 완료:', anchors.length, '개');
+                    detailedLogs.push(`4요소 패키지 앵커 생성 완료: ${anchors.length}개 (실패: ${anchorCreationErrors}개)`);
+                    console.log('🚀 4요소 패키지 앵커 수집 완료:', anchors.length, '개');
                     
                     return {
                         anchors: anchors,
@@ -3078,8 +2499,8 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🚀 **개별 무한스크롤 앵커 생성 (5단계 정보 포함 + 품질 점수 강화)**
-                function createInfiniteScrollAnchor(elementData, index) {
+                // 🚀 **개별 4요소 패키지 앵커 생성 (품질 점수 강화)**
+                function createFourElementPackageAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
                         const rect = elementData.rect;
@@ -3099,177 +2520,211 @@ extension BFCacheTransitionSystem {
                             return null;
                         }
                         
-                        // 🚀 **1단계: 고유 식별자 수집**
-                        const uniqueIdentifiers = {};
-                        let identifierCount = 0;
+                        // 🎯 **4요소 패키지 생성: {id, type, ts, kw}**
+                        const fourElementPackage = {};
+                        let packageScore = 0; // 패키지 완성도 점수
                         
-                        // href 패턴 (링크가 있는 경우)
-                        const linkElement = element.querySelector('a[href]') || (element.tagName === 'A' ? element : null);
-                        if (linkElement && linkElement.href) {
-                            const href = linkElement.href;
-                            // URL에서 고유한 부분 추출 (ID 파라미터 등)
-                            try {
-                                const urlParams = new URL(href).searchParams;
-                                for (const [key, value] of urlParams) {
-                                    if (key.includes('id') || key.includes('article') || key.includes('post')) {
-                                        uniqueIdentifiers.href = `${key}=${value}`;
-                                        identifierCount++;
-                                        break;
-                                    }
-                                }
-                                if (!uniqueIdentifiers.href && href.includes('id=')) {
-                                    const match = href.match(/id=([^&]+)/);
-                                    if (match) {
-                                        uniqueIdentifiers.href = match[0];
-                                        identifierCount++;
-                                    }
-                                }
-                            } catch(e) {
-                                // URL 파싱 실패는 무시
-                            }
-                        }
+                        // ① **고유 식별자 (id) - 최우선**
+                        let uniqueId = null;
                         
-                        // data-* 속성들
-                        const dataAttributes = {};
-                        for (const attr of element.attributes) {
-                            if (attr.name.startsWith('data-') && 
-                                (attr.name.includes('id') || attr.name.includes('key') || 
-                                 attr.name.includes('post') || attr.name.includes('article'))) {
-                                dataAttributes[attr.name] = attr.value;
-                                identifierCount++;
-                            }
-                        }
-                        if (Object.keys(dataAttributes).length > 0) {
-                            uniqueIdentifiers.dataAttributes = dataAttributes;
-                        }
-                        
-                        // id 속성
+                        // ID 속성
                         if (element.id) {
-                            uniqueIdentifiers.id = element.id;
-                            identifierCount++;
+                            uniqueId = element.id;
+                            packageScore += 20;
+                            detailedLogs.push(`   4요소[id]: ID 속성="${element.id}"`);
                         }
                         
-                        if (identifierCount > 0) {
-                            detailedLogs.push(`  1단계 고유식별자: ${identifierCount}개 (${Object.keys(uniqueIdentifiers)})`);
-                        }
-                        
-                        // 🚀 **2단계: 콘텐츠 지문 생성**
-                        const contentFingerprint = {};
-                        let fingerprintCount = 0;
-                        
-                        if (textContent.length > 0) {
-                            // 텍스트 시그니처 (앞 30자 + 뒤 30자)
-                            if (textContent.length > 60) {
-                                contentFingerprint.textSignature = textContent.substring(0, 30) + '...' + textContent.substring(textContent.length - 30);
-                            } else {
-                                contentFingerprint.textSignature = textContent;
-                            }
-                            fingerprintCount++;
-                            
-                            // 구조 정보
-                            contentFingerprint.tagName = element.tagName.toLowerCase();
-                            contentFingerprint.className = (element.className || '').split(' ')[0] || '';
-                            
-                            // 시간 정보 추출 (시:분 패턴)
-                            const timeMatch = textContent.match(/\\d{1,2}:\\d{2}/);
-                            if (timeMatch) {
-                                contentFingerprint.timePattern = timeMatch[0];
-                                fingerprintCount++;
-                            }
-                            
-                            detailedLogs.push(`  2단계 콘텐츠지문: 텍스트="${textContent.substring(0, 30)}...", 태그=${element.tagName}`);
-                        }
-                        
-                        // 🚀 **3단계: 상대적 인덱스 계산**
-                        const relativeIndex = {};
-                        let indexCount = 0;
-                        
-                        // 부모 컨테이너에서의 인덱스
-                        const parent = element.parentElement;
-                        if (parent) {
-                            const siblings = Array.from(parent.children);
-                            const indexInContainer = siblings.indexOf(element);
-                            if (indexInContainer >= 0) {
-                                relativeIndex.indexInContainer = indexInContainer;
-                                relativeIndex.containerSelector = generateBestSelector(parent);
-                                relativeIndex.itemSelector = element.tagName.toLowerCase();
-                                indexCount++;
-                                
-                                // 텍스트 미리보기 (검증용)
-                                if (textContent.length > 0) {
-                                    relativeIndex.textPreview = textContent.substring(0, 50);
+                        // data-* 속성들 (고유 식별자용)
+                        if (!uniqueId) {
+                            const dataAttrs = ['data-id', 'data-post-id', 'data-article-id', 
+                                             'data-comment-id', 'data-item-id', 'data-key', 
+                                             'data-user-id', 'data-thread-id'];
+                            for (const attr of dataAttrs) {
+                                const value = element.getAttribute(attr);
+                                if (value) {
+                                    uniqueId = value;
+                                    packageScore += 18;
+                                    detailedLogs.push(`   4요소[id]: ${attr}="${value}"`);
+                                    break;
                                 }
-                                
-                                detailedLogs.push(`  3단계 상대인덱스: ${indexInContainer}/${siblings.length} in ${relativeIndex.containerSelector}`);
                             }
                         }
                         
-                        // 🚀 **4단계: 기존 셀렉터들 생성**
-                        const selectors = [];
-                        
-                        // ID 기반 selector (최우선)
-                        if (element.id) {
-                            selectors.push('#' + element.id);
-                        }
-                        
-                        // 데이터 속성 기반
-                        for (const [attr, value] of Object.entries(dataAttributes)) {
-                            selectors.push(`[${attr}="${value}"]`);
-                            selectors.push(`${element.tagName.toLowerCase()}[${attr}="${value}"]`);
-                        }
-                        
-                        // 클래스 기반 selector
-                        if (element.className) {
-                            const classes = element.className.trim().split(/\\s+/).filter(c => c);
-                            if (classes.length > 0) {
-                                selectors.push('.' + classes.join('.'));
-                                selectors.push('.' + classes[0]);
-                                selectors.push(element.tagName.toLowerCase() + '.' + classes[0]);
+                        // href에서 ID 추출
+                        if (!uniqueId) {
+                            const linkElement = element.querySelector('a[href]') || (element.tagName === 'A' ? element : null);
+                            if (linkElement && linkElement.href) {
+                                try {
+                                    const urlParams = new URL(linkElement.href).searchParams;
+                                    for (const [key, value] of urlParams) {
+                                        if (key.includes('id') || key.includes('post') || key.includes('article')) {
+                                            uniqueId = value;
+                                            packageScore += 15;
+                                            detailedLogs.push(`   4요소[id]: URL 파라미터="${key}=${value}"`);
+                                            break;
+                                        }
+                                    }
+                                    // 직접 ID 패턴 추출
+                                    if (!uniqueId && linkElement.href.includes('id=')) {
+                                        const match = linkElement.href.match(/id=([^&]+)/);
+                                        if (match) {
+                                            uniqueId = match[1];
+                                            packageScore += 12;
+                                            detailedLogs.push(`   4요소[id]: URL 패턴 id="${match[1]}"`);
+                                        }
+                                    }
+                                } catch(e) {
+                                    // URL 파싱 실패는 무시
+                                }
                             }
                         }
                         
-                        // nth-child 기반
-                        if (parent) {
-                            const siblings = Array.from(parent.children);
-                            const nthIndex = siblings.indexOf(element) + 1;
-                            if (nthIndex > 0 && siblings.length < 20) {
-                                selectors.push(`${parent.tagName.toLowerCase()} > ${element.tagName.toLowerCase()}:nth-child(${nthIndex})`);
+                        // UUID 생성 (최후 수단)
+                        if (!uniqueId) {
+                            uniqueId = 'auto_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                            packageScore += 5;
+                            detailedLogs.push(`   4요소[id]: 자동 생성 UUID="${uniqueId}"`);
+                        }
+                        
+                        fourElementPackage.id = uniqueId;
+                        
+                        // ② **콘텐츠 타입 (type)**
+                        let contentType = 'unknown';
+                        const tagName = element.tagName.toLowerCase();
+                        const className = (element.className || '').toLowerCase();
+                        const parentClassName = (element.parentElement?.className || '').toLowerCase();
+                        
+                        // 클래스명/태그명 기반 타입 추론
+                        if (className.includes('comment') || className.includes('reply')) {
+                            contentType = 'comment';
+                            packageScore += 15;
+                        } else if (className.includes('post') || className.includes('article')) {
+                            contentType = 'post';
+                            packageScore += 15;
+                        } else if (className.includes('review') || className.includes('rating')) {
+                            contentType = 'review'; 
+                            packageScore += 15;
+                        } else if (tagName === 'article') {
+                            contentType = 'article';
+                            packageScore += 12;
+                        } else if (tagName === 'li' && (parentClassName.includes('list') || parentClassName.includes('feed'))) {
+                            contentType = 'item';
+                            packageScore += 10;
+                        } else if (className.includes('card') || className.includes('item')) {
+                            contentType = 'item';
+                            packageScore += 8;
+                        } else {
+                            contentType = tagName; // 태그명을 타입으로
+                            packageScore += 3;
+                        }
+                        
+                        fourElementPackage.type = contentType;
+                        detailedLogs.push(`   4요소[type]: "${contentType}"`);
+                        
+                        // ③ **타임스탬프 (ts)**
+                        let timestamp = null;
+                        
+                        // 시간 정보 추출 시도
+                        const timeElement = element.querySelector('time') || 
+                                          element.querySelector('[datetime]') ||
+                                          element.querySelector('.time, .date, .timestamp');
+                        
+                        if (timeElement) {
+                            const datetime = timeElement.getAttribute('datetime') || timeElement.textContent;
+                            if (datetime) {
+                                timestamp = datetime.trim();
+                                packageScore += 15;
+                                detailedLogs.push(`   4요소[ts]: 시간 요소="${timestamp}"`);
                             }
                         }
                         
-                        // 태그명 기본
-                        selectors.push(element.tagName.toLowerCase());
-                        
-                        detailedLogs.push(`  4단계 셀렉터: ${selectors.length}개 생성`);
-                        
-                        // 🚀 **5단계: 무한스크롤 컨텍스트 정보**
-                        const infiniteScrollContext = {
-                            documentHeight: contentHeight,
-                            viewportPosition: scrollY,
-                            relativePosition: contentHeight > 0 ? (absoluteTop / contentHeight) : 0, // 문서 내 상대적 위치 (0-1)
-                            distanceFromViewport: elementData.distanceFromViewport,
-                            isInViewport: rect.top >= 0 && rect.bottom <= viewportHeight,
-                            elementSize: {
-                                width: rect.width,
-                                height: rect.height
+                        // 텍스트에서 시간 패턴 추출
+                        if (!timestamp) {
+                            const timePatterns = [
+                                /\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/, // ISO8601
+                                /\\d{4}년\\s*\\d{1,2}월\\s*\\d{1,2}일/, // 한국어 날짜
+                                /\\d{1,2}:\\d{2}/, // 시:분
+                                /\\d{4}-\\d{2}-\\d{2}/, // YYYY-MM-DD
+                                /\\d{1,2}시간?\\s*전/, // N시간 전
+                                /\\d{1,2}일\\s*전/ // N일 전
+                            ];
+                            
+                            for (const pattern of timePatterns) {
+                                const match = textContent.match(pattern);
+                                if (match) {
+                                    timestamp = match[0];
+                                    packageScore += 10;
+                                    detailedLogs.push(`   4요소[ts]: 텍스트 패턴="${timestamp}"`);
+                                    break;
+                                }
                             }
-                        };
+                        }
                         
-                        detailedLogs.push(`  5단계 무한스크롤: 문서내위치=${(infiniteScrollContext.relativePosition * 100).toFixed(1)}%, 뷰포트거리=${infiniteScrollContext.distanceFromViewport.toFixed(1)}px`);
+                        // 현재 시간으로 대체 (최후 수단)
+                        if (!timestamp) {
+                            timestamp = new Date().toISOString();
+                            packageScore += 2;
+                            detailedLogs.push(`   4요소[ts]: 현재 시간="${timestamp}"`);
+                        }
                         
-                        // 📊 **품질 점수 강화 계산 (품질 텍스트 가산점 추가)**
-                        let qualityScore = identifierCount * 10 + fingerprintCount * 5 + indexCount * 3 + selectors.length;
+                        fourElementPackage.ts = timestamp;
+                        
+                        // ④ **컨텍스트 키워드 (kw)**
+                        let keywords = '';
+                        
+                        // 텍스트에서 키워드 추출 (첫 10자 + 마지막 10자)
+                        if (textContent.length > 20) {
+                            keywords = textContent.substring(0, 10) + '...' + textContent.substring(textContent.length - 10);
+                            packageScore += 12;
+                        } else if (textContent.length > 0) {
+                            keywords = textContent.substring(0, 20);
+                            packageScore += 8;
+                        }
+                        
+                        // 대체 키워드 (제목, alt 등)
+                        if (!keywords) {
+                            const titleAttr = element.getAttribute('title') || 
+                                            element.getAttribute('alt') ||
+                                            element.getAttribute('aria-label');
+                            if (titleAttr) {
+                                keywords = titleAttr.substring(0, 20);
+                                packageScore += 5;
+                                detailedLogs.push(`   4요소[kw]: 속성 키워드="${keywords}"`);
+                            }
+                        }
+                        
+                        // 클래스명을 키워드로 (최후 수단)
+                        if (!keywords && className) {
+                            keywords = className.split(' ')[0].substring(0, 15);
+                            packageScore += 2;
+                            detailedLogs.push(`   4요소[kw]: 클래스명 키워드="${keywords}"`);
+                        }
+                        
+                        fourElementPackage.kw = keywords || 'unknown';
+                        detailedLogs.push(`   4요소[kw]: "${fourElementPackage.kw}"`);
+                        
+                        // 📊 **품질 점수 계산 (4요소 패키지는 40점 이상 필요)**
+                        let qualityScore = packageScore;
                         
                         // 🧹 **품질 텍스트 보너스**
-                        if (textContent.length >= 20) qualityScore += 5; // 충분한 길이
-                        if (textContent.length >= 50) qualityScore += 5; // 더 긴 텍스트
-                        if (!/^(답글|댓글|더보기|클릭|선택)/.test(textContent)) qualityScore += 3; // 의미있는 텍스트
+                        if (textContent.length >= 20) qualityScore += 8; // 충분한 길이
+                        if (textContent.length >= 50) qualityScore += 8; // 더 긴 텍스트
+                        if (!/^(답글|댓글|더보기|클릭|선택)/.test(textContent)) qualityScore += 5; // 의미있는 텍스트
                         
-                        detailedLogs.push(`  앵커[${index}] 품질점수: ${qualityScore}점 (식별자=${identifierCount*10}, 지문=${fingerprintCount*5}, 인덱스=${indexCount*3}, 셀렉터=${selectors.length}, 텍스트보너스=추가)`);
+                        // 고유 ID 보너스
+                        if (uniqueId && !uniqueId.startsWith('auto_')) qualityScore += 10; // 실제 고유 ID
                         
-                        // 🧹 **품질 점수 15점 미만은 제외**
-                        if (qualityScore < 15) {
-                            detailedLogs.push(`  앵커[${index}] 품질점수 부족으로 제외: ${qualityScore}점 < 15점`);
+                        // 타입 정확도 보너스  
+                        if (contentType !== 'unknown' && contentType !== tagName) qualityScore += 5; // 정확한 타입 추론
+                        
+                        // 시간 정보 보너스
+                        if (timestamp && !timestamp.includes(new Date().toISOString().split('T')[0])) qualityScore += 5; // 실제 시간
+                        
+                        detailedLogs.push(`   앵커[${index}] 품질점수: ${qualityScore}점 (패키지=${packageScore}, 보너스=${qualityScore-packageScore})`);
+                        
+                        // 🧹 **품질 점수 40점 미만은 제외 (4요소 패키지 기준 상향)**
+                        if (qualityScore < 40) {
+                            detailedLogs.push(`   앵커[${index}] 품질점수 부족으로 제외: ${qualityScore}점 < 40점`);
                             return null;
                         }
                         
@@ -3297,121 +2752,42 @@ extension BFCacheTransitionSystem {
                                 height: rect.height
                             },
                             
-                            // 🚀 **5단계 무한스크롤 정보**
-                            uniqueIdentifiers: Object.keys(uniqueIdentifiers).length > 0 ? uniqueIdentifiers : null,
-                            contentFingerprint: Object.keys(contentFingerprint).length > 0 ? contentFingerprint : null,
-                            relativeIndex: Object.keys(relativeIndex).length > 0 ? relativeIndex : null,
-                            selectors: selectors,
-                            infiniteScrollContext: infiniteScrollContext,
+                            // 🎯 **4요소 패키지 (핵심)**
+                            fourElementPackage: fourElementPackage,
                             
                             // 메타 정보
-                            anchorType: 'infiniteScrollQuality',
+                            anchorType: 'fourElementPackage',
                             captureTimestamp: Date.now(),
                             qualityScore: qualityScore,
                             anchorIndex: index
                         };
                         
                     } catch(e) {
-                        console.error(`🚀 무한스크롤 앵커[${index}] 생성 실패:`, e);
+                        console.error(`🚀 4요소 패키지 앵커[${index}] 생성 실패:`, e);
                         detailedLogs.push(`  앵커[${index}] 생성 실패: ${e.message}`);
                         return null;
                     }
                 }
                 
-                // 🌐 **개선된 셀렉터 생성** (기존 로직 유지)
-                function generateBestSelector(element) {
-                    if (!element || element.nodeType !== 1) return null;
-                    
-                    // 1순위: ID가 있으면 ID 사용
-                    if (element.id) {
-                        return `#${element.id}`;
-                    }
-                    
-                    // 2순위: 데이터 속성 기반
-                    const dataAttrs = Array.from(element.attributes)
-                        .filter(attr => attr.name.startsWith('data-'))
-                        .map(attr => `[${attr.name}="${attr.value}"]`);
-                    if (dataAttrs.length > 0) {
-                        const attrSelector = element.tagName.toLowerCase() + dataAttrs.join('');
-                        try {
-                            if (document.querySelectorAll(attrSelector).length === 1) {
-                                return attrSelector;
-                            }
-                        } catch(e) {
-                            // 셀렉터 오류 무시
-                        }
-                    }
-                    
-                    // 3순위: 고유한 클래스 조합
-                    if (element.className) {
-                        const classes = element.className.trim().split(/\\s+/);
-                        const uniqueClasses = classes.filter(cls => {
-                            try {
-                                const elements = document.querySelectorAll(`.${cls}`);
-                                return elements.length === 1 && elements[0] === element;
-                            } catch(e) {
-                                return false;
-                            }
-                        });
-                        
-                        if (uniqueClasses.length > 0) {
-                            return `.${uniqueClasses.join('.')}`;
-                        }
-                        
-                        // 클래스 조합으로 고유성 확보
-                        if (classes.length > 0) {
-                            try {
-                                const classSelector = `.${classes.join('.')}`;
-                                if (document.querySelectorAll(classSelector).length === 1) {
-                                    return classSelector;
-                                }
-                            } catch(e) {
-                                // 셀렉터 오류 무시
-                            }
-                        }
-                    }
-                    
-                    // 4순위: 상위 경로 포함
-                    let path = [];
-                    let current = element;
-                    while (current && current !== document.documentElement) {
-                        let selector = current.tagName.toLowerCase();
-                        if (current.id) {
-                            path.unshift(`#${current.id}`);
-                            break;
-                        }
-                        if (current.className) {
-                            const classes = current.className.trim().split(/\\s+/).join('.');
-                            selector += `.${classes}`;
-                        }
-                        path.unshift(selector);
-                        current = current.parentElement;
-                        
-                        // 경로가 너무 길어지면 중단
-                        if (path.length > 5) break;
-                    }
-                    return path.join(' > ');
-                }
-                
-                // 🚀 **메인 실행 - 5단계 무한스크롤 특화 데이터 수집 (품질 필터링 포함)**
+                // 🚀 **메인 실행 - 4요소 패키지 데이터 수집 (품질 필터링 포함)**
                 const startTime = Date.now();
-                const infiniteScrollData = collectInfiniteScrollAnchors();
+                const packageAnchorsData = collectFourElementPackageAnchors();
                 const endTime = Date.now();
                 const captureTime = endTime - startTime;
                 
                 captureStats.captureTime = captureTime;
                 pageAnalysis.capturePerformance = {
                     totalTime: captureTime,
-                    anchorsPerSecond: infiniteScrollData.anchors.length > 0 ? (infiniteScrollData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
+                    anchorsPerSecond: packageAnchorsData.anchors.length > 0 ? (packageAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push(`=== 품질 캡처 완료 (${captureTime}ms) ===`);
-                detailedLogs.push(`최종 품질 앵커: ${infiniteScrollData.anchors.length}개`);
+                detailedLogs.push(`=== 4요소 패키지 캡처 완료 (${captureTime}ms) ===`);
+                detailedLogs.push(`최종 4요소 패키지 앵커: ${packageAnchorsData.anchors.length}개`);
                 detailedLogs.push(`처리 성능: ${pageAnalysis.capturePerformance.anchorsPerSecond} 앵커/초`);
                 
-                console.log('🚀 5단계 무한스크롤 특화 품질 캡처 완료:', {
-                    qualityAnchorsCount: infiniteScrollData.anchors.length,
-                    stats: infiniteScrollData.stats,
+                console.log('🚀 4요소 패키지 캡처 완료:', {
+                    packageAnchorsCount: packageAnchorsData.anchors.length,
+                    stats: packageAnchorsData.stats,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight],
@@ -3420,7 +2796,7 @@ extension BFCacheTransitionSystem {
                 
                 // ✅ **수정: Promise 없이 직접 반환**
                 return {
-                    infiniteScrollData: infiniteScrollData, // 🚀 **5단계 무한스크롤 특화 데이터**
+                    fourElementPackageAnchors: packageAnchorsData, // 🎯 **4요소 패키지 데이터**
                     scroll: { 
                         x: scrollX, 
                         y: scrollY
@@ -3447,15 +2823,15 @@ extension BFCacheTransitionSystem {
                     captureTime: captureTime              // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
-                console.error('🚀 5단계 무한스크롤 특화 품질 캡처 실패:', e);
+                console.error('🚀 4요소 패키지 캡처 실패:', e);
                 return {
-                    infiniteScrollData: { anchors: [], stats: {} },
+                    fourElementPackageAnchors: { anchors: [], stats: {} },
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                     href: window.location.href,
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: [`품질 캡처 실패: ${e.message}`],
+                    detailedLogs: [`4요소 패키지 캡처 실패: ${e.message}`],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
