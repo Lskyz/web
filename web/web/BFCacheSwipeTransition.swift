@@ -4,6 +4,7 @@
 //  🎯 **5단계 순차 시도 방식** - 고유식별자 → 콘텐츠지문 → 상대인덱스 → 기존셀렉터 → 무한스크롤트리거
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 + 랜드마크 + 구조적 앵커
 //  🎯 **스크롤 위치 기반 앵커 선택 개선** - 실제 컨텐츠 요소 우선
+//  🔧 **iframe 복원 제거** - 불필요한 단계 제거
 //  ✅ **복원 검증 로직 수정** - 실제 스크롤 위치 정확 측정
 //  🚀 **무한스크롤 5단계 순차 시도 방식 적용** - 모든 사이트 범용 대응
 //  📊 **세세한 과정로그 추가** - 앵커 px 지점 및 긴페이지 어긋남 원인 상세 추적
@@ -1631,17 +1632,17 @@ struct BFCacheSnapshot: Codable {
                 // 🔧 **복원 후 위치 검증 및 보정**
                 setTimeout(() => {
                     try {
-                        finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        finalDiffY = Math.abs(finalCurrentY - targetY);
-                        finalDiffX = Math.abs(finalCurrentX - targetX);
+                        finalY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        finalX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        finalDiffY = Math.abs(finalY - targetY);
+                        finalDiffX = Math.abs(finalX - targetX);
                         
                         // 사용된 Stage의 허용 오차 적용
                         const stageConfig = usedStage > 0 ? STAGE_CONFIG[`stage${usedStage}`] : null;
                         const tolerance = stageConfig ? stageConfig.tolerance : 100;
                         
                         detailedLogs.push('🔧 복원 후 위치 검증 시작');
-                        detailedLogs.push(`   최종 위치: X=${finalCurrentX.toFixed(1)}px, Y=${finalCurrentY.toFixed(1)}px`);
+                        detailedLogs.push(`   최종 위치: X=${finalX.toFixed(1)}px, Y=${finalY.toFixed(1)}px`);
                         detailedLogs.push(`   목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
                         detailedLogs.push(`   위치 차이: X=${finalDiffX.toFixed(1)}px, Y=${finalDiffY.toFixed(1)}px`);
                         detailedLogs.push(`   허용 오차: ${tolerance}px (Stage ${usedStage} 기준)`);
@@ -1651,7 +1652,7 @@ struct BFCacheSnapshot: Codable {
                         
                         verificationResult = {
                             target: [targetX, targetY],
-                            final: [finalCurrentX, finalCurrentY],
+                            final: [finalX, finalY],
                             diff: [finalDiffX, finalDiffY],
                             stage: usedStage,
                             method: usedMethod,
@@ -1673,27 +1674,27 @@ struct BFCacheSnapshot: Codable {
                         console.log('🚀 5단계 복원 검증:', verificationResult);
                         
                         if (actualRestoreSuccess) {
-                            detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalCurrentY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
+                            detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
                         } else {
-                            detailedLogs.push(`❌ 실제 복원 실패: 목표=${targetY.toFixed(1)}px, 실제=${finalCurrentY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
+                            detailedLogs.push(`❌ 실제 복원 실패: 목표=${targetY.toFixed(1)}px, 실제=${finalY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
                         }
                         
                         // 🔧 **허용 오차 초과 시 점진적 보정**
                         if (!finalWithinTolerance && (finalDiffY > tolerance || finalDiffX > tolerance)) {
                             detailedLogs.push('🔧 허용 오차 초과 - 점진적 보정 시작');
-                            detailedLogs.push(`   보정 필요 거리: X=${(targetX - finalCurrentX).toFixed(1)}px, Y=${(targetY - finalCurrentY).toFixed(1)}px`);
+                            detailedLogs.push(`   보정 필요 거리: X=${(targetX - finalX).toFixed(1)}px, Y=${(targetY - finalY).toFixed(1)}px`);
                             
                             const maxDiff = Math.max(finalDiffX, finalDiffY);
                             const steps = Math.min(5, Math.max(2, Math.ceil(maxDiff / 1000)));
-                            const stepX = (targetX - finalCurrentX) / steps;
-                            const stepY = (targetY - finalCurrentY) / steps;
+                            const stepX = (targetX - finalX) / steps;
+                            const stepY = (targetY - finalY) / steps;
                             
                             detailedLogs.push(`   점진적 보정: ${steps}단계, 단계별 이동 X=${stepX.toFixed(1)}px, Y=${stepY.toFixed(1)}px`);
                             
                             for (let i = 1; i <= steps; i++) {
                                 setTimeout(() => {
-                                    const stepTargetX = finalCurrentX + stepX * i;
-                                    const stepTargetY = finalCurrentY + stepY * i;
+                                    const stepTargetX = finalX + stepX * i;
+                                    const stepTargetY = finalY + stepY * i;
                                     performScrollTo(stepTargetX, stepTargetY);
                                     detailedLogs.push(`   점진적 보정 ${i}/${steps}: X=${stepTargetX.toFixed(1)}px, Y=${stepTargetY.toFixed(1)}px`);
                                 }, i * 150);
@@ -1772,7 +1773,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤)**
+    // 🚫 **브라우저 차단 대응 시스템 (점진적 스크롤) - ✅ iframe 복원 제거**
     private func performBrowserBlockingWorkaround(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         var stepResults: [Bool] = []
         var currentStep = 0
@@ -1939,10 +1940,7 @@ struct BFCacheSnapshot: Codable {
                                         const touchEvent = new TouchEvent('touchend', { bubbles: true });
                                         document.dispatchEvent(touchEvent);
                                         attemptData.infiniteScrollTrigger = 'touchEvent_attempted';
-                                        detailedLogs.push('터치 이벤트 트리거 성공');
-                                    } catch(e) {
-                                        attemptData.infiniteScrollTrigger = 'touchEvent_unsupported';
-                                        detailedLogs.push('터치 이벤트 트리거 실패');
+ 이벤트 트리거 실패');
                                     }
                                     
                                     // 📊 **더보기 버튼 검색 및 클릭**
@@ -2144,7 +2142,7 @@ struct BFCacheSnapshot: Codable {
                             TabPersistenceManager.debugMessages.append("📊 점진적 스크롤 성능 데이터: \(performanceData)")
                         }
                         
-                        // 📊 **스크롤 시도 데이터 추출** - 수정된 캐스팅
+                        // 📊 **스크롤 시도 데이터 추출**
                         if let scrollAttempts = resultDict["scrollAttempts"] as? [[String: Any]] {
                             TabPersistenceManager.debugMessages.append("📊 스크롤 시도 횟수: \(scrollAttempts.count)회")
                             
@@ -2706,13 +2704,6 @@ extension BFCacheTransitionSystem {
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
-                    
-                    // 🚫 **활성상태 제거**
-                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
-                        el.classList.remove(...Array.from(el.classList).filter(c => 
-                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
-                        ));
-                    });
                     
                     // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
@@ -3467,11 +3458,6 @@ extension BFCacheTransitionSystem {
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
                 console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
-                
-                // 🌐 동적 콘텐츠 새로고침 (필요시)
-                if (window.refreshDynamicContent) {
-                    window.refreshDynamicContent();
-                }
             }
         });
         
@@ -3483,4 +3469,3 @@ extension BFCacheTransitionSystem {
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
-}
