@@ -2349,7 +2349,7 @@ extension BFCacheTransitionSystem {
             }
         })()
         """
-    }  // generateFiveStageInfiniteScrollCaptureScript 함수 끝
+    }
     
     internal func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
@@ -2357,8 +2357,10 @@ extension BFCacheTransitionSystem {
             webView.layer.render(in: context.cgContext)
         }
     }
-    
-    // MARK: - 🌐 JavaScript 스크립트
+}
+
+// MARK: - 🌐 JavaScript 스크립트
+extension BFCacheTransitionSystem {
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
@@ -2396,3 +2398,4 @@ extension BFCacheTransitionSystem {
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
+}
