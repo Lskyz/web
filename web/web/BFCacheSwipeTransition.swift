@@ -21,6 +21,8 @@
 //  📦 **배치 로딩 시스템** - 연속적 더보기 호출로 충분한 콘텐츠 확보
 //  🐛 **스코프 에러 수정** - JavaScript 변수 정의 순서 개선
 //  🎯 **4요소 패키지 앵커** - id+type+ts+kw 패키지로 정확한 복원
+//  ✅ **URL 검증 강화** - 올바른 페이지에서만 복원 실행
+//  📏 **콘텐츠 높이 매칭** - 캐처 시점과 복원 시점 높이 일치 보장
 
 import UIKit
 import WebKit
@@ -176,9 +178,106 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 4요소 패키지 조합 복원 + 데이터 프리로딩**
+    // 🚀 **핵심 개선: 4요소 패키지 조합 복원 + 데이터 프리로딩 + URL 검증 + 콘텐츠 높이 매칭**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🚀 4요소 패키지 조합 BFCache 복원 시작")
+        
+        // ✅ **1단계: URL 검증 - 올바른 페이지에서만 복원**
+        DispatchQueue.main.async {
+            guard let currentURL = webView.url else {
+                TabPersistenceManager.debugMessages.append("❌ 현재 웹뷰 URL 없음 - 복원 취소")
+                completion(false)
+                return
+            }
+            
+            let cachedURL = self.pageRecord.url
+            let currentHost = currentURL.host?.lowercased() ?? ""
+            let cachedHost = cachedURL.host?.lowercased() ?? ""
+            let currentPath = currentURL.path
+            let cachedPath = cachedURL.path
+            
+            TabPersistenceManager.debugMessages.append("✅ URL 검증 시작:")
+            TabPersistenceManager.debugMessages.append("   현재 URL: \(currentURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("   캐시 URL: \(cachedURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("   현재 호스트: \(currentHost)")
+            TabPersistenceManager.debugMessages.append("   캐시 호스트: \(cachedHost)")
+            TabPersistenceManager.debugMessages.append("   현재 경로: \(currentPath)")
+            TabPersistenceManager.debugMessages.append("   캐시 경로: \(cachedPath)")
+            
+            // 호스트 일치 확인 (필수)
+            guard currentHost == cachedHost else {
+                TabPersistenceManager.debugMessages.append("❌ 호스트 불일치 - 복원 취소: \(currentHost) ≠ \(cachedHost)")
+                completion(false)
+                return
+            }
+            
+            // 경로 일치 확인 (엄격)
+            guard currentPath == cachedPath else {
+                TabPersistenceManager.debugMessages.append("❌ 경로 불일치 - 복원 취소: \(currentPath) ≠ \(cachedPath)")
+                completion(false)
+                return
+            }
+            
+            // URL 파라미터 비교 (선택적 - 중요한 파라미터만)
+            let currentQuery = currentURL.query ?? ""
+            let cachedQuery = cachedURL.query ?? ""
+            
+            if currentQuery != cachedQuery {
+                // 중요한 쿼리 파라미터만 확인 (id, page 등)
+                let importantParams = ["id", "page", "post", "article", "thread", "comment"]
+                let currentParams = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let cachedParams = URLComponents(url: cachedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                
+                for param in importantParams {
+                    let currentValue = currentParams.first { $0.name == param }?.value
+                    let cachedValue = cachedParams.first { $0.name == param }?.value
+                    
+                    if currentValue != cachedValue {
+                        TabPersistenceManager.debugMessages.append("❌ 중요한 쿼리 파라미터 불일치 - 복원 취소: \(param) (\(currentValue ?? "nil") ≠ \(cachedValue ?? "nil"))")
+                        completion(false)
+                        return
+                    }
+                }
+                
+                TabPersistenceManager.debugMessages.append("⚠️ 쿼리 파라미터 차이 있지만 중요한 파라미터는 일치")
+                TabPersistenceManager.debugMessages.append("   현재 쿼리: \(currentQuery)")
+                TabPersistenceManager.debugMessages.append("   캐시 쿼리: \(cachedQuery)")
+            }
+            
+            TabPersistenceManager.debugMessages.append("✅ URL 검증 통과 - 복원 진행")
+            
+            // ✅ **2단계: 페이지 로딩 상태 확인**
+            if webView.isLoading {
+                TabPersistenceManager.debugMessages.append("⏳ 페이지 로딩 중 - 로딩 완료 대기")
+                
+                var loadingCheckCount = 0
+                let maxLoadingChecks = 50 // 5초 최대 대기
+                
+                func checkLoadingComplete() {
+                    loadingCheckCount += 1
+                    
+                    if !webView.isLoading {
+                        TabPersistenceManager.debugMessages.append("✅ 페이지 로딩 완료 (\(loadingCheckCount * 100)ms 대기)")
+                        self.proceedWithRestore(to: webView, completion: completion)
+                    } else if loadingCheckCount >= maxLoadingChecks {
+                        TabPersistenceManager.debugMessages.append("⏰ 로딩 대기 타임아웃 - 강제 복원 진행")
+                        self.proceedWithRestore(to: webView, completion: completion)
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            checkLoadingComplete()
+                        }
+                    }
+                }
+                
+                checkLoadingComplete()
+            } else {
+                self.proceedWithRestore(to: webView, completion: completion)
+            }
+        }
+    }
+    
+    // ✅ **URL 검증 통과 후 실제 복원 진행**
+    private func proceedWithRestore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 캡처 상태: \(captureStatus.rawValue)")
         TabPersistenceManager.debugMessages.append("📊 목표 스크롤: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
@@ -253,10 +352,10 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
         
-        // 🔄 **1단계: 데이터 프리로딩 실행 (복원 전에)**
+        // 📏 **1단계: 콘텐츠 높이 매칭 및 데이터 프리로딩 실행 (복원 전에)**
         if preloadingConfig.enableDataPreloading {
-            performDataPreloading(to: webView) { preloadSuccess in
-                TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 완료: \(preloadSuccess ? "성공" : "실패")")
+            performContentHeightMatching(to: webView) { preloadSuccess in
+                TabPersistenceManager.debugMessages.append("📏 콘텐츠 높이 매칭 완료: \(preloadSuccess ? "성공" : "실패")")
                 
                 // 🚀 **2단계: 4요소 패키지 복원 실행**
                 self.performFourElementPackageRestore(to: webView)
@@ -266,33 +365,41 @@ struct BFCacheSnapshot: Codable {
             }
         } else {
             // 프리로딩 비활성화 시 바로 복원
-            TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 비활성화 - 바로 복원")
+            TabPersistenceManager.debugMessages.append("📏 콘텐츠 높이 매칭 비활성화 - 바로 복원")
             performFourElementPackageRestore(to: webView)
             handleCaptureStatusBasedRestore(to: webView, completion: completion)
         }
     }
     
-    // 🔄 **새 추가: 데이터 프리로딩 메서드**
-    private func performDataPreloading(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 시작")
+    // 📏 **새 추가: 콘텐츠 높이 매칭 메서드 (캐처 시점과 복원 시점 높이 일치 보장)**
+    private func performContentHeightMatching(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        TabPersistenceManager.debugMessages.append("📏 콘텐츠 높이 매칭 시작")
         
-        let preloadingJS = generateDataPreloadingScript()
+        let heightMatchingJS = generateContentHeightMatchingScript()
         
         DispatchQueue.main.async {
-            webView.evaluateJavaScript(preloadingJS) { result, error in
+            webView.evaluateJavaScript(heightMatchingJS) { result, error in
                 var success = false
                 
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 JS 오류: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("📏 콘텐츠 높이 매칭 JS 오류: \(error.localizedDescription)")
                 } else if let resultDict = result as? [String: Any] {
                     success = (resultDict["success"] as? Bool) ?? false
                     
-                    if let loadedContentHeight = resultDict["loadedContentHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 후 콘텐츠 높이: \(String(format: "%.1f", loadedContentHeight))px")
+                    if let currentHeight = resultDict["currentHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📏 현재 콘텐츠 높이: \(String(format: "%.1f", currentHeight))px")
+                    }
+                    
+                    if let targetHeight = resultDict["targetHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📏 목표 콘텐츠 높이: \(String(format: "%.1f", targetHeight))px")
+                    }
+                    
+                    if let heightDiff = resultDict["heightDiff"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📏 높이 차이: \(String(format: "%.1f", heightDiff))px")
                     }
                     
                     if let loadingAttempts = resultDict["loadingAttempts"] as? Int {
-                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 시도 횟수: \(loadingAttempts)회")
+                        TabPersistenceManager.debugMessages.append("📏 높이 매칭 시도 횟수: \(loadingAttempts)회")
                     }
                     
                     if let batchResults = resultDict["batchResults"] as? [[String: Any]] {
@@ -300,25 +407,25 @@ struct BFCacheSnapshot: Codable {
                     }
                     
                     if let detailedLogs = resultDict["detailedLogs"] as? [String] {
-                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 상세 로그:")
-                        for log in detailedLogs.prefix(10) {
+                        TabPersistenceManager.debugMessages.append("📏 높이 매칭 상세 로그:")
+                        for log in detailedLogs.prefix(15) {
                             TabPersistenceManager.debugMessages.append("   \(log)")
                         }
                     }
                     
                     if let errorMsg = resultDict["error"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔄 프리로딩 오류: \(errorMsg)")
+                        TabPersistenceManager.debugMessages.append("📏 높이 매칭 오류: \(errorMsg)")
                     }
                 }
                 
-                TabPersistenceManager.debugMessages.append("🔄 데이터 프리로딩 결과: \(success ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("📏 콘텐츠 높이 매칭 결과: \(success ? "성공" : "실패")")
                 completion(success)
             }
         }
     }
     
-    // 🔄 **새 추가: 데이터 프리로딩 JavaScript 생성**
-    private func generateDataPreloadingScript() -> String {
+    // 📏 **새 추가: 콘텐츠 높이 매칭 JavaScript 생성**
+    private func generateContentHeightMatchingScript() -> String {
         let targetHeight = preloadingConfig.targetContentHeight
         let maxAttempts = preloadingConfig.maxPreloadAttempts
         let batchSize = preloadingConfig.preloadBatchSize
@@ -328,7 +435,7 @@ struct BFCacheSnapshot: Codable {
         return """
         (async function() {
             try {
-                console.log('🔄 데이터 프리로딩 시작');
+                console.log('📏 콘텐츠 높이 매칭 시작');
                 
                 const detailedLogs = [];
                 const batchResults = [];
@@ -337,18 +444,21 @@ struct BFCacheSnapshot: Codable {
                 const maxAttempts = parseInt('\(maxAttempts)');
                 const batchSize = parseInt('\(batchSize)');
                 const enableBatchLoading = \(enableBatchLoading);
+                const heightTolerance = 200; // 높이 허용 오차 200px
                 
-                detailedLogs.push('🔄 데이터 프리로딩 설정');
+                detailedLogs.push('📏 콘텐츠 높이 매칭 시작');
                 detailedLogs.push(`목표 높이: ${targetContentHeight.toFixed(1)}px`);
                 detailedLogs.push(`최대 시도: ${maxAttempts}회`);
                 detailedLogs.push(`배치 크기: ${batchSize}개`);
                 detailedLogs.push(`배치 로딩: ${enableBatchLoading ? '활성화' : '비활성화'}`);
+                detailedLogs.push(`높이 허용 오차: ${heightTolerance}px`);
                 
-                console.log('🔄 데이터 프리로딩 설정:', {
+                console.log('📏 콘텐츠 높이 매칭 설정:', {
                     targetContentHeight: targetContentHeight,
                     maxAttempts: maxAttempts,
                     batchSize: batchSize,
-                    enableBatchLoading: enableBatchLoading
+                    enableBatchLoading: enableBatchLoading,
+                    heightTolerance: heightTolerance
                 });
                 
                 // 📊 **현재 페이지 상태 확인**
@@ -366,16 +476,36 @@ struct BFCacheSnapshot: Codable {
                         viewportHeight: viewportHeight,
                         currentScrollY: currentScrollY,
                         maxScrollY: maxScrollY,
-                        needsMore: currentHeight < targetContentHeight
+                        heightDeficit: Math.max(0, targetContentHeight - currentHeight)
                     };
                 }
                 
+                const initialState = getCurrentPageState();
+                detailedLogs.push(`초기 콘텐츠 높이: ${initialState.currentHeight.toFixed(1)}px`);
+                detailedLogs.push(`목표 높이와 차이: ${(targetContentHeight - initialState.currentHeight).toFixed(1)}px`);
+                
+                // 📏 **높이가 이미 충분한지 확인**
+                if (initialState.currentHeight >= targetContentHeight - heightTolerance) {
+                    detailedLogs.push('목표 높이 이미 달성 - 높이 매칭 불필요');
+                    return {
+                        success: true,
+                        reason: 'already_sufficient_height',
+                        currentHeight: initialState.currentHeight,
+                        targetHeight: targetContentHeight,
+                        heightDiff: targetContentHeight - initialState.currentHeight,
+                        loadingAttempts: 0,
+                        detailedLogs: detailedLogs
+                    };
+                }
+                
+                detailedLogs.push(`높이 부족 - 추가 로딩 필요: ${initialState.heightDeficit.toFixed(1)}px`);
+                
                 // 🔄 **무한스크롤 트리거 메서드들**
-                function triggerInfiniteScroll() {
+                function triggerContentLoading() {
                     const triggers = [];
+                    const state = getCurrentPageState();
                     
                     // 1. 페이지 하단 스크롤
-                    const state = getCurrentPageState();
                     const bottomY = state.maxScrollY;
                     window.scrollTo(0, bottomY);
                     triggers.push({ method: 'scroll_bottom', scrollY: bottomY });
@@ -390,16 +520,21 @@ struct BFCacheSnapshot: Codable {
                         '[data-testid*="load"], [class*="load"], [class*="more"], ' +
                         '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger, ' +
                         '[onclick*="more"], [onclick*="load"], button[class*="more"], ' +
-                        'a[href*="more"], .btn-more, .more-btn, .load-btn, .btn-load'
+                        'a[href*="more"], .btn-more, .more-btn, .load-btn, .btn-load, ' +
+                        '.next, .next-page, .pagination a, .pager a'
                     );
                     
                     let clickedButtons = 0;
                     loadMoreButtons.forEach((btn, index) => {
                         if (btn && typeof btn.click === 'function') {
                             try {
-                                btn.click();
-                                clickedButtons++;
-                                detailedLogs.push(`더보기 버튼[${index}] 클릭: ${btn.className || btn.tagName}`);
+                                // 버튼이 보이는 영역에 있는지 확인
+                                const rect = btn.getBoundingClientRect();
+                                if (rect.height > 0 && rect.width > 0) {
+                                    btn.click();
+                                    clickedButtons++;
+                                    detailedLogs.push(`더보기 버튼[${index}] 클릭: ${btn.className || btn.tagName}`);
+                                }
                             } catch(e) {
                                 detailedLogs.push(`더보기 버튼[${index}] 클릭 실패: ${e.message}`);
                             }
@@ -407,13 +542,19 @@ struct BFCacheSnapshot: Codable {
                     });
                     triggers.push({ method: 'load_more_buttons', found: loadMoreButtons.length, clicked: clickedButtons });
                     
-                    // 4. AJAX 요청 감지 및 대기
-                    let ajaxRequests = 0;
-                    if (window.XMLHttpRequest && window.XMLHttpRequest.prototype.open) {
-                        // AJAX 요청이 있을 가능성 체크
-                        ajaxRequests = 1; // 가정
+                    // 4. AJAX 요청 트리거 (가능한 경우)
+                    try {
+                        if (typeof window.loadMore === 'function') {
+                            window.loadMore();
+                            triggers.push({ method: 'window_loadMore', success: true });
+                        }
+                        if (typeof window.fetchMoreContent === 'function') {
+                            window.fetchMoreContent();
+                            triggers.push({ method: 'window_fetchMoreContent', success: true });
+                        }
+                    } catch(e) {
+                        triggers.push({ method: 'custom_functions', error: e.message });
                     }
-                    triggers.push({ method: 'ajax_detection', estimated: ajaxRequests });
                     
                     // 5. 터치 이벤트 (모바일)
                     try {
@@ -424,50 +565,64 @@ struct BFCacheSnapshot: Codable {
                         triggers.push({ method: 'touch_events', success: false, error: e.message });
                     }
                     
+                    detailedLogs.push(`콘텐츠 로딩 트리거: ${triggers.length}개 방법 시도`);
                     return triggers;
                 }
                 
                 // 📦 **배치 로딩 실행**
-                async function performBatchLoading() {
+                async function performBatchContentLoading() {
                     const batchStartTime = Date.now();
                     let totalTriggered = 0;
-                    let heightIncreased = false;
+                    let significantHeightIncrease = false;
+                    let bestHeightGain = 0;
                     
                     for (let batch = 0; batch < batchSize && loadingAttempts < maxAttempts; batch++) {
                         const beforeState = getCurrentPageState();
                         
-                        detailedLogs.push(`배치[${batch + 1}/${batchSize}] 시작: 현재 높이=${beforeState.currentHeight.toFixed(1)}px`);
+                        detailedLogs.push(`높이매칭 배치[${batch + 1}/${batchSize}] 시작: 현재=${beforeState.currentHeight.toFixed(1)}px, 목표=${targetContentHeight.toFixed(1)}px`);
                         
-                        // 무한스크롤 트리거 실행
-                        const triggers = triggerInfiniteScroll();
+                        // 콘텐츠 로딩 트리거 실행
+                        const triggers = triggerContentLoading();
                         totalTriggered += triggers.length;
                         loadingAttempts++;
                         
-                        // 잠시 대기 (콘텐츠 로딩 시간 확보)
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        // 콘텐츠 로딩 대기 시간 (더 길게 설정)
+                        await new Promise(resolve => setTimeout(resolve, 1500));
                         
                         const afterState = getCurrentPageState();
-                        const heightDiff = afterState.currentHeight - beforeState.currentHeight;
+                        const heightGain = afterState.currentHeight - beforeState.currentHeight;
                         
-                        detailedLogs.push(`배치[${batch + 1}] 완료: 높이 변화=${heightDiff.toFixed(1)}px`);
+                        detailedLogs.push(`높이매칭 배치[${batch + 1}] 완료: 높이 증가=${heightGain.toFixed(1)}px`);
+                        detailedLogs.push(`   현재 높이: ${afterState.currentHeight.toFixed(1)}px, 목표까지 남은 높이: ${(targetContentHeight - afterState.currentHeight).toFixed(1)}px`);
                         
-                        if (heightDiff > 50) { // 50px 이상 증가하면 성공
-                            heightIncreased = true;
-                            detailedLogs.push(`배치[${batch + 1}] 높이 증가 감지: ${heightDiff.toFixed(1)}px`);
+                        if (heightGain > bestHeightGain) {
+                            bestHeightGain = heightGain;
+                        }
+                        
+                        if (heightGain > 100) { // 100px 이상 증가하면 유의미한 증가
+                            significantHeightIncrease = true;
+                            detailedLogs.push(`높이매칭 배치[${batch + 1}] 유의미한 높이 증가 감지: ${heightGain.toFixed(1)}px`);
                         }
                         
                         batchResults.push({
                             batchIndex: batch + 1,
                             beforeHeight: beforeState.currentHeight,
                             afterHeight: afterState.currentHeight,
-                            heightDiff: heightDiff,
+                            heightGain: heightGain,
                             triggersUsed: triggers.length,
-                            success: heightDiff > 50
+                            success: heightGain > 50,
+                            targetDeficit: targetContentHeight - afterState.currentHeight
                         });
                         
-                        // 목표 높이 달성 시 중단
-                        if (afterState.currentHeight >= targetContentHeight) {
-                            detailedLogs.push(`목표 높이 달성: ${afterState.currentHeight.toFixed(1)}px >= ${targetContentHeight.toFixed(1)}px`);
+                        // 목표 높이 달성 시 중단 (허용 오차 포함)
+                        if (afterState.currentHeight >= targetContentHeight - heightTolerance) {
+                            detailedLogs.push(`목표 높이 달성: ${afterState.currentHeight.toFixed(1)}px >= ${(targetContentHeight - heightTolerance).toFixed(1)}px`);
+                            break;
+                        }
+                        
+                        // 높이가 더 이상 증가하지 않으면 중단
+                        if (batch > 0 && heightGain < 10) {
+                            detailedLogs.push(`높이 증가 멈춤 감지 - 배치 중단 (증가량: ${heightGain.toFixed(1)}px < 10px)`);
                             break;
                         }
                     }
@@ -478,39 +633,31 @@ struct BFCacheSnapshot: Codable {
                     return {
                         totalBatches: batchResults.length,
                         totalTriggered: totalTriggered,
-                        heightIncreased: heightIncreased,
+                        significantHeightIncrease: significantHeightIncrease,
+                        bestHeightGain: bestHeightGain,
                         duration: batchDuration,
                         finalState: getCurrentPageState()
                     };
                 }
                 
-                // 🔄 **메인 프리로딩 로직**
-                async function executePreloading() {
+                // 🔄 **메인 높이 매칭 로직**
+                async function executeHeightMatching() {
                     const startTime = Date.now();
                     const initialState = getCurrentPageState();
                     
-                    detailedLogs.push(`초기 상태: 높이=${initialState.currentHeight.toFixed(1)}px, 필요=${initialState.needsMore ? '예' : '아니오'}`);
-                    
-                    if (!initialState.needsMore) {
-                        detailedLogs.push('목표 높이 이미 달성 - 프리로딩 불필요');
-                        return {
-                            success: true,
-                            reason: 'already_sufficient',
-                            loadedContentHeight: initialState.currentHeight,
-                            loadingAttempts: 0
-                        };
-                    }
+                    detailedLogs.push(`높이 매칭 시작 상태: 현재=${initialState.currentHeight.toFixed(1)}px, 목표=${targetContentHeight.toFixed(1)}px`);
+                    detailedLogs.push(`필요한 추가 높이: ${initialState.heightDeficit.toFixed(1)}px`);
                     
                     let finalResult = null;
                     
                     if (enableBatchLoading) {
-                        detailedLogs.push('📦 배치 로딩 모드 시작');
-                        finalResult = await performBatchLoading();
+                        detailedLogs.push('📦 배치 높이 매칭 모드 시작');
+                        finalResult = await performBatchContentLoading();
                     } else {
-                        detailedLogs.push('🔄 단일 로딩 모드 시작');
+                        detailedLogs.push('🔄 단일 높이 매칭 모드 시작');
                         // 단일 로딩 모드
                         const beforeState = getCurrentPageState();
-                        const triggers = triggerInfiniteScroll();
+                        const triggers = triggerContentLoading();
                         loadingAttempts = 1;
                         
                         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -519,7 +666,8 @@ struct BFCacheSnapshot: Codable {
                         finalResult = {
                             totalBatches: 1,
                             totalTriggered: triggers.length,
-                            heightIncreased: afterState.currentHeight > beforeState.currentHeight + 50,
+                            significantHeightIncrease: afterState.currentHeight > beforeState.currentHeight + 100,
+                            bestHeightGain: afterState.currentHeight - beforeState.currentHeight,
                             duration: 2000,
                             finalState: afterState
                         };
@@ -527,53 +675,70 @@ struct BFCacheSnapshot: Codable {
                     
                     const endTime = Date.now();
                     const totalDuration = endTime - startTime;
+                    const finalState = finalResult.finalState;
+                    const finalHeightGain = finalState.currentHeight - initialState.currentHeight;
+                    const heightMatchSuccess = finalState.currentHeight >= targetContentHeight - heightTolerance;
                     
-                    detailedLogs.push(`프리로딩 완료: ${totalDuration}ms 소요`);
-                    detailedLogs.push(`최종 높이: ${finalResult.finalState.currentHeight.toFixed(1)}px`);
-                    detailedLogs.push(`높이 증가: ${finalResult.heightIncreased ? '성공' : '실패'}`);
+                    detailedLogs.push(`높이 매칭 완료: ${totalDuration}ms 소요`);
+                    detailedLogs.push(`최종 높이: ${finalState.currentHeight.toFixed(1)}px`);
+                    detailedLogs.push(`총 높이 증가: ${finalHeightGain.toFixed(1)}px`);
+                    detailedLogs.push(`목표 높이 달성: ${heightMatchSuccess ? '성공' : '실패'}`);
+                    detailedLogs.push(`남은 높이 차이: ${(targetContentHeight - finalState.currentHeight).toFixed(1)}px`);
                     
                     return {
-                        success: finalResult.heightIncreased || finalResult.finalState.currentHeight >= targetContentHeight * 0.8, // 80% 달성도 성공
-                        reason: finalResult.heightIncreased ? 'height_increased' : 'no_height_change',
-                        loadedContentHeight: finalResult.finalState.currentHeight,
+                        success: heightMatchSuccess || finalHeightGain > 200, // 목표 달성 또는 200px 이상 증가면 성공
+                        reason: heightMatchSuccess ? 'target_height_achieved' : (finalHeightGain > 200 ? 'significant_height_gain' : 'insufficient_height'),
+                        currentHeight: finalState.currentHeight,
+                        targetHeight: targetContentHeight,
+                        heightDiff: targetContentHeight - finalState.currentHeight,
+                        heightGain: finalHeightGain,
                         loadingAttempts: loadingAttempts,
                         batchResults: batchResults,
                         totalDuration: totalDuration,
                         initialHeight: initialState.currentHeight,
-                        targetHeight: targetContentHeight,
-                        detailedLogs: detailedLogs
+                        detailedLogs: detailedLogs,
+                        bestHeightGain: finalResult.bestHeightGain
                     };
                 }
                 
-                // 프리로딩 실행 (타임아웃 적용)
+                // 높이 매칭 실행 (타임아웃 적용)
                 const timeoutPromise = new Promise((resolve) => {
                     setTimeout(() => resolve({
                         success: false,
                         reason: 'timeout',
-                        loadedContentHeight: getCurrentPageState().currentHeight,
+                        currentHeight: getCurrentPageState().currentHeight,
+                        targetHeight: targetContentHeight,
+                        heightDiff: targetContentHeight - getCurrentPageState().currentHeight,
                         loadingAttempts: loadingAttempts,
-                        error: `프리로딩 타임아웃 (${timeoutSeconds}초)`,
+                        error: `높이 매칭 타임아웃 (${timeoutSeconds}초)`,
                         detailedLogs: detailedLogs
                     }), \(timeoutSeconds) * 1000);
                 });
                 
-                const preloadingPromise = executePreloading();
+                const heightMatchingPromise = executeHeightMatching();
                 
-                return await Promise.race([preloadingPromise, timeoutPromise]);
+                return await Promise.race([heightMatchingPromise, timeoutPromise]);
                 
             } catch(e) {
-                console.error('🔄 데이터 프리로딩 실패:', e);
+                console.error('📏 콘텐츠 높이 매칭 실패:', e);
                 return {
                     success: false,
                     reason: 'exception',
                     error: e.message,
-                    loadedContentHeight: getCurrentPageState ? getCurrentPageState().currentHeight : 0,
+                    currentHeight: getCurrentPageState ? getCurrentPageState().currentHeight : 0,
+                    targetHeight: \(targetHeight),
                     loadingAttempts: loadingAttempts,
-                    detailedLogs: [`프리로딩 실패: ${e.message}`]
+                    detailedLogs: [`높이 매칭 실패: ${e.message}`]
                 };
             }
         })()
         """
+    }
+    
+    // 🔄 **기존 데이터 프리로딩 메서드 (이제 콘텐츠 높이 매칭으로 대체됨)**
+    private func performDataPreloading(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        TabPersistenceManager.debugMessages.append("🔄 레거시 데이터 프리로딩 - 콘텐츠 높이 매칭으로 대체됨")
+        completion(true)
     }
     
     // 🔧 **기존 상태별 분기 로직 분리**
@@ -2009,7 +2174,7 @@ extension BFCacheTransitionSystem {
                     let completePackageAnchors = anchors.filter { anchor in
                         if let pkg = anchor["fourElementPackage"] as? [String: Any] {
                             let hasId = pkg["id"] != nil
-                            let hasType = pkg["type"] != nil  
+                            let hasType = pkg["type"] != nil
                             let hasTs = pkg["ts"] != nil
                             let hasKw = pkg["kw"] != nil
                             return hasId && hasType && hasTs && hasKw
@@ -2027,7 +2192,7 @@ extension BFCacheTransitionSystem {
                         if let pkg = firstPackageAnchor["fourElementPackage"] as? [String: Any] {
                             let id = pkg["id"] as? String ?? "unknown"
                             let type = pkg["type"] as? String ?? "unknown"
-                            let ts = pkg["ts"] as? String ?? "unknown"  
+                            let ts = pkg["ts"] as? String ?? "unknown"
                             let kw = pkg["kw"] as? String ?? "unknown"
                             TabPersistenceManager.debugMessages.append("📊 첫 완전패키지 4요소: id=\(id), type=\(type), ts=\(ts), kw=\(kw)")
                         }
@@ -2198,7 +2363,7 @@ extension BFCacheTransitionSystem {
                                 if let pkg = anchor["fourElementPackage"] as? [String: Any] {
                                     let hasId = pkg["id"] != nil
                                     let hasType = pkg["type"] != nil
-                                    let hasTs = pkg["ts"] != nil  
+                                    let hasTs = pkg["ts"] != nil
                                     let hasKw = pkg["kw"] != nil
                                     return hasId && hasType && hasTs && hasKw
                                 }
