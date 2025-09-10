@@ -9,6 +9,7 @@
 //  👁️ **보이는 요소만 캡처** - 실제 표시되는 활성 요소만 선별 캡처
 //  🧹 **의미있는 텍스트 필터링** - 에러메시지, 로딩메시지 등 제외
 //  🚫 **점진적 스크롤 제거** - 프리로딩으로 대체하여 중복 제거
+//  ⏱️ **단계별 대기 메커니즘** - MutationObserver + 시간 기반 하이브리드 대기
 
 import UIKit
 import WebKit
@@ -32,6 +33,9 @@ struct BFCacheSnapshot: Codable {
     // 🔄 **프리로딩 설정**
     let preloadingConfig: PreloadingConfig
     
+    // ⏱️ **단계별 대기 설정**
+    let waitingConfig: WaitingConfig
+    
     struct PreloadingConfig: Codable {
         let enableDataPreloading: Bool          // 🔄 데이터 프리로딩 활성화
         let enableBatchLoading: Bool            // 📦 배치 로딩 활성화  
@@ -47,6 +51,27 @@ struct BFCacheSnapshot: Codable {
             maxPreloadAttempts: 10,
             preloadBatchSize: 5,
             preloadTimeoutSeconds: 30
+        )
+    }
+    
+    // ⏱️ **단계별 대기 설정 구조체**
+    struct WaitingConfig: Codable {
+        let enableSmartWaiting: Bool           // 스마트 대기 활성화
+        let useMutationObserver: Bool          // MutationObserver 사용
+        let useTimeBasedWaiting: Bool          // 시간 기반 대기 사용
+        let maxWaitTimeMs: Int                 // 최대 대기 시간 (ms)
+        let minWaitTimeMs: Int                 // 최소 대기 시간 (ms)
+        let stabilityCheckIntervalMs: Int      // 안정성 체크 간격 (ms)
+        let domStabilityThresholdMs: Int       // DOM 안정화 임계값 (ms)
+        
+        static let `default` = WaitingConfig(
+            enableSmartWaiting: true,
+            useMutationObserver: true,
+            useTimeBasedWaiting: true,
+            maxWaitTimeMs: 1500,               // 최대 1.5초 대기
+            minWaitTimeMs: 100,                // 최소 100ms 대기
+            stabilityCheckIntervalMs: 50,      // 50ms 간격으로 체크
+            domStabilityThresholdMs: 200       // 200ms 동안 변경 없으면 안정화
         )
     }
     
@@ -72,6 +97,7 @@ struct BFCacheSnapshot: Codable {
         case captureStatus
         case version
         case preloadingConfig
+        case waitingConfig
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -85,6 +111,7 @@ struct BFCacheSnapshot: Codable {
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
         preloadingConfig = try container.decodeIfPresent(PreloadingConfig.self, forKey: .preloadingConfig) ?? PreloadingConfig.default
+        waitingConfig = try container.decodeIfPresent(WaitingConfig.self, forKey: .waitingConfig) ?? WaitingConfig.default
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -107,6 +134,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
         try container.encode(preloadingConfig, forKey: .preloadingConfig)
+        try container.encode(waitingConfig, forKey: .waitingConfig)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -133,7 +161,8 @@ struct BFCacheSnapshot: Codable {
          webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, 
          version: Int = 1,
-         preloadingConfig: PreloadingConfig = PreloadingConfig.default) {
+         preloadingConfig: PreloadingConfig = PreloadingConfig.default,
+         waitingConfig: WaitingConfig = WaitingConfig.default) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -154,6 +183,7 @@ struct BFCacheSnapshot: Codable {
             preloadBatchSize: preloadingConfig.preloadBatchSize,
             preloadTimeoutSeconds: preloadingConfig.preloadTimeoutSeconds
         )
+        self.waitingConfig = waitingConfig
     }
     
     // 이미지 로드 메서드
@@ -164,36 +194,120 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // 🚀 **핵심 개선: 개선된 4단계 복원 시스템**
+    // 🚀 **핵심 개선: 단계별 대기가 추가된 4단계 복원 시스템**
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🚀 개선된 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🚀 개선된 4단계 BFCache 복원 시작 (대기 메커니즘 적용)")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 캡처 상태: \(captureStatus.rawValue)")
         TabPersistenceManager.debugMessages.append("📊 목표 스크롤: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장시점 콘텐츠: \(String(format: "%.0f", preloadingConfig.targetContentHeight))px")
+        TabPersistenceManager.debugMessages.append("⏱️ 대기 설정: MutationObserver=\(waitingConfig.useMutationObserver), TimeBase=\(waitingConfig.useTimeBasedWaiting)")
         
         // 🚀 **1단계: 데이터 프리로딩 (저장시점 콘텐츠 높이까지)**
         performDataPreloading(to: webView) { preloadSuccess in
             TabPersistenceManager.debugMessages.append("🔄 1단계 데이터 프리로딩: \(preloadSuccess ? "성공" : "실패")")
             
-            // 🚀 **2단계: 상대적 백분율 복원**
-            self.performPercentageRestore(to: webView) { percentageSuccess in
-                TabPersistenceManager.debugMessages.append("📊 2단계 백분율 복원: \(percentageSuccess ? "성공" : "실패")")
+            // ⏱️ **프리로딩 후 DOM 안정화 대기**
+            self.waitForStabilization(webView: webView, stepName: "프리로딩 후") { 
                 
-                // 🚀 **3단계: 4요소 패키지 앵커 정밀 복원**
-                self.performFourElementPackageRestore(to: webView) { anchorSuccess in
-                    TabPersistenceManager.debugMessages.append("🎯 3단계 앵커 정밀 복원: \(anchorSuccess ? "성공" : "실패")")
+                // 🚀 **2단계: 상대적 백분율 복원**
+                self.performPercentageRestore(to: webView) { percentageSuccess in
+                    TabPersistenceManager.debugMessages.append("📊 2단계 백분율 복원: \(percentageSuccess ? "성공" : "실패")")
                     
-                    // 🚀 **4단계: 최종 검증 및 오차 임계값 풀백**
-                    self.performFinalVerificationAndFallback(to: webView) { finalSuccess in
-                        TabPersistenceManager.debugMessages.append("✅ 4단계 최종 검증: \(finalSuccess ? "성공" : "풀백")")
+                    // ⏱️ **스크롤 완료 대기**
+                    self.waitForScrollCompletion(webView: webView, stepName: "백분율 복원 후") {
                         
-                        let overallSuccess = preloadSuccess || percentageSuccess || anchorSuccess || finalSuccess
-                        TabPersistenceManager.debugMessages.append("🚀 전체 복원 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
-                        completion(overallSuccess)
+                        // 🚀 **3단계: 4요소 패키지 앵커 정밀 복원**
+                        self.performFourElementPackageRestore(to: webView) { anchorSuccess in
+                            TabPersistenceManager.debugMessages.append("🎯 3단계 앵커 정밀 복원: \(anchorSuccess ? "성공" : "실패")")
+                            
+                            // ⏱️ **앵커 스크롤 완료 대기**
+                            self.waitForScrollCompletion(webView: webView, stepName: "앵커 복원 후") {
+                                
+                                // 🚀 **4단계: 최종 검증 및 오차 임계값 풀백**
+                                self.performFinalVerificationAndFallback(to: webView) { finalSuccess in
+                                    TabPersistenceManager.debugMessages.append("✅ 4단계 최종 검증: \(finalSuccess ? "성공" : "풀백")")
+                                    
+                                    let overallSuccess = preloadSuccess || percentageSuccess || anchorSuccess || finalSuccess
+                                    TabPersistenceManager.debugMessages.append("🚀 전체 복원 결과: \(overallSuccess ? "✅ 성공" : "❌ 실패")")
+                                    completion(overallSuccess)
+                                }
+                            }
+                        }
                     }
                 }
+            }
+        }
+    }
+    
+    // ⏱️ **DOM 안정화 대기 메서드**
+    private func waitForStabilization(webView: WKWebView, stepName: String, completion: @escaping () -> Void) {
+        if !waitingConfig.enableSmartWaiting {
+            TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스마트 대기 비활성화 - 즉시 진행")
+            completion()
+            return
+        }
+        
+        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) DOM 안정화 대기 시작")
+        
+        let waitScript = generateStabilizationWaitScript(
+            useMutationObserver: waitingConfig.useMutationObserver,
+            maxWaitMs: waitingConfig.maxWaitTimeMs,
+            minWaitMs: waitingConfig.minWaitTimeMs,
+            stabilityThresholdMs: waitingConfig.domStabilityThresholdMs,
+            checkIntervalMs: waitingConfig.stabilityCheckIntervalMs
+        )
+        
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(waitScript) { result, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 대기 스크립트 오류: \(error.localizedDescription)")
+                } else if let resultDict = result as? [String: Any] {
+                    if let waitedMs = resultDict["waitedMs"] as? Int {
+                        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 대기 완료: \(waitedMs)ms")
+                    }
+                    if let method = resultDict["method"] as? String {
+                        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 대기 방법: \(method)")
+                    }
+                    if let mutationCount = resultDict["mutationCount"] as? Int {
+                        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 감지된 DOM 변경: \(mutationCount)회")
+                    }
+                }
+                completion()
+            }
+        }
+    }
+    
+    // ⏱️ **스크롤 완료 대기 메서드**
+    private func waitForScrollCompletion(webView: WKWebView, stepName: String, completion: @escaping () -> Void) {
+        if !waitingConfig.enableSmartWaiting {
+            TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 대기 비활성화 - 즉시 진행")
+            completion()
+            return
+        }
+        
+        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 완료 대기 시작")
+        
+        let waitScript = generateScrollCompletionWaitScript(
+            maxWaitMs: min(waitingConfig.maxWaitTimeMs, 500), // 스크롤은 더 짧게
+            minWaitMs: waitingConfig.minWaitTimeMs,
+            checkIntervalMs: waitingConfig.stabilityCheckIntervalMs
+        )
+        
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(waitScript) { result, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 대기 오류: \(error.localizedDescription)")
+                } else if let resultDict = result as? [String: Any] {
+                    if let waitedMs = resultDict["waitedMs"] as? Int {
+                        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 대기: \(waitedMs)ms")
+                    }
+                    if let scrollStable = resultDict["scrollStable"] as? Bool {
+                        TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 안정화: \(scrollStable)")
+                    }
+                }
+                completion()
             }
         }
     }
@@ -392,6 +506,158 @@ struct BFCacheSnapshot: Codable {
                 completion(success)
             }
         }
+    }
+    
+    // ⏱️ **DOM 안정화 대기 스크립트 생성**
+    private func generateStabilizationWaitScript(useMutationObserver: Bool, maxWaitMs: Int, minWaitMs: Int, stabilityThresholdMs: Int, checkIntervalMs: Int) -> String {
+        return """
+        (function() {
+            return new Promise(function(resolve) {
+                console.log('⏱️ DOM 안정화 대기 시작');
+                
+                var startTime = Date.now();
+                var maxWait = \(maxWaitMs);
+                var minWait = \(minWaitMs);
+                var stabilityThreshold = \(stabilityThresholdMs);
+                var checkInterval = \(checkIntervalMs);
+                var useMutationObserver = \(useMutationObserver ? "true" : "false");
+                
+                var mutationCount = 0;
+                var lastMutationTime = Date.now();
+                var observer = null;
+                var checkTimer = null;
+                var resolved = false;
+                
+                function resolveWait(method, waitedMs) {
+                    if (resolved) return;
+                    resolved = true;
+                    
+                    if (observer) observer.disconnect();
+                    if (checkTimer) clearInterval(checkTimer);
+                    
+                    console.log('⏱️ 대기 완료: ' + method + ' (' + waitedMs + 'ms)');
+                    
+                    resolve({
+                        success: true,
+                        method: method,
+                        waitedMs: waitedMs,
+                        mutationCount: mutationCount,
+                        lastMutationTime: lastMutationTime
+                    });
+                }
+                
+                // MutationObserver 설정
+                if (useMutationObserver && typeof MutationObserver !== 'undefined') {
+                    observer = new MutationObserver(function(mutations) {
+                        mutationCount += mutations.length;
+                        lastMutationTime = Date.now();
+                        console.log('⏱️ DOM 변경 감지: ' + mutations.length + '개');
+                    });
+                    
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        characterData: true
+                    });
+                }
+                
+                // 정기적 안정성 체크
+                checkTimer = setInterval(function() {
+                    var currentTime = Date.now();
+                    var elapsedTime = currentTime - startTime;
+                    var timeSinceLastMutation = currentTime - lastMutationTime;
+                    
+                    // 최대 대기 시간 초과
+                    if (elapsedTime >= maxWait) {
+                        resolveWait('max_timeout', elapsedTime);
+                        return;
+                    }
+                    
+                    // 최소 대기 시간 경과 && DOM 안정화
+                    if (elapsedTime >= minWait && timeSinceLastMutation >= stabilityThreshold) {
+                        resolveWait('dom_stable', elapsedTime);
+                        return;
+                    }
+                    
+                }, checkInterval);
+                
+                // 폴백: MutationObserver 미지원시 시간 기반 대기
+                if (!useMutationObserver || typeof MutationObserver === 'undefined') {
+                    setTimeout(function() {
+                        resolveWait('time_based', minWait);
+                    }, minWait);
+                }
+            });
+        })()
+        """
+    }
+    
+    // ⏱️ **스크롤 완료 대기 스크립트 생성**
+    private func generateScrollCompletionWaitScript(maxWaitMs: Int, minWaitMs: Int, checkIntervalMs: Int) -> String {
+        return """
+        (function() {
+            return new Promise(function(resolve) {
+                console.log('⏱️ 스크롤 완료 대기 시작');
+                
+                var startTime = Date.now();
+                var maxWait = \(maxWaitMs);
+                var minWait = \(minWaitMs);
+                var checkInterval = \(checkIntervalMs);
+                
+                var lastScrollY = window.scrollY || window.pageYOffset || 0;
+                var lastScrollX = window.scrollX || window.pageXOffset || 0;
+                var scrollStableCount = 0;
+                var resolved = false;
+                
+                function resolveWait(scrollStable, waitedMs) {
+                    if (resolved) return;
+                    resolved = true;
+                    
+                    clearInterval(checkTimer);
+                    
+                    console.log('⏱️ 스크롤 대기 완료: ' + (scrollStable ? '안정화' : '타임아웃') + ' (' + waitedMs + 'ms)');
+                    
+                    resolve({
+                        success: true,
+                        scrollStable: scrollStable,
+                        waitedMs: waitedMs,
+                        finalScrollY: window.scrollY || window.pageYOffset || 0,
+                        finalScrollX: window.scrollX || window.pageXOffset || 0
+                    });
+                }
+                
+                var checkTimer = setInterval(function() {
+                    var currentTime = Date.now();
+                    var elapsedTime = currentTime - startTime;
+                    var currentScrollY = window.scrollY || window.pageYOffset || 0;
+                    var currentScrollX = window.scrollX || window.pageXOffset || 0;
+                    
+                    // 스크롤 변화 확인
+                    if (Math.abs(currentScrollY - lastScrollY) < 1 && Math.abs(currentScrollX - lastScrollX) < 1) {
+                        scrollStableCount++;
+                    } else {
+                        scrollStableCount = 0;
+                        lastScrollY = currentScrollY;
+                        lastScrollX = currentScrollX;
+                    }
+                    
+                    // 최대 대기 시간 초과
+                    if (elapsedTime >= maxWait) {
+                        resolveWait(scrollStableCount > 0, elapsedTime);
+                        return;
+                    }
+                    
+                    // 스크롤 안정화 (3회 연속 변화 없음)
+                    if (elapsedTime >= minWait && scrollStableCount >= 3) {
+                        resolveWait(true, elapsedTime);
+                        return;
+                    }
+                    
+                }, checkInterval);
+            });
+        })()
+        """
     }
     
     // 🔄 **데이터 프리로딩 JavaScript 생성 - WKWebView 직렬화 안전 버전**
