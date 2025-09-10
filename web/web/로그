@@ -1,0 +1,2396 @@
+[18:13:08.923][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:13:08.923][BA5DBF][B:✅ F:❌][10] 💾 세션 저장: 10개 페이지, 현재 인덱스 9
+스냅샷 생성: ID BA5DBF6E, 10개 페이지, 인덱스 9
+저장 시도: 탭 2개 [72페이지, 10페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22337 바이트
+앱 백그라운드 진입: 탭 저장
+[18:13:14.341][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:13:14.342][BA5DBF][B:✅ F:❌][10] 💾 세션 저장: 10개 페이지, 현재 인덱스 9
+스냅샷 생성: ID BA5DBF6E, 10개 페이지, 인덱스 9
+저장 시도: 탭 2개 [72페이지, 10페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22337 바이트
+앱 백그라운드 진입: 탭 저장
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 53688문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["scroll", "captureStats", "content", "pageAnalysis", "actualScrollable", "fourElementPackageAnchors", "href", "title", "userAgent", "captureTime", "viewport", "timestamp", "detailedLogs"]
+🎯 JS 캡처된 앵커: 0개 (완전 패키지: 0개)
+📊 JS 캡처 통계: ["captureTime": 2, "processingErrors": 0, "qualityFilteredCount": 1, "finalAnchors": 0, "candidateElements": 28, "nearbyElements": 1, "selectorStats": {
+    "div[class*=\"content\"]" = 2;
+    h1 = 2;
+    img = 3;
+    li = 15;
+    p = 5;
+    section = 1;
+}, "anchorCreationErrors": 0, "selectedElements": 1]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 13030.3), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["scroll", "captureStats", "content", "pageAnalysis", "actualScrollable", "fourElementPackageAnchors", "href", "title", "userAgent", "captureTime", "viewport", "timestamp", "detailedLogs"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 0개 (완전 패키지: 0개)
+📊 4요소 패키지 수집 통계: ["captureTime": 2, "processingErrors": 0, "qualityFilteredCount": 1, "finalAnchors": 0, "candidateElements": 28, "nearbyElements": 1, "selectorStats": {
+    "div[class*=\"content\"]" = 2;
+    h1 = 2;
+    img = 3;
+    li = 15;
+    p = 5;
+    section = 1;
+}, "anchorCreationErrors": 0, "selectedElements": 1]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[18:13:21.272][BA5DBF][B:✅ F:❌][10] 🌐 SPA push: m.cafe.naver.com_query_single_spa | https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+✏️ 쿼리 차이: -["tab"] +[]
+[18:13:21.273][BA5DBF][B:✅ F:❌][10] 🆕 URL 차이 감지 - 새 페이지 추가
+[18:13:21.273][BA5DBF][B:✅ F:❌][10]    현재: https://m.cafe.naver.com/ca-fe/mjbox?tab=popular&tc=section_home_my_cafe
+[18:13:21.273][BA5DBF][B:✅ F:❌][10]    신규: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:21.273][BA5DBF][B:✅ F:❌][11] 📄 새 페이지 추가: '무협중국드라마 MJBox : 네이버 카페' [ID: B2FCCA82] (총 11개)
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v1]
+[18:13:22.774][BA5DBF][B:✅ F:❌][11] 🌐 SPA xhr_load: m.cafe.naver.com_query_single_spa | https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:22.774][BA5DBF][B:✅ F:❌][11] 🌐 알 수 없는 SPA 타입: xhr_load
+[18:13:23.965][BA5DBF][B:✅ F:❌][11] 🌐 SPA xhr_load: m.cafe.naver.com_query_single_spa | https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:23.965][BA5DBF][B:✅ F:❌][11] 🌐 알 수 없는 SPA 타입: xhr_load
+[18:13:24.319][BA5DBF][B:✅ F:❌][11] 🌐 SPA xhr_load: m.cafe.naver.com_query_single_spa | https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:24.320][BA5DBF][B:✅ F:❌][11] 🌐 알 수 없는 SPA 타입: xhr_load
+[18:13:24.630][BA5DBF][B:✅ F:❌][11] 🌐 SPA xhr_load: m.cafe.naver.com_query_single_spa | https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:24.630][BA5DBF][B:✅ F:❌][11] 🌐 알 수 없는 SPA 타입: xhr_load
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 40746문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["fourElementPackageAnchors", "captureTime", "scroll", "captureStats", "title", "timestamp", "userAgent", "actualScrollable", "detailedLogs", "pageAnalysis", "href", "content", "viewport"]
+🎯 JS 캡처된 앵커: 0개 (완전 패키지: 0개)
+📊 JS 캡처 통계: ["captureTime": 1, "processingErrors": 0, "qualityFilteredCount": 3, "finalAnchors": 0, "candidateElements": 9, "nearbyElements": 3, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    "div[class*=\"post\"]" = 1;
+    h1 = 1;
+    h3 = 1;
+    p = 5;
+}, "anchorCreationErrors": 0, "selectedElements": 3]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 21345.7), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["fourElementPackageAnchors", "captureTime", "scroll", "captureStats", "title", "timestamp", "userAgent", "actualScrollable", "detailedLogs", "pageAnalysis", "href", "content", "viewport"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 0개 (완전 패키지: 0개)
+📊 4요소 패키지 수집 통계: ["captureTime": 1, "processingErrors": 0, "qualityFilteredCount": 3, "finalAnchors": 0, "candidateElements": 9, "nearbyElements": 3, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    "div[class*=\"post\"]" = 1;
+    h1 = 1;
+    h3 = 1;
+    p = 5;
+}, "anchorCreationErrors": 0, "selectedElements": 3]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v1]
+[18:13:27.415][BA5DBF][B:✅ F:❌][11] 🌐 SPA push: m.cafe.naver.com_query_multi_spa | https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:13:27.415][BA5DBF][B:✅ F:❌][11] 🆕 URL 차이 감지 - 새 페이지 추가
+[18:13:27.415][BA5DBF][B:✅ F:❌][11]    현재: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:27.415][BA5DBF][B:✅ F:❌][11]    신규: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromlist=true&tc=cafe_home_all_articles
+[18:13:27.415][BA5DBF][B:✅ F:❌][12] 📄 새 페이지 추가: '무협중국드라마 MJBox : 네이버 카페' [ID: 6EA15CF6] (총 12개)
+[18:13:27.416] ☁️ 전역 방문 기록 저장: 259개
+[18:13:27.576][BA5DBF][B:✅ F:❌][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["captureTime", "detailedLogs", "actualScrollable", "timestamp", "content", "pageAnalysis", "scroll", "title", "captureStats", "userAgent", "href", "fourElementPackageAnchors", "viewport"]
+🎯 JS 캡처된 앵커: 26개 (완전 패키지: 26개)
+📊 JS 캡처 통계: ["captureTime": 3, "processingErrors": 0, "finalAnchors": 26, "qualityFilteredCount": 41, "candidateElements": 168, "nearbyElements": 41, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "anchorCreationErrors": 0, "selectedElements": 30]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["captureTime", "detailedLogs", "actualScrollable", "timestamp", "content", "pageAnalysis", "scroll", "title", "captureStats", "userAgent", "href", "fourElementPackageAnchors", "viewport"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 26개 (완전 패키지: 26개)
+🎯 첫 번째 완전 패키지 앵커 키: ["qualityScore", "offsetFromTop", "offsetFromLeft", "size", "textContent", "anchorType", "captureTimestamp", "className", "anchorIndex", "fourElementPackage", "tagName", "id", "viewportPosition", "absolutePosition"]
+📊 첫 완전패키지 4요소: id=auto_1757495608251_uzsavyt54, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 430  구독
+📊 첫 완전패키지 위치: X=16.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "이야기방앱 열기 [수다] 십이봉신 : 열두통의 편지 주익연 연기짱 본문 기타 기능본문 폰트"
+📊 첫 완전패키지 품질점수: 78점
+📊 4요소 패키지 수집 통계: ["captureTime": 3, "processingErrors": 0, "finalAnchors": 26, "qualityFilteredCount": 41, "candidateElements": 168, "nearbyElements": 41, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "anchorCreationErrors": 0, "selectedElements": 30]
+✅ 4요소 패키지 직렬 캡처 완료: 십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페 [v1]
+[18:13:30.668][BA5DBF][B:✅ F:❌][12][Q:1] 📥 복원 큐 추가: 인덱스 10 (큐 길이: 1)
+[18:13:30.669][BA5DBF][B:✅ F:✅][12][preparing(10)] 🎯 네비게이션 상태: back=true, forward=true, index=10/12
+[18:13:30.669][BA5DBF][B:✅ F:✅][12][preparing(10)] 🔄 복원 시작: 인덱스 10 → '무협중국드라마 MJBox : 네이버 카페' (큐 남은 건수: 0)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+[18:13:30.671][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(10)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:13:30.672][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(10)] ⬅️ 뒤로가기 큐 추가 성공: '무협중국드라마 MJBox : 네이버 카페' [DataModel 인덱스: 10/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 뒤로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=21345.7px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 37271
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 37271
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 37271px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["fourElementPackageAnchors", "captureTime", "scroll", "captureStats", "title", "timestamp", "userAgent", "actualScrollable", "detailedLogs", "pageAnalysis", "href", "content", "viewport"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 0개 발견 (완전 패키지: 0개)
+📊 수집 통계: ["captureTime": 1, "processingErrors": 0, "qualityFilteredCount": 3, "finalAnchors": 0, "candidateElements": 9, "nearbyElements": 3, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    "div[class*=\"post\"]" = 1;
+    h1 = 1;
+    h3 = 1;
+    p = 5;
+}, "anchorCreationErrors": 0, "selectedElements": 3]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+[18:13:30.674][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(10)] 🎯 DataModel canGoBack 변경: true
+[18:13:30.675][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(10)] 🎯 DataModel canGoForward 변경: true
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=21345.7px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+🚀 4요소 패키지 복원 JS 실행 오류: A JavaScript exception occurred
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464/likeit
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464/likeit → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:13:30.777][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+✅ JS 상태 캡처 성공: ["userAgent", "title", "scroll", "detailedLogs", "viewport", "fourElementPackageAnchors", "timestamp", "captureTime", "captureStats", "content", "pageAnalysis", "href", "actualScrollable"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["anchorCreationErrors": 0, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "nearbyElements": 3, "qualityFilteredCount": 3, "candidateElements": 9, "captureTime": 0, "selectedElements": 3, "processingErrors": 0, "finalAnchors": 1]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, -5.7), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["userAgent", "title", "scroll", "detailedLogs", "viewport", "fourElementPackageAnchors", "timestamp", "captureTime", "captureStats", "content", "pageAnalysis", "href", "actualScrollable"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["viewportPosition", "id", "qualityScore", "size", "tagName", "anchorType", "fourElementPackage", "captureTimestamp", "offsetFromLeft", "offsetFromTop", "textContent", "absolutePosition", "anchorIndex", "className"]
+📊 첫 완전패키지 4요소: id=auto_1757495610775_pveg2wxtx, type=post, ts=2025-09-10T09:13:30.775Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["anchorCreationErrors": 0, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "nearbyElements": 3, "qualityFilteredCount": 3, "candidateElements": 9, "captureTime": 0, "selectedElements": 3, "processingErrors": 0, "finalAnchors": 1]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 45322문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["scroll", "content", "detailedLogs", "title", "fourElementPackageAnchors", "href", "userAgent", "pageAnalysis", "timestamp", "actualScrollable", "captureStats", "viewport", "captureTime"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "anchorCreationErrors": 0, "captureTime": 1, "finalAnchors": 1, "processingErrors": 0, "nearbyElements": 3, "candidateElements": 9, "selectedElements": 3]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["scroll", "content", "detailedLogs", "title", "fourElementPackageAnchors", "href", "userAgent", "pageAnalysis", "timestamp", "actualScrollable", "captureStats", "viewport", "captureTime"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["tagName", "captureTimestamp", "absolutePosition", "textContent", "offsetFromTop", "size", "anchorIndex", "className", "fourElementPackage", "viewportPosition", "qualityScore", "id", "anchorType", "offsetFromLeft"]
+📊 첫 완전패키지 4요소: id=auto_1757495610804_70cpup69u, type=post, ts=2025-09-10T09:13:30.804Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "anchorCreationErrors": 0, "captureTime": 1, "finalAnchors": 1, "processingErrors": 0, "nearbyElements": 3, "candidateElements": 9, "selectedElements": 3]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 45322문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["title", "userAgent", "pageAnalysis", "fourElementPackageAnchors", "href", "captureTime", "viewport", "detailedLogs", "content", "actualScrollable", "captureStats", "timestamp", "scroll"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 3, "finalAnchors": 1, "anchorCreationErrors": 0, "captureTime": 0, "processingErrors": 0, "candidateElements": 9, "nearbyElements": 3, "selectedElements": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["title", "userAgent", "pageAnalysis", "fourElementPackageAnchors", "href", "captureTime", "viewport", "detailedLogs", "content", "actualScrollable", "captureStats", "timestamp", "scroll"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["viewportPosition", "id", "qualityScore", "size", "tagName", "anchorType", "fourElementPackage", "captureTimestamp", "offsetFromLeft", "offsetFromTop", "textContent", "absolutePosition", "anchorIndex", "className"]
+📊 첫 완전패키지 4요소: id=auto_1757495610812_xtri44k0y, type=post, ts=2025-09-10T09:13:30.812Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 3, "finalAnchors": 1, "anchorCreationErrors": 0, "captureTime": 0, "processingErrors": 0, "candidateElements": 9, "nearbyElements": 3, "selectedElements": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 45322문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 3, "nearbyElements": 3, "anchorCreationErrors": 0, "candidateElements": 9, "finalAnchors": 1, "processingErrors": 0, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "captureTime": 0, "selectedElements": 3]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["textContent", "className", "size", "id", "offsetFromLeft", "anchorType", "captureTimestamp", "viewportPosition", "offsetFromTop", "anchorIndex", "absolutePosition", "tagName", "qualityScore", "fourElementPackage"]
+📊 첫 완전패키지 4요소: id=auto_1757495610827_1hwwaqr3t, type=post, ts=2025-09-10T09:13:30.827Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 3, "nearbyElements": 3, "anchorCreationErrors": 0, "candidateElements": 9, "finalAnchors": 1, "processingErrors": 0, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "captureTime": 0, "selectedElements": 3]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=21345.7px
+   초기 위치: X=0.0px, Y=0.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 825
+   최대 스크롤: X=0.0px, Y=34.0px
+   목표 Y 도달 가능: 아니오 (21311.7px 초과)
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=21345.7px
+   시도 1: 현재 Y=0.0px, 차이=21345.7px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   스크롤 한계: Y=34.0px (미도달)
+   무한 스크롤 구간 감지 - 트리거 시도
+   터치 이벤트 트리거 성공
+   더보기 버튼: 0개 발견, 0개 클릭
+   모든 스크롤 방법 시도 완료
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 825;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 34;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+🚫 1단계 완료: 실패 (progressive_inProgress)
+🚫 단계 1 소요시간: 0.10초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v2]
+[18:13:30.914][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🌐 SPA push: m.cafe.naver.com_numeric_first_mixed_spa | https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464/likeit
+[18:13:30.914][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🤫 복원(활성) 중 SPA push 무시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464/likeit
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v3]
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[18:13:31.164][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v4]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v1
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v5]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v2
+[18:13:31.422][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🔄 SPA Replace - 현재 페이지 교체: '네이버 카페'
+[18:13:31.422][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🤫 큐 복원 중 URL변경 - 현재 항목 치환: '네이버 카페'
+[18:13:31.422][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: B2FCCA82)
+[18:13:31.422][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:13:31.422][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 10
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 10
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22926 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:13:31.422][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[18:13:31.591][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:13:31.682][BA5DBF][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=21345.7px
+   현재 위치: X=0.0px, Y=0.0px
+   목표와 차이: X=0.0px, Y=21345.7px
+   허용 오차: 30px
+   허용 오차 내: 아니오
+   페이지 크기: 393 x 5725
+   최대 스크롤: X=0.0px, Y=4934.0px
+   목표 Y 도달 가능: 아니오
+   목표 X 도달 가능: 예
+   Y축 초과량: 16411.7px
+   목표가 콘텐츠 영역 벗어남: 15620.7px
+   최종 보정 필요 - 실행 중
+   보정 전: X=0.0px, Y=0.0px
+📊 최종 검증 데이터: ["scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 0;
+    excessX = 0;
+    excessY = "16411.66666666667";
+    isTargetBeyondContent = 1;
+}, "currentState": {
+    content =     {
+        height = 5725;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = "21345.66666666667";
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4934;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    target =     {
+        x = 0;
+        y = "21345.66666666667";
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 0;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=21346px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.84초
+🚫 브라우저 차단 대응 완료: 0/2 성공, 소요시간: 0.94초
+🚫 최종 결과: ❌ 실패
+[BFCache🚫] ⚠️ 브라우저 차단 대응 BFCache 복원 실패: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 실패
+🛡️ DebugView 완전 격리 모드 - 키보드 리셋
+🛡️ DebugView 완전 격리 모드 - 키보드 리셋 + 안전영역 전체 무시
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["captureStats", "fourElementPackageAnchors", "scroll", "detailedLogs", "pageAnalysis", "content", "viewport", "href", "userAgent", "actualScrollable", "timestamp", "captureTime", "title"]
+🎯 JS 캡처된 앵커: 26개 (완전 패키지: 26개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 41, "captureTime": 5, "anchorCreationErrors": 0, "candidateElements": 274, "finalAnchors": 26, "processingErrors": 0, "nearbyElements": 41, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 121;
+    li = 34;
+    p = 49;
+    video = 1;
+}, "selectedElements": 30]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["captureStats", "fourElementPackageAnchors", "scroll", "detailedLogs", "pageAnalysis", "content", "viewport", "href", "userAgent", "actualScrollable", "timestamp", "captureTime", "title"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 26개 (완전 패키지: 26개)
+🎯 첫 번째 완전 패키지 앵커 키: ["captureTimestamp", "className", "absolutePosition", "anchorType", "offsetFromTop", "size", "qualityScore", "viewportPosition", "fourElementPackage", "anchorIndex", "tagName", "id", "offsetFromLeft", "textContent"]
+📊 첫 완전패키지 4요소: id=auto_1757495681953_v576c5rct, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 430  구독
+📊 첫 완전패키지 위치: X=16.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "이야기방앱 열기 [수다] 십이봉신 : 열두통의 편지 주익연 연기짱 본문 기타 기능본문 폰트"
+📊 첫 완전패키지 품질점수: 78점
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 41, "captureTime": 5, "anchorCreationErrors": 0, "candidateElements": 274, "finalAnchors": 26, "processingErrors": 0, "nearbyElements": 41, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 121;
+    li = 34;
+    p = 49;
+    video = 1;
+}, "selectedElements": 30]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v6]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v3
+[18:14:42.262][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 9 (큐 길이: 1)
+[18:14:42.263][BA5DBF][B:✅ F:✅][12][preparing(9)] 🔄 복원 시작: 인덱스 9 → '무협중국드라마 MJBox : 네이버 카페' (큐 남은 건수: 0)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+[18:14:42.264][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(9)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+[18:14:42.267][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(9)] ⬅️ 뒤로가기 큐 추가 성공: '무협중국드라마 MJBox : 네이버 카페' [DataModel 인덱스: 9/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 뒤로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=13030.3px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 29681
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 29681
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 29681px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["scroll", "captureStats", "content", "pageAnalysis", "actualScrollable", "fourElementPackageAnchors", "href", "title", "userAgent", "captureTime", "viewport", "timestamp", "detailedLogs"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 0개 발견 (완전 패키지: 0개)
+📊 수집 통계: ["qualityFilteredCount": 1, "finalAnchors": 0, "anchorCreationErrors": 0, "captureTime": 2, "processingErrors": 0, "candidateElements": 28, "nearbyElements": 1, "selectorStats": {
+    "div[class*=\"content\"]" = 2;
+    h1 = 2;
+    img = 3;
+    li = 15;
+    p = 5;
+    section = 1;
+}, "selectedElements": 1]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=13030.3px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+[18:14:42.347][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+🚀 4요소 패키지 복원 JS 실행 오류: A JavaScript exception occurred
+✅ JS 상태 캡처 성공: ["timestamp", "actualScrollable", "captureStats", "content", "fourElementPackageAnchors", "userAgent", "title", "pageAnalysis", "captureTime", "detailedLogs", "scroll", "href", "viewport"]
+🎯 JS 캡처된 앵커: 29개 (완전 패키지: 29개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 122, "finalAnchors": 29, "anchorCreationErrors": 0, "captureTime": 3, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 36;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 120;
+    li = 34;
+    p = 49;
+    video = 1;
+}, "candidateElements": 274, "nearbyElements": 122, "processingErrors": 0, "selectedElements": 30]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["timestamp", "actualScrollable", "captureStats", "content", "fourElementPackageAnchors", "userAgent", "title", "pageAnalysis", "captureTime", "detailedLogs", "scroll", "href", "viewport"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 29개 (완전 패키지: 29개)
+🎯 첫 번째 완전 패키지 앵커 키: ["captureTimestamp", "className", "absolutePosition", "anchorType", "offsetFromTop", "size", "qualityScore", "viewportPosition", "fourElementPackage", "anchorIndex", "tagName", "id", "offsetFromLeft", "textContent"]
+📊 첫 완전패키지 4요소: id=auto_1757495682358_sxbxn5jat, type=item, ts=2025.09.08. 21:48, kw=플로리아1  옵션주...1:48 답글쓰기1
+📊 첫 완전패키지 위치: X=0.0px, Y=13030.0px
+📊 첫 완전패키지 오프셋: 0.0px
+📊 첫 완전패키지 텍스트: "플로리아1  옵션주익연 배우의 재발견이었어요 주익연배우 드라마나 영화를 많이 본건 아니지만"
+📊 첫 완전패키지 품질점수: 73점
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 122, "finalAnchors": 29, "anchorCreationErrors": 0, "captureTime": 3, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 36;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 120;
+    li = 34;
+    p = 49;
+    video = 1;
+}, "candidateElements": 274, "nearbyElements": 122, "processingErrors": 0, "selectedElements": 30]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 35515문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v2]
+✅ JS 상태 캡처 성공: ["detailedLogs", "scroll", "actualScrollable", "fourElementPackageAnchors", "pageAnalysis", "userAgent", "captureTime", "captureStats", "viewport", "href", "title", "timestamp", "content"]
+🎯 JS 캡처된 앵커: 0개 (완전 패키지: 0개)
+📊 JS 캡처 통계: ["finalAnchors": 0, "qualityFilteredCount": 0, "anchorCreationErrors": 0, "captureTime": 1, "processingErrors": 0, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    p = 2;
+}, "nearbyElements": 0, "candidateElements": 3, "selectedElements": 0]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 13030.3), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["detailedLogs", "scroll", "actualScrollable", "fourElementPackageAnchors", "pageAnalysis", "userAgent", "captureTime", "captureStats", "viewport", "href", "title", "timestamp", "content"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 0개 (완전 패키지: 0개)
+📊 4요소 패키지 수집 통계: ["finalAnchors": 0, "qualityFilteredCount": 0, "anchorCreationErrors": 0, "captureTime": 1, "processingErrors": 0, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    p = 2;
+}, "nearbyElements": 0, "candidateElements": 3, "selectedElements": 0]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+[18:14:42.433][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 9] URL: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["detailedLogs", "timestamp", "fourElementPackageAnchors", "captureTime", "href", "viewport", "captureStats", "content", "scroll", "pageAnalysis", "title", "actualScrollable", "userAgent"]
+🎯 JS 캡처된 앵커: 0개 (완전 패키지: 0개)
+📊 JS 캡처 통계: ["qualityFilteredCount": 0, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    p = 2;
+}, "anchorCreationErrors": 0, "captureTime": 0, "finalAnchors": 0, "processingErrors": 0, "nearbyElements": 0, "candidateElements": 3, "selectedElements": 0]
+⚡ 부분 캡처 성공: visual=true, dom=false, js=true
+📊 캡처 완료: 위치=(0.0, 13030.3), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["detailedLogs", "timestamp", "fourElementPackageAnchors", "captureTime", "href", "viewport", "captureStats", "content", "scroll", "pageAnalysis", "title", "actualScrollable", "userAgent"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 0개 (완전 패키지: 0개)
+📊 4요소 패키지 수집 통계: ["qualityFilteredCount": 0, "selectorStats": {
+    "div[class*=\"content\"]" = 1;
+    p = 2;
+}, "anchorCreationErrors": 0, "captureTime": 0, "finalAnchors": 0, "processingErrors": 0, "nearbyElements": 0, "candidateElements": 3, "selectedElements": 0]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[18:14:42.443][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 9] URL: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+[18:14:42.443][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🤫 큐 복원 완료 - 제목만 업데이트: '네이버 카페'
+[18:14:42.443][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: 4B0D5FB1)
+[18:14:42.443][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:14:42.443][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 9
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 9
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22952 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:14:42.444][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=13030.3px
+   초기 위치: X=0.0px, Y=0.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 791
+   최대 스크롤: X=0.0px, Y=0.0px
+   목표 Y 도달 가능: 아니오 (13030.3px 초과)
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=13030.3px
+   시도 1: 현재 Y=0.0px, 차이=13030.3px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   스크롤 한계: Y=0.0px (도달)
+   무한 스크롤 구간 감지 - 트리거 시도
+   터치 이벤트 트리거 성공
+   더보기 버튼: 0개 발견, 0개 클릭
+   모든 스크롤 방법 시도 완료
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 791;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 0;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+🚫 1단계 완료: 실패 (progressive_inProgress)
+🚫 단계 1 소요시간: 0.11초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v3]
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v4]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v1
+[18:14:42.610][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '무협중국드라마 MJBox : 네이버 카페' [인덱스: 9] URL: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+[18:14:43.290][BA5DBF][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=13030.3px
+   현재 위치: X=0.0px, Y=13030.0px
+   목표와 차이: X=0.0px, Y=0.3px
+   허용 오차: 30px
+   허용 오차 내: 예
+   페이지 크기: 393 x 19705
+   최대 스크롤: X=0.0px, Y=18914.0px
+   목표 Y 도달 가능: 예
+   목표 X 도달 가능: 예
+   허용 오차 내 - 보정 불필요
+📊 최종 검증 데이터: ["scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 1;
+    excessX = 0;
+    excessY = 0;
+    isTargetBeyondContent = 0;
+}, "currentState": {
+    content =     {
+        height = 19705;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = "0.3333333333339397";
+    };
+    maxScroll =     {
+        x = 0;
+        y = 18914;
+    };
+    scroll =     {
+        x = 0;
+        y = 13030;
+    };
+    target =     {
+        x = 0;
+        y = "13030.33333333333";
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 1;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=13030px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.84초
+🚫 브라우저 차단 대응 완료: 0/2 성공, 소요시간: 0.95초
+🚫 최종 결과: ❌ 실패
+[BFCache🚫] ⚠️ 브라우저 차단 대응 BFCache 복원 실패: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 실패
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 앞으로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99988문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 JS 캡처된 앵커: 22개 (완전 패키지: 22개)
+📊 JS 캡처 통계: ["anchorCreationErrors": 0, "candidateElements": 603, "selectorStats": {
+    "div[class*=\"content\"]" = 211;
+    h1 = 2;
+    iframe = 12;
+    img = 144;
+    li = 229;
+    p = 4;
+    section = 1;
+}, "selectedElements": 30, "processingErrors": 0, "nearbyElements": 90, "captureTime": 10, "qualityFilteredCount": 90, "finalAnchors": 22]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 13030.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 22개 (완전 패키지: 22개)
+🎯 첫 번째 완전 패키지 앵커 키: ["captureTimestamp", "qualityScore", "size", "offsetFromTop", "viewportPosition", "textContent", "absolutePosition", "className", "id", "offsetFromLeft", "tagName", "fourElementPackage", "anchorIndex", "anchorType"]
+📊 첫 완전패키지 4요소: id=11122390, type=item, ts=2025-09-10T09:14:47.390Z, kw=류우녕 25/09/...4  댓글  NEW
+📊 첫 완전패키지 위치: X=0.0px, Y=13041.0px
+📊 첫 완전패키지 오프셋: -11.0px
+📊 첫 완전패키지 텍스트: "류우녕 25/09/06  라방 라이브 몇곡 올려봅니다  크리스탈02    25.09.07."
+📊 첫 완전패키지 품질점수: 75점
+📊 4요소 패키지 수집 통계: ["anchorCreationErrors": 0, "candidateElements": 603, "selectorStats": {
+    "div[class*=\"content\"]" = 211;
+    h1 = 2;
+    iframe = 12;
+    img = 144;
+    li = 229;
+    p = 4;
+    section = 1;
+}, "selectedElements": 30, "processingErrors": 0, "nearbyElements": 90, "captureTime": 10, "qualityFilteredCount": 90, "finalAnchors": 22]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v5]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v2
+[18:14:48.173][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 10 (큐 길이: 1)
+[18:14:48.174][BA5DBF][B:✅ F:✅][12][preparing(10)] 🔄 복원 시작: 인덱스 10 → '네이버 카페' (큐 남은 건수: 0)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+[18:14:48.175][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(10)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:14:48.177][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(10)] ➡️ 앞으로가기 큐 추가 성공: '네이버 카페' [DataModel 인덱스: 10/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 앞으로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=0.0px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 14115
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 14115
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 14115px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["captureStats", "fourElementPackageAnchors", "scroll", "detailedLogs", "pageAnalysis", "content", "viewport", "href", "userAgent", "actualScrollable", "timestamp", "captureTime", "title"]
+🎯 4요소 패키지 앵커 데이터 확인: ["anchors", "stats"]
+🎯 4요소 패키지 앵커: 26개 발견 (완전 패키지: 26개)
+📊 완전패키지앵커[0] 4요소: id=auto_1757495681953_v576c5rct, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 430  구독
+📊 완전패키지앵커[0] 절대위치: X=16.0px, Y=52.0px
+📊 완전패키지앵커[0] 품질점수: 78점
+📊 완전패키지앵커[1] 4요소: id=postContent, type=post, ts=2025-09-10T09:14:41.953Z, kw=<출처 : 주익연웨...표시되지 않습니다.
+📊 완전패키지앵커[1] 절대위치: X=0.0px, Y=241.0px
+📊 완전패키지앵커[1] 품질점수: 85점
+📊 완전패키지앵커[2] 4요소: id=auto_1757495681953_7pbgz9tjn, type=div, ts=2025-09-10T09:14:41.953Z, kw=<출처 : 주익연웨...만날수있어 🎵​​
+📊 완전패키지앵커[2] 절대위치: X=16.0px, Y=261.0px
+📊 완전패키지앵커[2] 품질점수: 43점
+📊 나머지 23개 완전 패키지 앵커 생략...
+📊 수집 통계: ["candidateElements": 274, "anchorCreationErrors": 0, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 121;
+    li = 34;
+    p = 49;
+    video = 1;
+}, "processingErrors": 0, "nearbyElements": 41, "selectedElements": 30, "captureTime": 5, "qualityFilteredCount": 41, "finalAnchors": 26]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+📸 스냅샷 캡처 시도: 네이버 카페
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=0.0px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+📸 스냅샷 성공
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🌐 DOM 캡처 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+[18:14:48.200][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[BFCache🚫] 🛡️ 전환 중 - 새 제스처 무시
+🚀 4요소 패키지 복원 JS 실행 오류: A JavaScript exception occurred
+🌐 DOM 캡처 성공: 99988문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=0.0px
+   초기 위치: X=0.0px, Y=0.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 23628
+   최대 스크롤: X=0.0px, Y=22837.0px
+   목표 Y 도달 가능: 예 ()
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=0.0px
+   시도 1: 현재 Y=0.0px, 차이=0.0px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   ✅ 점진적 스크롤 성공: 1회 시도, 최종 차이 Y=0.0px
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 23628;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 22837;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+📊 스크롤 시도 횟수: 1회
+   시도[1]: Y=0.0px, 차이=0.0px
+📊 점진적 스크롤 최종 결과: ["finalDiff": {
+    x = 0;
+    y = 0;
+}, "totalTime": 0, "finalPosition": {
+    x = 0;
+    y = 0;
+}, "success": 1, "attempts": 1]
+🚫 1단계 완료: 성공 (progressive_success)
+🚫 단계 1 소요시간: 0.34초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+✅ JS 상태 캡처 성공: ["fourElementPackageAnchors", "captureTime", "scroll", "captureStats", "title", "timestamp", "userAgent", "actualScrollable", "detailedLogs", "pageAnalysis", "href", "content", "viewport"]
+🎯 JS 캡처된 앵커: 24개 (완전 패키지: 24개)
+📊 JS 캡처 통계: ["candidateElements": 603, "qualityFilteredCount": 43, "selectedElements": 30, "anchorCreationErrors": 0, "captureTime": 6, "selectorStats": {
+    "div[class*=\"content\"]" = 211;
+    h1 = 2;
+    iframe = 12;
+    img = 144;
+    li = 229;
+    p = 4;
+    section = 1;
+}, "finalAnchors": 24, "processingErrors": 0, "nearbyElements": 43]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 13110.3), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["fourElementPackageAnchors", "captureTime", "scroll", "captureStats", "title", "timestamp", "userAgent", "actualScrollable", "detailedLogs", "pageAnalysis", "href", "content", "viewport"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 24개 (완전 패키지: 24개)
+🎯 첫 번째 완전 패키지 앵커 키: ["anchorIndex", "fourElementPackage", "qualityScore", "absolutePosition", "offsetFromLeft", "tagName", "className", "captureTimestamp", "id", "anchorType", "viewportPosition", "textContent", "offsetFromTop", "size"]
+📊 첫 완전패키지 4요소: id=ct, type=div, ts=13:28, kw=인기글  댓글TOP...댓글TOP 보러가기
+📊 첫 완전패키지 위치: X=0.0px, Y=330.0px
+📊 첫 완전패키지 오프셋: -330.0px
+📊 첫 완전패키지 텍스트: "인기글  댓글TOP  좋아요TOP  인기멤버  최근 7일간 작성된 글 중 인기가 많은 게시"
+📊 첫 완전패키지 품질점수: 81점
+📊 4요소 패키지 수집 통계: ["candidateElements": 603, "qualityFilteredCount": 43, "selectedElements": 30, "anchorCreationErrors": 0, "captureTime": 6, "selectorStats": {
+    "div[class*=\"content\"]" = 211;
+    h1 = 2;
+    iframe = 12;
+    img = 144;
+    li = 229;
+    p = 4;
+    section = 1;
+}, "finalAnchors": 24, "processingErrors": 0, "nearbyElements": 43]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[18:14:48.613][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v7]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v4
+[18:14:48.681][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:14:48.681][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🤫 큐 복원 완료 - 제목만 업데이트: '네이버 카페'
+[18:14:48.682][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: B2FCCA82)
+[18:14:48.682][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:14:48.682][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 10
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 10
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22925 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:14:48.682][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[18:14:48.916][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:14:49.218][BA5DBF][B:✅ F:✅] 🔄 앞으로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=0.0px
+   현재 위치: X=0.0px, Y=0.0px
+   목표와 차이: X=0.0px, Y=0.0px
+   허용 오차: 30px
+   허용 오차 내: 예
+   페이지 크기: 393 x 5028
+   최대 스크롤: X=0.0px, Y=4237.0px
+   목표 Y 도달 가능: 예
+   목표 X 도달 가능: 예
+   허용 오차 내 - 보정 불필요
+📊 최종 검증 데이터: ["currentState": {
+    content =     {
+        height = 5028;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = 0;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4237;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    target =     {
+        x = 0;
+        y = 0;
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 1;
+}, "scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 1;
+    excessX = 0;
+    excessY = 0;
+    isTargetBeyondContent = 0;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=0px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.85초
+🚫 브라우저 차단 대응 완료: 1/2 성공, 소요시간: 1.19초
+🚫 최종 결과: ✅ 성공
+[BFCache🚫] ✅ 브라우저 차단 대응 BFCache 복원 성공: 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 성공
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["actualScrollable", "fourElementPackageAnchors", "captureTime", "detailedLogs", "pageAnalysis", "title", "content", "href", "scroll", "userAgent", "viewport", "captureStats", "timestamp"]
+🎯 JS 캡처된 앵커: 28개 (완전 패키지: 28개)
+📊 JS 캡처 통계: ["candidateElements": 168, "qualityFilteredCount": 39, "selectedElements": 30, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "captureTime": 6, "anchorCreationErrors": 0, "finalAnchors": 28, "processingErrors": 0, "nearbyElements": 39]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, -2.3), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["actualScrollable", "fourElementPackageAnchors", "captureTime", "detailedLogs", "pageAnalysis", "title", "content", "href", "scroll", "userAgent", "viewport", "captureStats", "timestamp"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 28개 (완전 패키지: 28개)
+🎯 첫 번째 완전 패키지 앵커 키: ["anchorIndex", "fourElementPackage", "qualityScore", "absolutePosition", "tagName", "className", "offsetFromLeft", "captureTimestamp", "id", "anchorType", "viewportPosition", "textContent", "offsetFromTop", "size"]
+📊 첫 완전패키지 4요소: id=auto_1757495689879_7xqou3v6n, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 431  구독
+📊 첫 완전패키지 위치: X=16.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -70.0px
+📊 첫 완전패키지 텍스트: "이야기방앱 열기 [수다] 십이봉신 : 열두통의 편지 주익연 연기짱 본문 기타 기능본문 폰트"
+📊 첫 완전패키지 품질점수: 78점
+📊 4요소 패키지 수집 통계: ["candidateElements": 168, "qualityFilteredCount": 39, "selectedElements": 30, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "captureTime": 6, "anchorCreationErrors": 0, "finalAnchors": 28, "processingErrors": 0, "nearbyElements": 39]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v8]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v5
+[18:14:50.429][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 9 (큐 길이: 1)
+[18:14:50.430][BA5DBF][B:✅ F:✅][12][preparing(9)] 🔄 복원 시작: 인덱스 9 → '무협중국드라마 MJBox : 네이버 카페' (큐 남은 건수: 0)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+[18:14:50.431][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(9)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular
+[18:14:50.433][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(9)] ⬅️ 뒤로가기 큐 추가 성공: '무협중국드라마 MJBox : 네이버 카페' [DataModel 인덱스: 9/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 뒤로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=13030.0px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 23628
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 23628
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 23628px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 22개 발견 (완전 패키지: 22개)
+📊 완전패키지앵커[0] 4요소: id=11122390, type=item, ts=2025-09-10T09:14:47.390Z, kw=류우녕 25/09/...4  댓글  NEW
+📊 완전패키지앵커[0] 절대위치: X=0.0px, Y=13041.0px
+📊 완전패키지앵커[0] 품질점수: 75점
+📊 완전패키지앵커[1] 4요소: id=auto_1757495687390_utuq1w4ii, type=div, ts=2025-09-10T09:14:47.390Z, kw=류우녕 25/09/....  조회  663
+📊 완전패키지앵커[1] 절대위치: X=16.0px, Y=13054.0px
+📊 완전패키지앵커[1] 품질점수: 43점
+📊 완전패키지앵커[2] 4요소: id=11122390, type=item, ts=2025-09-10T09:14:47.390Z, kw=이분 이름이 궁금해...3  댓글  NEW
+📊 완전패키지앵커[2] 절대위치: X=0.0px, Y=12955.0px
+📊 완전패키지앵커[2] 품질점수: 75점
+📊 나머지 19개 완전 패키지 앵커 생략...
+📊 수집 통계: ["candidateElements": 603, "qualityFilteredCount": 90, "selectedElements": 30, "anchorCreationErrors": 0, "selectorStats": {
+    "div[class*=\"content\"]" = 211;
+    h1 = 2;
+    iframe = 12;
+    img = 144;
+    li = 229;
+    p = 4;
+    section = 1;
+}, "captureTime": 10, "finalAnchors": 22, "processingErrors": 0, "nearbyElements": 90]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe&tab=popular → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=13030.0px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+🌐 DOM 캡처 성공: 99995문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+🚀 4요소 패키지 복원 JS 실행 오류: A JavaScript exception occurred
+[18:14:50.759][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+✅ JS 상태 캡처 성공: ["title", "userAgent", "pageAnalysis", "fourElementPackageAnchors", "href", "captureTime", "viewport", "detailedLogs", "content", "actualScrollable", "captureStats", "timestamp", "scroll"]
+🎯 JS 캡처된 앵커: 29개 (완전 패키지: 29개)
+📊 JS 캡처 통계: ["nearbyElements": 112, "finalAnchors": 29, "selectedElements": 30, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 36;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 25;
+    li = 34;
+    p = 48;
+}, "candidateElements": 168, "processingErrors": 0, "qualityFilteredCount": 112, "anchorCreationErrors": 0, "captureTime": 3]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, -4.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["title", "userAgent", "pageAnalysis", "fourElementPackageAnchors", "href", "captureTime", "viewport", "detailedLogs", "content", "actualScrollable", "captureStats", "timestamp", "scroll"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 29개 (완전 패키지: 29개)
+🎯 첫 번째 완전 패키지 앵커 키: ["offsetFromLeft", "fourElementPackage", "className", "qualityScore", "anchorIndex", "size", "offsetFromTop", "captureTimestamp", "viewportPosition", "id", "textContent", "tagName", "absolutePosition", "anchorType"]
+📊 첫 완전패키지 4요소: id=auto_1757495690761_ruj8xqwkc, type=item, ts=2025.09.08. 21:48, kw=플로리아1  옵션주...1:48 답글쓰기1
+📊 첫 완전패키지 위치: X=0.0px, Y=13030.0px
+📊 첫 완전패키지 오프셋: 0.0px
+📊 첫 완전패키지 텍스트: "플로리아1  옵션주익연 배우의 재발견이었어요 주익연배우 드라마나 영화를 많이 본건 아니지만"
+📊 첫 완전패키지 품질점수: 73점
+📊 4요소 패키지 수집 통계: ["nearbyElements": 112, "finalAnchors": 29, "selectedElements": 30, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 36;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 25;
+    li = 34;
+    p = 48;
+}, "candidateElements": 168, "processingErrors": 0, "qualityFilteredCount": 112, "anchorCreationErrors": 0, "captureTime": 3]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=13030.0px
+   초기 위치: X=0.0px, Y=13030.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 791
+   최대 스크롤: X=0.0px, Y=0.0px
+   목표 Y 도달 가능: 아니오 (13030.0px 초과)
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=0.0px
+   시도 1: 현재 Y=13030.0px, 차이=0.0px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   ✅ 점진적 스크롤 성공: 1회 시도, 최종 차이 Y=0.0px
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 791;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 0;
+    };
+    scroll =     {
+        x = 0;
+        y = 13030;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+📊 스크롤 시도 횟수: 1회
+   시도[1]: Y=13030.0px, 차이=0.0px
+📊 점진적 스크롤 최종 결과: ["attempts": 1, "success": 1, "finalDiff": {
+    x = 0;
+    y = 0;
+}, "totalTime": 0, "finalPosition": {
+    x = 0;
+    y = 13030;
+}]
+🚫 1단계 완료: 성공 (progressive_success)
+🚫 단계 1 소요시간: 0.26초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+🌐 DOM 캡처 성공: 99995문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["captureStats", "href", "scroll", "fourElementPackageAnchors", "title", "viewport", "userAgent", "timestamp", "pageAnalysis", "actualScrollable", "detailedLogs", "content", "captureTime"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["nearbyElements": 3, "selectedElements": 3, "finalAnchors": 1, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "candidateElements": 9, "processingErrors": 0, "qualityFilteredCount": 3, "anchorCreationErrors": 0, "captureTime": 1]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 13030.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["captureStats", "href", "scroll", "fourElementPackageAnchors", "title", "viewport", "userAgent", "timestamp", "pageAnalysis", "actualScrollable", "detailedLogs", "content", "captureTime"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["captureTimestamp", "className", "absolutePosition", "anchorType", "qualityScore", "offsetFromTop", "size", "viewportPosition", "fourElementPackage", "anchorIndex", "tagName", "id", "offsetFromLeft", "textContent"]
+📊 첫 완전패키지 4요소: id=auto_1757495690788_9qwpjlehi, type=post, ts=2025-09-10T09:14:50.788Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["nearbyElements": 3, "selectedElements": 3, "finalAnchors": 1, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "candidateElements": 9, "processingErrors": 0, "qualityFilteredCount": 3, "anchorCreationErrors": 0, "captureTime": 1]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[18:14:50.795][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v6]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v3
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v7]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v4
+[18:14:50.928][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🔄 SPA Replace - 현재 페이지 교체: '네이버 카페'
+[18:14:50.928][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🤫 큐 복원 중 URL변경 - 현재 항목 치환: '네이버 카페'
+[18:14:50.928][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: 4B0D5FB1)
+[18:14:50.928][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:14:50.928][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 9
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 9
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22955 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:14:50.929][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[18:14:51.109][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:14:51.483][BA5DBF][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=13030.0px
+   현재 위치: X=0.0px, Y=0.0px
+   목표와 차이: X=0.0px, Y=13030.0px
+   허용 오차: 30px
+   허용 오차 내: 아니오
+   페이지 크기: 393 x 5016
+   최대 스크롤: X=0.0px, Y=4225.0px
+   목표 Y 도달 가능: 아니오
+   목표 X 도달 가능: 예
+   Y축 초과량: 8805.0px
+   목표가 콘텐츠 영역 벗어남: 8014.0px
+   최종 보정 필요 - 실행 중
+   보정 전: X=0.0px, Y=0.0px
+📊 최종 검증 데이터: ["scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 0;
+    excessX = 0;
+    excessY = 8805;
+    isTargetBeyondContent = 1;
+}, "currentState": {
+    content =     {
+        height = 5016;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = 13030;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4225;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    target =     {
+        x = 0;
+        y = 13030;
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 0;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=13030px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.84초
+🚫 브라우저 차단 대응 완료: 1/2 성공, 소요시간: 1.11초
+🚫 최종 결과: ✅ 성공
+[BFCache🚫] ✅ 브라우저 차단 대응 BFCache 복원 성공: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 성공
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 앞으로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 JS 캡처된 앵커: 19개 (완전 패키지: 19개)
+📊 JS 캡처 통계: ["nearbyElements": 94, "anchorCreationErrors": 0, "selectedElements": 30, "qualityFilteredCount": 94, "captureTime": 6, "processingErrors": 0, "candidateElements": 276, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 120;
+    li = 34;
+    p = 50;
+    video = 3;
+}, "finalAnchors": 19]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 4168.7), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 19개 (완전 패키지: 19개)
+🎯 첫 번째 완전 패키지 앵커 키: ["offsetFromLeft", "fourElementPackage", "qualityScore", "className", "anchorIndex", "captureTimestamp", "offsetFromTop", "size", "viewportPosition", "id", "textContent", "tagName", "absolutePosition", "anchorType"]
+📊 첫 완전패키지 4요소: id=auto_1757495778894_yt0rm7gn4, type=div, ts=2025-09-10T09:16:18.894Z, kw=첫사랑 엔딩 굿즈 ...09.08. 댓글6
+📊 첫 완전패키지 위치: X=409.0px, Y=4177.4px
+📊 첫 완전패키지 오프셋: -3.4px
+📊 첫 완전패키지 텍스트: "첫사랑 엔딩 굿즈 쪼개기 너무 하다는 생각이 드네요. kaisers    25.09.08."
+📊 첫 완전패키지 품질점수: 43점
+📊 4요소 패키지 수집 통계: ["nearbyElements": 94, "anchorCreationErrors": 0, "selectedElements": 30, "qualityFilteredCount": 94, "captureTime": 6, "processingErrors": 0, "candidateElements": 276, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 120;
+    li = 34;
+    p = 50;
+    video = 3;
+}, "finalAnchors": 19]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v8]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v5
+[18:16:24.283][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 10 (큐 길이: 1)
+[18:16:24.284][BA5DBF][B:✅ F:✅][12][preparing(10)] 🔄 복원 시작: 인덱스 10 → '네이버 카페' (큐 남은 건수: 0)
+[18:16:24.285][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(10)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:24.286][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(10)] ➡️ 앞으로가기 큐 추가 성공: '네이버 카페' [DataModel 인덱스: 10/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 앞으로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=-2.3px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 5028
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 5028
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 5028px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["actualScrollable", "fourElementPackageAnchors", "captureTime", "detailedLogs", "pageAnalysis", "title", "content", "href", "scroll", "userAgent", "viewport", "captureStats", "timestamp"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 28개 발견 (완전 패키지: 28개)
+📊 완전패키지앵커[0] 4요소: id=auto_1757495689879_7xqou3v6n, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 431  구독
+📊 완전패키지앵커[0] 절대위치: X=16.0px, Y=52.0px
+📊 완전패키지앵커[0] 품질점수: 78점
+📊 완전패키지앵커[1] 4요소: id=postContent, type=post, ts=2025-09-10T09:14:49.879Z, kw=<출처 : 주익연웨...표시되지 않습니다.
+📊 완전패키지앵커[1] 절대위치: X=0.0px, Y=241.0px
+📊 완전패키지앵커[1] 품질점수: 85점
+📊 완전패키지앵커[2] 4요소: id=auto_1757495689879_aqpe7t19t, type=div, ts=2025-09-10T09:14:49.879Z, kw=<출처 : 주익연웨...만날수있어 🎵​​
+📊 완전패키지앵커[2] 절대위치: X=16.0px, Y=261.0px
+📊 완전패키지앵커[2] 품질점수: 43점
+📊 나머지 25개 완전 패키지 앵커 생략...
+📊 수집 통계: ["nearbyElements": 39, "captureTime": 6, "selectedElements": 30, "qualityFilteredCount": 39, "anchorCreationErrors": 0, "processingErrors": 0, "finalAnchors": 28, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "candidateElements": 168]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=-2.3px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+[18:16:24.314][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🚀 사용된 복원 방법: package_id_element
+🚀 앵커 정보: package_postContent_post_<출처 : 주익연웨...표시되지 않습니다.
+🚀 4요소 패키지 복원 디버그: ["matchedPackage": {
+    id = postContent;
+    kw = "<\Ucd9c\Ucc98 : \Uc8fc\Uc775\Uc5f0\Uc6e8...\Ud45c\Uc2dc\Ub418\Uc9c0 \Uc54a\Uc2b5\Ub2c8\Ub2e4.";
+    ts = "2025-09-10T09:14:49.879Z";
+    type = post;
+}, "afterPosition": {
+    x = 0;
+    y = 500;
+}, "matchDetails": {
+    keywordVerified = 0;
+    method = getElementById;
+    selector = "#postContent";
+    timestampVerified = 0;
+    typeVerified = 1;
+}, "elementPosition": {
+    x = 0;
+    y = 241;
+}]
+🚀 복원 검증 결과: [:]
+📊 JavaScript 상세 로그:
+   🚀 4요소 패키지 복원 시작
+   📊 목표 위치: X=0.0px, Y=-2.3px
+   📊 목표 백분율: X=0.00%, Y=0.00%
+   📊 4요소 패키지 데이터 존재: true
+   📊 앵커 개수: 28개
+   📊 현재 스크롤: X=0.0px, Y=4222.0px
+   📊 현재 뷰포트: 393 x 791
+   📊 현재 콘텐츠: 393 x 14103
+   📊 현재 최대 스크롤: X=0.0px, Y=13312.0px
+   🎯 4요소 패키지 앵커 복원 시도 시작
+      완전한 4요소 패키지 앵커: 28개 (전체 28개)
+   🎯 완전패키지앵커[0] 4요소 패키지 시도
+      패키지: id="auto_1757495689879_7xqou3v6n", type="post", ts="작성일 2025.09.08. 21:17", kw="이야기방앱 열기 [...조회 431  구독"
+      품질점수: 78점
+      4요소 패키지 통합 매칭 시작: id+type+ts+kw
+      1순위: 고유ID 검색 "auto_1757495689879_7xqou3v6n"
+      2순위 대체: 타입+키워드 조합 검색 "post" + "이야기방앱 열기 [...조회 431  구독"
+      타입 "post" 선호 태그: [div, article, section]
+      키워드 "이야기방앱 열기 [...조회 431  구독" 포함 요소: 0개
+      완전패키지앵커[0] 4요소 패키지 매칭 실패
+      실패 원인: ID="auto_1757495689879_7xqou3v6n" 검색 실패, 타입+키워드 대체 검색도 실패
+   🎯 완전패키지앵커[1] 4요소 패키지 시도
+      패키지: id="postContent", type="post", ts="2025-09-10T09:14:49.879Z", kw="<출처 : 주익연웨...표시되지 않습니다."
+      품질점수: 85점
+      4요소 패키지 통합 매칭 시작: id+type+ts+kw
+      1순위: 고유ID 검색 "postContent"
+      ✅ ID 요소로 발견: #postContent
+      2순위: 타입+키워드 검증 "post" + "<출처 : 주익연웨...표시되지 않습니다."
+      타입 태그 매칭: true (기대: div, 실제: div)
+      키워드 매칭: false ("<출처 : 주익연웨...표시되지 않습니다." in 텍스트)
+      ✅ 타입+키워드 검증 통과
+      3순위: 타임스탬프 검증 "2025-09-10T09:14:49.879Z"
+      타임스탬프 검증: false ("2025-09-10" in 텍스트)
+      ⚠️ 타임스탬프 불일치 - 경고만 (계속 진행)
+   🎯 4요소 패키지 앵커 발견 - 스크롤 실행
+      매칭 방법: package_id_element
+      매칭 상세: {"method":"getElementById","selector":"#postContent","typeVerified":true,"keywordVerified":false,"timestampVerified":false}
+      발견된 요소 위치: X=0.0px, Y=241.0px
+      요소 크기: 393.0 x 1499.1
+      요소 태그: <div>
+      캡처된 오프셋: -259.0px
+      스크롤 실행: scrollIntoView
+      오프셋 보정: 259px
+      복원 후 위치: X=0.0px, Y=500.0px
+      목표와 차이: X=0.0px, Y=502.3px
+📊 페이지 분석 결과: ["currentContent": {
+    height = 14103;
+    width = 393;
+}, "currentScroll": {
+    x = 0;
+    y = 4222;
+}, "currentMaxScroll": {
+    x = 0;
+    y = 13312;
+}, "currentViewport": {
+    height = 791;
+    width = 393;
+}]
+📊 패키지 분석 결과: ["completePackageAnchors": 28, "successfulAnchor": {
+    index = 1;
+    matchDetails =     {
+        keywordVerified = 0;
+        method = getElementById;
+        selector = "#postContent";
+        timestampVerified = 0;
+        typeVerified = 1;
+    };
+    matchMethod = "package_id_element";
+    package =     {
+        id = postContent;
+        kw = "<\Ucd9c\Ucc98 : \Uc8fc\Uc775\Uc5f0\Uc6e8...\Ud45c\Uc2dc\Ub418\Uc9c0 \Uc54a\Uc2b5\Ub2c8\Ub2e4.";
+        ts = "2025-09-10T09:14:49.879Z";
+        type = post;
+    };
+}, "restoredByPackage": 1, "totalAnchors": 28]
+🚀 4요소 패키지 복원: 성공
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=-2.3px
+   초기 위치: X=0.0px, Y=0.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 791
+   최대 스크롤: X=0.0px, Y=0.0px
+   목표 Y 도달 가능: 예 ()
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=2.3px
+   시도 1: 현재 Y=0.0px, 차이=2.3px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   ✅ 점진적 스크롤 성공: 1회 시도, 최종 차이 Y=2.3px
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 791;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 0;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+📊 스크롤 시도 횟수: 1회
+   시도[1]: Y=0.0px, 차이=2.3px
+📊 점진적 스크롤 최종 결과: ["totalTime": 0, "finalDiff": {
+    x = 0;
+    y = "2.333333333333333";
+}, "success": 1, "attempts": 1, "finalPosition": {
+    x = 0;
+    y = 0;
+}]
+🚫 1단계 완료: 성공 (progressive_success)
+🚫 단계 1 소요시간: 0.12초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+[18:16:24.419][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:24.438][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:24.438][BA5DBF][B:✅ F:✅][12][queueRestoring(10)] 🤫 큐 복원 완료 - 제목만 업데이트: '네이버 카페'
+[18:16:24.438][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: B2FCCA82)
+[18:16:24.438][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:16:24.438][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 10
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 10
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22957 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:16:24.439][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[BFCache🚫] 🛡️ 전환 중 - 새 제스처 무시
+[18:16:24.980][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=-2.3px
+   현재 위치: X=0.0px, Y=0.0px
+   목표와 차이: X=0.0px, Y=2.3px
+   허용 오차: 30px
+   허용 오차 내: 예
+   페이지 크기: 393 x 5016
+   최대 스크롤: X=0.0px, Y=4225.0px
+   목표 Y 도달 가능: 예
+   목표 X 도달 가능: 예
+   허용 오차 내 - 보정 불필요
+📊 최종 검증 데이터: ["scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 1;
+    excessX = 0;
+    excessY = 0;
+    isTargetBeyondContent = 0;
+}, "currentState": {
+    content =     {
+        height = 5016;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = "2.333333333333333";
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4225;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    target =     {
+        x = 0;
+        y = "-2.333333333333333";
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 1;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=-2px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.83초
+🚫 브라우저 차단 대응 완료: 1/2 성공, 소요시간: 0.95초
+🚫 최종 결과: ✅ 성공
+[BFCache🚫] ✅ 브라우저 차단 대응 BFCache 복원 성공: 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 성공
+[18:16:25.328][BA5DBF][B:✅ F:✅] 🔄 앞으로가기 플래그 리셋 완료
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["href", "content", "actualScrollable", "fourElementPackageAnchors", "captureTime", "title", "userAgent", "detailedLogs", "scroll", "timestamp", "captureStats", "viewport", "pageAnalysis"]
+🎯 JS 캡처된 앵커: 26개 (완전 패키지: 26개)
+📊 JS 캡처 통계: ["selectedElements": 30, "nearbyElements": 41, "finalAnchors": 26, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "candidateElements": 168, "processingErrors": 0, "qualityFilteredCount": 41, "anchorCreationErrors": 0, "captureTime": 3]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["href", "content", "actualScrollable", "fourElementPackageAnchors", "captureTime", "title", "userAgent", "detailedLogs", "scroll", "timestamp", "captureStats", "viewport", "pageAnalysis"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 26개 (완전 패키지: 26개)
+🎯 첫 번째 완전 패키지 앵커 키: ["textContent", "className", "size", "id", "offsetFromLeft", "anchorType", "captureTimestamp", "viewportPosition", "offsetFromTop", "anchorIndex", "absolutePosition", "tagName", "qualityScore", "fourElementPackage"]
+📊 첫 완전패키지 4요소: id=auto_1757495785629_aglcazfg8, type=post, ts=작성일 2025.09.08. 21:17, kw=이야기방앱 열기 [...조회 432  구독
+📊 첫 완전패키지 위치: X=16.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "이야기방앱 열기 [수다] 십이봉신 : 열두통의 편지 주익연 연기짱 본문 기타 기능본문 폰트"
+📊 첫 완전패키지 품질점수: 78점
+📊 4요소 패키지 수집 통계: ["selectedElements": 30, "nearbyElements": 41, "finalAnchors": 26, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "candidateElements": 168, "processingErrors": 0, "qualityFilteredCount": 41, "anchorCreationErrors": 0, "captureTime": 3]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v9]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_B2FCCA82-31F8-4663-94CB-DB63B1C770B7_v6
+[18:16:25.972][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 9 (큐 길이: 1)
+[18:16:25.972][BA5DBF][B:✅ F:✅][12][preparing(9)] 🔄 복원 시작: 인덱스 9 → '네이버 카페' (큐 남은 건수: 0)
+[18:16:25.973][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(9)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:25.973][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(9)] ⬅️ 뒤로가기 큐 추가 성공: '네이버 카페' [DataModel 인덱스: 9/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 뒤로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=4168.7px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 14103
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 14103
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 14103px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 19개 발견 (완전 패키지: 19개)
+📊 완전패키지앵커[0] 4요소: id=auto_1757495778894_yt0rm7gn4, type=div, ts=2025-09-10T09:16:18.894Z, kw=첫사랑 엔딩 굿즈 ...09.08. 댓글6
+📊 완전패키지앵커[0] 절대위치: X=409.0px, Y=4177.4px
+📊 완전패키지앵커[0] 품질점수: 43점
+📊 완전패키지앵커[1] 4요소: id=auto_1757495778894_sd7g8euvt, type=div, ts=2025-09-10T09:16:18.894Z, kw=첫사랑 엔딩 굿즈 ...09.08. 댓글6
+📊 완전패키지앵커[1] 절대위치: X=802.0px, Y=4177.4px
+📊 완전패키지앵커[1] 품질점수: 43점
+📊 완전패키지앵커[2] 4요소: id=auto_1757495778894_yikhfvedq, type=div, ts=2025-09-10T09:16:18.894Z, kw=첫사랑 엔딩 굿즈 ...09.08. 댓글6
+📊 완전패키지앵커[2] 절대위치: X=1195.0px, Y=4177.4px
+📊 완전패키지앵커[2] 품질점수: 43점
+📊 나머지 16개 완전 패키지 앵커 생략...
+📊 수집 통계: ["nearbyElements": 94, "finalAnchors": 19, "selectedElements": 30, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 16;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    h4 = 3;
+    iframe = 1;
+    img = 120;
+    li = 34;
+    p = 50;
+    video = 3;
+}, "candidateElements": 276, "processingErrors": 0, "qualityFilteredCount": 94, "anchorCreationErrors": 0, "captureTime": 6]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=4168.7px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+[18:16:26.040][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🚀 4요소 패키지 복원 JS 실행 오류: A JavaScript exception occurred
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=4168.7px
+   초기 위치: X=0.0px, Y=4169.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 791
+   최대 스크롤: X=0.0px, Y=0.0px
+   목표 Y 도달 가능: 아니오 (4168.7px 초과)
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=0.3px
+   시도 1: 현재 Y=4169.0px, 차이=0.3px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   ✅ 점진적 스크롤 성공: 1회 시도, 최종 차이 Y=0.3px
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 791;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 0;
+    };
+    scroll =     {
+        x = 0;
+        y = 4169;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+📊 스크롤 시도 횟수: 1회
+   시도[1]: Y=4169.0px, 차이=0.3px
+📊 점진적 스크롤 최종 결과: ["finalDiff": {
+    x = 0;
+    y = "0.3333333333330302";
+}, "attempts": 1, "finalPosition": {
+    x = 0;
+    y = 4169;
+}, "totalTime": 0, "success": 1]
+🚫 1단계 완료: 성공 (progressive_success)
+🚫 단계 1 소요시간: 0.22초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+[18:16:26.351][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:26.363][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:26.364][BA5DBF][B:✅ F:✅][12][queueRestoring(9)] 🤫 큐 복원 완료 - 제목만 업데이트: '네이버 카페'
+[18:16:26.364][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: 4B0D5FB1)
+[18:16:26.364][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:16:26.364][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 9
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 9
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22956 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:16:26.364][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[18:16:26.583][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:27.022][BA5DBF][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=4168.7px
+   현재 위치: X=0.0px, Y=0.0px
+   목표와 차이: X=0.0px, Y=4168.7px
+   허용 오차: 30px
+   허용 오차 내: 아니오
+   페이지 크기: 393 x 5040
+   최대 스크롤: X=0.0px, Y=4249.0px
+   목표 Y 도달 가능: 예
+   목표 X 도달 가능: 예
+   최종 보정 필요 - 실행 중
+   보정 전: X=0.0px, Y=0.0px
+📊 최종 검증 데이터: ["scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 1;
+    excessX = 0;
+    excessY = 0;
+    isTargetBeyondContent = 0;
+}, "currentState": {
+    content =     {
+        height = 5040;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = "4168.666666666667";
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4249;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    target =     {
+        x = 0;
+        y = "4168.666666666667";
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 0;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=4169px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.84초
+🚫 브라우저 차단 대응 완료: 1/2 성공, 소요시간: 1.06초
+🚫 최종 결과: ✅ 성공
+[BFCache🚫] ✅ 브라우저 차단 대응 BFCache 복원 성공: 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 성공
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["captureStats", "href", "scroll", "fourElementPackageAnchors", "title", "viewport", "userAgent", "timestamp", "pageAnalysis", "actualScrollable", "detailedLogs", "content", "captureTime"]
+🎯 JS 캡처된 앵커: 19개 (완전 패키지: 19개)
+📊 JS 캡처 통계: ["nearbyElements": 88, "finalAnchors": 19, "candidateElements": 168, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "selectedElements": 30, "processingErrors": 0, "qualityFilteredCount": 88, "anchorCreationErrors": 0, "captureTime": 5]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 4168.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["captureStats", "href", "scroll", "fourElementPackageAnchors", "title", "viewport", "userAgent", "timestamp", "pageAnalysis", "actualScrollable", "detailedLogs", "content", "captureTime"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 19개 (완전 패키지: 19개)
+🎯 첫 번째 완전 패키지 앵커 키: ["size", "captureTimestamp", "offsetFromTop", "fourElementPackage", "anchorIndex", "qualityScore", "viewportPosition", "textContent", "absolutePosition", "tagName", "offsetFromLeft", "className", "id", "anchorType"]
+📊 첫 완전패키지 4요소: id=auto_1757495788119_hh64taowz, type=item, ts=2025-09-10T09:16:28.119Z, kw=오뢰 스마일레몬  ...이미지 갯수  8+
+📊 첫 완전패키지 위치: X=0.0px, Y=4189.4px
+📊 첫 완전패키지 오프셋: -21.4px
+📊 첫 완전패키지 텍스트: "오뢰 스마일레몬    25.09.08. 댓글17 게시글 내 이미지 갯수  8+"
+📊 첫 완전패키지 품질점수: 47점
+📊 4요소 패키지 수집 통계: ["nearbyElements": 88, "finalAnchors": 19, "candidateElements": 168, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
+    h1 = 1;
+    h2 = 1;
+    h3 = 2;
+    iframe = 1;
+    img = 26;
+    li = 34;
+    p = 48;
+}, "selectedElements": 30, "processingErrors": 0, "qualityFilteredCount": 88, "anchorCreationErrors": 0, "captureTime": 5]
+✅ 4요소 패키지 직렬 캡처 완료: 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 네이버 카페 [v9]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_4B0D5FB1-4016-4454-A6D6-D8C1CD13BCD1_v6
+[18:16:28.421][BA5DBF][B:✅ F:✅][12][Q:1] 📥 복원 큐 추가: 인덱스 8 (큐 길이: 1)
+[18:16:28.422][BA5DBF][B:✅ F:✅][12][preparing(8)] 🔄 복원 시작: 인덱스 8 → '무협중국드라마 MJBox : 네이버 카페' (큐 남은 건수: 0)
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles → https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+[18:16:28.423][BA5DBF][B:✅ F:✅][🚩FLAG][preparing(8)] 🔄 복원 로드: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+[18:16:28.425][BA5DBF][B:✅ F:✅][🚩FLAG][queueRestoring(8)] ⬅️ 뒤로가기 큐 추가 성공: '무협중국드라마 MJBox : 네이버 카페' [DataModel 인덱스: 8/12]
+[BFCache🚫] 🏄‍♂️ 사파리 스타일 뒤로가기 완료
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 조합 BFCache 복원 시작
+📊 복원 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+📊 캡처 상태: complete
+📊 목표 스크롤: X=0.0px, Y=4591.0px
+📊 목표 백분율: X=0.00%, Y=0.00%
+📊 캡처된 콘텐츠 크기: 393 x 5382
+📊 캡처된 뷰포트 크기: 393 x 791
+📊 실제 스크롤 가능 크기: 393 x 5382
+🔄 데이터 프리로딩: 활성화
+📦 배치 로딩: 활성화
+🎯 목표 콘텐츠 높이: 5382px
+⚡ 최대 프리로딩 시도: 10회
+📦 배치 크기: 5개
+🔥 캡처된 jsState 키 확인: ["fourElementPackageAnchors", "userAgent", "captureStats", "detailedLogs", "actualScrollable", "content", "title", "href", "viewport", "pageAnalysis", "scroll", "captureTime", "timestamp"]
+🎯 4요소 패키지 앵커 데이터 확인: ["stats", "anchors"]
+🎯 4요소 패키지 앵커: 1개 발견 (완전 패키지: 1개)
+📊 완전패키지앵커[0] 4요소: id=ct, type=div, ts=2025-09-10T09:11:25.265Z, kw=인기글  댓글TOP...많은 게시글입니다.
+📊 완전패키지앵커[0] 절대위치: X=0.0px, Y=330.0px
+📊 완전패키지앵커[0] 품질점수: 68점
+📊 수집 통계: ["nearbyElements": 7, "finalAnchors": 1, "selectorStats": {
+    "div[class*=\"content\"]" = 2;
+    h1 = 2;
+    img = 2;
+    li = 16;
+    p = 4;
+    section = 1;
+}, "selectedElements": 7, "candidateElements": 27, "processingErrors": 0, "qualityFilteredCount": 7, "anchorCreationErrors": 0, "captureTime": 1]
+🔄 데이터 프리로딩 시작
+[BFCache🚫] 🎬 미리보기 타임아웃 제거됨 - 제스처 먹통 방지
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 떠나기 스냅샷 캡처 시작: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 URL 변경 감지 - 떠나기 전 캐시: https://m.cafe.naver.com/ca-fe/mjbox?tc=section_home_my_cafe → https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+🔄 데이터 프리로딩 JS 오류: JavaScript execution returned a result of an unsupported type
+🔄 데이터 프리로딩 결과: 실패
+🔄 데이터 프리로딩 완료: 실패
+🚀 4요소 패키지 1단계 복원 시작
+📊 네이티브 스크롤뷰 백업 설정: X=0.0px, Y=4591.0px
+🚀 4요소 패키지 복원 JavaScript 실행 중...
+🚀 4요소 패키지 1단계 복원 완료
+✅ 완전 캡처 상태 - 4요소 패키지 복원 + 브라우저 차단 대응
+🌐 4요소 패키지 복원 후 브라우저 차단 대응 시작
+🚫 브라우저 차단 대응 단계 구성 시작
+✅ 2단계 최종 보정 단계 추가 (필수)
+🚫 총 2단계 브라우저 차단 대응 단계 구성 완료
+🚫 1단계 실행 시작
+🚫 1단계: 점진적 스크롤 복원 (대기: 100ms)
+🌐 DOM 캡처 성공: 99995문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+🚀 사용된 복원 방법: package_id_element
+🚀 앵커 정보: package_ct_div_인기글  댓글TOP...많은 게시글입니다.
+🚀 4요소 패키지 복원 디버그: ["afterPosition": {
+    x = 0;
+    y = 3645;
+}, "elementPosition": {
+    x = 0;
+    y = 4002;
+}, "matchedPackage": {
+    id = ct;
+    kw = "\Uc778\Uae30\Uae00  \Ub313\Uae00TOP...\Ub9ce\Uc740 \Uac8c\Uc2dc\Uae00\Uc785\Ub2c8\Ub2e4.";
+    ts = "2025-09-10T09:11:25.265Z";
+    type = div;
+}, "matchDetails": {
+    keywordVerified = 0;
+    method = getElementById;
+    selector = "#ct";
+    timestampVerified = 0;
+    typeVerified = 1;
+}]
+🚀 복원 검증 결과: [:]
+📊 JavaScript 상세 로그:
+   🚀 4요소 패키지 복원 시작
+   📊 목표 위치: X=0.0px, Y=4591.0px
+   📊 목표 백분율: X=0.00%, Y=0.00%
+   📊 4요소 패키지 데이터 존재: true
+   📊 앵커 개수: 1개
+   📊 현재 스크롤: X=0.0px, Y=4002.0px
+   📊 현재 뷰포트: 393 x 791
+   📊 현재 콘텐츠: 393 x 791
+   📊 현재 최대 스크롤: X=0.0px, Y=0.0px
+   🎯 4요소 패키지 앵커 복원 시도 시작
+      완전한 4요소 패키지 앵커: 1개 (전체 1개)
+   🎯 완전패키지앵커[0] 4요소 패키지 시도
+      패키지: id="ct", type="div", ts="2025-09-10T09:11:25.265Z", kw="인기글  댓글TOP...많은 게시글입니다."
+      품질점수: 68점
+      4요소 패키지 통합 매칭 시작: id+type+ts+kw
+      1순위: 고유ID 검색 "ct"
+      ✅ ID 요소로 발견: #ct
+      2순위: 타입+키워드 검증 "div" + "인기글  댓글TOP...많은 게시글입니다."
+      타입 태그 매칭: true (기대: div, 실제: div)
+      키워드 매칭: false ("인기글  댓글TOP...많은 게시글입니다." in 텍스트)
+      ✅ 타입+키워드 검증 통과
+      3순위: 타임스탬프 검증 "2025-09-10T09:11:25.265Z"
+      타임스탬프 검증: false ("2025-09-10" in 텍스트)
+      ⚠️ 타임스탬프 불일치 - 경고만 (계속 진행)
+   🎯 4요소 패키지 앵커 발견 - 스크롤 실행
+      매칭 방법: package_id_element
+      매칭 상세: {"method":"getElementById","selector":"#ct","typeVerified":true,"keywordVerified":false,"timestampVerified":false}
+      발견된 요소 위치: X=0.0px, Y=4002.0px
+      요소 크기: 0.0 x 0.0
+      요소 태그: <div>
+      캡처된 오프셋: 357.0px
+      스크롤 실행: scrollIntoView
+      오프셋 보정: -357px
+      복원 후 위치: X=0.0px, Y=3645.0px
+      목표와 차이: X=0.0px, Y=946.0px
+📊 페이지 분석 결과: ["currentViewport": {
+    height = 791;
+    width = 393;
+}, "currentContent": {
+    height = 791;
+    width = 393;
+}, "currentMaxScroll": {
+    x = 0;
+    y = 0;
+}, "currentScroll": {
+    x = 0;
+    y = 4002;
+}]
+📊 패키지 분석 결과: ["successfulAnchor": {
+    index = 0;
+    matchDetails =     {
+        keywordVerified = 0;
+        method = getElementById;
+        selector = "#ct";
+        timestampVerified = 0;
+        typeVerified = 1;
+    };
+    matchMethod = "package_id_element";
+    package =     {
+        id = ct;
+        kw = "\Uc778\Uae30\Uae00  \Ub313\Uae00TOP...\Ub9ce\Uc740 \Uac8c\Uc2dc\Uae00\Uc785\Ub2c8\Ub2e4.";
+        ts = "2025-09-10T09:11:25.265Z";
+        type = div;
+    };
+}, "completePackageAnchors": 1, "totalAnchors": 1, "restoredByPackage": 1]
+🚀 4요소 패키지 복원: 성공
+[18:16:28.504][BA5DBF][B:✅ F:✅][12][queueRestoring(8)] 🚀 네비게이션 시작: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+✅ JS 상태 캡처 성공: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 JS 캡처된 앵커: 1개 (완전 패키지: 1개)
+📊 JS 캡처 통계: ["nearbyElements": 3, "finalAnchors": 1, "candidateElements": 9, "selectedElements": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "processingErrors": 0, "qualityFilteredCount": 3, "anchorCreationErrors": 0, "captureTime": 0]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 4022.7), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["userAgent", "title", "actualScrollable", "viewport", "pageAnalysis", "fourElementPackageAnchors", "timestamp", "captureTime", "content", "scroll", "captureStats", "detailedLogs", "href"]
+🎯 캡처된 4요소 패키지 데이터 키: ["anchors", "stats"]
+🎯 캡처된 4요소 패키지 앵커 개수: 1개 (완전 패키지: 1개)
+🎯 첫 번째 완전 패키지 앵커 키: ["absolutePosition", "size", "viewportPosition", "anchorIndex", "id", "textContent", "qualityScore", "captureTimestamp", "fourElementPackage", "anchorType", "tagName", "className", "offsetFromTop", "offsetFromLeft"]
+📊 첫 완전패키지 4요소: id=auto_1757495788521_7hxxz5cle, type=post, ts=2025-09-10T09:16:28.521Z, kw=[수다] 십이봉신 ...편지 주익연 연기짱
+📊 첫 완전패키지 위치: X=0.0px, Y=52.0px
+📊 첫 완전패키지 오프셋: -52.0px
+📊 첫 완전패키지 텍스트: "[수다] 십이봉신 : 열두통의 편지 주익연 연기짱"
+📊 첫 완전패키지 품질점수: 52점
+📊 4요소 패키지 수집 통계: ["nearbyElements": 3, "finalAnchors": 1, "candidateElements": 9, "selectedElements": 3, "selectorStats": {
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 2;
+    h1 = 1;
+    h2 = 2;
+    p = 2;
+}, "processingErrors": 0, "qualityFilteredCount": 3, "anchorCreationErrors": 0, "captureTime": 0]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 무협중국드라마 MJBox : 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 무협중국드라마 MJBox : 네이버 카페
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🚀 4요소 패키지 JS 상태 캡처 시작
+[18:16:28.531][BA5DBF][B:✅ F:✅][12][queueRestoring(8)] 📝 URL 기반 제목 업데이트(보정): '네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+✅ JS 상태 캡처 성공: ["timestamp", "detailedLogs", "fourElementPackageAnchors", "captureTime", "captureStats", "viewport", "href", "content", "scroll", "pageAnalysis", "title", "actualScrollable", "userAgent"]
+🎯 JS 캡처된 앵커: 0개 (완전 패키지: 0개)
+📊 JS 캡처 통계: ["nearbyElements": 0, "finalAnchors": 0, "selectorStats": {
+}, "selectedElements": 0, "candidateElements": 0, "processingErrors": 0, "qualityFilteredCount": 0, "anchorCreationErrors": 0, "captureTime": 0]
+⚡ 부분 캡처 성공: visual=true, dom=false, js=true
+📊 캡처 완료: 위치=(0.0, 4591.0), 백분율=(0.00%, 0.00%)
+🔥 캡처된 jsState 키: ["timestamp", "detailedLogs", "fourElementPackageAnchors", "captureTime", "captureStats", "viewport", "href", "content", "scroll", "pageAnalysis", "title", "actualScrollable", "userAgent"]
+🎯 캡처된 4요소 패키지 데이터 키: ["stats", "anchors"]
+🎯 캡처된 4요소 패키지 앵커 개수: 0개 (완전 패키지: 0개)
+📊 4요소 패키지 수집 통계: ["nearbyElements": 0, "finalAnchors": 0, "selectorStats": {
+}, "selectedElements": 0, "candidateElements": 0, "processingErrors": 0, "qualityFilteredCount": 0, "anchorCreationErrors": 0, "captureTime": 0]
+✅ 4요소 패키지 직렬 캡처 완료: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v6]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_58E59099-273A-4A72-8CDC-3A970D9BC6CA_v3
+📊 점진적 스크롤 상세 로그:
+   🚫 점진적 스크롤 시작
+   목표: X=0.0px, Y=4591.0px
+   초기 위치: X=0.0px, Y=0.0px
+   뷰포트: 393 x 791
+   콘텐츠: 393 x 791
+   최대 스크롤: X=0.0px, Y=0.0px
+   목표 Y 도달 가능: 아니오 (4591.0px 초과)
+   목표 X 도달 가능: 예
+   초기 거리: X=0.0px, Y=4591.0px
+   시도 1: 현재 Y=0.0px, 차이=4591.0px, 진행=0.0px
+   스크롤 정체 감지: 1회 연속
+   스크롤 한계: Y=0.0px (도달)
+   무한 스크롤 구간 감지 - 트리거 시도
+   터치 이벤트 트리거 성공
+   더보기 버튼: 0개 발견, 0개 클릭
+   모든 스크롤 방법 시도 완료
+📊 점진적 스크롤 성능 데이터: ["initial": {
+    content =     {
+        height = 791;
+        width = 393;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 0;
+    };
+    scroll =     {
+        x = 0;
+        y = 0;
+    };
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+}]
+🚫 1단계 완료: 실패 (progressive_inProgress)
+🚫 단계 1 소요시간: 0.10초
+🚫 2단계 실행 시작
+✅ 2단계: 최종 보정 (대기: 0.80초)
+[18:16:28.637][BA5DBF][B:✅ F:✅][12][queueRestoring(8)] 🔄 SPA Replace - 현재 페이지 교체: '네이버 카페'
+[18:16:28.637][BA5DBF][B:✅ F:✅][12][queueRestoring(8)] 🤫 큐 복원 중 URL변경 - 현재 항목 치환: '네이버 카페'
+[18:16:28.637][BA5DBF][B:✅ F:✅][12] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '네이버 카페' [ID: 58E59099)
+[18:16:28.637][34A3FC][B:✅ F:✅][72] 💾 세션 저장: 72개 페이지, 현재 인덱스 70
+스냅샷 생성: ID 34A3FC77, 72개 페이지, 인덱스 70
+[18:16:28.637][BA5DBF][B:✅ F:✅][12] 💾 세션 저장: 12개 페이지, 현재 인덱스 8
+스냅샷 생성: ID BA5DBF6E, 12개 페이지, 인덱스 8
+저장 시도: 탭 2개 [72페이지, 12페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 22999 바이트
+탭 스냅샷 저장(네비게이션 완료)
+[18:16:28.638][BA5DBF][B:✅ F:✅][12] ✅ 네비게이션 완료
+[BFCache🚫] 💾 이미지 저장 성공: snapshot.jpg
+[BFCache🚫] 💾 상태 저장 성공: state.json
+[BFCache🚫] 💾 디스크 저장 완료: 무협중국드라마 MJBox : 네이버 카페 [v7]
+[BFCache🚫] 🗑️ 이전 버전 삭제: Page_58E59099-273A-4A72-8CDC-3A970D9BC6CA_v4
+[18:16:28.835][BA5DBF][B:✅ F:✅][12] 📝 URL 기반 제목 업데이트(보정): '십이봉신 : 열두통의 편지 주익연 연기짱 : 네이버 카페' [인덱스: 11] URL: https://m.cafe.naver.com/ca-fe/web/cafes/11122390/articles/916464?fromList=true&tc=cafe_home_all_articles
+[18:16:29.438][BA5DBF][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+📊 최종 보정 상세 로그:
+   ✅ 브라우저 차단 대응 최종 보정 시작
+   목표: X=0.0px, Y=4591.0px
+   현재 위치: X=0.0px, Y=4059.0px
+   목표와 차이: X=0.0px, Y=532.0px
+   허용 오차: 30px
+   허용 오차 내: 아니오
+   페이지 크기: 393 x 4850
+   최대 스크롤: X=0.0px, Y=4059.0px
+   목표 Y 도달 가능: 아니오
+   목표 X 도달 가능: 예
+   Y축 초과량: 532.0px
+   최종 보정 필요 - 실행 중
+   보정 전: X=0.0px, Y=4059.0px
+📊 최종 검증 데이터: ["currentState": {
+    content =     {
+        height = 4850;
+        width = 393;
+    };
+    diff =     {
+        x = 0;
+        y = 532;
+    };
+    maxScroll =     {
+        x = 0;
+        y = 4059;
+    };
+    scroll =     {
+        x = 0;
+        y = 4059;
+    };
+    target =     {
+        x = 0;
+        y = 4591;
+    };
+    tolerance = 30;
+    viewport =     {
+        height = 791;
+        width = 393;
+    };
+    withinTolerance = 0;
+}, "scrollability": {
+    canScrollToTargetX = 1;
+    canScrollToTargetY = 0;
+    excessX = 0;
+    excessY = 532;
+    isTargetBeyondContent = 0;
+}]
+✅ 2단계 허용 오차 내: false
+✅ 2단계 최종 차이: X=0.0px, Y=0.0px
+✅ 2단계 실제 복원: 목표=4591px → 실제=0px
+✅ 2단계 실제 복원 성공: false (50px 기준)
+✅ 2단계 브라우저 차단 대응 최종보정 완료: 실패
+🚫 단계 2 소요시간: 0.84초
+🚫 브라우저 차단 대응 완료: 0/2 성공, 소요시간: 0.95초
+🚫 최종 결과: ❌ 실패
+[BFCache🚫] ⚠️ 브라우저 차단 대응 BFCache 복원 실패: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache 실패
+🚀 4요소 패키지 캡처 대상: m.cafe.naver.com - 네이버 카페
+🚀 4요소 패키지 직렬 캡처 시작: 네이버 카페 (immediate)
+📸 스냅샷 캡처 시도: 네이버 카페
+[BFCache🚫] 💭 메모리 캐시 히트: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 📸 타겟 페이지 BFCache 스냅샷 사용: 무협중국드라마 MJBox : 네이버 카페
+[BFCache🚫] 🎬 직접 전환 시작: 뒤로가기
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 99996문자
+🚀 4요소 패키지 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["scroll", "pageAnalysis", "captureTime", "viewport", "fourElementPackageAnchors", "captureStats", "href", "actualScrollable", "userAgent", "detailedLogs", "timestamp", "content", "title"]
+🎯 JS 캡처된 앵커: 19개 (완전 패키지: 19개)
+📊 JS 캡처 통계: ["nearbyElements": 92, "captureTime": 7, "selectedElements": 30, "qualityFilteredCount": 92, "anchorCreationErrors": 0, "processingErrors": 0, "finalAnchors": 19, "selectorStats": {
+    ".reply" = 5;
+    "div[class*=\"card\"]" = 2;
+    "div[class*=\"content\"]" = 35;
+    "div[class*=\"item\"]" = 10;
+    "div[class*=\"post\"]" = 3;
