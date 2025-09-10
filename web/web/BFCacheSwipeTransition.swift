@@ -538,7 +538,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 📊 **상대적 백분율 복원 JavaScript 생성 - WKWebView 직렬화 안전 버전**
+    // 📊 **상대적 백분율 복원 JavaScript 생성 - WKWebView 직렬화 안전 버전 + 모바일 OR 조건 개선**
     private func generatePercentageRestoreScript() -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
@@ -548,7 +548,7 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
-                console.log('📊 상대적 백분율 복원 시작');
+                console.log('📊 모바일 친화적 백분율 복원 시작');
                 
                 // 📊 **안전한 결과 객체 (기본 타입만 사용)**
                 var safeResult = {
@@ -586,32 +586,56 @@ struct BFCacheSnapshot: Codable {
                 
                 var calculatedX = 0;
                 var calculatedY = 0;
-                var method = 'percentage';
+                var method = 'none';
                 
-                // 백분율 기반 위치 계산
-                if (targetPercentY > 0 && currentMaxScrollY > 0) {
-                    calculatedY = (targetPercentY / 100.0) * currentMaxScrollY;
-                    method = 'percentage_y';
-                } else if (targetY > 0 && currentMaxScrollY > 0) {
-                    // 절대 위치가 유효하면 사용
-                    calculatedY = Math.min(targetY, currentMaxScrollY);
-                    method = 'absolute_y_clamped';
+                // 📱 **모바일 친화적: OR 조건으로 변경 - 세로 스크롤만 있어도 백분율 복원**
+                var hasVerticalScroll = currentMaxScrollY > 0;
+                var hasHorizontalScroll = currentMaxScrollX > 0;
+                var canUsePercentage = hasVerticalScroll || hasHorizontalScroll; // 🔧 AND → OR 조건
+                
+                safeResult.detailedLogs.push('스크롤 가능 여부: 세로=' + hasVerticalScroll + ', 가로=' + hasHorizontalScroll);
+                safeResult.detailedLogs.push('백분율 사용 가능: ' + canUsePercentage);
+                
+                if (canUsePercentage) {
+                    // Y축 백분율 복원 (세로 스크롤 있으면 사용)
+                    if (targetPercentY > 0 && hasVerticalScroll) {
+                        calculatedY = (targetPercentY / 100.0) * currentMaxScrollY;
+                        method = 'percentage_y';
+                        safeResult.detailedLogs.push('Y축 백분율 복원: ' + targetPercentY.toFixed(2) + '% → ' + calculatedY.toFixed(1) + 'px');
+                    } else if (targetY > 0 && hasVerticalScroll) {
+                        // 절대 위치를 최대값으로 제한
+                        calculatedY = Math.min(targetY, currentMaxScrollY);
+                        method = 'absolute_y_clamped';
+                        safeResult.detailedLogs.push('Y축 절대값 복원 (제한): ' + targetY.toFixed(1) + ' → ' + calculatedY.toFixed(1) + 'px');
+                    } else {
+                        calculatedY = 0;
+                        method = 'fallback_top';
+                        safeResult.detailedLogs.push('Y축 최상단 복원');
+                    }
+                    
+                    // X축 백분율 복원 (가로 스크롤 있으면 사용)
+                    if (targetPercentX > 0 && hasHorizontalScroll) {
+                        calculatedX = (targetPercentX / 100.0) * currentMaxScrollX;
+                        safeResult.detailedLogs.push('X축 백분율 복원: ' + targetPercentX.toFixed(2) + '% → ' + calculatedX.toFixed(1) + 'px');
+                    } else if (hasHorizontalScroll) {
+                        calculatedX = Math.min(targetX, currentMaxScrollX);
+                        safeResult.detailedLogs.push('X축 절대값 복원');
+                    } else {
+                        calculatedX = 0; // 가로 스크롤이 없으면 0
+                        safeResult.detailedLogs.push('X축 스크롤 없음 - 0px');
+                    }
                 } else {
+                    // 백분율 사용 불가능한 경우 절대값 사용
                     calculatedY = 0;
-                    method = 'fallback_top';
-                }
-                
-                if (targetPercentX > 0 && currentMaxScrollX > 0) {
-                    calculatedX = (targetPercentX / 100.0) * currentMaxScrollX;
-                } else {
-                    calculatedX = Math.min(targetX, currentMaxScrollX);
+                    calculatedX = 0;
+                    method = 'no_scroll_available';
+                    safeResult.detailedLogs.push('스크롤 불가능 - 최상단 복원');
                 }
                 
                 safeResult.method = method;
                 safeResult.calculatedX = calculatedX;
                 safeResult.calculatedY = calculatedY;
-                safeResult.detailedLogs.push('계산된 위치: X=' + calculatedX.toFixed(1) + ', Y=' + calculatedY.toFixed(1));
-                safeResult.detailedLogs.push('사용된 방법: ' + method);
+                safeResult.detailedLogs.push('최종 계산된 위치: X=' + calculatedX.toFixed(1) + ', Y=' + calculatedY.toFixed(1));
                 
                 // 스크롤 실행
                 window.scrollTo(calculatedX, calculatedY);
@@ -642,7 +666,7 @@ struct BFCacheSnapshot: Codable {
                 safeResult.diffY = diffY;
                 safeResult.detailedLogs.push('실제 위치: X=' + actualX.toFixed(1) + ', Y=' + actualY.toFixed(1));
                 safeResult.detailedLogs.push('위치 차이: X=' + diffX.toFixed(1) + ', Y=' + diffY.toFixed(1));
-                safeResult.detailedLogs.push('허용 오차: ' + tolerance + 'px');
+                safeResult.detailedLogs.push('허용 오차: ' + tolerance + 'px → 성공: ' + success);
                 
                 return safeResult;
                 
@@ -1286,11 +1310,15 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 상대적 위치 계산 (백분율) - 범위 제한 없음
+        // 📱 **모바일 친화적 백분율 계산 (OR 조건) - 중요한 수정!**
         let scrollPercent: CGPoint
-        if captureData.actualScrollableSize.width > captureData.viewportSize.width && captureData.actualScrollableSize.height > captureData.viewportSize.height {
-            let maxScrollX = captureData.actualScrollableSize.width - captureData.viewportSize.width
-            let maxScrollY = captureData.actualScrollableSize.height - captureData.viewportSize.height
+        let hasVerticalScroll = captureData.actualScrollableSize.height > captureData.viewportSize.height
+        let hasHorizontalScroll = captureData.actualScrollableSize.width > captureData.viewportSize.width
+        
+        // 🔧 **핵심 수정: OR 조건으로 변경 - 세로 스크롤만 있어도 백분율 계산**
+        if hasVerticalScroll || hasHorizontalScroll { // AND(&&) → OR(||) 조건으로 수정
+            let maxScrollY = hasVerticalScroll ? captureData.actualScrollableSize.height - captureData.viewportSize.height : 0
+            let maxScrollX = hasHorizontalScroll ? captureData.actualScrollableSize.width - captureData.viewportSize.width : 0
             
             scrollPercent = CGPoint(
                 x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
@@ -1301,6 +1329,7 @@ extension BFCacheTransitionSystem {
         }
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("📱 스크롤 가능: 세로=\(hasVerticalScroll), 가로=\(hasHorizontalScroll)")
         
         // 🔄 **프리로딩 설정 생성 (저장된 콘텐츠 높이 기반)**
         let preloadingConfig = BFCacheSnapshot.PreloadingConfig(
