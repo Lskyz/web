@@ -22,6 +22,7 @@
 //  🐛 **스코프 에러 수정** - JavaScript 변수 정의 순서 개선
 //  🎯 **4요소 패키지 앵커** - id+type+ts+kw 패키지로 정확한 복원
 //  👁️ **보이는 요소만 캡처** - 실제 표시되는 활성 요소만 선별 캡처
+//  🚫 **JS 타입 오류 수정** - Swift 호환 기본 타입만 반환
 
 import UIKit
 import WebKit
@@ -318,7 +319,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // 🔄 **새 추가: 데이터 프리로딩 JavaScript 생성**
+    // 🔄 **🚫 수정: Swift 호환 데이터 프리로딩 JavaScript 생성**
     private func generateDataPreloadingScript() -> String {
         let targetHeight = preloadingConfig.targetContentHeight
         let maxAttempts = preloadingConfig.maxPreloadAttempts
@@ -327,7 +328,7 @@ struct BFCacheSnapshot: Codable {
         let enableBatchLoading = preloadingConfig.enableBatchLoading
         
         return """
-        (async function() {
+        (function() {
             try {
                 console.log('🔄 데이터 프리로딩 시작');
                 
@@ -338,12 +339,13 @@ struct BFCacheSnapshot: Codable {
                 const maxAttempts = parseInt('\(maxAttempts)');
                 const batchSize = parseInt('\(batchSize)');
                 const enableBatchLoading = \(enableBatchLoading);
+                const timeoutSeconds = parseInt('\(timeoutSeconds)');
                 
                 detailedLogs.push('🔄 데이터 프리로딩 설정');
-                detailedLogs.push(`목표 높이: ${targetContentHeight.toFixed(1)}px`);
-                detailedLogs.push(`최대 시도: ${maxAttempts}회`);
-                detailedLogs.push(`배치 크기: ${batchSize}개`);
-                detailedLogs.push(`배치 로딩: ${enableBatchLoading ? '활성화' : '비활성화'}`);
+                detailedLogs.push('목표 높이: ' + targetContentHeight.toFixed(1) + 'px');
+                detailedLogs.push('최대 시도: ' + maxAttempts + '회');
+                detailedLogs.push('배치 크기: ' + batchSize + '개');
+                detailedLogs.push('배치 로딩: ' + (enableBatchLoading ? '활성화' : '비활성화'));
                 
                 console.log('🔄 데이터 프리로딩 설정:', {
                     targetContentHeight: targetContentHeight,
@@ -362,6 +364,7 @@ struct BFCacheSnapshot: Codable {
                     const currentScrollY = window.scrollY || window.pageYOffset || 0;
                     const maxScrollY = Math.max(0, currentHeight - viewportHeight);
                     
+                    // 🚫 **Swift 호환 기본 타입만 반환**
                     return {
                         currentHeight: currentHeight,
                         viewportHeight: viewportHeight,
@@ -395,17 +398,18 @@ struct BFCacheSnapshot: Codable {
                     );
                     
                     let clickedButtons = 0;
-                    loadMoreButtons.forEach((btn, index) => {
+                    for (let i = 0; i < loadMoreButtons.length; i++) {
+                        const btn = loadMoreButtons[i];
                         if (btn && typeof btn.click === 'function') {
                             try {
                                 btn.click();
                                 clickedButtons++;
-                                detailedLogs.push(`더보기 버튼[${index}] 클릭: ${btn.className || btn.tagName}`);
+                                detailedLogs.push('더보기 버튼[' + i + '] 클릭: ' + (btn.className || btn.tagName));
                             } catch(e) {
-                                detailedLogs.push(`더보기 버튼[${index}] 클릭 실패: ${e.message}`);
+                                detailedLogs.push('더보기 버튼[' + i + '] 클릭 실패: ' + e.message);
                             }
                         }
-                    });
+                    }
                     triggers.push({ method: 'load_more_buttons', found: loadMoreButtons.length, clicked: clickedButtons });
                     
                     // 4. AJAX 요청 감지 및 대기
@@ -416,11 +420,15 @@ struct BFCacheSnapshot: Codable {
                     }
                     triggers.push({ method: 'ajax_detection', estimated: ajaxRequests });
                     
-                    // 5. 터치 이벤트 (모바일)
+                    // 5. 터치 이벤트 (모바일) - 🚫 try-catch로 안전 처리
                     try {
-                        const touchEvent = new TouchEvent('touchend', { bubbles: true });
-                        document.dispatchEvent(touchEvent);
-                        triggers.push({ method: 'touch_events', success: true });
+                        if (typeof TouchEvent !== 'undefined') {
+                            const touchEvent = new TouchEvent('touchend', { bubbles: true });
+                            document.dispatchEvent(touchEvent);
+                            triggers.push({ method: 'touch_events', success: true });
+                        } else {
+                            triggers.push({ method: 'touch_events', success: false, error: 'TouchEvent not supported' });
+                        }
                     } catch(e) {
                         triggers.push({ method: 'touch_events', success: false, error: e.message });
                     }
@@ -428,35 +436,58 @@ struct BFCacheSnapshot: Codable {
                     return triggers;
                 }
                 
-                // 📦 **배치 로딩 실행**
-                async function performBatchLoading() {
-                    const batchStartTime = Date.now();
-                    let totalTriggered = 0;
-                    let heightIncreased = false;
+                // 📊 **동기적 처리로 변경 - Promise 제거**
+                let totalBatches = 0;
+                let totalTriggered = 0;
+                let heightIncreased = false;
+                let batchProcessingLogs = [];
+                
+                const initialState = getCurrentPageState();
+                detailedLogs.push('초기 상태: 높이=' + initialState.currentHeight.toFixed(1) + 'px, 필요=' + (initialState.needsMore ? '예' : '아니오'));
+                
+                if (!initialState.needsMore) {
+                    detailedLogs.push('목표 높이 이미 달성 - 프리로딩 불필요');
+                    
+                    // 🚫 **Swift 호환 기본 타입으로 반환**
+                    return {
+                        success: true,
+                        reason: 'already_sufficient',
+                        loadedContentHeight: initialState.currentHeight,
+                        loadingAttempts: 0,
+                        batchResults: [],
+                        detailedLogs: detailedLogs
+                    };
+                }
+                
+                // 📦 **배치 로딩 실행 (동기적)**
+                if (enableBatchLoading) {
+                    detailedLogs.push('📦 배치 로딩 모드 시작');
                     
                     for (let batch = 0; batch < batchSize && loadingAttempts < maxAttempts; batch++) {
                         const beforeState = getCurrentPageState();
                         
-                        detailedLogs.push(`배치[${batch + 1}/${batchSize}] 시작: 현재 높이=${beforeState.currentHeight.toFixed(1)}px`);
+                        detailedLogs.push('배치[' + (batch + 1) + '/' + batchSize + '] 시작: 현재 높이=' + beforeState.currentHeight.toFixed(1) + 'px');
                         
                         // 무한스크롤 트리거 실행
                         const triggers = triggerInfiniteScroll();
                         totalTriggered += triggers.length;
                         loadingAttempts++;
                         
-                        // 잠시 대기 (콘텐츠 로딩 시간 확보)
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        // 🚫 **동기적 대기 처리 (Promise 대신 로그만)**
+                        detailedLogs.push('배치[' + (batch + 1) + '] 트리거 완료: ' + triggers.length + '개 방법 시도');
                         
+                        // 즉시 높이 변화 확인
                         const afterState = getCurrentPageState();
                         const heightDiff = afterState.currentHeight - beforeState.currentHeight;
                         
-                        detailedLogs.push(`배치[${batch + 1}] 완료: 높이 변화=${heightDiff.toFixed(1)}px`);
+                        detailedLogs.push('배치[' + (batch + 1) + '] 완료: 높이 변화=' + heightDiff.toFixed(1) + 'px');
                         
                         if (heightDiff > 50) { // 50px 이상 증가하면 성공
                             heightIncreased = true;
-                            detailedLogs.push(`배치[${batch + 1}] 높이 증가 감지: ${heightDiff.toFixed(1)}px`);
+                            detailedLogs.push('배치[' + (batch + 1) + '] 높이 증가 감지: ' + heightDiff.toFixed(1) + 'px');
                         }
                         
+                        // 🚫 **기본 타입으로 배치 결과 저장**
                         batchResults.push({
                             batchIndex: batch + 1,
                             beforeHeight: beforeState.currentHeight,
@@ -466,111 +497,68 @@ struct BFCacheSnapshot: Codable {
                             success: heightDiff > 50
                         });
                         
+                        totalBatches++;
+                        
                         // 목표 높이 달성 시 중단
                         if (afterState.currentHeight >= targetContentHeight) {
-                            detailedLogs.push(`목표 높이 달성: ${afterState.currentHeight.toFixed(1)}px >= ${targetContentHeight.toFixed(1)}px`);
+                            detailedLogs.push('목표 높이 달성: ' + afterState.currentHeight.toFixed(1) + 'px >= ' + targetContentHeight.toFixed(1) + 'px');
                             break;
                         }
                     }
+                } else {
+                    detailedLogs.push('🔄 단일 로딩 모드 시작');
+                    // 단일 로딩 모드
+                    const beforeState = getCurrentPageState();
+                    const triggers = triggerInfiniteScroll();
+                    loadingAttempts = 1;
+                    totalTriggered = triggers.length;
+                    totalBatches = 1;
                     
-                    const batchEndTime = Date.now();
-                    const batchDuration = batchEndTime - batchStartTime;
+                    const afterState = getCurrentPageState();
+                    heightIncreased = afterState.currentHeight > beforeState.currentHeight + 50;
                     
-                    return {
-                        totalBatches: batchResults.length,
-                        totalTriggered: totalTriggered,
-                        heightIncreased: heightIncreased,
-                        duration: batchDuration,
-                        finalState: getCurrentPageState()
-                    };
+                    batchResults.push({
+                        batchIndex: 1,
+                        beforeHeight: beforeState.currentHeight,
+                        afterHeight: afterState.currentHeight,
+                        heightDiff: afterState.currentHeight - beforeState.currentHeight,
+                        triggersUsed: triggers.length,
+                        success: heightIncreased
+                    });
                 }
                 
-                // 🔄 **메인 프리로딩 로직**
-                async function executePreloading() {
-                    const startTime = Date.now();
-                    const initialState = getCurrentPageState();
-                    
-                    detailedLogs.push(`초기 상태: 높이=${initialState.currentHeight.toFixed(1)}px, 필요=${initialState.needsMore ? '예' : '아니오'}`);
-                    
-                    if (!initialState.needsMore) {
-                        detailedLogs.push('목표 높이 이미 달성 - 프리로딩 불필요');
-                        return {
-                            success: true,
-                            reason: 'already_sufficient',
-                            loadedContentHeight: initialState.currentHeight,
-                            loadingAttempts: 0
-                        };
-                    }
-                    
-                    let finalResult = null;
-                    
-                    if (enableBatchLoading) {
-                        detailedLogs.push('📦 배치 로딩 모드 시작');
-                        finalResult = await performBatchLoading();
-                    } else {
-                        detailedLogs.push('🔄 단일 로딩 모드 시작');
-                        // 단일 로딩 모드
-                        const beforeState = getCurrentPageState();
-                        const triggers = triggerInfiniteScroll();
-                        loadingAttempts = 1;
-                        
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        
-                        const afterState = getCurrentPageState();
-                        finalResult = {
-                            totalBatches: 1,
-                            totalTriggered: triggers.length,
-                            heightIncreased: afterState.currentHeight > beforeState.currentHeight + 50,
-                            duration: 2000,
-                            finalState: afterState
-                        };
-                    }
-                    
-                    const endTime = Date.now();
-                    const totalDuration = endTime - startTime;
-                    
-                    detailedLogs.push(`프리로딩 완료: ${totalDuration}ms 소요`);
-                    detailedLogs.push(`최종 높이: ${finalResult.finalState.currentHeight.toFixed(1)}px`);
-                    detailedLogs.push(`높이 증가: ${finalResult.heightIncreased ? '성공' : '실패'}`);
-                    
-                    return {
-                        success: finalResult.heightIncreased || finalResult.finalState.currentHeight >= targetContentHeight * 0.8, // 80% 달성도 성공
-                        reason: finalResult.heightIncreased ? 'height_increased' : 'no_height_change',
-                        loadedContentHeight: finalResult.finalState.currentHeight,
-                        loadingAttempts: loadingAttempts,
-                        batchResults: batchResults,
-                        totalDuration: totalDuration,
-                        initialHeight: initialState.currentHeight,
-                        targetHeight: targetContentHeight,
-                        detailedLogs: detailedLogs
-                    };
-                }
+                const finalState = getCurrentPageState();
+                detailedLogs.push('프리로딩 완료');
+                detailedLogs.push('최종 높이: ' + finalState.currentHeight.toFixed(1) + 'px');
+                detailedLogs.push('높이 증가: ' + (heightIncreased ? '성공' : '실패'));
                 
-                // 프리로딩 실행 (타임아웃 적용)
-                const timeoutPromise = new Promise((resolve) => {
-                    setTimeout(() => resolve({
-                        success: false,
-                        reason: 'timeout',
-                        loadedContentHeight: getCurrentPageState().currentHeight,
-                        loadingAttempts: loadingAttempts,
-                        error: `프리로딩 타임아웃 (${timeoutSeconds}초)`,
-                        detailedLogs: detailedLogs
-                    }), \(timeoutSeconds) * 1000);
-                });
-                
-                const preloadingPromise = executePreloading();
-                
-                return await Promise.race([preloadingPromise, timeoutPromise]);
+                // 🚫 **Swift 호환 기본 타입만 반환**
+                return {
+                    success: heightIncreased || finalState.currentHeight >= targetContentHeight * 0.8,
+                    reason: heightIncreased ? 'height_increased' : 'no_height_change',
+                    loadedContentHeight: finalState.currentHeight,
+                    loadingAttempts: loadingAttempts,
+                    batchResults: batchResults,
+                    totalBatches: totalBatches,
+                    totalTriggered: totalTriggered,
+                    heightIncreased: heightIncreased,
+                    initialHeight: initialState.currentHeight,
+                    targetHeight: targetContentHeight,
+                    detailedLogs: detailedLogs
+                };
                 
             } catch(e) {
                 console.error('🔄 데이터 프리로딩 실패:', e);
+                
+                // 🚫 **에러 시에도 Swift 호환 기본 타입만 반환**
                 return {
                     success: false,
                     reason: 'exception',
                     error: e.message,
-                    loadedContentHeight: getCurrentPageState ? getCurrentPageState().currentHeight : 0,
-                    loadingAttempts: loadingAttempts,
-                    detailedLogs: [`프리로딩 실패: ${e.message}`]
+                    loadedContentHeight: 0,
+                    loadingAttempts: 0,
+                    batchResults: [],
+                    detailedLogs: ['프리로딩 실패: ' + e.message]
                 };
             }
         })()
@@ -704,10 +692,10 @@ struct BFCacheSnapshot: Codable {
                 let finalWithinTolerance = false;  // 🐛 **스코프 에러 수정: 변수 미리 정의**
                 
                 detailedLogs.push('🚀 4요소 패키지 복원 시작');
-                detailedLogs.push(`📊 목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
-                detailedLogs.push(`📊 목표 백분율: X=${targetPercentX.toFixed(2)}%, Y=${targetPercentY.toFixed(2)}%`);
-                detailedLogs.push(`📊 4요소 패키지 데이터 존재: ${!!fourElementPackageData}`);
-                detailedLogs.push(`📊 앵커 개수: ${fourElementPackageData?.anchors?.length || 0}개`);
+                detailedLogs.push('📊 목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                detailedLogs.push('📊 목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                detailedLogs.push('📊 4요소 패키지 데이터 존재: ' + (!!fourElementPackageData));
+                detailedLogs.push('📊 앵커 개수: ' + (fourElementPackageData?.anchors?.length || 0) + '개');
                 
                 // 📊 **현재 페이지 상태 상세 분석**
                 const currentScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
@@ -724,10 +712,10 @@ struct BFCacheSnapshot: Codable {
                 pageAnalysis.currentContent = { width: currentContentWidth, height: currentContentHeight };
                 pageAnalysis.currentMaxScroll = { x: currentMaxScrollX, y: currentMaxScrollY };
                 
-                detailedLogs.push(`📊 현재 스크롤: X=${currentScrollX.toFixed(1)}px, Y=${currentScrollY.toFixed(1)}px`);
-                detailedLogs.push(`📊 현재 뷰포트: ${currentViewportWidth.toFixed(0)} x ${currentViewportHeight.toFixed(0)}`);
-                detailedLogs.push(`📊 현재 콘텐츠: ${currentContentWidth.toFixed(0)} x ${currentContentHeight.toFixed(0)}`);
-                detailedLogs.push(`📊 현재 최대 스크롤: X=${currentMaxScrollX.toFixed(1)}px, Y=${currentMaxScrollY.toFixed(1)}px`);
+                detailedLogs.push('📊 현재 스크롤: X=' + currentScrollX.toFixed(1) + 'px, Y=' + currentScrollY.toFixed(1) + 'px');
+                detailedLogs.push('📊 현재 뷰포트: ' + currentViewportWidth.toFixed(0) + ' x ' + currentViewportHeight.toFixed(0));
+                detailedLogs.push('📊 현재 콘텐츠: ' + currentContentWidth.toFixed(0) + ' x ' + currentContentHeight.toFixed(0));
+                detailedLogs.push('📊 현재 최대 스크롤: X=' + currentMaxScrollX.toFixed(1) + 'px, Y=' + currentMaxScrollY.toFixed(1) + 'px');
                 
                 console.log('🚀 4요소 패키지 복원 시작:', {
                     target: [targetX, targetY],
@@ -792,7 +780,7 @@ struct BFCacheSnapshot: Codable {
                     const anchors = fourElementPackageData.anchors;
                     
                     // 🧹 **완전한 4요소 패키지 앵커 필터링**
-                    const completePackageAnchors = anchors.filter(anchor => {
+                    const completePackageAnchors = anchors.filter(function(anchor) {
                         if (!anchor.fourElementPackage) return false;
                         const pkg = anchor.fourElementPackage;
                         const hasCompletePackage = pkg.id && pkg.type && pkg.ts && pkg.kw;
@@ -801,7 +789,7 @@ struct BFCacheSnapshot: Codable {
                         return hasCompletePackage && hasQualityText && hasQualityScore;
                     });
                     
-                    detailedLogs.push(`   완전한 4요소 패키지 앵커: ${completePackageAnchors.length}개 (전체 ${anchors.length}개)`);
+                    detailedLogs.push('   완전한 4요소 패키지 앵커: ' + completePackageAnchors.length + '개 (전체 ' + anchors.length + '개)');
                     packageAnalysis.completePackageAnchors = completePackageAnchors.length;
                     packageAnalysis.totalAnchors = anchors.length;
                     
@@ -810,20 +798,20 @@ struct BFCacheSnapshot: Codable {
                         const anchor = completePackageAnchors[anchorIndex];
                         const pkg = anchor.fourElementPackage; // 4요소 패키지: {id, type, ts, kw}
                         
-                        detailedLogs.push(`🎯 완전패키지앵커[${anchorIndex}] 4요소 패키지 시도`);
-                        detailedLogs.push(`   패키지: id="${pkg.id}", type="${pkg.type}", ts="${pkg.ts}", kw="${pkg.kw}"`);
-                        detailedLogs.push(`   품질점수: ${anchor.qualityScore}점`);
+                        detailedLogs.push('🎯 완전패키지앵커[' + anchorIndex + '] 4요소 패키지 시도');
+                        detailedLogs.push('   패키지: id="' + pkg.id + '", type="' + pkg.type + '", ts="' + pkg.ts + '", kw="' + pkg.kw + '"');
+                        detailedLogs.push('   품질점수: ' + anchor.qualityScore + '점');
                         
                         let foundElement = null;
                         let matchMethod = null;
                         let matchDetails = {};
                         
                         // 🎯 **4요소 패키지 통합 매칭 (동시에 활용)**
-                        detailedLogs.push(`   4요소 패키지 통합 매칭 시작: id+type+ts+kw`);
+                        detailedLogs.push('   4요소 패키지 통합 매칭 시작: id+type+ts+kw');
                         
                         // ① **고유 ID 기반 DOM 검색 (최우선)**
                         if (pkg.id && pkg.id !== 'unknown') {
-                            detailedLogs.push(`   1순위: 고유ID 검색 "${pkg.id}"`);
+                            detailedLogs.push('   1순위: 고유ID 검색 "' + pkg.id + '"');
                             
                             // ID 속성 검색
                             const elementById = document.getElementById(pkg.id);
@@ -831,24 +819,25 @@ struct BFCacheSnapshot: Codable {
                                 foundElement = elementById;
                                 matchMethod = 'package_id_element';
                                 matchDetails.method = 'getElementById';
-                                matchDetails.selector = `#${pkg.id}`;
-                                detailedLogs.push(`   ✅ ID 요소로 발견: #${pkg.id}`);
+                                matchDetails.selector = '#' + pkg.id;
+                                detailedLogs.push('   ✅ ID 요소로 발견: #' + pkg.id);
                             }
                             
                             // data-* 속성 검색 (타입 고려)
                             if (!foundElement) {
                                 const dataSelectors = [
-                                    `[data-id="${pkg.id}"]`,
-                                    `[data-${pkg.type}-id="${pkg.id}"]`, // 타입별 특화
-                                    `[data-item-id="${pkg.id}"]`,
-                                    `[data-post-id="${pkg.id}"]`,
-                                    `[data-comment-id="${pkg.id}"]`,
-                                    `[data-article-id="${pkg.id}"]`,
-                                    `[data-review-id="${pkg.id}"]`,
-                                    `[data-key="${pkg.id}"]`
+                                    '[data-id="' + pkg.id + '"]',
+                                    '[data-' + pkg.type + '-id="' + pkg.id + '"]', // 타입별 특화
+                                    '[data-item-id="' + pkg.id + '"]',
+                                    '[data-post-id="' + pkg.id + '"]',
+                                    '[data-comment-id="' + pkg.id + '"]',
+                                    '[data-article-id="' + pkg.id + '"]',
+                                    '[data-review-id="' + pkg.id + '"]',
+                                    '[data-key="' + pkg.id + '"]'
                                 ];
                                 
-                                for (const selector of dataSelectors) {
+                                for (let i = 0; i < dataSelectors.length; i++) {
+                                    const selector = dataSelectors[i];
                                     try {
                                         const elements = document.querySelectorAll(selector);
                                         if (elements.length > 0) {
@@ -856,81 +845,89 @@ struct BFCacheSnapshot: Codable {
                                             matchMethod = 'package_id_data_attr';
                                             matchDetails.method = 'data_attribute';
                                             matchDetails.selector = selector;
-                                            detailedLogs.push(`   ✅ 데이터 속성으로 발견: ${selector}`);
+                                            detailedLogs.push('   ✅ 데이터 속성으로 발견: ' + selector);
                                             break;
                                         }
                                     } catch(e) {
-                                        detailedLogs.push(`   셀렉터 오류: ${selector} - ${e.message}`);
+                                        detailedLogs.push('   셀렉터 오류: ' + selector + ' - ' + e.message);
                                     }
                                 }
                             }
                             
                             // href 패턴 검색
-                            if (!foundElement && pkg.id.match(/^[0-9]+$/)) {
+                            if (!foundElement && /^[0-9]+$/.test(pkg.id)) {
                                 try {
-                                    const hrefElements = document.querySelectorAll(`a[href*="${pkg.id}"]`);
+                                    const hrefElements = document.querySelectorAll('a[href*="' + pkg.id + '"]');
                                     if (hrefElements.length > 0) {
                                         foundElement = hrefElements[0];
                                         matchMethod = 'package_id_href';
                                         matchDetails.method = 'href_pattern';
                                         matchDetails.pattern = pkg.id;
-                                        detailedLogs.push(`   ✅ href 패턴으로 발견: href*="${pkg.id}"`);
+                                        detailedLogs.push('   ✅ href 패턴으로 발견: href*="' + pkg.id + '"');
                                     }
                                 } catch(e) {
-                                    detailedLogs.push(`   href 검색 오류: ${e.message}`);
+                                    detailedLogs.push('   href 검색 오류: ' + e.message);
                                 }
                             }
                         }
                         
                         // ② **타입+키워드 조합 검증 (ID로 찾은 경우 확인용, 못 찾은 경우 대체 검색)**
                         if (foundElement && pkg.type && pkg.kw) {
-                            detailedLogs.push(`   2순위: 타입+키워드 검증 "${pkg.type}" + "${pkg.kw}"`);
+                            detailedLogs.push('   2순위: 타입+키워드 검증 "' + pkg.type + '" + "' + pkg.kw + '"');
                             
                             // 찾은 요소에 키워드가 포함되어 있는지 확인
                             const elementText = (foundElement.textContent || '').trim();
                             const keywordMatch = elementText.includes(pkg.kw);
                             const typeTagMatch = foundElement.tagName.toLowerCase() === getPreferredTag(pkg.type);
                             
-                            detailedLogs.push(`   타입 태그 매칭: ${typeTagMatch} (기대: ${getPreferredTag(pkg.type)}, 실제: ${foundElement.tagName.toLowerCase()})`);
-                            detailedLogs.push(`   키워드 매칭: ${keywordMatch} ("${pkg.kw}" in 텍스트)`);
+                            detailedLogs.push('   타입 태그 매칭: ' + typeTagMatch + ' (기대: ' + getPreferredTag(pkg.type) + ', 실제: ' + foundElement.tagName.toLowerCase() + ')');
+                            detailedLogs.push('   키워드 매칭: ' + keywordMatch + ' ("' + pkg.kw + '" in 텍스트)');
                             
                             if (!keywordMatch && !typeTagMatch) {
-                                detailedLogs.push(`   ⚠️ ID로 찾았지만 타입+키워드 검증 실패 - 다른 요소 탐색`);
+                                detailedLogs.push('   ⚠️ ID로 찾았지만 타입+키워드 검증 실패 - 다른 요소 탐색');
                                 foundElement = null; // 무효화하고 다른 방법 시도
                                 matchMethod = null;
                                 matchDetails = {};
                             } else {
                                 matchDetails.typeVerified = typeTagMatch;
                                 matchDetails.keywordVerified = keywordMatch;
-                                detailedLogs.push(`   ✅ 타입+키워드 검증 통과`);
+                                detailedLogs.push('   ✅ 타입+키워드 검증 통과');
                             }
                         }
                         
                         // ID로 못 찾은 경우 타입+키워드 조합으로 검색
                         if (!foundElement && pkg.type && pkg.kw) {
-                            detailedLogs.push(`   2순위 대체: 타입+키워드 조합 검색 "${pkg.type}" + "${pkg.kw}"`);
+                            detailedLogs.push('   2순위 대체: 타입+키워드 조합 검색 "' + pkg.type + '" + "' + pkg.kw + '"');
                             
                             const preferredTags = getPreferredTags(pkg.type);
-                            detailedLogs.push(`   타입 "${pkg.type}" 선호 태그: [${preferredTags.join(', ')}]`);
+                            detailedLogs.push('   타입 "' + pkg.type + '" 선호 태그: [' + preferredTags.join(', ') + ']');
                             
                             // 키워드 포함 요소들 찾기
-                            const keywordElements = Array.from(document.querySelectorAll('*')).filter(el => {
+                            const allElements = document.querySelectorAll('*');
+                            const keywordElements = [];
+                            for (let i = 0; i < allElements.length; i++) {
+                                const el = allElements[i];
                                 const text = (el.textContent || '').trim();
-                                return isQualityText(text) && text.includes(pkg.kw);
-                            });
+                                if (isQualityText(text) && text.includes(pkg.kw)) {
+                                    keywordElements.push(el);
+                                }
+                            }
                             
-                            detailedLogs.push(`   키워드 "${pkg.kw}" 포함 요소: ${keywordElements.length}개`);
+                            detailedLogs.push('   키워드 "' + pkg.kw + '" 포함 요소: ' + keywordElements.length + '개');
                             
                             // 선호 태그 우선순위로 찾기
-                            for (const tag of preferredTags) {
-                                const tagMatchElements = keywordElements.filter(el => el.tagName.toLowerCase() === tag);
+                            for (let j = 0; j < preferredTags.length; j++) {
+                                const tag = preferredTags[j];
+                                const tagMatchElements = keywordElements.filter(function(el) {
+                                    return el.tagName.toLowerCase() === tag;
+                                });
                                 if (tagMatchElements.length > 0) {
                                     foundElement = tagMatchElements[0];
                                     matchMethod = 'package_type_keyword';
                                     matchDetails.method = 'type_keyword_combo';
                                     matchDetails.preferredTag = tag;
                                     matchDetails.keywordMatched = true;
-                                    detailedLogs.push(`   ✅ 타입+키워드로 발견: <${tag}> with "${pkg.kw}"`);
+                                    detailedLogs.push('   ✅ 타입+키워드로 발견: <' + tag + '> with "' + pkg.kw + '"');
                                     break;
                                 }
                             }
@@ -941,67 +938,67 @@ struct BFCacheSnapshot: Codable {
                                 matchMethod = 'package_keyword_only';
                                 matchDetails.method = 'keyword_only';
                                 matchDetails.foundTag = foundElement.tagName.toLowerCase();
-                                detailedLogs.push(`   ✅ 키워드만으로 발견: <${foundElement.tagName.toLowerCase()}> with "${pkg.kw}"`);
+                                detailedLogs.push('   ✅ 키워드만으로 발견: <' + foundElement.tagName.toLowerCase() + '> with "' + pkg.kw + '"');
                             }
                         }
                         
                         // ③ **타임스탬프 추가 검증 (시간 정보 일치 확인)**
                         if (foundElement && pkg.ts) {
-                            detailedLogs.push(`   3순위: 타임스탬프 검증 "${pkg.ts}"`);
+                            detailedLogs.push('   3순위: 타임스탬프 검증 "' + pkg.ts + '"');
                             
                             const elementText = (foundElement.textContent || '').trim();
                             const tsPattern = pkg.ts.split('T')[0]; // 날짜 부분 (2025-09-09)
                             const timeMatch = elementText.includes(tsPattern) || elementText.includes(pkg.ts);
                             
                             matchDetails.timestampVerified = timeMatch;
-                            detailedLogs.push(`   타임스탬프 검증: ${timeMatch} ("${tsPattern}" in 텍스트)`);
+                            detailedLogs.push('   타임스탬프 검증: ' + timeMatch + ' ("' + tsPattern + '" in 텍스트)');
                             
                             if (!timeMatch) {
-                                detailedLogs.push(`   ⚠️ 타임스탬프 불일치 - 경고만 (계속 진행)`);
+                                detailedLogs.push('   ⚠️ 타임스탬프 불일치 - 경고만 (계속 진행)');
                             }
                         }
                         
                         // 요소를 찾았으면 스크롤 실행
                         if (foundElement) {
-                            detailedLogs.push(`🎯 4요소 패키지 앵커 발견 - 스크롤 실행`);
-                            detailedLogs.push(`   매칭 방법: ${matchMethod}`);
-                            detailedLogs.push(`   매칭 상세: ${JSON.stringify(matchDetails)}`);
+                            detailedLogs.push('🎯 4요소 패키지 앵커 발견 - 스크롤 실행');
+                            detailedLogs.push('   매칭 방법: ' + matchMethod);
+                            detailedLogs.push('   매칭 상세: ' + JSON.stringify(matchDetails));
                             
                             // 📊 **발견된 요소의 정확한 위치 분석**
                             const elementRect = foundElement.getBoundingClientRect();
                             const elementScrollY = currentScrollY + elementRect.top;
                             const elementScrollX = currentScrollX + elementRect.left;
                             
-                            detailedLogs.push(`   발견된 요소 위치: X=${elementScrollX.toFixed(1)}px, Y=${elementScrollY.toFixed(1)}px`);
-                            detailedLogs.push(`   요소 크기: ${elementRect.width.toFixed(1)} x ${elementRect.height.toFixed(1)}`);
-                            detailedLogs.push(`   요소 태그: <${foundElement.tagName.toLowerCase()}>`);
+                            detailedLogs.push('   발견된 요소 위치: X=' + elementScrollX.toFixed(1) + 'px, Y=' + elementScrollY.toFixed(1) + 'px');
+                            detailedLogs.push('   요소 크기: ' + elementRect.width.toFixed(1) + ' x ' + elementRect.height.toFixed(1));
+                            detailedLogs.push('   요소 태그: <' + foundElement.tagName.toLowerCase() + '>');
                             
                             // 오프셋 정보 확인 (기존 앵커 데이터에서)
                             let offsetY = 0;
                             if (anchor.offsetFromTop) {
                                 offsetY = parseFloat(anchor.offsetFromTop) || 0;
-                                detailedLogs.push(`   캡처된 오프셋: ${offsetY.toFixed(1)}px`);
+                                detailedLogs.push('   캡처된 오프셋: ' + offsetY.toFixed(1) + 'px');
                             }
                             
                             // 요소로 스크롤
-                            detailedLogs.push(`   스크롤 실행: scrollIntoView`);
+                            detailedLogs.push('   스크롤 실행: scrollIntoView');
                             foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
                             
                             // 오프셋 보정
                             if (offsetY !== 0) {
-                                detailedLogs.push(`   오프셋 보정: ${-offsetY.toFixed(1)}px`);
+                                detailedLogs.push('   오프셋 보정: ' + (-offsetY).toFixed(1) + 'px');
                                 window.scrollBy(0, -offsetY);
                             }
                             
                             // 📊 **복원 후 위치 확인**
                             const afterScrollY = parseFloat(window.scrollY || window.pageYOffset || 0);
                             const afterScrollX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            detailedLogs.push(`   복원 후 위치: X=${afterScrollX.toFixed(1)}px, Y=${afterScrollY.toFixed(1)}px`);
-                            detailedLogs.push(`   목표와 차이: X=${Math.abs(afterScrollX - targetX).toFixed(1)}px, Y=${Math.abs(afterScrollY - targetY).toFixed(1)}px`);
+                            detailedLogs.push('   복원 후 위치: X=' + afterScrollX.toFixed(1) + 'px, Y=' + afterScrollY.toFixed(1) + 'px');
+                            detailedLogs.push('   목표와 차이: X=' + Math.abs(afterScrollX - targetX).toFixed(1) + 'px, Y=' + Math.abs(afterScrollY - targetY).toFixed(1) + 'px');
                             
                             restoredByPackage = true;
                             usedMethod = matchMethod;
-                            anchorInfo = `package_${pkg.id || 'unknown'}_${pkg.type}_${pkg.kw}`;
+                            anchorInfo = 'package_' + pkg.id + '_' + pkg.type + '_' + pkg.kw;
                             debugInfo.matchedPackage = pkg;
                             debugInfo.matchDetails = matchDetails;
                             debugInfo.elementPosition = { x: elementScrollX, y: elementScrollY };
@@ -1016,8 +1013,8 @@ struct BFCacheSnapshot: Codable {
                             
                             break; // 성공했으므로 더 이상 시도하지 않음
                         } else {
-                            detailedLogs.push(`   완전패키지앵커[${anchorIndex}] 4요소 패키지 매칭 실패`);
-                            detailedLogs.push(`   실패 원인: ID="${pkg.id}" 검색 실패, 타입+키워드 대체 검색도 실패`);
+                            detailedLogs.push('   완전패키지앵커[' + anchorIndex + '] 4요소 패키지 매칭 실패');
+                            detailedLogs.push('   실패 원인: ID="' + pkg.id + '" 검색 실패, 타입+키워드 대체 검색도 실패');
                         }
                     }
                     
@@ -1037,92 +1034,79 @@ struct BFCacheSnapshot: Codable {
                     packageAnalysis.fallbackUsed = true;
                 }
                 
-                // 🔧 **복원 후 위치 검증 및 보정**
-                setTimeout(() => {
-                    try {
-                        finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                        finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                        finalDiffY = Math.abs(finalCurrentY - targetY);
-                        finalDiffX = Math.abs(finalCurrentX - targetX);
-                        
-                        // 4요소 패키지는 더 엄격한 허용 오차 (25px)
-                        const tolerance = 25;
-                        finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
-                        
-                        detailedLogs.push('🔧 복원 후 위치 검증 시작');
-                        detailedLogs.push(`   최종 위치: X=${finalCurrentX.toFixed(1)}px, Y=${finalCurrentY.toFixed(1)}px`);
-                        detailedLogs.push(`   목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
-                        detailedLogs.push(`   위치 차이: X=${finalDiffX.toFixed(1)}px, Y=${finalDiffY.toFixed(1)}px`);
-                        detailedLogs.push(`   허용 오차: ${tolerance}px (4요소 패키지 기준)`);
-                        detailedLogs.push(`   허용 오차 내: ${finalWithinTolerance ? '예' : '아니오'}`);
-                        
-                        verificationResult = {
-                            target: [targetX, targetY],
-                            final: [finalCurrentX, finalCurrentY],
-                            diff: [finalDiffX, finalDiffY],
-                            method: usedMethod,
-                            tolerance: tolerance,
-                            withinTolerance: finalWithinTolerance,
-                            packageBased: restoredByPackage,
-                            actualRestoreDistance: Math.sqrt(finalDiffX * finalDiffX + finalDiffY * finalDiffY),
-                            actualRestoreSuccess: finalDiffY <= 25 // 25px 이내면 실제 성공으로 간주
-                        };
-                        
-                        // 🐛 **스코프 에러 수정: 변수 할당**
-                        actualRestoreSuccess = verificationResult.actualRestoreSuccess;
-                        practicalSuccess = finalDiffY <= 40; // 40px 이내면 실용적 성공
-                        
-                        detailedLogs.push(`   실제 복원 거리: ${verificationResult.actualRestoreDistance.toFixed(1)}px`);
-                        detailedLogs.push(`   실제 복원 성공: ${actualRestoreSuccess ? '예' : '아니오'} (25px 기준)`);
-                        detailedLogs.push(`   실용적 복원 성공: ${practicalSuccess ? '예' : '아니오'} (40px 기준)`);
-                        
-                        console.log('🚀 4요소 패키지 복원 검증:', verificationResult);
-                        
-                        if (actualRestoreSuccess) {
-                            detailedLogs.push(`✅ 실제 복원 성공: 목표=${targetY.toFixed(1)}px, 실제=${finalCurrentY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
-                        } else {
-                            detailedLogs.push(`❌ 실제 복원 실패: 목표=${targetY.toFixed(1)}px, 실제=${finalCurrentY.toFixed(1)}px, 차이=${finalDiffY.toFixed(1)}px`);
-                        }
-                        
-                        // 🔧 **허용 오차 초과 시 점진적 보정**
-                        if (!finalWithinTolerance && (finalDiffY > tolerance || finalDiffX > tolerance)) {
-                            detailedLogs.push('🔧 허용 오차 초과 - 점진적 보정 시작');
-                            detailedLogs.push(`   보정 필요 거리: X=${(targetX - finalCurrentX).toFixed(1)}px, Y=${(targetY - finalCurrentY).toFixed(1)}px`);
-                            
-                            const maxDiff = Math.max(finalDiffX, finalDiffY);
-                            const steps = Math.min(5, Math.max(2, Math.ceil(maxDiff / 1000)));
-                            const stepX = (targetX - finalCurrentX) / steps;
-                            const stepY = (targetY - finalCurrentY) / steps;
-                            
-                            detailedLogs.push(`   점진적 보정: ${steps}단계, 단계별 이동 X=${stepX.toFixed(1)}px, Y=${stepY.toFixed(1)}px`);
-                            
-                            for (let i = 1; i <= steps; i++) {
-                                setTimeout(() => {
-                                    const stepTargetX = finalCurrentX + stepX * i;
-                                    const stepTargetY = finalCurrentY + stepY * i;
-                                    performScrollTo(stepTargetX, stepTargetY);
-                                    detailedLogs.push(`   점진적 보정 ${i}/${steps}: X=${stepTargetX.toFixed(1)}px, Y=${stepTargetY.toFixed(1)}px`);
-                                }, i * 100);
-                            }
-                            
-                            verificationResult.progressiveCorrection = {
-                                steps: steps,
-                                stepSize: [stepX, stepY],
-                                reason: 'tolerance_exceeded'
-                            };
-                        }
-                        
-                    } catch(verifyError) {
-                        verificationResult = {
-                            error: verifyError.message,
-                            method: usedMethod
-                        };
-                        detailedLogs.push(`🚀 4요소 패키지 복원 검증 실패: ${verifyError.message}`);
-                        console.error('🚀 4요소 패키지 복원 검증 실패:', verifyError);
-                    }
-                }, 100);
+                // 🔧 **복원 후 위치 검증 및 보정** - 🚫 setTimeout을 동기적 처리로 변경
+                finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                finalDiffY = Math.abs(finalCurrentY - targetY);
+                finalDiffX = Math.abs(finalCurrentX - targetX);
                 
-                // 🚫 **수정: Swift 호환 반환값 (기본 타입만)**
+                // 4요소 패키지는 더 엄격한 허용 오차 (25px)
+                const tolerance = 25;
+                finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
+                
+                detailedLogs.push('🔧 복원 후 위치 검증 시작');
+                detailedLogs.push('   최종 위치: X=' + finalCurrentX.toFixed(1) + 'px, Y=' + finalCurrentY.toFixed(1) + 'px');
+                detailedLogs.push('   목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                detailedLogs.push('   위치 차이: X=' + finalDiffX.toFixed(1) + 'px, Y=' + finalDiffY.toFixed(1) + 'px');
+                detailedLogs.push('   허용 오차: ' + tolerance + 'px (4요소 패키지 기준)');
+                detailedLogs.push('   허용 오차 내: ' + (finalWithinTolerance ? '예' : '아니오'));
+                
+                verificationResult = {
+                    target: [targetX, targetY],
+                    final: [finalCurrentX, finalCurrentY],
+                    diff: [finalDiffX, finalDiffY],
+                    method: usedMethod,
+                    tolerance: tolerance,
+                    withinTolerance: finalWithinTolerance,
+                    packageBased: restoredByPackage,
+                    actualRestoreDistance: Math.sqrt(finalDiffX * finalDiffX + finalDiffY * finalDiffY),
+                    actualRestoreSuccess: finalDiffY <= 25 // 25px 이내면 실제 성공으로 간주
+                };
+                
+                // 🐛 **스코프 에러 수정: 변수 할당**
+                actualRestoreSuccess = verificationResult.actualRestoreSuccess;
+                practicalSuccess = finalDiffY <= 40; // 40px 이내면 실용적 성공
+                
+                detailedLogs.push('   실제 복원 거리: ' + verificationResult.actualRestoreDistance.toFixed(1) + 'px');
+                detailedLogs.push('   실제 복원 성공: ' + (actualRestoreSuccess ? '예' : '아니오') + ' (25px 기준)');
+                detailedLogs.push('   실용적 복원 성공: ' + (practicalSuccess ? '예' : '아니오') + ' (40px 기준)');
+                
+                console.log('🚀 4요소 패키지 복원 검증:', verificationResult);
+                
+                if (actualRestoreSuccess) {
+                    detailedLogs.push('✅ 실제 복원 성공: 목표=' + targetY.toFixed(1) + 'px, 실제=' + finalCurrentY.toFixed(1) + 'px, 차이=' + finalDiffY.toFixed(1) + 'px');
+                } else {
+                    detailedLogs.push('❌ 실제 복원 실패: 목표=' + targetY.toFixed(1) + 'px, 실제=' + finalCurrentY.toFixed(1) + 'px, 차이=' + finalDiffY.toFixed(1) + 'px');
+                }
+                
+                // 🔧 **허용 오차 초과 시 점진적 보정**
+                if (!finalWithinTolerance && (finalDiffY > tolerance || finalDiffX > tolerance)) {
+                    detailedLogs.push('🔧 허용 오차 초과 - 점진적 보정 시작');
+                    detailedLogs.push('   보정 필요 거리: X=' + (targetX - finalCurrentX).toFixed(1) + 'px, Y=' + (targetY - finalCurrentY).toFixed(1) + 'px');
+                    
+                    const maxDiff = Math.max(finalDiffX, finalDiffY);
+                    const steps = Math.min(5, Math.max(2, Math.ceil(maxDiff / 1000)));
+                    const stepX = (targetX - finalCurrentX) / steps;
+                    const stepY = (targetY - finalCurrentY) / steps;
+                    
+                    detailedLogs.push('   점진적 보정: ' + steps + '단계, 단계별 이동 X=' + stepX.toFixed(1) + 'px, Y=' + stepY.toFixed(1) + 'px');
+                    
+                    // 🚫 **동기적 점진적 보정 (setTimeout 제거)**
+                    for (let i = 1; i <= steps; i++) {
+                        const stepTargetX = finalCurrentX + stepX * i;
+                        const stepTargetY = finalCurrentY + stepY * i;
+                        performScrollTo(stepTargetX, stepTargetY);
+                        detailedLogs.push('   점진적 보정 ' + i + '/' + steps + ': X=' + stepTargetX.toFixed(1) + 'px, Y=' + stepTargetY.toFixed(1) + 'px');
+                    }
+                    
+                    verificationResult.progressiveCorrection = {
+                        steps: steps,
+                        stepSize: [stepX, stepY],
+                        reason: 'tolerance_exceeded'
+                    };
+                }
+                
+                // 🚫 **Swift 호환 반환값 (기본 타입만)**
                 return {
                     success: true,
                     method: usedMethod,
@@ -1138,7 +1122,7 @@ struct BFCacheSnapshot: Codable {
                 
             } catch(e) { 
                 console.error('🚀 4요소 패키지 복원 실패:', e);
-                detailedLogs.push(`🚀 전체 복원 실패: ${e.message}`);
+                detailedLogs.push('🚀 전체 복원 실패: ' + e.message);
                 
                 // 🚫 **수정: Swift 호환 반환값**
                 return {
@@ -1158,7 +1142,7 @@ struct BFCacheSnapshot: Codable {
             
             // 통합된 스크롤 실행 함수
             function performScrollTo(x, y) {
-                detailedLogs.push(`🔧 스크롤 실행: X=${x.toFixed(1)}px, Y=${y.toFixed(1)}px`);
+                detailedLogs.push('🔧 스크롤 실행: X=' + x.toFixed(1) + 'px, Y=' + y.toFixed(1) + 'px');
                 window.scrollTo(x, y);
                 document.documentElement.scrollTop = y;
                 document.documentElement.scrollLeft = x;
@@ -1231,7 +1215,7 @@ struct BFCacheSnapshot: Codable {
                         const scrollAttempts = [];
                         
                         detailedLogs.push('🚫 점진적 스크롤 시작');
-                        detailedLogs.push(`목표: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
+                        detailedLogs.push('목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                         
                         console.log('🚫 점진적 스크롤 시작:', {target: [targetX, targetY]});
                         
@@ -1252,10 +1236,10 @@ struct BFCacheSnapshot: Codable {
                             maxScroll: { x: maxScrollX, y: maxScrollY }
                         };
                         
-                        detailedLogs.push(`초기 위치: X=${initialScrollX.toFixed(1)}px, Y=${initialScrollY.toFixed(1)}px`);
-                        detailedLogs.push(`뷰포트: ${viewportWidth.toFixed(0)} x ${viewportHeight.toFixed(0)}`);
-                        detailedLogs.push(`콘텐츠: ${contentWidth.toFixed(0)} x ${contentHeight.toFixed(0)}`);
-                        detailedLogs.push(`최대 스크롤: X=${maxScrollX.toFixed(1)}px, Y=${maxScrollY.toFixed(1)}px`);
+                        detailedLogs.push('초기 위치: X=' + initialScrollX.toFixed(1) + 'px, Y=' + initialScrollY.toFixed(1) + 'px');
+                        detailedLogs.push('뷰포트: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
+                        detailedLogs.push('콘텐츠: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
+                        detailedLogs.push('최대 스크롤: X=' + maxScrollX.toFixed(1) + 'px, Y=' + maxScrollY.toFixed(1) + 'px');
                         
                         // 📊 **목표 위치 실현 가능성 분석**
                         const isTargetReachableY = targetY <= maxScrollY + tolerance;
@@ -1263,275 +1247,242 @@ struct BFCacheSnapshot: Codable {
                         const initialDiffY = Math.abs(initialScrollY - targetY);
                         const initialDiffX = Math.abs(initialScrollX - targetX);
                         
-                        detailedLogs.push(`목표 Y 도달 가능: ${isTargetReachableY ? '예' : '아니오'} (${isTargetReachableY ? '' : (targetY - maxScrollY).toFixed(1) + 'px 초과'})`);
-                        detailedLogs.push(`목표 X 도달 가능: ${isTargetReachableX ? '예' : '아니오'}`);
-                        detailedLogs.push(`초기 거리: X=${initialDiffX.toFixed(1)}px, Y=${initialDiffY.toFixed(1)}px`);
+                        detailedLogs.push('목표 Y 도달 가능: ' + (isTargetReachableY ? '예' : '아니오') + (isTargetReachableY ? '' : ' (' + (targetY - maxScrollY).toFixed(1) + 'px 초과)'));
+                        detailedLogs.push('목표 X 도달 가능: ' + (isTargetReachableX ? '예' : '아니오'));
+                        detailedLogs.push('초기 거리: X=' + initialDiffX.toFixed(1) + 'px, Y=' + initialDiffY.toFixed(1) + 'px');
                         
                         // 🚫 **브라우저 차단 대응: 점진적 스크롤 - 상세 디버깅**
                         let attempts = 0;
                         const maxAttempts = 15;
-                        const attemptInterval = 200; // 200ms 간격
                         let lastScrollY = initialScrollY;
                         let lastScrollX = initialScrollX;
                         let stuckCounter = 0; // 스크롤이 멈춘 횟수
                         
-                        function performScrollAttempt() {
-                            try {
-                                attempts++;
-                                const attemptStartTime = Date.now();
-                                
-                                // 현재 위치 확인
-                                const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                
-                                const diffX = Math.abs(currentX - targetX);
-                                const diffY = Math.abs(currentY - targetY);
-                                const progressY = Math.abs(currentY - lastScrollY);
-                                const progressX = Math.abs(currentX - lastScrollX);
-                                
-                                // 📊 **시도별 상세 기록**
-                                const attemptData = {
-                                    attempt: attempts,
-                                    timestamp: attemptStartTime,
-                                    current: { x: currentX, y: currentY },
-                                    target: { x: targetX, y: targetY },
-                                    diff: { x: diffX, y: diffY },
-                                    progress: { x: progressX, y: progressY },
-                                    withinTolerance: diffX <= tolerance && diffY <= tolerance
-                                };
-                                
-                                scrollAttempts.push(attemptData);
-                                
-                                detailedLogs.push(`시도 ${attempts}: 현재 Y=${currentY.toFixed(1)}px, 차이=${diffY.toFixed(1)}px, 진행=${progressY.toFixed(1)}px`);
-                                
-                                // 📊 **스크롤 정체 감지**
-                                if (progressY < 1.0 && progressX < 1.0) {
-                                    stuckCounter++;
-                                    detailedLogs.push(`스크롤 정체 감지: ${stuckCounter}회 연속`);
-                                } else {
-                                    stuckCounter = 0;
-                                }
-                                
-                                // 목표 도달 확인
-                                if (diffX <= tolerance && diffY <= tolerance) {
-                                    const successData = {
+                        // 🚫 **동기적 점진적 스크롤 처리**
+                        let finalResult = null;
+                        
+                        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                            attempts = attempt + 1;
+                            
+                            // 현재 위치 확인
+                            const currentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            
+                            const diffX = Math.abs(currentX - targetX);
+                            const diffY = Math.abs(currentY - targetY);
+                            const progressY = Math.abs(currentY - lastScrollY);
+                            const progressX = Math.abs(currentX - lastScrollX);
+                            
+                            // 📊 **시도별 상세 기록**
+                            const attemptData = {
+                                attempt: attempts,
+                                current: { x: currentX, y: currentY },
+                                target: { x: targetX, y: targetY },
+                                diff: { x: diffX, y: diffY },
+                                progress: { x: progressX, y: progressY },
+                                withinTolerance: diffX <= tolerance && diffY <= tolerance
+                            };
+                            
+                            scrollAttempts.push(attemptData);
+                            
+                            detailedLogs.push('시도 ' + attempts + ': 현재 Y=' + currentY.toFixed(1) + 'px, 차이=' + diffY.toFixed(1) + 'px, 진행=' + progressY.toFixed(1) + 'px');
+                            
+                            // 📊 **스크롤 정체 감지**
+                            if (progressY < 1.0 && progressX < 1.0) {
+                                stuckCounter++;
+                                detailedLogs.push('스크롤 정체 감지: ' + stuckCounter + '회 연속');
+                            } else {
+                                stuckCounter = 0;
+                            }
+                            
+                            // 목표 도달 확인
+                            if (diffX <= tolerance && diffY <= tolerance) {
+                                finalResult = {
+                                    result: 'progressive_success',
+                                    data: {
                                         success: true,
                                         attempts: attempts,
                                         finalPosition: { x: currentX, y: currentY },
-                                        finalDiff: { x: diffX, y: diffY },
-                                        totalTime: Date.now() - attemptStartTime
-                                    };
-                                    
-                                    detailedLogs.push(`✅ 점진적 스크롤 성공: ${attempts}회 시도, 최종 차이 Y=${diffY.toFixed(1)}px`);
-                                    console.log('🚫 점진적 스크롤 성공:', successData);
-                                    
-                                    return {
-                                        result: 'progressive_success',
-                                        data: successData,
-                                        detailedLogs: detailedLogs,
-                                        performanceData: performanceData,
-                                        scrollAttempts: scrollAttempts
-                                    };
-                                }
-                                
-                                // 📊 **스크롤 한계 상세 분석**
-                                const currentMaxScrollY = Math.max(
-                                    document.documentElement.scrollHeight - window.innerHeight,
-                                    document.body.scrollHeight - window.innerHeight,
-                                    0
-                                );
-                                const currentMaxScrollX = Math.max(
-                                    document.documentElement.scrollWidth - window.innerWidth,
-                                    document.body.scrollWidth - window.innerWidth,
-                                    0
-                                );
-                                
-                                attemptData.scrollLimits = {
-                                    maxX: currentMaxScrollX,
-                                    maxY: currentMaxScrollY,
-                                    atLimitX: currentX >= currentMaxScrollX - 5,
-                                    atLimitY: currentY >= currentMaxScrollY - 5,
-                                    heightChanged: Math.abs(currentMaxScrollY - maxScrollY) > 10
+                                        finalDiff: { x: diffX, y: diffY }
+                                    }
                                 };
                                 
-                                detailedLogs.push(`스크롤 한계: Y=${currentMaxScrollY.toFixed(1)}px (${currentY >= currentMaxScrollY - 5 ? '도달' : '미도달'})`);
+                                detailedLogs.push('✅ 점진적 스크롤 성공: ' + attempts + '회 시도, 최종 차이 Y=' + diffY.toFixed(1) + 'px');
+                                console.log('🚫 점진적 스크롤 성공:', finalResult.data);
+                                break;
+                            }
+                            
+                            // 📊 **스크롤 한계 상세 분석**
+                            const currentMaxScrollY = Math.max(
+                                document.documentElement.scrollHeight - window.innerHeight,
+                                document.body.scrollHeight - window.innerHeight,
+                                0
+                            );
+                            const currentMaxScrollX = Math.max(
+                                document.documentElement.scrollWidth - window.innerWidth,
+                                document.body.scrollWidth - window.innerWidth,
+                                0
+                            );
+                            
+                            attemptData.scrollLimits = {
+                                maxX: currentMaxScrollX,
+                                maxY: currentMaxScrollY,
+                                atLimitX: currentX >= currentMaxScrollX - 5,
+                                atLimitY: currentY >= currentMaxScrollY - 5,
+                                heightChanged: Math.abs(currentMaxScrollY - maxScrollY) > 10
+                            };
+                            
+                            detailedLogs.push('스크롤 한계: Y=' + currentMaxScrollY.toFixed(1) + 'px (' + (currentY >= currentMaxScrollY - 5 ? '도달' : '미도달') + ')');
+                            
+                            // 📊 **무한 스크롤 감지 및 트리거**
+                            if (currentY >= currentMaxScrollY - 100 && targetY > currentMaxScrollY) {
+                                detailedLogs.push('무한 스크롤 구간 감지 - 트리거 시도');
                                 
-                                // 📊 **무한 스크롤 감지 및 트리거**
-                                if (currentY >= currentMaxScrollY - 100 && targetY > currentMaxScrollY) {
-                                    detailedLogs.push('무한 스크롤 구간 감지 - 트리거 시도');
-                                    
-                                    // 스크롤 이벤트 강제 발생
-                                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                    window.dispatchEvent(new Event('resize', { bubbles: true }));
-                                    
-                                    // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용)
-                                    try {
+                                // 스크롤 이벤트 강제 발생
+                                window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                window.dispatchEvent(new Event('resize', { bubbles: true }));
+                                
+                                // 터치 이벤트 시뮬레이션 (모바일 무한 스크롤용) - 🚫 안전 처리
+                                try {
+                                    if (typeof TouchEvent !== 'undefined') {
                                         const touchEvent = new TouchEvent('touchend', { bubbles: true });
                                         document.dispatchEvent(touchEvent);
                                         attemptData.infiniteScrollTrigger = 'touchEvent_attempted';
                                         detailedLogs.push('터치 이벤트 트리거 성공');
-                                    } catch(e) {
+                                    } else {
                                         attemptData.infiniteScrollTrigger = 'touchEvent_unsupported';
-                                        detailedLogs.push('터치 이벤트 트리거 실패');
+                                        detailedLogs.push('터치 이벤트 미지원');
                                     }
-                                    
-                                    // 📊 **더보기 버튼 검색 및 클릭**
-                                    const loadMoreButtons = document.querySelectorAll(
-                                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                                        '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
-                                    );
-                                    
-                                    let clickedButtons = 0;
-                                    loadMoreButtons.forEach((btn, index) => {
-                                        if (btn && typeof btn.click === 'function') {
-                                            try {
-                                                btn.click();
-                                                clickedButtons++;
-                                                detailedLogs.push(`더보기 버튼[${index}] 클릭: ${btn.className || btn.tagName}`);
-                                            } catch(e) {
-                                                detailedLogs.push(`더보기 버튼[${index}] 클릭 실패: ${e.message}`);
-                                            }
+                                } catch(e) {
+                                    attemptData.infiniteScrollTrigger = 'touchEvent_failed';
+                                    detailedLogs.push('터치 이벤트 트리거 실패');
+                                }
+                                
+                                // 📊 **더보기 버튼 검색 및 클릭**
+                                const loadMoreButtons = document.querySelectorAll(
+                                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                                    '[data-role="load"], .load-more, .show-more, .infinite-scroll-trigger'
+                                );
+                                
+                                let clickedButtons = 0;
+                                for (let i = 0; i < loadMoreButtons.length; i++) {
+                                    const btn = loadMoreButtons[i];
+                                    if (btn && typeof btn.click === 'function') {
+                                        try {
+                                            btn.click();
+                                            clickedButtons++;
+                                            detailedLogs.push('더보기 버튼[' + i + '] 클릭: ' + (btn.className || btn.tagName));
+                                        } catch(e) {
+                                            detailedLogs.push('더보기 버튼[' + i + '] 클릭 실패: ' + e.message);
                                         }
-                                    });
-                                    
-                                    attemptData.loadMoreButtons = {
-                                        found: loadMoreButtons.length,
-                                        clicked: clickedButtons
-                                    };
-                                    
-                                    detailedLogs.push(`더보기 버튼: ${loadMoreButtons.length}개 발견, ${clickedButtons}개 클릭`);
-                                    
-                                    // 📊 **페이지 하단 강제 스크롤**
-                                    if (clickedButtons > 0) {
-                                        detailedLogs.push('더보기 버튼 클릭 후 하단 강제 스크롤');
-                                        setTimeout(() => {
-                                            const newMaxY = Math.max(
-                                                document.documentElement.scrollHeight - window.innerHeight,
-                                                document.body.scrollHeight - window.innerHeight,
-                                                0
-                                            );
-                                            window.scrollTo(0, newMaxY);
-                                        }, 100);
                                     }
                                 }
                                 
-                                // 📊 **스크롤 시도 - 여러 방법으로**
+                                attemptData.loadMoreButtons = {
+                                    found: loadMoreButtons.length,
+                                    clicked: clickedButtons
+                                };
+                                
+                                detailedLogs.push('더보기 버튼: ' + loadMoreButtons.length + '개 발견, ' + clickedButtons + '개 클릭');
+                                
+                                // 📊 **페이지 하단 강제 스크롤**
+                                if (clickedButtons > 0) {
+                                    detailedLogs.push('더보기 버튼 클릭 후 하단 강제 스크롤');
+                                    const newMaxY = Math.max(
+                                        document.documentElement.scrollHeight - window.innerHeight,
+                                        document.body.scrollHeight - window.innerHeight,
+                                        0
+                                    );
+                                    window.scrollTo(0, newMaxY);
+                                }
+                            }
+                            
+                            // 📊 **스크롤 시도 - 여러 방법으로**
+                            try {
+                                // 방법 1: window.scrollTo
+                                window.scrollTo(targetX, targetY);
+                                
+                                // 방법 2: documentElement 직접 설정
+                                document.documentElement.scrollTop = targetY;
+                                document.documentElement.scrollLeft = targetX;
+                                
+                                // 방법 3: body 직접 설정
+                                document.body.scrollTop = targetY;
+                                document.body.scrollLeft = targetX;
+                                
+                                // 방법 4: scrollingElement 사용
+                                if (document.scrollingElement) {
+                                    document.scrollingElement.scrollTop = targetY;
+                                    document.scrollingElement.scrollLeft = targetX;
+                                }
+                                
+                                attemptData.scrollMethods = 'all_attempted';
+                                detailedLogs.push('모든 스크롤 방법 시도 완료');
+                            } catch(scrollError) {
+                                attemptData.scrollError = scrollError.message;
+                                detailedLogs.push('스크롤 실행 오류: ' + scrollError.message);
+                            }
+                            
+                            // 📊 **스크롤 정체 대응**
+                            if (stuckCounter >= 3) {
+                                detailedLogs.push('스크롤 정체 3회 연속 - 강제 해제 시도');
+                                
+                                // 강제 스크롤 해제 방법들
                                 try {
-                                    // 방법 1: window.scrollTo
+                                    // 1. CSS overflow 임시 변경
+                                    const bodyStyle = document.body.style;
+                                    const originalOverflow = bodyStyle.overflow;
+                                    bodyStyle.overflow = 'visible';
+                                    
+                                    // 2. 스크롤 실행
                                     window.scrollTo(targetX, targetY);
                                     
-                                    // 방법 2: documentElement 직접 설정
-                                    document.documentElement.scrollTop = targetY;
-                                    document.documentElement.scrollLeft = targetX;
+                                    // 3. 원복 - 🚫 동기적 처리
+                                    bodyStyle.overflow = originalOverflow;
                                     
-                                    // 방법 3: body 직접 설정
-                                    document.body.scrollTop = targetY;
-                                    document.body.scrollLeft = targetX;
-                                    
-                                    // 방법 4: scrollingElement 사용
-                                    if (document.scrollingElement) {
-                                        document.scrollingElement.scrollTop = targetY;
-                                        document.scrollingElement.scrollLeft = targetX;
-                                    }
-                                    
-                                    attemptData.scrollMethods = 'all_attempted';
-                                    detailedLogs.push('모든 스크롤 방법 시도 완료');
-                                } catch(scrollError) {
-                                    attemptData.scrollError = scrollError.message;
-                                    detailedLogs.push(`스크롤 실행 오류: ${scrollError.message}`);
+                                    stuckCounter = 0; // 정체 카운터 리셋
+                                    detailedLogs.push('스크롤 정체 강제 해제 완료');
+                                } catch(e) {
+                                    detailedLogs.push('스크롤 정체 해제 실패: ' + e.message);
                                 }
-                                
-                                // 📊 **스크롤 정체 대응**
-                                if (stuckCounter >= 3) {
-                                    detailedLogs.push('스크롤 정체 3회 연속 - 강제 해제 시도');
-                                    
-                                    // 강제 스크롤 해제 방법들
-                                    try {
-                                        // 1. CSS overflow 임시 변경
-                                        const bodyStyle = document.body.style;
-                                        const originalOverflow = bodyStyle.overflow;
-                                        bodyStyle.overflow = 'visible';
-                                        
-                                        // 2. 스크롤 실행
-                                        window.scrollTo(targetX, targetY);
-                                        
-                                        // 3. 원복
-                                        setTimeout(() => {
-                                            bodyStyle.overflow = originalOverflow;
-                                        }, 50);
-                                        
-                                        stuckCounter = 0; // 정체 카운터 리셋
-                                        detailedLogs.push('스크롤 정체 강제 해제 완료');
-                                    } catch(e) {
-                                        detailedLogs.push(`스크롤 정체 해제 실패: ${e.message}`);
-                                    }
-                                }
-                                
-                                // 최대 시도 확인
-                                if (attempts >= maxAttempts) {
-                                    const failureData = {
-                                        success: false,
-                                        attempts: maxAttempts,
-                                        finalPosition: { x: currentX, y: currentY },
-                                        finalDiff: { x: diffX, y: diffY },
-                                        stuckCounter: stuckCounter,
-                                        reason: 'max_attempts_reached'
-                                    };
-                                    
-                                    detailedLogs.push(`점진적 스크롤 최대 시도 도달: ${maxAttempts}회`);
-                                    detailedLogs.push(`최종 위치: Y=${currentY.toFixed(1)}px, 목표=${targetY.toFixed(1)}px, 차이=${diffY.toFixed(1)}px`);
-                                    console.log('🚫 점진적 스크롤 최대 시도 도달:', failureData);
-                                    
-                                    return {
-                                        result: 'progressive_maxAttempts',
-                                        data: failureData,
-                                        detailedLogs: detailedLogs,
-                                        performanceData: performanceData,
-                                        scrollAttempts: scrollAttempts
-                                    };
-                                }
-                                
-                                // 다음 시도를 위한 위치 업데이트
-                                lastScrollY = currentY;
-                                lastScrollX = currentX;
-                                
-                                // 다음 시도 예약
-                                setTimeout(() => {
-                                    const result = performScrollAttempt();
-                                    if (result) {
-                                        // 재귀 완료 - 결과 처리는 상위에서
-                                    }
-                                }, attemptInterval);
-                                
-                                return null; // 계속 진행
-                                
-                            } catch(attemptError) {
-                                const errorData = {
-                                    success: false,
-                                    attempts: attempts,
-                                    error: attemptError.message,
-                                    reason: 'attempt_exception'
-                                };
-                                
-                                detailedLogs.push(`점진적 스크롤 시도 오류: ${attemptError.message}`);
-                                console.error('🚫 점진적 스크롤 시도 오류:', attemptError);
-                                
-                                return {
-                                    result: `progressive_attemptError`,
-                                    data: errorData,
-                                    detailedLogs: detailedLogs,
-                                    performanceData: performanceData,
-                                    scrollAttempts: scrollAttempts
-                                };
                             }
+                            
+                            // 다음 시도를 위한 위치 업데이트
+                            lastScrollY = currentY;
+                            lastScrollX = currentX;
                         }
                         
-                        // 첫 번째 시도 시작
-                        const result = performScrollAttempt();
-                        return result || {
-                            result: 'progressive_inProgress',
+                        // 최대 시도 도달 시 결과 설정
+                        if (!finalResult) {
+                            const finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            const finalDiffY = Math.abs(finalCurrentY - targetY);
+                            const finalDiffX = Math.abs(finalCurrentX - targetX);
+                            
+                            finalResult = {
+                                result: 'progressive_maxAttempts',
+                                data: {
+                                    success: false,
+                                    attempts: maxAttempts,
+                                    finalPosition: { x: finalCurrentX, y: finalCurrentY },
+                                    finalDiff: { x: finalDiffX, y: finalDiffY },
+                                    stuckCounter: stuckCounter,
+                                    reason: 'max_attempts_reached'
+                                }
+                            };
+                            
+                            detailedLogs.push('점진적 스크롤 최대 시도 도달: ' + maxAttempts + '회');
+                            detailedLogs.push('최종 위치: Y=' + finalCurrentY.toFixed(1) + 'px, 목표=' + targetY.toFixed(1) + 'px, 차이=' + finalDiffY.toFixed(1) + 'px');
+                            console.log('🚫 점진적 스크롤 최대 시도 도달:', finalResult.data);
+                        }
+                        
+                        // 🚫 **Swift 호환 최종 반환값**
+                        return {
+                            result: finalResult.result,
+                            data: finalResult.data,
                             detailedLogs: detailedLogs,
-                            performanceData: performanceData
+                            performanceData: performanceData,
+                            scrollAttempts: scrollAttempts
                         };
                         
                     } catch(e) { 
@@ -1539,7 +1490,7 @@ struct BFCacheSnapshot: Codable {
                         return {
                             result: 'progressive_error',
                             error: e.message,
-                            detailedLogs: [`점진적 스크롤 전체 실패: ${e.message}`]
+                            detailedLogs: ['점진적 스크롤 전체 실패: ' + e.message]
                         };
                     }
                 })()
@@ -1653,7 +1604,7 @@ struct BFCacheSnapshot: Codable {
                         const verificationData = {};
                         
                         detailedLogs.push('✅ 브라우저 차단 대응 최종 보정 시작');
-                        detailedLogs.push(`목표: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
+                        detailedLogs.push('목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                         
                         // ✅ **수정: 실제 스크롤 위치 정확 측정**
                         const currentX = parseFloat(window.scrollX || window.pageXOffset || 0);
@@ -1683,12 +1634,12 @@ struct BFCacheSnapshot: Codable {
                             maxScroll: { x: maxScrollX, y: maxScrollY }
                         };
                         
-                        detailedLogs.push(`현재 위치: X=${currentX.toFixed(1)}px, Y=${currentY.toFixed(1)}px`);
-                        detailedLogs.push(`목표와 차이: X=${diffX.toFixed(1)}px, Y=${diffY.toFixed(1)}px`);
-                        detailedLogs.push(`허용 오차: ${tolerance}px`);
-                        detailedLogs.push(`허용 오차 내: ${isWithinTolerance ? '예' : '아니오'}`);
-                        detailedLogs.push(`페이지 크기: ${contentWidth.toFixed(0)} x ${contentHeight.toFixed(0)}`);
-                        detailedLogs.push(`최대 스크롤: X=${maxScrollX.toFixed(1)}px, Y=${maxScrollY.toFixed(1)}px`);
+                        detailedLogs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
+                        detailedLogs.push('목표와 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                        detailedLogs.push('허용 오차: ' + tolerance + 'px');
+                        detailedLogs.push('허용 오차 내: ' + (isWithinTolerance ? '예' : '아니오'));
+                        detailedLogs.push('페이지 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
+                        detailedLogs.push('최대 스크롤: X=' + maxScrollX.toFixed(1) + 'px, Y=' + maxScrollY.toFixed(1) + 'px');
                         
                         // 📊 **스크롤 가능성 분석**
                         const canScrollToTargetY = targetY <= maxScrollY + tolerance;
@@ -1703,13 +1654,13 @@ struct BFCacheSnapshot: Codable {
                             excessX: Math.max(0, targetX - maxScrollX)
                         };
                         
-                        detailedLogs.push(`목표 Y 도달 가능: ${canScrollToTargetY ? '예' : '아니오'}`);
-                        detailedLogs.push(`목표 X 도달 가능: ${canScrollToTargetX ? '예' : '아니오'}`);
+                        detailedLogs.push('목표 Y 도달 가능: ' + (canScrollToTargetY ? '예' : '아니오'));
+                        detailedLogs.push('목표 X 도달 가능: ' + (canScrollToTargetX ? '예' : '아니오'));
                         if (!canScrollToTargetY) {
-                            detailedLogs.push(`Y축 초과량: ${(targetY - maxScrollY).toFixed(1)}px`);
+                            detailedLogs.push('Y축 초과량: ' + (targetY - maxScrollY).toFixed(1) + 'px');
                         }
                         if (isTargetBeyondContent) {
-                            detailedLogs.push(`목표가 콘텐츠 영역 벗어남: ${(targetY - contentHeight).toFixed(1)}px`);
+                            detailedLogs.push('목표가 콘텐츠 영역 벗어남: ' + (targetY - contentHeight).toFixed(1) + 'px');
                         }
                         
                         console.log('✅ 브라우저 차단 대응 최종 검증:', verificationData);
@@ -1724,7 +1675,7 @@ struct BFCacheSnapshot: Codable {
                             const beforeCorrectionY = parseFloat(window.scrollY || window.pageYOffset || 0);
                             const beforeCorrectionX = parseFloat(window.scrollX || window.pageXOffset || 0);
                             
-                            detailedLogs.push(`보정 전: X=${beforeCorrectionX.toFixed(1)}px, Y=${beforeCorrectionY.toFixed(1)}px`);
+                            detailedLogs.push('보정 전: X=' + beforeCorrectionX.toFixed(1) + 'px, Y=' + beforeCorrectionY.toFixed(1) + 'px');
                             
                             // 강력한 최종 보정 
                             window.scrollTo(targetX, targetY);
@@ -1740,64 +1691,59 @@ struct BFCacheSnapshot: Codable {
                             }
                             
                             // 📊 **보정 후 즉시 확인**
-                            setTimeout(() => {
-                                const afterCorrectionY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                                const afterCorrectionX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                                const correctionDiffY = Math.abs(afterCorrectionY - beforeCorrectionY);
-                                const correctionDiffX = Math.abs(afterCorrectionX - beforeCorrectionX);
-                                
-                                verificationData.correction = {
-                                    applied: true,
-                                    before: { x: beforeCorrectionX, y: beforeCorrectionY },
-                                    after: { x: afterCorrectionX, y: afterCorrectionY },
-                                    movement: { x: correctionDiffX, y: correctionDiffY },
-                                    effective: correctionDiffY > 5 || correctionDiffX > 5
-                                };
-                                
-                                detailedLogs.push(`보정 후: X=${afterCorrectionX.toFixed(1)}px, Y=${afterCorrectionY.toFixed(1)}px`);
-                                detailedLogs.push(`보정 이동량: X=${correctionDiffX.toFixed(1)}px, Y=${correctionDiffY.toFixed(1)}px`);
-                                detailedLogs.push(`보정 효과: ${verificationData.correction.effective ? '유효' : '무효과'}`);
-                            }, 50);
+                            const afterCorrectionY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                            const afterCorrectionX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                            const correctionDiffY = Math.abs(afterCorrectionY - beforeCorrectionY);
+                            const correctionDiffX = Math.abs(afterCorrectionX - beforeCorrectionX);
+                            
+                            verificationData.correction = {
+                                applied: true,
+                                before: { x: beforeCorrectionX, y: beforeCorrectionY },
+                                after: { x: afterCorrectionX, y: afterCorrectionY },
+                                movement: { x: correctionDiffX, y: correctionDiffY },
+                                effective: correctionDiffY > 5 || correctionDiffX > 5
+                            };
+                            
+                            detailedLogs.push('보정 후: X=' + afterCorrectionX.toFixed(1) + 'px, Y=' + afterCorrectionY.toFixed(1) + 'px');
+                            detailedLogs.push('보정 이동량: X=' + correctionDiffX.toFixed(1) + 'px, Y=' + correctionDiffY.toFixed(1) + 'px');
+                            detailedLogs.push('보정 효과: ' + (verificationData.correction.effective ? '유효' : '무효과'));
                         } else {
                             detailedLogs.push('허용 오차 내 - 보정 불필요');
                         }
                         
-                        // ✅ **최종 위치 정확 측정 및 기록**
-                        setTimeout(() => {
-                            // 🐛 **스코프 에러 수정: 변수 할당**
-                            finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
-                            finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
-                            finalDiffX = Math.abs(finalCurrentX - targetX);
-                            finalDiffY = Math.abs(finalCurrentY - targetY);
-                            finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
-                            
-                            // ✅ **실제 복원 성공 여부 정확히 판단**
-                            actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
-                            practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
-                            
-                            verificationData.finalResult = {
-                                final: { x: finalCurrentX, y: finalCurrentY },
-                                target: { x: targetX, y: targetY },
-                                diff: { x: finalDiffX, y: finalDiffY },
-                                tolerance: tolerance,
-                                withinTolerance: finalWithinTolerance,
-                                actualRestoreSuccess: actualRestoreSuccess,
-                                practicalSuccess: practicalSuccess,
-                                correctionApplied: correctionApplied
-                            };
-                            
-                            detailedLogs.push('=== 최종 결과 ===');
-                            detailedLogs.push(`최종 위치: X=${finalCurrentX.toFixed(1)}px, Y=${finalCurrentY.toFixed(1)}px`);
-                            detailedLogs.push(`목표 위치: X=${targetX.toFixed(1)}px, Y=${targetY.toFixed(1)}px`);
-                            detailedLogs.push(`최종 차이: X=${finalDiffX.toFixed(1)}px, Y=${finalDiffY.toFixed(1)}px`);
-                            detailedLogs.push(`허용 오차 내: ${finalWithinTolerance ? '예' : '아니오'} (${tolerance}px 기준)`);
-                            detailedLogs.push(`실제 복원 성공: ${actualRestoreSuccess ? '예' : '아니오'} (50px 기준)`);
-                            detailedLogs.push(`실용적 성공: ${practicalSuccess ? '예' : '아니오'} (100px 기준)`);
-                            
-                            console.log('✅ 브라우저 차단 대응 최종보정 완료:', verificationData);
-                            
-                        }, 100);
+                        // ✅ **최종 위치 정확 측정 및 기록** - 🚫 동기적 처리
+                        finalCurrentY = parseFloat(window.scrollY || window.pageYOffset || 0);
+                        finalCurrentX = parseFloat(window.scrollX || window.pageXOffset || 0);
+                        finalDiffX = Math.abs(finalCurrentX - targetX);
+                        finalDiffY = Math.abs(finalCurrentY - targetY);
+                        finalWithinTolerance = finalDiffX <= tolerance && finalDiffY <= tolerance;
                         
+                        // ✅ **실제 복원 성공 여부 정확히 판단**
+                        actualRestoreSuccess = finalDiffY <= 50; // 50px 이내면 실제 성공
+                        practicalSuccess = finalDiffY <= 100; // 100px 이내면 실용적 성공
+                        
+                        verificationData.finalResult = {
+                            final: { x: finalCurrentX, y: finalCurrentY },
+                            target: { x: targetX, y: targetY },
+                            diff: { x: finalDiffX, y: finalDiffY },
+                            tolerance: tolerance,
+                            withinTolerance: finalWithinTolerance,
+                            actualRestoreSuccess: actualRestoreSuccess,
+                            practicalSuccess: practicalSuccess,
+                            correctionApplied: correctionApplied
+                        };
+                        
+                        detailedLogs.push('=== 최종 결과 ===');
+                        detailedLogs.push('최종 위치: X=' + finalCurrentX.toFixed(1) + 'px, Y=' + finalCurrentY.toFixed(1) + 'px');
+                        detailedLogs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                        detailedLogs.push('최종 차이: X=' + finalDiffX.toFixed(1) + 'px, Y=' + finalDiffY.toFixed(1) + 'px');
+                        detailedLogs.push('허용 오차 내: ' + (finalWithinTolerance ? '예' : '아니오') + ' (' + tolerance + 'px 기준)');
+                        detailedLogs.push('실제 복원 성공: ' + (actualRestoreSuccess ? '예' : '아니오') + ' (50px 기준)');
+                        detailedLogs.push('실용적 성공: ' + (practicalSuccess ? '예' : '아니오') + ' (100px 기준)');
+                        
+                        console.log('✅ 브라우저 차단 대응 최종보정 완료:', verificationData);
+                        
+                        // 🚫 **Swift 호환 반환값**
                         return {
                             success: actualRestoreSuccess, // ✅ 실제 복원 성공 여부
                             withinTolerance: finalWithinTolerance,
@@ -1814,7 +1760,7 @@ struct BFCacheSnapshot: Codable {
                         return {
                             success: false,
                             error: e.message,
-                            detailedLogs: [`브라우저 차단 대응 최종보정 실패: ${e.message}`]
+                            detailedLogs: ['브라우저 차단 대응 최종보정 실패: ' + e.message]
                         };
                     }
                 })()
@@ -2010,7 +1956,7 @@ extension BFCacheTransitionSystem {
                     let completePackageAnchors = anchors.filter { anchor in
                         if let pkg = anchor["fourElementPackage"] as? [String: Any] {
                             let hasId = pkg["id"] != nil
-                            let hasType = pkg["type"] != nil  
+                            let hasType = pkg["type"] != nil
                             let hasTs = pkg["ts"] != nil
                             let hasKw = pkg["kw"] != nil
                             return hasId && hasType && hasTs && hasKw
@@ -2028,7 +1974,7 @@ extension BFCacheTransitionSystem {
                         if let pkg = firstPackageAnchor["fourElementPackage"] as? [String: Any] {
                             let id = pkg["id"] as? String ?? "unknown"
                             let type = pkg["type"] as? String ?? "unknown"
-                            let ts = pkg["ts"] as? String ?? "unknown"  
+                            let ts = pkg["ts"] as? String ?? "unknown"
                             let kw = pkg["kw"] as? String ?? "unknown"
                             TabPersistenceManager.debugMessages.append("📊 첫 보이는 완전패키지 4요소: id=\(id), type=\(type), ts=\(ts), kw=\(kw)")
                         }
@@ -2155,18 +2101,22 @@ extension BFCacheTransitionSystem {
                     if (document.readyState !== 'complete') return null;
                     
                     // 🚫 **눌린 상태/활성 상태 모두 제거**
-                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(el => {
-                        el.classList.remove(...Array.from(el.classList).filter(c => 
-                            c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus')
-                        ));
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
+                        var classList = Array.from(el.classList);
+                        var classesToRemove = classList.filter(function(c) {
+                            return c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus');
+                        });
+                        for (var i = 0; i < classesToRemove.length; i++) {
+                            el.classList.remove(classesToRemove[i]);
+                        }
                     });
                     
                     // input focus 제거
-                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(el => {
+                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
                         el.blur();
                     });
                     
-                    const html = document.documentElement.outerHTML;
+                    var html = document.documentElement.outerHTML;
                     return html.length > 100000 ? html.substring(0, 100000) : html;
                 } catch(e) { return null; }
             })()
@@ -2205,7 +2155,7 @@ extension BFCacheTransitionSystem {
                                 if let pkg = anchor["fourElementPackage"] as? [String: Any] {
                                     let hasId = pkg["id"] != nil
                                     let hasType = pkg["type"] != nil
-                                    let hasTs = pkg["ts"] != nil  
+                                    let hasTs = pkg["ts"] != nil
                                     let hasKw = pkg["kw"] != nil
                                     return hasId && hasType && hasTs && hasKw
                                 }
@@ -2316,9 +2266,9 @@ extension BFCacheTransitionSystem {
                 const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                 
                 detailedLogs.push('👁️ 보이는 요소만 4요소 패키지 캡처 시작');
-                detailedLogs.push(`스크롤 위치: X=${scrollX.toFixed(1)}px, Y=${scrollY.toFixed(1)}px`);
-                detailedLogs.push(`뷰포트 크기: ${viewportWidth.toFixed(0)} x ${viewportHeight.toFixed(0)}`);
-                detailedLogs.push(`콘텐츠 크기: ${contentWidth.toFixed(0)} x ${contentHeight.toFixed(0)}`);
+                detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
+                detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
+                detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
                 
                 pageAnalysis.scroll = { x: scrollX, y: scrollY };
                 pageAnalysis.viewport = { width: viewportWidth, height: viewportHeight };
@@ -2340,11 +2290,13 @@ extension BFCacheTransitionSystem {
                     height: viewportHeight
                 };
                 
-                detailedLogs.push(`실제 보이는 영역: top=${actualViewportRect.top.toFixed(1)}, bottom=${actualViewportRect.bottom.toFixed(1)}`);
-                detailedLogs.push(`영역 크기: ${actualViewportRect.width.toFixed(0)} x ${actualViewportRect.height.toFixed(0)}`);
+                detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
+                detailedLogs.push('영역 크기: ' + actualViewportRect.width.toFixed(0) + ' x ' + actualViewportRect.height.toFixed(0));
                 
                 // 👁️ **요소 가시성 정확 판단 함수**
-                function isElementActuallyVisible(element, strictMode = true) {
+                function isElementActuallyVisible(element, strictMode) {
+                    if (strictMode === undefined) strictMode = true;
+                    
                     try {
                         // 1. 기본 DOM 연결 확인
                         if (!element || !element.getBoundingClientRect) return { visible: false, reason: 'invalid_element' };
@@ -2406,7 +2358,8 @@ extension BFCacheTransitionSystem {
                             '.accordion-content:not(.open)'
                         ];
                         
-                        for (const selector of hiddenContentSelectors) {
+                        for (let i = 0; i < hiddenContentSelectors.length; i++) {
+                            const selector = hiddenContentSelectors[i];
                             try {
                                 if (element.matches(selector) || element.closest(selector)) {
                                     return { visible: false, reason: 'hidden_content_area' };
@@ -2424,7 +2377,7 @@ extension BFCacheTransitionSystem {
                         };
                         
                     } catch(e) {
-                        return { visible: false, reason: `visibility_check_error: ${e.message}` };
+                        return { visible: false, reason: 'visibility_check_error: ' + e.message };
                     }
                 }
                 
@@ -2449,7 +2402,8 @@ extension BFCacheTransitionSystem {
                         /^(am|pm|오전|오후|시|분|초)$/i,
                     ];
                     
-                    for (const pattern of meaninglessPatterns) {
+                    for (let i = 0; i < meaninglessPatterns.length; i++) {
+                        const pattern = meaninglessPatterns[i];
                         if (pattern.test(cleanText)) {
                             return false;
                         }
@@ -2457,10 +2411,12 @@ extension BFCacheTransitionSystem {
                     
                     // 너무 반복적인 문자 (같은 문자 70% 이상)
                     const charCounts = {};
-                    for (const char of cleanText) {
+                    for (let i = 0; i < cleanText.length; i++) {
+                        const char = cleanText[i];
                         charCounts[char] = (charCounts[char] || 0) + 1;
                     }
-                    const maxCharCount = Math.max(...Object.values(charCounts));
+                    const counts = Object.values(charCounts);
+                    const maxCharCount = Math.max.apply(Math, counts);
                     if (maxCharCount / cleanText.length > 0.7) {
                         return false;
                     }
@@ -2481,7 +2437,7 @@ extension BFCacheTransitionSystem {
                         finalAnchors: 0
                     };
                     
-                    detailedLogs.push(`👁️ 보이는 뷰포트 영역: ${actualViewportRect.top.toFixed(1)} ~ ${actualViewportRect.bottom.toFixed(1)}px`);
+                    detailedLogs.push('👁️ 보이는 뷰포트 영역: ' + actualViewportRect.top.toFixed(1) + ' ~ ' + actualViewportRect.bottom.toFixed(1) + 'px');
                     console.log('👁️ 실제 뷰포트 영역:', actualViewportRect);
                     
                     // 👁️ **범용 콘텐츠 요소 패턴 (보이는 것만 선별)**
@@ -2511,32 +2467,39 @@ extension BFCacheTransitionSystem {
                     let candidateElements = [];
                     let selectorStats = {};
                     
-                    detailedLogs.push(`총 ${contentSelectors.length}개 selector 패턴으로 후보 요소 수집 시작`);
+                    detailedLogs.push('총 ' + contentSelectors.length + '개 selector 패턴으로 후보 요소 수집 시작');
                     
                     // 모든 selector에서 요소 수집
-                    for (const selector of contentSelectors) {
+                    for (let i = 0; i < contentSelectors.length; i++) {
+                        const selector = contentSelectors[i];
                         try {
                             const elements = document.querySelectorAll(selector);
                             if (elements.length > 0) {
                                 selectorStats[selector] = elements.length;
-                                candidateElements.push(...Array.from(elements));
+                                for (let j = 0; j < elements.length; j++) {
+                                    candidateElements.push(elements[j]);
+                                }
                             }
                         } catch(e) {
-                            selectorStats[selector] = `error: ${e.message}`;
+                            selectorStats[selector] = 'error: ' + e.message;
                         }
                     }
                     
                     visibilityStats.totalCandidates = candidateElements.length;
                     captureStats.selectorStats = selectorStats;
                     
-                    detailedLogs.push(`후보 요소 수집 완료: ${candidateElements.length}개`);
-                    detailedLogs.push(`주요 selector 결과: li=${selectorStats['li'] || 0}, div=${selectorStats['div[class*="item"]'] || 0}, [data-id]=${selectorStats['[data-id]'] || 0}`);
+                    detailedLogs.push('후보 요소 수집 완료: ' + candidateElements.length + '개');
+                    detailedLogs.push('주요 selector 결과: li=' + (selectorStats['li'] || 0) + ', div=' + (selectorStats['div[class*="item"]'] || 0) + ', [data-id]=' + (selectorStats['[data-id]'] || 0));
                     
                     console.log('👁️ 후보 요소 수집:', {
                         totalElements: candidateElements.length,
                         topSelectors: Object.entries(selectorStats)
-                            .filter(([_, count]) => typeof count === 'number' && count > 0)
-                            .sort(([,a], [,b]) => b - a)
+                            .filter(function(entry) {
+                                return typeof entry[1] === 'number' && entry[1] > 0;
+                            })
+                            .sort(function(a, b) {
+                                return b[1] - a[1];
+                            })
                             .slice(0, 5)
                     });
                     
@@ -2544,7 +2507,8 @@ extension BFCacheTransitionSystem {
                     let visibleElements = [];
                     let processingErrors = 0;
                     
-                    for (const element of candidateElements) {
+                    for (let i = 0; i < candidateElements.length; i++) {
+                        const element = candidateElements[i];
                         try {
                             const visibilityResult = isElementActuallyVisible(element, true); // 엄격 모드
                             visibilityStats.visibilityChecked++;
@@ -2576,8 +2540,8 @@ extension BFCacheTransitionSystem {
                     captureStats.visibilityStats = visibilityStats;
                     captureStats.processingErrors = processingErrors;
                     
-                    detailedLogs.push(`가시성 검사 완료: ${visibilityStats.visibilityChecked}개 검사, ${visibilityStats.actuallyVisible}개 실제 보임`);
-                    detailedLogs.push(`품질 필터링 후 최종: ${visibleElements.length}개 (오류: ${processingErrors}개)`);
+                    detailedLogs.push('가시성 검사 완료: ' + visibilityStats.visibilityChecked + '개 검사, ' + visibilityStats.actuallyVisible + '개 실제 보임');
+                    detailedLogs.push('품질 필터링 후 최종: ' + visibleElements.length + '개 (오류: ' + processingErrors + '개)');
                     
                     console.log('👁️ 보이는 품질 요소 필터링 완료:', {
                         totalCandidates: visibilityStats.totalCandidates,
@@ -2591,7 +2555,7 @@ extension BFCacheTransitionSystem {
                     const viewportCenterY = scrollY + (viewportHeight / 2);
                     const viewportCenterX = scrollX + (viewportWidth / 2);
                     
-                    visibleElements.sort((a, b) => {
+                    visibleElements.sort(function(a, b) {
                         const aCenterY = a.absoluteTop + (a.rect.height / 2);
                         const aCenterX = a.absoluteLeft + (a.rect.width / 2);
                         const bCenterY = b.absoluteTop + (b.rect.height / 2);
@@ -2606,8 +2570,8 @@ extension BFCacheTransitionSystem {
                     const selectedElements = visibleElements.slice(0, 20); // 👁️ 20개로 제한 (기존 30개에서 축소)
                     visibilityStats.finalAnchors = selectedElements.length;
                     
-                    detailedLogs.push(`뷰포트 중심 기준 정렬 후 상위 ${selectedElements.length}개 선택`);
-                    detailedLogs.push(`뷰포트 중심: X=${viewportCenterX.toFixed(1)}px, Y=${viewportCenterY.toFixed(1)}px`);
+                    detailedLogs.push('뷰포트 중심 기준 정렬 후 상위 ' + selectedElements.length + '개 선택');
+                    detailedLogs.push('뷰포트 중심: X=' + viewportCenterX.toFixed(1) + 'px, Y=' + viewportCenterY.toFixed(1) + 'px');
                     
                     console.log('👁️ 뷰포트 중심 기준 선택 완료:', {
                         viewportCenter: [viewportCenterX, viewportCenterY],
@@ -2624,7 +2588,7 @@ extension BFCacheTransitionSystem {
                             }
                         } catch(e) {
                             anchorCreationErrors++;
-                            console.warn(`👁️ 보이는 앵커[${i}] 생성 실패:`, e);
+                            console.warn('👁️ 보이는 앵커[' + i + '] 생성 실패:', e);
                         }
                     }
                     
@@ -2632,7 +2596,7 @@ extension BFCacheTransitionSystem {
                     captureStats.finalAnchors = anchors.length;
                     visibilityStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push(`보이는 4요소 패키지 앵커 생성 완료: ${anchors.length}개 (실패: ${anchorCreationErrors}개)`);
+                    detailedLogs.push('보이는 4요소 패키지 앵커 생성 완료: ' + anchors.length + '개 (실패: ' + anchorCreationErrors + '개)');
                     console.log('👁️ 보이는 4요소 패키지 앵커 수집 완료:', anchors.length, '개');
                     
                     return {
@@ -2642,7 +2606,9 @@ extension BFCacheTransitionSystem {
                 }
                 
                 // 👁️ **개별 보이는 4요소 패키지 앵커 생성 (가시성 정보 포함)**
-                function createFourElementPackageAnchor(elementData, index, includeVisibility = true) {
+                function createFourElementPackageAnchor(elementData, index, includeVisibility) {
+                    if (includeVisibility === undefined) includeVisibility = true;
+                    
                     try {
                         const element = elementData.element;
                         const rect = elementData.rect;
@@ -2655,11 +2621,11 @@ extension BFCacheTransitionSystem {
                         const offsetFromTop = scrollY - absoluteTop;
                         const offsetFromLeft = scrollX - absoluteLeft;
                         
-                        detailedLogs.push(`👁️ 보이는 앵커[${index}] 생성: 위치 Y=${absoluteTop.toFixed(1)}px, 오프셋=${offsetFromTop.toFixed(1)}px`);
+                        detailedLogs.push('👁️ 보이는 앵커[' + index + '] 생성: 위치 Y=' + absoluteTop.toFixed(1) + 'px, 오프셋=' + offsetFromTop.toFixed(1) + 'px');
                         
                         // 🧹 **품질 텍스트 재확인**
                         if (!isQualityText(textContent)) {
-                            detailedLogs.push(`   👁️ 앵커[${index}] 품질 텍스트 검증 실패: "${textContent.substring(0, 30)}"`);
+                            detailedLogs.push('   👁️ 앵커[' + index + '] 품질 텍스트 검증 실패: "' + textContent.substring(0, 30) + '"');
                             return null;
                         }
                         
@@ -2674,7 +2640,7 @@ extension BFCacheTransitionSystem {
                         if (element.id) {
                             uniqueId = element.id;
                             packageScore += 20;
-                            detailedLogs.push(`   👁️ 4요소[id]: ID 속성="${element.id}"`);
+                            detailedLogs.push('   👁️ 4요소[id]: ID 속성="' + element.id + '"');
                         }
                         
                         // data-* 속성들 (고유 식별자용)
@@ -2682,12 +2648,13 @@ extension BFCacheTransitionSystem {
                             const dataAttrs = ['data-id', 'data-post-id', 'data-article-id', 
                                              'data-comment-id', 'data-item-id', 'data-key', 
                                              'data-user-id', 'data-thread-id'];
-                            for (const attr of dataAttrs) {
+                            for (let i = 0; i < dataAttrs.length; i++) {
+                                const attr = dataAttrs[i];
                                 const value = element.getAttribute(attr);
                                 if (value) {
                                     uniqueId = value;
                                     packageScore += 18;
-                                    detailedLogs.push(`   👁️ 4요소[id]: ${attr}="${value}"`);
+                                    detailedLogs.push('   👁️ 4요소[id]: ' + attr + '="' + value + '"');
                                     break;
                                 }
                             }
@@ -2698,12 +2665,16 @@ extension BFCacheTransitionSystem {
                             const linkElement = element.querySelector('a[href]') || (element.tagName === 'A' ? element : null);
                             if (linkElement && linkElement.href) {
                                 try {
-                                    const urlParams = new URL(linkElement.href).searchParams;
-                                    for (const [key, value] of urlParams) {
+                                    const url = new URL(linkElement.href);
+                                    const urlParams = url.searchParams;
+                                    const paramEntries = Array.from(urlParams.entries());
+                                    for (let i = 0; i < paramEntries.length; i++) {
+                                        const key = paramEntries[i][0];
+                                        const value = paramEntries[i][1];
                                         if (key.includes('id') || key.includes('post') || key.includes('article')) {
                                             uniqueId = value;
                                             packageScore += 15;
-                                            detailedLogs.push(`   👁️ 4요소[id]: URL 파라미터="${key}=${value}"`);
+                                            detailedLogs.push('   👁️ 4요소[id]: URL 파라미터="' + key + '=' + value + '"');
                                             break;
                                         }
                                     }
@@ -2713,7 +2684,7 @@ extension BFCacheTransitionSystem {
                                         if (match) {
                                             uniqueId = match[1];
                                             packageScore += 12;
-                                            detailedLogs.push(`   👁️ 4요소[id]: URL 패턴 id="${match[1]}"`);
+                                            detailedLogs.push('   👁️ 4요소[id]: URL 패턴 id="' + match[1] + '"');
                                         }
                                     }
                                 } catch(e) {
@@ -2726,7 +2697,7 @@ extension BFCacheTransitionSystem {
                         if (!uniqueId) {
                             uniqueId = 'auto_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
                             packageScore += 5;
-                            detailedLogs.push(`   👁️ 4요소[id]: 자동 생성 UUID="${uniqueId}"`);
+                            detailedLogs.push('   👁️ 4요소[id]: 자동 생성 UUID="' + uniqueId + '"');
                         }
                         
                         fourElementPackage.id = uniqueId;
@@ -2735,7 +2706,7 @@ extension BFCacheTransitionSystem {
                         let contentType = 'unknown';
                         const tagName = element.tagName.toLowerCase();
                         const className = (element.className || '').toLowerCase();
-                        const parentClassName = (element.parentElement?.className || '').toLowerCase();
+                        const parentClassName = (element.parentElement && element.parentElement.className || '').toLowerCase();
                         
                         // 클래스명/태그명 기반 타입 추론
                         if (className.includes('comment') || className.includes('reply')) {
@@ -2762,7 +2733,7 @@ extension BFCacheTransitionSystem {
                         }
                         
                         fourElementPackage.type = contentType;
-                        detailedLogs.push(`   👁️ 4요소[type]: "${contentType}"`);
+                        detailedLogs.push('   👁️ 4요소[type]: "' + contentType + '"');
                         
                         // ③ **타임스탬프 (ts)**
                         let timestamp = null;
@@ -2777,7 +2748,7 @@ extension BFCacheTransitionSystem {
                             if (datetime) {
                                 timestamp = datetime.trim();
                                 packageScore += 15;
-                                detailedLogs.push(`   👁️ 4요소[ts]: 시간 요소="${timestamp}"`);
+                                detailedLogs.push('   👁️ 4요소[ts]: 시간 요소="' + timestamp + '"');
                             }
                         }
                         
@@ -2792,12 +2763,13 @@ extension BFCacheTransitionSystem {
                                 /\\d{1,2}일\\s*전/ // N일 전
                             ];
                             
-                            for (const pattern of timePatterns) {
+                            for (let i = 0; i < timePatterns.length; i++) {
+                                const pattern = timePatterns[i];
                                 const match = textContent.match(pattern);
                                 if (match) {
                                     timestamp = match[0];
                                     packageScore += 10;
-                                    detailedLogs.push(`   👁️ 4요소[ts]: 텍스트 패턴="${timestamp}"`);
+                                    detailedLogs.push('   👁️ 4요소[ts]: 텍스트 패턴="' + timestamp + '"');
                                     break;
                                 }
                             }
@@ -2807,7 +2779,7 @@ extension BFCacheTransitionSystem {
                         if (!timestamp) {
                             timestamp = new Date().toISOString();
                             packageScore += 2;
-                            detailedLogs.push(`   👁️ 4요소[ts]: 현재 시간="${timestamp}"`);
+                            detailedLogs.push('   👁️ 4요소[ts]: 현재 시간="' + timestamp + '"');
                         }
                         
                         fourElementPackage.ts = timestamp;
@@ -2832,7 +2804,7 @@ extension BFCacheTransitionSystem {
                             if (titleAttr) {
                                 keywords = titleAttr.substring(0, 20);
                                 packageScore += 5;
-                                detailedLogs.push(`   👁️ 4요소[kw]: 속성 키워드="${keywords}"`);
+                                detailedLogs.push('   👁️ 4요소[kw]: 속성 키워드="' + keywords + '"');
                             }
                         }
                         
@@ -2840,11 +2812,11 @@ extension BFCacheTransitionSystem {
                         if (!keywords && className) {
                             keywords = className.split(' ')[0].substring(0, 15);
                             packageScore += 2;
-                            detailedLogs.push(`   👁️ 4요소[kw]: 클래스명 키워드="${keywords}"`);
+                            detailedLogs.push('   👁️ 4요소[kw]: 클래스명 키워드="' + keywords + '"');
                         }
                         
                         fourElementPackage.kw = keywords || 'unknown';
-                        detailedLogs.push(`   👁️ 4요소[kw]: "${fourElementPackage.kw}"`);
+                        detailedLogs.push('   👁️ 4요소[kw]: "' + fourElementPackage.kw + '"');
                         
                         // 📊 **품질 점수 계산 (보이는 요소는 50점 이상 필요)**
                         let qualityScore = packageScore;
@@ -2869,11 +2841,11 @@ extension BFCacheTransitionSystem {
                         // 시간 정보 보너스
                         if (timestamp && !timestamp.includes(new Date().toISOString().split('T')[0])) qualityScore += 5; // 실제 시간
                         
-                        detailedLogs.push(`   👁️ 앵커[${index}] 품질점수: ${qualityScore}점 (패키지=${packageScore}, 보너스=${qualityScore-packageScore})`);
+                        detailedLogs.push('   👁️ 앵커[' + index + '] 품질점수: ' + qualityScore + '점 (패키지=' + packageScore + ', 보너스=' + (qualityScore-packageScore) + ')');
                         
                         // 👁️ **보이는 요소는 품질 점수 50점 미만 제외**
                         if (qualityScore < 50) {
-                            detailedLogs.push(`   👁️ 앵커[${index}] 품질점수 부족으로 제외: ${qualityScore}점 < 50점`);
+                            detailedLogs.push('   👁️ 앵커[' + index + '] 품질점수 부족으로 제외: ' + qualityScore + '점 < 50점');
                             return null;
                         }
                         
@@ -2930,8 +2902,8 @@ extension BFCacheTransitionSystem {
                         return anchorData;
                         
                     } catch(e) {
-                        console.error(`👁️ 보이는 4요소 패키지 앵커[${index}] 생성 실패:`, e);
-                        detailedLogs.push(`  👁️ 앵커[${index}] 생성 실패: ${e.message}`);
+                        console.error('👁️ 보이는 4요소 패키지 앵커[' + index + '] 생성 실패:', e);
+                        detailedLogs.push('  👁️ 앵커[' + index + '] 생성 실패: ' + e.message);
                         return null;
                     }
                 }
@@ -2948,9 +2920,9 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: packageAnchorsData.anchors.length > 0 ? (packageAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push(`=== 보이는 요소만 4요소 패키지 캡처 완료 (${captureTime}ms) ===`);
-                detailedLogs.push(`최종 보이는 4요소 패키지 앵커: ${packageAnchorsData.anchors.length}개`);
-                detailedLogs.push(`처리 성능: ${pageAnalysis.capturePerformance.anchorsPerSecond} 앵커/초`);
+                detailedLogs.push('=== 보이는 요소만 4요소 패키지 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('최종 보이는 4요소 패키지 앵커: ' + packageAnchorsData.anchors.length + '개');
+                detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
                 console.log('👁️ 보이는 요소만 4요소 패키지 캡처 완료:', {
                     visiblePackageAnchorsCount: packageAnchorsData.anchors.length,
@@ -3000,7 +2972,7 @@ extension BFCacheTransitionSystem {
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: [`보이는 요소만 4요소 패키지 캡처 실패: ${e.message}`],
+                    detailedLogs: ['보이는 요소만 4요소 패키지 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
