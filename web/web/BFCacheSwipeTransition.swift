@@ -326,7 +326,7 @@ struct BFCacheSnapshot: Codable {
         let enableBatchLoading = preloadingConfig.enableBatchLoading
         
         return """
-        (function() {
+        (async function() {
             try {
                 console.log('🔄 데이터 프리로딩 시작');
                 
