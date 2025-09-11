@@ -1,14 +1,3 @@
-네, 요청하신 변경사항을 반영한 전체 코드를 작성해드리겠습니다.
-
-주요 변경사항은 다음과 같습니다:
-
-1.  **브라우저 차단 대응 로직 삭제**: `performBrowserBlockingWorkaround` 함수 호출 부분을 제거했습니다.
-2.  **0 단계 프리로딩 추가**: `performFiveStageInfiniteScrollRestore` 함수 내부에, 저장 시점의 `actualScrollableSize.height`를 기반으로 콘텐츠를 미리 로드하는 "0 단계"를 삽입했습니다. 이는 복원 시점의 콘텐츠 높이가 저장 시점보다 작을 경우, 무한 스크롤을 트리거하여 높이를 맞추는 로직입니다.
-3.  **기존 구조 유지**: 5단계 복원 로직의 핵심 구조와 이름은 그대로 유지하면서 확장했습니다.
-
-변경된 전체 코드는 다음과 같습니다:
-
-```swift
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **5단계 무한스크롤 특화 BFCache 페이지 스냅샷 및 복원 시스템**
