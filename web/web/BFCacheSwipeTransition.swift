@@ -1972,4 +1972,3 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
-```
