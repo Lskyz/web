@@ -241,7 +241,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // ⏱️ **DOM 안정화 대기 메서드**
+    // ⏱️ **DOM 안정화 대기 메서드 - Promise 제거**
     private func waitForStabilization(webView: WKWebView, stepName: String, completion: @escaping () -> Void) {
         if !waitingConfig.enableSmartWaiting {
             TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스마트 대기 비활성화 - 즉시 진행")
@@ -279,7 +279,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // ⏱️ **스크롤 완료 대기 메서드**
+    // ⏱️ **스크롤 완료 대기 메서드 - Promise 제거**
     private func waitForScrollCompletion(webView: WKWebView, stepName: String, completion: @escaping () -> Void) {
         if !waitingConfig.enableSmartWaiting {
             TabPersistenceManager.debugMessages.append("⏱️ \(stepName) 스크롤 대기 비활성화 - 즉시 진행")
@@ -508,154 +508,97 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // ⏱️ **DOM 안정화 대기 스크립트 생성**
+    // ⏱️ **DOM 안정화 대기 스크립트 생성 - Promise 제거, 즉시 실행**
     private func generateStabilizationWaitScript(useMutationObserver: Bool, maxWaitMs: Int, minWaitMs: Int, stabilityThresholdMs: Int, checkIntervalMs: Int) -> String {
         return """
         (function() {
-            return new Promise(function(resolve) {
-                console.log('⏱️ DOM 안정화 대기 시작');
+            console.log('⏱️ DOM 안정화 대기 시작 (즉시 실행)');
+            
+            var startTime = Date.now();
+            var maxWait = \(maxWaitMs);
+            var minWait = \(minWaitMs);
+            var stabilityThreshold = \(stabilityThresholdMs);
+            var checkInterval = \(checkIntervalMs);
+            var useMutationObserver = \(useMutationObserver ? "true" : "false");
+            
+            var mutationCount = 0;
+            var lastMutationTime = Date.now();
+            var observer = null;
+            
+            // MutationObserver 설정
+            if (useMutationObserver && typeof MutationObserver !== 'undefined') {
+                observer = new MutationObserver(function(mutations) {
+                    mutationCount += mutations.length;
+                    lastMutationTime = Date.now();
+                });
                 
-                var startTime = Date.now();
-                var maxWait = \(maxWaitMs);
-                var minWait = \(minWaitMs);
-                var stabilityThreshold = \(stabilityThresholdMs);
-                var checkInterval = \(checkIntervalMs);
-                var useMutationObserver = \(useMutationObserver ? "true" : "false");
-                
-                var mutationCount = 0;
-                var lastMutationTime = Date.now();
-                var observer = null;
-                var checkTimer = null;
-                var resolved = false;
-                
-                function resolveWait(method, waitedMs) {
-                    if (resolved) return;
-                    resolved = true;
-                    
-                    if (observer) observer.disconnect();
-                    if (checkTimer) clearInterval(checkTimer);
-                    
-                    console.log('⏱️ 대기 완료: ' + method + ' (' + waitedMs + 'ms)');
-                    
-                    resolve({
-                        success: true,
-                        method: method,
-                        waitedMs: waitedMs,
-                        mutationCount: mutationCount,
-                        lastMutationTime: lastMutationTime
-                    });
-                }
-                
-                // MutationObserver 설정
-                if (useMutationObserver && typeof MutationObserver !== 'undefined') {
-                    observer = new MutationObserver(function(mutations) {
-                        mutationCount += mutations.length;
-                        lastMutationTime = Date.now();
-                        console.log('⏱️ DOM 변경 감지: ' + mutations.length + '개');
-                    });
-                    
-                    observer.observe(document.body, {
-                        childList: true,
-                        subtree: true,
-                        attributes: true,
-                        characterData: true
-                    });
-                }
-                
-                // 정기적 안정성 체크
-                checkTimer = setInterval(function() {
-                    var currentTime = Date.now();
-                    var elapsedTime = currentTime - startTime;
-                    var timeSinceLastMutation = currentTime - lastMutationTime;
-                    
-                    // 최대 대기 시간 초과
-                    if (elapsedTime >= maxWait) {
-                        resolveWait('max_timeout', elapsedTime);
-                        return;
-                    }
-                    
-                    // 최소 대기 시간 경과 && DOM 안정화
-                    if (elapsedTime >= minWait && timeSinceLastMutation >= stabilityThreshold) {
-                        resolveWait('dom_stable', elapsedTime);
-                        return;
-                    }
-                    
-                }, checkInterval);
-                
-                // 폴백: MutationObserver 미지원시 시간 기반 대기
-                if (!useMutationObserver || typeof MutationObserver === 'undefined') {
-                    setTimeout(function() {
-                        resolveWait('time_based', minWait);
-                    }, minWait);
-                }
-            });
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    characterData: true
+                });
+            }
+            
+            // 동기적 대기 시뮬레이션
+            var waitedMs = 0;
+            var method = 'immediate';
+            
+            // 최소 대기 시간
+            var endTime = startTime + minWait;
+            while (Date.now() < endTime) {
+                // busy wait
+            }
+            waitedMs = Date.now() - startTime;
+            
+            // Observer 정리
+            if (observer) observer.disconnect();
+            
+            console.log('⏱️ 대기 완료: ' + method + ' (' + waitedMs + 'ms)');
+            
+            return {
+                success: true,
+                method: method,
+                waitedMs: waitedMs,
+                mutationCount: mutationCount,
+                lastMutationTime: lastMutationTime
+            };
         })()
         """
     }
     
-    // ⏱️ **스크롤 완료 대기 스크립트 생성**
+    // ⏱️ **스크롤 완료 대기 스크립트 생성 - Promise 제거, 즉시 실행**
     private func generateScrollCompletionWaitScript(maxWaitMs: Int, minWaitMs: Int, checkIntervalMs: Int) -> String {
         return """
         (function() {
-            return new Promise(function(resolve) {
-                console.log('⏱️ 스크롤 완료 대기 시작');
-                
-                var startTime = Date.now();
-                var maxWait = \(maxWaitMs);
-                var minWait = \(minWaitMs);
-                var checkInterval = \(checkIntervalMs);
-                
-                var lastScrollY = window.scrollY || window.pageYOffset || 0;
-                var lastScrollX = window.scrollX || window.pageXOffset || 0;
-                var scrollStableCount = 0;
-                var resolved = false;
-                
-                function resolveWait(scrollStable, waitedMs) {
-                    if (resolved) return;
-                    resolved = true;
-                    
-                    clearInterval(checkTimer);
-                    
-                    console.log('⏱️ 스크롤 대기 완료: ' + (scrollStable ? '안정화' : '타임아웃') + ' (' + waitedMs + 'ms)');
-                    
-                    resolve({
-                        success: true,
-                        scrollStable: scrollStable,
-                        waitedMs: waitedMs,
-                        finalScrollY: window.scrollY || window.pageYOffset || 0,
-                        finalScrollX: window.scrollX || window.pageXOffset || 0
-                    });
-                }
-                
-                var checkTimer = setInterval(function() {
-                    var currentTime = Date.now();
-                    var elapsedTime = currentTime - startTime;
-                    var currentScrollY = window.scrollY || window.pageYOffset || 0;
-                    var currentScrollX = window.scrollX || window.pageXOffset || 0;
-                    
-                    // 스크롤 변화 확인
-                    if (Math.abs(currentScrollY - lastScrollY) < 1 && Math.abs(currentScrollX - lastScrollX) < 1) {
-                        scrollStableCount++;
-                    } else {
-                        scrollStableCount = 0;
-                        lastScrollY = currentScrollY;
-                        lastScrollX = currentScrollX;
-                    }
-                    
-                    // 최대 대기 시간 초과
-                    if (elapsedTime >= maxWait) {
-                        resolveWait(scrollStableCount > 0, elapsedTime);
-                        return;
-                    }
-                    
-                    // 스크롤 안정화 (3회 연속 변화 없음)
-                    if (elapsedTime >= minWait && scrollStableCount >= 3) {
-                        resolveWait(true, elapsedTime);
-                        return;
-                    }
-                    
-                }, checkInterval);
-            });
+            console.log('⏱️ 스크롤 완료 대기 시작 (즉시 실행)');
+            
+            var startTime = Date.now();
+            var minWait = \(minWaitMs);
+            
+            var initialScrollY = window.scrollY || window.pageYOffset || 0;
+            var initialScrollX = window.scrollX || window.pageXOffset || 0;
+            
+            // 최소 대기
+            var endTime = startTime + minWait;
+            while (Date.now() < endTime) {
+                // busy wait
+            }
+            
+            var finalScrollY = window.scrollY || window.pageYOffset || 0;
+            var finalScrollX = window.scrollX || window.pageXOffset || 0;
+            var scrollStable = (Math.abs(finalScrollY - initialScrollY) < 1 && Math.abs(finalScrollX - initialScrollX) < 1);
+            var waitedMs = Date.now() - startTime;
+            
+            console.log('⏱️ 스크롤 대기 완료: ' + (scrollStable ? '안정화' : '변경됨') + ' (' + waitedMs + 'ms)');
+            
+            return {
+                success: true,
+                scrollStable: scrollStable,
+                waitedMs: waitedMs,
+                finalScrollY: finalScrollY,
+                finalScrollX: finalScrollX
+            };
         })()
         """
     }
@@ -804,7 +747,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 📊 **상대적 백분율 복원 JavaScript 생성 - WKWebView 직렬화 안전 버전 + 모바일 OR 조건 개선**
+    // 📊 **상대적 백분율 복원 JavaScript 생성 - 로직 수정**
     private func generatePercentageRestoreScript() -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
@@ -814,7 +757,7 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
-                console.log('📊 모바일 친화적 백분율 복원 시작');
+                console.log('📊 백분율 복원 시작 (로직 개선)');
                 
                 // 📊 **안전한 결과 객체 (기본 타입만 사용)**
                 var safeResult = {
@@ -849,59 +792,66 @@ struct BFCacheSnapshot: Codable {
                 safeResult.detailedLogs.push('현재 콘텐츠: ' + currentContentWidth.toFixed(0) + ' x ' + currentContentHeight.toFixed(0));
                 safeResult.detailedLogs.push('현재 최대 스크롤: X=' + currentMaxScrollX.toFixed(1) + ', Y=' + currentMaxScrollY.toFixed(1));
                 safeResult.detailedLogs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                safeResult.detailedLogs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 var calculatedX = 0;
                 var calculatedY = 0;
                 var method = 'none';
                 
-                // 📱 **모바일 친화적: OR 조건으로 변경 - 세로 스크롤만 있어도 백분율 복원**
+                // 📱 **개선된 복원 로직**
                 var hasVerticalScroll = currentMaxScrollY > 0;
                 var hasHorizontalScroll = currentMaxScrollX > 0;
-                var canUsePercentage = hasVerticalScroll || hasHorizontalScroll; // 🔧 AND → OR 조건
                 
-                safeResult.detailedLogs.push('스크롤 가능 여부: 세로=' + hasVerticalScroll + ', 가로=' + hasHorizontalScroll);
-                safeResult.detailedLogs.push('백분율 사용 가능: ' + canUsePercentage);
+                safeResult.detailedLogs.push('스크롤 가능: 세로=' + hasVerticalScroll + ', 가로=' + hasHorizontalScroll);
                 
-                if (canUsePercentage) {
-                    // Y축 백분율 복원 (세로 스크롤 있으면 사용)
-                    if (targetPercentY > 0 && hasVerticalScroll) {
+                // 🔧 **Y축 복원 (개선된 로직)**
+                if (hasVerticalScroll) {
+                    // 백분율이 저장되어 있으면 백분율 사용
+                    if (targetPercentY >= 0) { // 0도 유효한 값
                         calculatedY = (targetPercentY / 100.0) * currentMaxScrollY;
                         method = 'percentage_y';
                         safeResult.detailedLogs.push('Y축 백분율 복원: ' + targetPercentY.toFixed(2) + '% → ' + calculatedY.toFixed(1) + 'px');
-                    } else if (targetY > 0 && hasVerticalScroll) {
-                        // 절대 위치를 최대값으로 제한
+                    } else if (targetY > 0) {
+                        // 백분율이 없으면 절대값 사용 (최대값으로 제한)
                         calculatedY = Math.min(targetY, currentMaxScrollY);
                         method = 'absolute_y_clamped';
-                        safeResult.detailedLogs.push('Y축 절대값 복원 (제한): ' + targetY.toFixed(1) + ' → ' + calculatedY.toFixed(1) + 'px');
-                    } else {
-                        calculatedY = 0;
-                        method = 'fallback_top';
-                        safeResult.detailedLogs.push('Y축 최상단 복원');
-                    }
-                    
-                    // X축 백분율 복원 (가로 스크롤 있으면 사용)
-                    if (targetPercentX > 0 && hasHorizontalScroll) {
-                        calculatedX = (targetPercentX / 100.0) * currentMaxScrollX;
-                        safeResult.detailedLogs.push('X축 백분율 복원: ' + targetPercentX.toFixed(2) + '% → ' + calculatedX.toFixed(1) + 'px');
-                    } else if (hasHorizontalScroll) {
-                        calculatedX = Math.min(targetX, currentMaxScrollX);
-                        safeResult.detailedLogs.push('X축 절대값 복원');
-                    } else {
-                        calculatedX = 0; // 가로 스크롤이 없으면 0
-                        safeResult.detailedLogs.push('X축 스크롤 없음 - 0px');
+                        safeResult.detailedLogs.push('Y축 절대값 복원: ' + targetY.toFixed(1) + ' → ' + calculatedY.toFixed(1) + 'px');
                     }
                 } else {
-                    // 백분율 사용 불가능한 경우 절대값 사용
-                    calculatedY = 0;
+                    // 스크롤 불가능한 경우
+                    if (targetY > 0) {
+                        // 목표 위치가 있었지만 현재 스크롤 불가능
+                        calculatedY = 0;
+                        method = 'no_scroll_fallback_y';
+                        safeResult.detailedLogs.push('Y축 스크롤 불가능 - 최상단 복원');
+                    } else {
+                        calculatedY = 0;
+                        method = 'top_position';
+                        safeResult.detailedLogs.push('Y축 원래 최상단');
+                    }
+                }
+                
+                // 🔧 **X축 복원 (개선된 로직)**
+                if (hasHorizontalScroll) {
+                    // 백분율이 저장되어 있으면 백분율 사용
+                    if (targetPercentX >= 0) { // 0도 유효한 값
+                        calculatedX = (targetPercentX / 100.0) * currentMaxScrollX;
+                        safeResult.detailedLogs.push('X축 백분율 복원: ' + targetPercentX.toFixed(2) + '% → ' + calculatedX.toFixed(1) + 'px');
+                    } else if (targetX > 0) {
+                        calculatedX = Math.min(targetX, currentMaxScrollX);
+                        safeResult.detailedLogs.push('X축 절대값 복원: ' + targetX.toFixed(1) + ' → ' + calculatedX.toFixed(1) + 'px');
+                    }
+                } else {
                     calculatedX = 0;
-                    method = 'no_scroll_available';
-                    safeResult.detailedLogs.push('스크롤 불가능 - 최상단 복원');
+                    if (targetX > 0) {
+                        safeResult.detailedLogs.push('X축 스크롤 불가능 - 0px');
+                    }
                 }
                 
                 safeResult.method = method;
                 safeResult.calculatedX = calculatedX;
                 safeResult.calculatedY = calculatedY;
-                safeResult.detailedLogs.push('최종 계산된 위치: X=' + calculatedX.toFixed(1) + ', Y=' + calculatedY.toFixed(1));
+                safeResult.detailedLogs.push('최종 계산 위치: X=' + calculatedX.toFixed(1) + ', Y=' + calculatedY.toFixed(1));
                 
                 // 스크롤 실행
                 window.scrollTo(calculatedX, calculatedY);
@@ -1576,26 +1526,24 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 📱 **모바일 친화적 백분율 계산 (OR 조건) - 중요한 수정!**
+        // 📱 **개선된 백분율 계산 로직**
         let scrollPercent: CGPoint
-        let hasVerticalScroll = captureData.actualScrollableSize.height > captureData.viewportSize.height
-        let hasHorizontalScroll = captureData.actualScrollableSize.width > captureData.viewportSize.width
+        let maxScrollY = max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height)
+        let maxScrollX = max(0, captureData.actualScrollableSize.width - captureData.viewportSize.width)
         
-        // 🔧 **핵심 수정: OR 조건으로 변경 - 세로 스크롤만 있어도 백분율 계산**
-        if hasVerticalScroll || hasHorizontalScroll { // AND(&&) → OR(||) 조건으로 수정
-            let maxScrollY = hasVerticalScroll ? captureData.actualScrollableSize.height - captureData.viewportSize.height : 0
-            let maxScrollX = hasHorizontalScroll ? captureData.actualScrollableSize.width - captureData.viewportSize.width : 0
-            
+        // 🔧 **백분율 계산 수정 - 스크롤 가능한 경우에만 계산**
+        if maxScrollY > 0 || maxScrollX > 0 {
             scrollPercent = CGPoint(
                 x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
                 y: maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
             )
         } else {
+            // 스크롤 불가능한 페이지는 백분율 0
             scrollPercent = CGPoint.zero
         }
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
-        TabPersistenceManager.debugMessages.append("📱 스크롤 가능: 세로=\(hasVerticalScroll), 가로=\(hasHorizontalScroll)")
+        TabPersistenceManager.debugMessages.append("📱 최대 스크롤: X=\(String(format: "%.1f", maxScrollX))px, Y=\(String(format: "%.1f", maxScrollY))px")
         
         // 🔄 **프리로딩 설정 생성 (저장된 콘텐츠 높이 기반)**
         let preloadingConfig = BFCacheSnapshot.PreloadingConfig(
