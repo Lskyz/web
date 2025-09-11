@@ -1276,7 +1276,7 @@ struct BFCacheSnapshot: Codable {
         
         // **1단계: 레이아웃 안정화 대기 강화**
         restoreSteps.append((1, { stepCompletion in
-            let stabilizationDelay: TimeInterval = 1.5 // 🚀 **대기시간 증가: 0.1초 → 1.5초**
+            let stabilizationDelay: TimeInterval = 0.1 // 🚀 **대기시간 증가: 0.1초 → 1.5초**
             TabPersistenceManager.debugMessages.append("🚀 1단계: 레이아웃 안정화 대기 강화 (대기: \(String(format: "%.1f", stabilizationDelay))초)")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + stabilizationDelay) {
