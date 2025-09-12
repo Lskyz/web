@@ -207,17 +207,15 @@ struct BFCacheSnapshot: Codable {
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) { [weak self] in
-                self?.executeStep2_PercentScroll(context: context)
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
+                self.executeStep2_PercentScroll(context: context)
             }
             return
         }
         
         let js = generateStep1_ContentRestoreScript()
         
-        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self = self else { return }
-            
+        context.webView?.evaluateJavaScript(js) { result, error in
             var step1Success = false
             
             if let error = error {
@@ -263,17 +261,15 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) { [weak self] in
-                self?.executeStep3_AnchorRestore(context: context)
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
+                self.executeStep3_AnchorRestore(context: context)
             }
             return
         }
         
         let js = generateStep2_PercentScrollScript()
         
-        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self = self else { return }
-            
+        context.webView?.evaluateJavaScript(js) { result, error in
             var step2Success = false
             var updatedContext = context
             
@@ -323,8 +319,8 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) { [weak self] in
-                self?.executeStep4_FinalVerification(context: context)
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
+                self.executeStep4_FinalVerification(context: context)
             }
             return
         }
@@ -339,9 +335,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep3_AnchorRestoreScript(packageDataJSON: fourElementPackageDataJSON)
         
-        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self = self else { return }
-            
+        context.webView?.evaluateJavaScript(js) { result, error in
             var step3Success = false
             
             if let error = error {
@@ -395,9 +389,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep4_FinalVerificationScript()
         
-        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self = self else { return }
-            
+        context.webView?.evaluateJavaScript(js) { result, error in
             var step4Success = false
             
             if let error = error {
