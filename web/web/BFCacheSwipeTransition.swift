@@ -23,6 +23,8 @@
 //  🆕 **0 단계 프리로딩 추가** - 저장 시점 높이 기반 콘텐츠 미리 로드
 //  🆕 **브라우저 차단 대응 삭제** - 불필요한 복원 단계 제거
 //  🔧 **스티키 헤더 오프셋 이중 적용 버그 수정** - 한 번만 적용하도록 수정
+//  ✅ **async/await 문법 오류 수정** - 동기 함수로 변경
+//  ✅ **Promise 반환 제거** - evaluateJavaScript 호환성 보장
 import UIKit
 import WebKit
 import SwiftUI
@@ -250,7 +252,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
 
-    // 🚀 **새로 추가: 0단계 프리로딩 JavaScript 생성**
+    // 🚀 **수정: 0단계 프리로딩 JavaScript - Promise 제거, 동기 객체 반환**
     private func generatePreloadingScript() -> String {
         let targetHeight = self.actualScrollableSize.height
         return """
@@ -283,20 +285,21 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
 
-                // 무한스크롤 트리거 함수 (기존 Stage 5 로직 활용)
-                async function performInfiniteScrollTrigger(container, targetY) {
+                // 무한스크롤 트리거 함수 (동기 버전)
+                function performInfiniteScrollTriggerSync(container, targetY) {
                     try {
                         let triggeredMethods = 0;
                         // 1. 하단으로 스크롤하여 트리거
                         const currentMaxY = Math.max(0, (container.scrollHeight || 0) - window.innerHeight);
                         container.scrollTop = currentMaxY;
-                        window.scrollTo(0, currentMaxY); // 윈도우 스크롤도 시도
+                        window.scrollTo(0, currentMaxY);
                         triggeredMethods++;
-                        await new Promise(resolve => setTimeout(resolve, 300));
+                        
                         // 2. 스크롤 이벤트 강제 발생
                         window.dispatchEvent(new Event('scroll', { bubbles: true }));
                         window.dispatchEvent(new Event('resize', { bubbles: true }));
                         container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        
                         // 3. 더보기 버튼 클릭
                         const loadMoreButtons = document.querySelectorAll(
                             '.load-more, .show-more, .infinite-scroll-trigger, ' +
@@ -317,19 +320,7 @@ struct BFCacheSnapshot: Codable {
                         if (clickedButtons > 0) {
                             triggeredMethods++;
                         }
-                        // 4. 터치 이벤트 시뮬레이션
-                        try {
-                            const touchEvent = new TouchEvent('touchend', { bubbles: true });
-                            document.dispatchEvent(touchEvent);
-                            triggeredMethods++;
-                        } catch(e) {}
-                        // 5. 인공 스크롤 반복 (일부 사이트는 스크롤 양에 반응)
-                        for (let i = 0; i < 3; i++) {
-                            const newY = currentMaxY - 100 + (i * 50);
-                            container.scrollTop = newY;
-                            window.scrollTo(0, newY);
-                            await new Promise(resolve => setTimeout(resolve, 200));
-                        }
+                        
                         console.log('🚀 무한스크롤 트리거 완료:', triggeredMethods + '개 방법 시도');
                         return triggeredMethods > 0;
                     } catch(e) {
@@ -378,55 +369,47 @@ struct BFCacheSnapshot: Codable {
                 const container = detectRealScrollContainer();
                 console.log('🚀 0단계 스크롤 컨테이너:', container === document.documentElement ? 'document' : container.tagName);
 
-                // 프리로딩 로직
-                return new Promise(async (resolve) => {
-                    let attempts = 0;
-                    const maxAttempts = 10; // 최대 시도 횟수
-                    const checkInterval = 500; // 체크 간격 (ms)
-
-                    const checkAndLoad = async () => {
-                        const currentHeight = getCurrentContentHeight();
-                        console.log(`🚀 0단계 체크 ${attempts + 1}: 현재 높이 ${currentHeight}px, 목표 높이 ${targetHeight}px`);
-                        
-                        if (currentHeight >= targetHeight) {
-                            console.log('✅ 0단계 프리로딩 성공: 목표 높이 도달');
-                            resolve({
-                                success: true,
-                                message: "프리로딩 성공",
-                                debug: { currentHeight: currentHeight, targetHeight: targetHeight, attempts: attempts }
-                            });
-                            return;
-                        }
-
-                        if (attempts >= maxAttempts) {
-                            console.log('⚠️ 0단계 프리로딩 중단: 최대 시도 횟수 초과');
-                            resolve({
-                                success: true, // 실패로 간주하지 않고, 최선을 다했다고 표시
-                                message: "프리로딩 중단 (최대 시도)",
-                                debug: { currentHeight: currentHeight, targetHeight: targetHeight, attempts: attempts }
-                            });
-                            return;
-                        }
-
-                        attempts++;
-                        const triggerSuccess = await performInfiniteScrollTrigger(container, targetHeight);
-                        if (!triggerSuccess) {
-                            console.log('⚠️ 0단계 프리로딩 중단: 트리거 실패');
-                            resolve({
-                                success: true, // 실패로 간주하지 않고, 최선을 다했다고 표시
-                                message: "프리로딩 중단 (트리거 실패)",
-                                debug: { currentHeight: currentHeight, targetHeight: targetHeight, attempts: attempts }
-                            });
-                            return;
-                        }
-
-                        // 레이아웃 안정화를 위해 대기
-                        await new Promise(r => setTimeout(r, 1000));
-                        checkAndLoad(); // 재귀적으로 체크
-                    };
-
-                    checkAndLoad();
-                });
+                // 프리로딩 시도 (동기 버전)
+                let attempts = 0;
+                const maxAttempts = 3; // 빠른 시도를 위해 축소
+                
+                while (attempts < maxAttempts) {
+                    const currentHeight = getCurrentContentHeight();
+                    console.log(`🚀 0단계 체크 ${attempts + 1}: 현재 높이 ${currentHeight}px, 목표 높이 ${targetHeight}px`);
+                    
+                    if (currentHeight >= targetHeight) {
+                        console.log('✅ 0단계 프리로딩 성공: 목표 높이 도달');
+                        return {
+                            success: true,
+                            message: "프리로딩 성공",
+                            debug: { currentHeight: currentHeight, targetHeight: targetHeight, attempts: attempts }
+                        };
+                    }
+                    
+                    attempts++;
+                    const triggerSuccess = performInfiniteScrollTriggerSync(container, targetHeight);
+                    if (!triggerSuccess) {
+                        console.log('⚠️ 0단계 프리로딩 중단: 트리거 실패');
+                        return {
+                            success: true,
+                            message: "프리로딩 중단 (트리거 실패)",
+                            debug: { currentHeight: currentHeight, targetHeight: targetHeight, attempts: attempts }
+                        };
+                    }
+                }
+                
+                const finalHeight = getCurrentContentHeight();
+                return {
+                    success: true,
+                    message: "프리로딩 완료",
+                    debug: { 
+                        currentHeight: finalHeight, 
+                        targetHeight: targetHeight, 
+                        attempts: attempts,
+                        heightIncreased: finalHeight > currentHeight
+                    }
+                };
+                
             } catch(e) {
                 console.error('🚀 0단계 프리로딩 실패:', e);
                 return {
@@ -440,7 +423,7 @@ struct BFCacheSnapshot: Codable {
     }
 
 
-    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (스티키 헤더 이중 적용 버그 수정)**
+    // 🚀 **핵심 수정: async/await 제거, 동기 함수로 변경**
     private func generateFiveStageInfiniteScrollRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -1018,7 +1001,7 @@ struct BFCacheSnapshot: Codable {
                         return { success: false, error: `Stage 4 예외: ${e.message}` };
                     }
                 }
-                // 🚀 **Stage 5: 퍼센트 기반 복원 + 무한스크롤 트리거 (핵심 수정)**
+                // 🚀 **수정: Stage 5 - async/await 제거, 동기 함수로 변경**
                 function tryPercentBasedRestore(config, targetX, targetY, targetPercentX, targetPercentY, realScrollContainer, stickyInfo) {
                     try {
                         console.log('🚀 Stage 5: 퍼센트 기반 복원 + 무한스크롤 트리거 시작');
@@ -1043,15 +1026,14 @@ struct BFCacheSnapshot: Codable {
                             });
                         }
                         console.log('🚀 Stage 5: 현재 페이지 높이:', currentHeight, 'px, 목표 Y:', calculatedTargetY, 'px, 최대 스크롤:', maxScrollY, 'px');
-                        // 🚀 **레이아웃 안정화 강화: 충분한 무한스크롤 트리거**
+                        // 🚀 **수정: 동기적 무한스크롤 트리거**
                         if (calculatedTargetY > maxScrollY - viewportHeight * 0.1) { // 하단 90% 이상이면 트리거
                             console.log('🚀 Stage 5: 무한스크롤 트리거 필요 - 콘텐츠 로드 시도');
-                            // 무한스크롤 트리거 강화
-                            const triggerSuccess = await performInfiniteScrollTrigger(currentContainer, calculatedTargetY);
+                            // 무한스크롤 트리거 (동기 버전)
+                            const triggerSuccess = performInfiniteScrollTriggerSync(currentContainer, calculatedTargetY);
                             if (triggerSuccess) {
-                                console.log('🚀 Stage 5: 무한스크롤 트리거 후 대기 시작');
-                                // 🚀 **레이아웃 안정화 대기 부족 해결: 충분한 대기 시간**
-                                await new Promise(resolve => setTimeout(resolve, 2000)); // 2초 대기
+                                console.log('🚀 Stage 5: 무한스크롤 트리거 완료');
+                                // 동기적 대기는 제거하고 즉시 스크롤 시도
                                 // 재계산된 높이로 다시 시도
                                 const newHeight = Math.max(
                                     currentContainer.scrollHeight || 0,
@@ -1070,8 +1052,9 @@ struct BFCacheSnapshot: Codable {
                                 });
                             }
                         }
-                        // 🔧 **버그 수정: Stage 5에서는 이미 스티키 오프셋이 포함된 좌표이므로 performScrollToPosition에 오프셋 포함 안함**
-                        performScrollToPosition(calculatedTargetY - stickyInfo.totalOffset, targetX, realScrollContainer, false); // false = 오프셋 적용 안함
+                        // 🔧 **수정: 스티키 오프셋 적용 (한 번만)**
+                        const adjustedTargetY = calculatedTargetY - stickyInfo.totalOffset;
+                        performScrollToPosition(adjustedTargetY, targetX, realScrollContainer);
                         return {
                             success: true,
                             method: 'percent_based',
@@ -1079,28 +1062,31 @@ struct BFCacheSnapshot: Codable {
                             debug: {
                                 originalTarget: [targetX, targetY],
                                 percentTarget: [targetX, calculatedTargetY],
+                                adjustedTarget: [targetX, adjustedTargetY],
                                 percent: [targetPercentX, targetPercentY],
                                 currentHeight: currentHeight,
-                                maxScrollY: maxScrollY
+                                maxScrollY: maxScrollY,
+                                stickyOffset: stickyInfo.totalOffset
                             }
                         };
                     } catch(e) {
                         return { success: false, error: `Stage 5 예외: ${e.message}` };
                     }
                 }
-                // 🚀 **무한스크롤 트리거 강화 함수**
-                async function performInfiniteScrollTrigger(container, targetY) {
+                // 🚀 **수정: 동기적 무한스크롤 트리거 함수**
+                function performInfiniteScrollTriggerSync(container, targetY) {
                     try {
                         let triggeredMethods = 0;
                         // 1. 하단으로 스크롤하여 트리거
                         const currentMaxY = Math.max(0, (container.scrollHeight || 0) - window.innerHeight);
-                        performScrollToPosition(currentMaxY, 0, container, false); // 오프셋 적용 안함
+                        performScrollToPosition(currentMaxY, 0, container);
                         triggeredMethods++;
-                        await new Promise(resolve => setTimeout(resolve, 300));
+                        
                         // 2. 스크롤 이벤트 강제 발생
                         window.dispatchEvent(new Event('scroll', { bubbles: true }));
                         window.dispatchEvent(new Event('resize', { bubbles: true }));
                         container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        
                         // 3. 더보기 버튼 클릭
                         const loadMoreButtons = document.querySelectorAll(
                             '.load-more, .show-more, .infinite-scroll-trigger, ' +
@@ -1121,17 +1107,20 @@ struct BFCacheSnapshot: Codable {
                         if (clickedButtons > 0) {
                             triggeredMethods++;
                         }
+                        
                         // 4. 터치 이벤트 시뮬레이션
                         try {
                             const touchEvent = new TouchEvent('touchend', { bubbles: true });
                             document.dispatchEvent(touchEvent);
                             triggeredMethods++;
                         } catch(e) {}
+                        
                         // 5. 인공 스크롤 반복 (일부 사이트는 스크롤 양에 반응)
                         for (let i = 0; i < 3; i++) {
-                            performScrollToPosition(currentMaxY - 100 + (i * 50), 0, container, false); // 오프셋 적용 안함
-                            await new Promise(resolve => setTimeout(resolve, 200));
+                            const newY = currentMaxY - 100 + (i * 50);
+                            performScrollToPosition(newY, 0, container);
                         }
+                        
                         console.log('🚀 무한스크롤 트리거 완료:', triggeredMethods + '개 방법 시도');
                         return triggeredMethods > 0;
                     } catch(e) {
@@ -1139,7 +1128,7 @@ struct BFCacheSnapshot: Codable {
                         return false;
                     }
                 }
-                // 🎯 **핵심 수정: 요소 기준 스크롤 - 스티키 오프셋을 여기서만 적용**
+                // 🎯 **수정: 요소 기준 스크롤 - 스티키 오프셋 한 번만 적용**
                 function performScrollToElement(element, realScrollContainer, stickyInfo) {
                     try {
                         const rect = element.getBoundingClientRect();
@@ -1150,8 +1139,8 @@ struct BFCacheSnapshot: Codable {
                         // 타겟 위치 계산 (스티키 헤더 보정 포함)
                         const targetScrollY = currentScrollY + rect.top - stickyInfo.totalOffset - 20; // 20px 여유
                         const targetScrollX = currentScrollX + rect.left;
-                        // 🔧 **버그 수정: performScrollToPosition에 오프셋 적용 여부 플래그 전달**
-                        performScrollToPosition(targetScrollY, targetScrollX, container, false); // false = 오프셋 적용 안함
+                        // 🔧 **수정: performScrollToPosition에 오프셋이 이미 적용된 좌표 전달**
+                        performScrollToPosition(targetScrollY, targetScrollX, container);
                         console.log('🎯 요소 기준 스크롤:', {
                             element: element.tagName,
                             rect: [rect.left, rect.top, rect.width, rect.height],
@@ -1163,11 +1152,11 @@ struct BFCacheSnapshot: Codable {
                         console.error('🎯 요소 기준 스크롤 실패:', e);
                     }
                 }
-                // 🔧 **버그 수정: performScrollToPosition에서 오프셋 적용 옵션 추가**
-                function performScrollToPosition(targetY, targetX, realScrollContainer, applyOffset = false) {
+                // 🔧 **수정: performScrollToPosition - 오프셋 이중 적용 제거**
+                function performScrollToPosition(targetY, targetX, realScrollContainer) {
                     try {
                         const container = realScrollContainer || document.documentElement;
-                        // 🔧 **버그 수정: applyOffset이 true일 때만 오프셋 적용**
+                        // 🔧 **오프셋이 이미 적용된 좌표를 받음**
                         const finalY = Math.max(0, targetY);
                         const finalX = Math.max(0, targetX);
                         if (container === document.documentElement) {
@@ -1191,9 +1180,8 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         console.log('🎯 위치 기준 스크롤 수행:', {
-                            original: [targetX, targetY],
+                            target: [targetX, targetY],
                             final: [finalX, finalY],
-                            applyOffset: applyOffset,
                             container: container === document.documentElement ? 'document' : container.tagName || 'element'
                         });
                     } catch(e) {
@@ -1204,14 +1192,15 @@ struct BFCacheSnapshot: Codable {
                 if (!restoredByStage) {
                     // 모든 단계 실패 - 긴급 폴백
                     console.log('🚨 모든 5단계 실패 - 긴급 좌표 폴백');
-                    // 🔧 **버그 수정: 긴급 폴백에서도 스티키 오프셋 한 번만 적용**
-                    performScrollToPosition(targetY - stickyInfo.totalOffset, targetX, realScrollContainer, false); // 오프셋 이미 빼고 전달
+                    // 🔧 **수정: 긴급 폴백에서도 스티키 오프셋 한 번만 적용**
+                    const adjustedTargetY = targetY - stickyInfo.totalOffset;
+                    performScrollToPosition(adjustedTargetY, targetX, realScrollContainer);
                     usedStage = 0;
                     usedMethod = 'emergency_coordinate';
                     anchorInfo = 'emergency';
                     errorMsg = '모든 5단계 복원 실패';
                 }
-                // 🔧 **복원 후 위치 검증 및 보정 (버그 수정)**
+                // 🔧 **복원 후 위치 검증 및 보정**
                 setTimeout(() => {
                     try {
                         const container = realScrollContainer || document.documentElement;
@@ -1247,7 +1236,7 @@ struct BFCacheSnapshot: Codable {
                         } else {
                             console.log(`❌ 실제 복원 실패: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
                         }
-                        // 🔧 **버그 수정: 보정 시에도 오프셋 이중 적용 방지**
+                        // 🔧 **수정: 보정 시에도 오프셋 이중 적용 방지**
                         if (!verificationResult.withinTolerance && (diffY > tolerance || diffX > tolerance)) {
                             console.log('🔧 허용 오차 초과 - 점진적 보정 시작:', verificationResult);
                             const maxDiff = Math.max(diffX, diffY);
@@ -1258,8 +1247,8 @@ struct BFCacheSnapshot: Codable {
                                 setTimeout(() => {
                                     const stepTargetX = finalX + stepX * i;
                                     const stepTargetY = finalY + stepY * i;
-                                    // 🔧 **버그 수정: 보정 시에는 오프셋 적용 안함 (이미 목표 좌표에 반영됨)**
-                                    performScrollToPosition(stepTargetY, stepTargetX, container, false); // 오프셋 적용 안함
+                                    // 🔧 **보정 시에는 오프셋 적용 안함 (이미 목표 좌표에 반영됨)**
+                                    performScrollToPosition(stepTargetY, stepTargetX, container);
                                     console.log(`🔧 점진적 보정 ${i}/${steps}:`, [stepTargetX, stepTargetY]);
                                 }, i * 150);
                             }
