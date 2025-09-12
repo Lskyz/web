@@ -22,6 +22,7 @@
 //  🔍 **앵커 매칭 신뢰성 강화** - 동형 컨텐츠 오매칭 방지
 //  🆕 **0 단계 프리로딩 추가** - 저장 시점 높이 기반 콘텐츠 미리 로드
 //  🆕 **브라우저 차단 대응 삭제** - 불필요한 복원 단계 제거
+//  🔧 **스티키 헤더 오프셋 이중 적용 버그 수정** - 한 번만 적용하도록 수정
 import UIKit
 import WebKit
 import SwiftUI
@@ -439,7 +440,7 @@ struct BFCacheSnapshot: Codable {
     }
 
 
-    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (문제점 수정)**
+    // 🚀 **핵심: 5단계 무한스크롤 특화 복원 JavaScript 생성 (스티키 헤더 이중 적용 버그 수정)**
     private func generateFiveStageInfiniteScrollRestoreScript() -> String {
         let targetPos = self.scrollPosition
         let targetPercent = self.scrollPositionPercent
@@ -1069,8 +1070,8 @@ struct BFCacheSnapshot: Codable {
                                 });
                             }
                         }
-                        // 실제 스크롤 수행 (스티키 헤더 보정)
-                        performScrollToPosition(calculatedTargetY, targetX, realScrollContainer, stickyInfo);
+                        // 🔧 **버그 수정: Stage 5에서는 이미 스티키 오프셋이 포함된 좌표이므로 performScrollToPosition에 오프셋 포함 안함**
+                        performScrollToPosition(calculatedTargetY - stickyInfo.totalOffset, targetX, realScrollContainer, false); // false = 오프셋 적용 안함
                         return {
                             success: true,
                             method: 'percent_based',
@@ -1093,7 +1094,7 @@ struct BFCacheSnapshot: Codable {
                         let triggeredMethods = 0;
                         // 1. 하단으로 스크롤하여 트리거
                         const currentMaxY = Math.max(0, (container.scrollHeight || 0) - window.innerHeight);
-                        performScrollToPosition(currentMaxY, 0, container, {totalOffset: 0});
+                        performScrollToPosition(currentMaxY, 0, container, false); // 오프셋 적용 안함
                         triggeredMethods++;
                         await new Promise(resolve => setTimeout(resolve, 300));
                         // 2. 스크롤 이벤트 강제 발생
@@ -1128,7 +1129,7 @@ struct BFCacheSnapshot: Codable {
                         } catch(e) {}
                         // 5. 인공 스크롤 반복 (일부 사이트는 스크롤 양에 반응)
                         for (let i = 0; i < 3; i++) {
-                            performScrollToPosition(currentMaxY - 100 + (i * 50), 0, container, {totalOffset: 0});
+                            performScrollToPosition(currentMaxY - 100 + (i * 50), 0, container, false); // 오프셋 적용 안함
                             await new Promise(resolve => setTimeout(resolve, 200));
                         }
                         console.log('🚀 무한스크롤 트리거 완료:', triggeredMethods + '개 방법 시도');
@@ -1138,7 +1139,7 @@ struct BFCacheSnapshot: Codable {
                         return false;
                     }
                 }
-                // 🎯 **핵심 수정 4: 실제 컨테이너 기준 스크롤 함수**
+                // 🎯 **핵심 수정: 요소 기준 스크롤 - 스티키 오프셋을 여기서만 적용**
                 function performScrollToElement(element, realScrollContainer, stickyInfo) {
                     try {
                         const rect = element.getBoundingClientRect();
@@ -1149,7 +1150,8 @@ struct BFCacheSnapshot: Codable {
                         // 타겟 위치 계산 (스티키 헤더 보정 포함)
                         const targetScrollY = currentScrollY + rect.top - stickyInfo.totalOffset - 20; // 20px 여유
                         const targetScrollX = currentScrollX + rect.left;
-                        performScrollToPosition(targetScrollY, targetScrollX, container, stickyInfo);
+                        // 🔧 **버그 수정: performScrollToPosition에 오프셋 적용 여부 플래그 전달**
+                        performScrollToPosition(targetScrollY, targetScrollX, container, false); // false = 오프셋 적용 안함
                         console.log('🎯 요소 기준 스크롤:', {
                             element: element.tagName,
                             rect: [rect.left, rect.top, rect.width, rect.height],
@@ -1161,10 +1163,12 @@ struct BFCacheSnapshot: Codable {
                         console.error('🎯 요소 기준 스크롤 실패:', e);
                     }
                 }
-                function performScrollToPosition(targetY, targetX, realScrollContainer, stickyInfo) {
+                // 🔧 **버그 수정: performScrollToPosition에서 오프셋 적용 옵션 추가**
+                function performScrollToPosition(targetY, targetX, realScrollContainer, applyOffset = false) {
                     try {
                         const container = realScrollContainer || document.documentElement;
-                        const finalY = Math.max(0, targetY - stickyInfo.totalOffset);
+                        // 🔧 **버그 수정: applyOffset이 true일 때만 오프셋 적용**
+                        const finalY = Math.max(0, targetY);
                         const finalX = Math.max(0, targetX);
                         if (container === document.documentElement) {
                             // 윈도우 스크롤
@@ -1188,8 +1192,8 @@ struct BFCacheSnapshot: Codable {
                         }
                         console.log('🎯 위치 기준 스크롤 수행:', {
                             original: [targetX, targetY],
-                            stickyOffset: stickyInfo.totalOffset,
                             final: [finalX, finalY],
+                            applyOffset: applyOffset,
                             container: container === document.documentElement ? 'document' : container.tagName || 'element'
                         });
                     } catch(e) {
@@ -1200,13 +1204,14 @@ struct BFCacheSnapshot: Codable {
                 if (!restoredByStage) {
                     // 모든 단계 실패 - 긴급 폴백
                     console.log('🚨 모든 5단계 실패 - 긴급 좌표 폴백');
-                    performScrollToPosition(targetY, targetX, realScrollContainer, stickyInfo);
+                    // 🔧 **버그 수정: 긴급 폴백에서도 스티키 오프셋 한 번만 적용**
+                    performScrollToPosition(targetY - stickyInfo.totalOffset, targetX, realScrollContainer, false); // 오프셋 이미 빼고 전달
                     usedStage = 0;
                     usedMethod = 'emergency_coordinate';
                     anchorInfo = 'emergency';
                     errorMsg = '모든 5단계 복원 실패';
                 }
-                // 🔧 **복원 후 위치 검증 및 보정 (내부 컨테이너 검증 오류 수정)**
+                // 🔧 **복원 후 위치 검증 및 보정 (버그 수정)**
                 setTimeout(() => {
                     try {
                         const container = realScrollContainer || document.documentElement;
@@ -1242,7 +1247,7 @@ struct BFCacheSnapshot: Codable {
                         } else {
                             console.log(`❌ 실제 복원 실패: 목표=${targetY}px, 실제=${finalY}px, 차이=${diffY.toFixed(1)}px`);
                         }
-                        // 🔧 **허용 오차 초과 시 점진적 보정**
+                        // 🔧 **버그 수정: 보정 시에도 오프셋 이중 적용 방지**
                         if (!verificationResult.withinTolerance && (diffY > tolerance || diffX > tolerance)) {
                             console.log('🔧 허용 오차 초과 - 점진적 보정 시작:', verificationResult);
                             const maxDiff = Math.max(diffX, diffY);
@@ -1253,7 +1258,8 @@ struct BFCacheSnapshot: Codable {
                                 setTimeout(() => {
                                     const stepTargetX = finalX + stepX * i;
                                     const stepTargetY = finalY + stepY * i;
-                                    performScrollToPosition(stepTargetY, stepTargetX, container, stickyInfo);
+                                    // 🔧 **버그 수정: 보정 시에는 오프셋 적용 안함 (이미 목표 좌표에 반영됨)**
+                                    performScrollToPosition(stepTargetY, stepTargetX, container, false); // 오프셋 적용 안함
                                     console.log(`🔧 점진적 보정 ${i}/${steps}:`, [stepTargetX, stepTargetY]);
                                 }, i * 150);
                             }
