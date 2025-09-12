@@ -1,13 +1,14 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
-//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선) + 🚀 안티클램핑
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) - SPA는 패시브 모드
+//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선) + 🚀 내부 스크롤러 대응
 //  🔍 **Step 3**: 4요소 패키지 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정 + 스페이서 정리
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **대용량 스크롤**: 5000px 이상도 정확히 복원 (안티클램핑)
+//  🎯 **내부 스크롤러 대응**: window가 아닌 div 스크롤러도 완벽 지원
 
 import UIKit
 import WebKit
@@ -188,11 +189,45 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
+        
+        // SPA 감지 및 설정 조정
+        var adjustedConfig = restorationConfig
+        if let host = pageRecord.url.host,
+           (host.contains("cafe.naver.com") || host.contains("m.cafe.naver.com")) {
+            // SPA 사이트는 Step 1 비활성화 또는 패시브 모드, 딜레이 단축
+            adjustedConfig = RestorationConfig(
+                enableContentRestore: false,  // 클릭 방지를 위해 비활성화
+                enablePercentRestore: true,
+                enableAnchorRestore: true,
+                enableFinalVerification: true,
+                savedContentHeight: restorationConfig.savedContentHeight,
+                step1RenderDelay: 0.05,
+                step2RenderDelay: 0.05,
+                step3RenderDelay: 0.2,
+                step4RenderDelay: 0.15
+            )
+            TabPersistenceManager.debugMessages.append("🎯 SPA 사이트 감지 - Step 1 비활성화, 딜레이 단축")
+        }
+        
+        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(adjustedConfig.step1RenderDelay)s, Step2=\(adjustedConfig.step2RenderDelay)s, Step3=\(adjustedConfig.step3RenderDelay)s, Step4=\(adjustedConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
-            snapshot: self,
+            snapshot: BFCacheSnapshot(
+                pageRecord: pageRecord,
+                domSnapshot: domSnapshot,
+                scrollPosition: scrollPosition,
+                scrollPositionPercent: scrollPositionPercent,
+                contentSize: contentSize,
+                viewportSize: viewportSize,
+                actualScrollableSize: actualScrollableSize,
+                jsState: jsState,
+                timestamp: timestamp,
+                webViewSnapshotPath: webViewSnapshotPath,
+                captureStatus: captureStatus,
+                version: version,
+                restorationConfig: adjustedConfig
+            ),
             webView: webView,
             completion: completion
         )
@@ -201,14 +236,14 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원
+    // MARK: - Step 1: 저장 콘텐츠 높이 복원 (SPA는 패시브 모드)
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         
-        guard restorationConfig.enableContentRestore else {
+        guard context.snapshot.restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
             return
@@ -236,7 +271,7 @@ struct BFCacheSnapshot: Codable {
                 if let percentage = resultDict["percentage"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                 }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                if let isStaticSite = resultDict["isStaticSite"] as? Bool, isStaticSite {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                 }
                 if let logs = resultDict["logs"] as? [String] {
@@ -247,28 +282,28 @@ struct BFCacheSnapshot: Codable {
             }
             
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(context.snapshot.restorationConfig.step1RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 복원 (최우선) + 🚀 안티클램핑
+    // MARK: - Step 2: 상대좌표 기반 스크롤 복원 (최우선) + 🚀 내부 스크롤러 대응
     private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선) + 안티클램핑")
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선) + 내부 스크롤러 대응")
         
-        guard restorationConfig.enablePercentRestore else {
+        guard context.snapshot.restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: context)
             }
             return
         }
         
-        // 🚀 **안티클램핑 적용된 스크롤 스크립트**
+        // 🚀 **내부 스크롤러 대응 스크립트**
         let js = generateStep2_PercentScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
@@ -280,6 +315,9 @@ struct BFCacheSnapshot: Codable {
             } else if let resultDict = result as? [String: Any] {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 
+                if let scrollerType = resultDict["scrollerType"] as? String {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 스크롤러 타입: \(scrollerType)")
+                }
                 if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
                 }
@@ -315,10 +353,10 @@ struct BFCacheSnapshot: Codable {
             }
             
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(context.snapshot.restorationConfig.step2RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: updatedContext)
             }
         }
@@ -328,9 +366,9 @@ struct BFCacheSnapshot: Codable {
     private func executeStep3_AnchorRestore(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 4요소 패키지 앵커 정밀 복원 시작")
         
-        guard restorationConfig.enableAnchorRestore else {
+        guard context.snapshot.restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step3RenderDelay) {
                 self.executeStep4_FinalVerification(context: context)
             }
             return
@@ -379,10 +417,10 @@ struct BFCacheSnapshot: Codable {
             }
             
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(context.snapshot.restorationConfig.step3RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step3RenderDelay) {
                 self.executeStep4_FinalVerification(context: context)
             }
         }
@@ -392,7 +430,7 @@ struct BFCacheSnapshot: Codable {
     private func executeStep4_FinalVerification(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 + 스페이서 정리 시작")
         
-        guard restorationConfig.enableFinalVerification else {
+        guard context.snapshot.restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
             context.completion(context.overallSuccess)
             return
@@ -434,10 +472,10 @@ struct BFCacheSnapshot: Codable {
             }
             
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(context.snapshot.restorationConfig.step4RenderDelay)초")
             
             // 최종 대기 후 완료 콜백
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + context.snapshot.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
                 TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
                 context.completion(finalSuccess)
@@ -453,14 +491,47 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
+                // 🎯 메인 스크롤러 자동 탐지 헬퍼
+                function __getPrimaryScroller(){
+                    const de = document.documentElement, db = document.body;
+                    // 1) window 스크롤이 실제로 움직이는지
+                    const canWindowScroll = (de.scrollHeight - window.innerHeight) > 2 || (db.scrollHeight - window.innerHeight) > 2;
+                    if (canWindowScroll) return { node: null, type: 'window' };
+                    
+                    // 2) 화면을 덮는 overflow:auto/scroll 컨테이너 탐지
+                    const cands = Array.from(document.querySelectorAll('[style*="overflow"], [class*="scroll"], [class*="list"], [class*="content"], [role="main"]'))
+                        .filter(el=>{
+                            try{
+                                const cs = getComputedStyle(el);
+                                if (!/(auto|scroll)/.test(cs.overflow + cs.overflowY)) return false;
+                                const r = el.getBoundingClientRect();
+                                // 화면 상당 부분을 차지 & 실제 스크롤 가능
+                                return r.height > window.innerHeight*0.6 && (el.scrollHeight - el.clientHeight) > 2;
+                            }catch(_){ return false; }
+                        });
+                    
+                    if (cands.length) {
+                        // 스크롤량이 가장 큰 친구를 메인으로
+                        cands.sort((a,b)=> (b.scrollHeight-b.clientHeight) - (a.scrollHeight-a.clientHeight));
+                        return { node: cands[0], type: 'element' };
+                    }
+                    // 3) 최후: window로
+                    return { node: null, type: 'window' };
+                }
+                
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)');
-                const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
                 
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+                // 🎯 메인 스크롤러 탐지
+                const sc = __getPrimaryScroller();
+                const isWin = (sc.type === 'window');
+                const node = sc.node;
+                
+                const currentHeight = isWin
+                    ? Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+                    : node.scrollHeight;
+                
+                logs.push('[Step 1] 콘텐츠 높이 복원 시작 (' + sc.type + ')');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 
@@ -477,43 +548,33 @@ struct BFCacheSnapshot: Codable {
                         targetHeight: targetHeight,
                         restoredHeight: currentHeight,
                         percentage: percentage,
+                        scrollerType: sc.type,
                         logs: logs
                     };
                 }
                 
-                // 동적 사이트 - 콘텐츠 로드 시도
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
+                // 🎯 패시브 모드 - 클릭 없이 스크롤 워밍업만
+                logs.push('패시브 모드 - 스크롤 워밍업만 수행');
                 
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
+                // 무한스크롤 트리거를 위한 하단 스크롤 (클릭 없음!)
+                for (let i = 0; i < 2; i++) {
+                    if (isWin) {
+                        // window 스크롤
+                        window.scrollTo(0, Number.MAX_SAFE_INTEGER);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    } else {
+                        // 내부 스크롤러
+                        node.scrollTop = node.scrollHeight;
+                        node.dispatchEvent(new Event('scroll', { bubbles: true }));
                     }
                 }
                 
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 페이지 하단 스크롤로 무한스크롤 트리거
-                const maxScrollY = Math.max(0, currentHeight - window.innerHeight);
-                window.scrollTo(0, maxScrollY);
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                logs.push('무한스크롤 트리거 시도');
+                logs.push('무한스크롤 트리거 시도 (클릭 없음)');
                 
                 // 복원 후 높이 측정
-                const restoredHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                const restoredHeight = isWin
+                    ? Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+                    : node.scrollHeight;
                 
                 const finalPercentage = (restoredHeight / targetHeight) * 100;
                 const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
@@ -528,6 +589,7 @@ struct BFCacheSnapshot: Codable {
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
                     percentage: finalPercentage,
+                    scrollerType: sc.type,
                     logs: logs
                 };
                 
@@ -543,7 +605,7 @@ struct BFCacheSnapshot: Codable {
     }
     
     private func generateStep2_PercentScrollScript() -> String {
-        // 🚀 **안티클램핑 적용된 스크롤 스크립트**
+        // 🚀 **내부 스크롤러 대응 스크립트**
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
         let absoluteX = scrollPosition.x
@@ -552,33 +614,126 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
+                // 🎯 메인 스크롤러 자동 탐지 헬퍼
+                function __getPrimaryScroller(){
+                    const de = document.documentElement, db = document.body;
+                    // 1) window 스크롤이 실제로 움직이는지
+                    const canWindowScroll = (de.scrollHeight - window.innerHeight) > 2 || (db.scrollHeight - window.innerHeight) > 2;
+                    if (canWindowScroll) return { node: null, type: 'window' };
+                    
+                    // 2) 화면을 덮는 overflow:auto/scroll 컨테이너 탐지
+                    const cands = Array.from(document.querySelectorAll('[style*="overflow"], [class*="scroll"], [class*="list"], [class*="content"], [role="main"]'))
+                        .filter(el=>{
+                            try{
+                                const cs = getComputedStyle(el);
+                                if (!/(auto|scroll)/.test(cs.overflow + cs.overflowY)) return false;
+                                const r = el.getBoundingClientRect();
+                                // 화면 상당 부분을 차지 & 실제 스크롤 가능
+                                return r.height > window.innerHeight*0.6 && (el.scrollHeight - el.clientHeight) > 2;
+                            }catch(_){ return false; }
+                        });
+                    
+                    if (cands.length) {
+                        // 스크롤량이 가장 큰 친구를 메인으로
+                        cands.sort((a,b)=> (b.scrollHeight-b.clientHeight) - (a.scrollHeight-a.clientHeight));
+                        return { node: cands[0], type: 'element' };
+                    }
+                    // 3) 최후: window로
+                    return { node: null, type: 'window' };
+                }
+                
+                // 🚀 내부 스크롤러용 안티클램핑 헬퍼
+                function __applyAntiClamp(scroller, targetX, targetY){
+                    const vpH = window.innerHeight, vpW = window.innerWidth;
+                    const isWin = !scroller;
+                    
+                    const maxY = isWin
+                        ? Math.max(0, Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - vpH)
+                        : Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                    
+                    const maxX = isWin
+                        ? Math.max(0, Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - vpW)
+                        : Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+                    
+                    const needY = Math.max(0, targetY - maxY);
+                    const needX = Math.max(0, targetX - maxX);
+                    if (needY===0 && needX===0) return { applied:false, spacerH:0 };
+                    
+                    if (isWin){
+                        // 문서 스페이서 (기존 방식)
+                        let spacer = document.getElementById('__bfcache_spacer__');
+                        if(!spacer){
+                            spacer = document.createElement('div');
+                            spacer.id='__bfcache_spacer__';
+                            spacer.setAttribute('aria-hidden','true');
+                            spacer.style.cssText='pointer-events:none;opacity:0;contain:strict;position:relative;width:1px;height:0;overflow:hidden';
+                            (document.body||document.documentElement).appendChild(spacer);
+                        }
+                        spacer.style.height = (parseFloat(spacer.style.height)||0) + (needY + vpH*1.5) + 'px';
+                        spacer.style.width  = (parseFloat(spacer.style.width)||1) + (needX + vpW*1.0) + 'px';
+                    }else{
+                        // 내부 스크롤러 스페이서
+                        let spacer = scroller.querySelector('#__bfcache_inner_spacer__');
+                        if(!spacer){
+                            spacer = document.createElement('div');
+                            spacer.id='__bfcache_inner_spacer__';
+                            spacer.setAttribute('aria-hidden','true');
+                            spacer.style.cssText='pointer-events:none;opacity:0;width:1px;height:0;overflow:hidden';
+                            scroller.appendChild(spacer);
+                        }
+                        spacer.style.height = (parseFloat(spacer.style.height)||0) + (needY + scroller.clientHeight*1.5) + 'px';
+                        spacer.style.width  = (parseFloat(spacer.style.width)||1) + (needX + scroller.clientWidth*1.0) + 'px';
+                    }
+                    
+                    // smooth scroll 무력화
+                    try{
+                        let tag = document.getElementById('__bfcache_nosmooth__');
+                        if(!tag){ 
+                            tag=document.createElement('style'); 
+                            tag.id='__bfcache_nosmooth__'; 
+                            tag.textContent='html,body,*{scroll-behavior:auto!important;}'; 
+                            document.head.appendChild(tag); 
+                        }
+                        if (!isWin) scroller.style.scrollBehavior='auto';
+                    }catch(_){}
+                    
+                    return { applied:true, spacerH: needY };
+                }
+                
                 const logs = [];
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 const absoluteX = parseFloat('\(absoluteX)');
                 const absoluteY = parseFloat('\(absoluteY)');
                 
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 + 안티클램핑');
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 + 내부 스크롤러 대응');
                 logs.push('절대 목표: X=' + absoluteX.toFixed(1) + 'px, Y=' + absoluteY.toFixed(1) + 'px');
                 logs.push('백분율 목표: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
+                // 🎯 메인 스크롤러 탐지
+                const sc = __getPrimaryScroller();
+                const isWin = (sc.type === 'window');
+                const node = sc.node; // element 또는 null(window)
+                
+                logs.push('메인 스크롤러: ' + sc.type);
+                
                 // 현재 콘텐츠 크기와 뷰포트 크기
-                const contentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
-                const contentWidth = Math.max(
-                    document.documentElement.scrollWidth,
-                    document.body.scrollWidth
-                );
-                const viewportHeight = window.innerHeight;
-                const viewportWidth = window.innerWidth;
+                const contentHeight = isWin
+                    ? Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)
+                    : node.scrollHeight;
+                const contentWidth = isWin
+                    ? Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
+                    : node.scrollWidth;
+                
+                const viewportHeight = isWin ? window.innerHeight : node.clientHeight;
+                const viewportWidth = isWin ? window.innerWidth  : node.clientWidth;
                 
                 // 최대 스크롤 가능 거리
                 const maxScrollY = Math.max(0, contentHeight - viewportHeight);
                 const maxScrollX = Math.max(0, contentWidth - viewportWidth);
                 
                 logs.push('현재 콘텐츠: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0) + 'px');
+                logs.push('뷰포트: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0) + 'px');
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
                 
                 let targetX, targetY;
@@ -597,104 +752,46 @@ struct BFCacheSnapshot: Codable {
                     logs.push('절대 위치 폴백 사용: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 }
                 
-                // 🚀 === 안티클램핑: 목표가 maxScroll을 넘으면 임시 스페이서로 여유를 만든다 ===
-                let spacerApplied = false;
-                let spacerHeight = 0;
-                
-                (function antiClamp() {
-                    try {
-                        const vpH = window.innerHeight || 0;
-                        const vpW = window.innerWidth || 0;
-                        
-                        // 메인 스크롤러
-                        const scroller = document.scrollingElement || document.documentElement || document.body;
-                        
-                        // 필요 여유 계산
-                        const needY = Math.max(0, targetY - maxScrollY);
-                        const needX = Math.max(0, targetX - maxScrollX);
-                        
-                        if (needY === 0 && needX === 0) {
-                            logs.push('안티클램핑 불필요 - 목표가 현재 최대 스크롤 내에 있음');
-                            return;
-                        }
-                        
-                        logs.push('안티클램핑 필요: Y여유=' + needY.toFixed(0) + 'px, X여유=' + needX.toFixed(0) + 'px');
-                        
-                        // 스페이서 찾기/생성
-                        let spacer = document.getElementById('__bfcache_spacer__');
-                        if (!spacer) {
-                            spacer = document.createElement('div');
-                            spacer.id = '__bfcache_spacer__';
-                            spacer.setAttribute('aria-hidden', 'true');
-                            spacer.style.cssText = [
-                                'pointer-events:none',
-                                'opacity:0',
-                                'contain:strict',
-                                'position:relative',
-                                'width:1px',
-                                'height:0px',
-                                'overflow:hidden'
-                            ].join(';');
-                            // 문서 맨 끝에 붙여 실제 문서 길이를 늘린다
-                            (document.body || scroller).appendChild(spacer);
-                            logs.push('스페이서 생성 및 삽입');
-                        }
-                        
-                        // 여유는 뷰포트 1.5배 정도 버퍼를 더해서 안정화
-                        const extraH = needY > 0 ? (needY + vpH * 1.5) : 0;
-                        const extraW = needX > 0 ? (needX + vpW * 1.0) : 0;
-                        
-                        spacer.style.height = Math.max(parseFloat(spacer.style.height) || 0, extraH) + 'px';
-                        spacer.style.width = Math.max(parseFloat(spacer.style.width) || 1, 1 + extraW) + 'px';
-                        
-                        spacerHeight = extraH;
-                        logs.push('스페이서 크기 설정: ' + extraH.toFixed(0) + ' x ' + (1 + extraW).toFixed(0) + 'px');
-                        
-                        // 일부 iOS WebKit에서 문서 자체 min-height에 걸릴 수 있어 보조로 넓혀줌
-                        const de = document.documentElement;
-                        if (!de.hasAttribute('data-bfcache-orig-minh')) {
-                            de.setAttribute('data-bfcache-orig-minh', de.style.minHeight || '');
-                        }
-                        const newMinH = (Math.max(scroller.scrollHeight, document.body?.scrollHeight || 0) + extraH);
-                        if (newMinH > 0) {
-                            de.style.minHeight = newMinH + 'px';
-                            logs.push('documentElement min-height 설정: ' + newMinH.toFixed(0) + 'px');
-                        }
-                        
-                        spacerApplied = true;
-                        logs.push('안티클램핑 스페이서 적용 완료');
-                        
-                    } catch(e) {
-                        logs.push('안티클램핑 오류: ' + e.message);
-                    }
-                })();
-                
-                // 🚀 **직접 스크롤 설정 - 즉시 이동**
-                window.scrollTo(targetX, targetY);
-                
-                // 추가 보장 - 다양한 방법으로 스크롤 설정
-                document.documentElement.scrollTop = targetY;
-                document.documentElement.scrollLeft = targetX;
-                document.body.scrollTop = targetY;
-                document.body.scrollLeft = targetX;
-                
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = targetY;
-                    document.scrollingElement.scrollLeft = targetX;
+                // 🚀 안티클램핑 적용 (내부/문서 각각)
+                const anti = __applyAntiClamp(node, targetX, targetY);
+                if (anti.applied) {
+                    logs.push('안티클램핑 스페이서 적용: 높이=' + anti.spacerH.toFixed(0) + 'px');
                 }
                 
-                // 대용량 스크롤을 위한 특별 처리
+                // 🚀 **즉시 점프 - 실제 스크롤러에 적용**
+                if (isWin) {
+                    // window 스크롤
+                    window.scrollTo(targetX, targetY);
+                    document.documentElement.scrollTop = targetY;
+                    document.documentElement.scrollLeft = targetX;
+                    document.body.scrollTop = targetY;
+                    document.body.scrollLeft = targetX;
+                    if (document.scrollingElement) {
+                        document.scrollingElement.scrollTop = targetY;
+                        document.scrollingElement.scrollLeft = targetX;
+                    }
+                } else {
+                    // 내부 스크롤러
+                    node.scrollTop = targetY;
+                    node.scrollLeft = targetX;
+                    logs.push('내부 스크롤러에 직접 설정: Y=' + targetY.toFixed(1) + 'px');
+                }
+                
+                // 대용량 스크롤을 위한 재시도 (애니메이션 아님, 즉시)
                 if (targetY > 5000) {
-                    // 큰 값도 정확히 설정되도록 재시도
                     setTimeout(function() {
-                        window.scrollTo(targetX, targetY);
+                        if (isWin) {
+                            window.scrollTo(targetX, targetY);
+                        } else {
+                            node.scrollTop = targetY;
+                        }
                     }, 16);
                     logs.push('대용량 스크롤 재시도 예약: Y=' + targetY.toFixed(0) + 'px');
                 }
                 
                 // 실제 적용된 위치 확인
-                const actualX = window.scrollX || window.pageXOffset || 0;
-                const actualY = window.scrollY || window.pageYOffset || 0;
+                const actualX = isWin ? (window.scrollX || window.pageXOffset || 0) : node.scrollLeft;
+                const actualY = isWin ? (window.scrollY || window.pageYOffset || 0) : node.scrollTop;
                 
                 const diffX = Math.abs(actualX - targetX);
                 const diffY = Math.abs(actualY - targetY);
@@ -713,9 +810,10 @@ struct BFCacheSnapshot: Codable {
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
                     fallbackUsed: fallbackUsed,
-                    spacerApplied: spacerApplied,
-                    spacerHeight: spacerHeight,
+                    spacerApplied: anti.applied,
+                    spacerHeight: anti.spacerH,
                     maxScroll: { x: maxScrollX, y: maxScrollY },
+                    scrollerType: sc.type,
                     logs: logs
                 };
                 
@@ -737,12 +835,40 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
+                // 🎯 메인 스크롤러 자동 탐지 헬퍼
+                function __getPrimaryScroller(){
+                    const de = document.documentElement, db = document.body;
+                    const canWindowScroll = (de.scrollHeight - window.innerHeight) > 2 || (db.scrollHeight - window.innerHeight) > 2;
+                    if (canWindowScroll) return { node: null, type: 'window' };
+                    
+                    const cands = Array.from(document.querySelectorAll('[style*="overflow"], [class*="scroll"], [class*="list"], [class*="content"], [role="main"]'))
+                        .filter(el=>{
+                            try{
+                                const cs = getComputedStyle(el);
+                                if (!/(auto|scroll)/.test(cs.overflow + cs.overflowY)) return false;
+                                const r = el.getBoundingClientRect();
+                                return r.height > window.innerHeight*0.6 && (el.scrollHeight - el.clientHeight) > 2;
+                            }catch(_){ return false; }
+                        });
+                    
+                    if (cands.length) {
+                        cands.sort((a,b)=> (b.scrollHeight-b.clientHeight) - (a.scrollHeight-a.clientHeight));
+                        return { node: cands[0], type: 'element' };
+                    }
+                    return { node: null, type: 'window' };
+                }
+                
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const fourElementPackageData = \(packageDataJSON);
                 
-                logs.push('[Step 3] 4요소 패키지 앵커 복원');
+                // 🎯 메인 스크롤러 탐지
+                const sc = __getPrimaryScroller();
+                const isWin = (sc.type === 'window');
+                const node = sc.node;
+                
+                logs.push('[Step 3] 4요소 패키지 앵커 복원 (' + sc.type + ')');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -751,6 +877,7 @@ struct BFCacheSnapshot: Codable {
                     return {
                         success: false,
                         anchorCount: 0,
+                        scrollerType: sc.type,
                         logs: logs
                     };
                 }
@@ -816,16 +943,20 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (foundElement && matchedAnchor) {
-                    // 요소로 스크롤
-                    foundElement.scrollIntoView({ behavior: 'instant', block: 'start' });
+                    // 요소로 스크롤 (behavior:'auto'로 수정)
+                    foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
                     
                     // 오프셋 보정
                     if (matchedAnchor.offsetFromTop) {
-                        window.scrollBy(0, -matchedAnchor.offsetFromTop);
+                        if (isWin) {
+                            window.scrollBy(0, -matchedAnchor.offsetFromTop);
+                        } else {
+                            node.scrollTop -= matchedAnchor.offsetFromTop;
+                        }
                     }
                     
-                    const actualX = window.scrollX || window.pageXOffset || 0;
-                    const actualY = window.scrollY || window.pageYOffset || 0;
+                    const actualX = isWin ? (window.scrollX || window.pageXOffset || 0) : node.scrollLeft;
+                    const actualY = isWin ? (window.scrollY || window.pageYOffset || 0) : node.scrollTop;
                     const diffX = Math.abs(actualX - targetX);
                     const diffY = Math.abs(actualY - targetY);
                     
@@ -841,6 +972,7 @@ struct BFCacheSnapshot: Codable {
                         },
                         restoredPosition: { x: actualX, y: actualY },
                         targetDifference: { x: diffX, y: diffY },
+                        scrollerType: sc.type,
                         logs: logs
                     };
                 }
@@ -849,6 +981,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     anchorCount: completeAnchors.length,
+                    scrollerType: sc.type,
                     logs: logs
                 };
                 
@@ -871,17 +1004,59 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
+                // 🎯 메인 스크롤러 자동 탐지 헬퍼
+                function __getPrimaryScroller(){
+                    const de = document.documentElement, db = document.body;
+                    const canWindowScroll = (de.scrollHeight - window.innerHeight) > 2 || (db.scrollHeight - window.innerHeight) > 2;
+                    if (canWindowScroll) return { node: null, type: 'window' };
+                    
+                    const cands = Array.from(document.querySelectorAll('[style*="overflow"], [class*="scroll"], [class*="list"], [class*="content"], [role="main"]'))
+                        .filter(el=>{
+                            try{
+                                const cs = getComputedStyle(el);
+                                if (!/(auto|scroll)/.test(cs.overflow + cs.overflowY)) return false;
+                                const r = el.getBoundingClientRect();
+                                return r.height > window.innerHeight*0.6 && (el.scrollHeight - el.clientHeight) > 2;
+                            }catch(_){ return false; }
+                        });
+                    
+                    if (cands.length) {
+                        cands.sort((a,b)=> (b.scrollHeight-b.clientHeight) - (a.scrollHeight-a.clientHeight));
+                        return { node: cands[0], type: 'element' };
+                    }
+                    return { node: null, type: 'window' };
+                }
+                
+                // 🧹 스페이서 정리 헬퍼
+                function __cleanupAntiClamp(){
+                    const tag=document.getElementById('__bfcache_nosmooth__'); 
+                    if(tag) tag.remove();
+                    
+                    const s1=document.getElementById('__bfcache_spacer__'); 
+                    if(s1) s1.remove();
+                    
+                    document.documentElement.removeAttribute('data-bfcache-orig-minh');
+                    
+                    // 내부 스크롤러 스페이서들도 정리
+                    document.querySelectorAll('#__bfcache_inner_spacer__').forEach(n=>n.remove());
+                }
+                
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const tolerance = 100;  // 대용량 스크롤을 위해 허용 오차 증가
                 
-                logs.push('[Step 4] 최종 검증 및 미세 보정');
+                // 🎯 메인 스크롤러 탐지
+                const sc = __getPrimaryScroller();
+                const isWin = (sc.type === 'window');
+                const node = sc.node;
+                
+                logs.push('[Step 4] 최종 검증 및 미세 보정 (' + sc.type + ')');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 현재 위치 확인
-                let currentX = window.scrollX || window.pageXOffset || 0;
-                let currentY = window.scrollY || window.pageYOffset || 0;
+                let currentX = isWin ? (window.scrollX || window.pageXOffset || 0) : node.scrollLeft;
+                let currentY = isWin ? (window.scrollY || window.pageYOffset || 0) : node.scrollTop;
                 
                 let diffX = Math.abs(currentX - targetX);
                 let diffY = Math.abs(currentY - targetY);
@@ -896,27 +1071,33 @@ struct BFCacheSnapshot: Codable {
                 if (!withinTolerance) {
                     logs.push('허용 오차 초과 - 강제 보정 적용');
                     
-                    // 🚀 **직접 스크롤 설정 - 대용량도 지원**
-                    window.scrollTo(targetX, targetY);
-                    
-                    // 모든 스크롤 속성 강제 설정
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
-                    
-                    if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetY;
-                        document.scrollingElement.scrollLeft = targetX;
+                    // 🚀 **실제 스크롤러에 직접 설정**
+                    if (isWin) {
+                        window.scrollTo(targetX, targetY);
+                        document.documentElement.scrollTop = targetY;
+                        document.documentElement.scrollLeft = targetX;
+                        document.body.scrollTop = targetY;
+                        document.body.scrollLeft = targetX;
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = targetY;
+                            document.scrollingElement.scrollLeft = targetX;
+                        }
+                    } else {
+                        node.scrollTop = targetY;
+                        node.scrollLeft = targetX;
+                        logs.push('내부 스크롤러 강제 보정: Y=' + targetY.toFixed(1) + 'px');
                     }
                     
                     // 대용량 스크롤 특별 처리
                     if (targetY > 5000) {
-                        // 재시도로 확실히 설정
                         setTimeout(function() {
-                            window.scrollTo(targetX, targetY);
-                            document.documentElement.scrollTop = targetY;
-                            document.body.scrollTop = targetY;
+                            if (isWin) {
+                                window.scrollTo(targetX, targetY);
+                                document.documentElement.scrollTop = targetY;
+                                document.body.scrollTop = targetY;
+                            } else {
+                                node.scrollTop = targetY;
+                            }
                         }, 50);
                         logs.push('대용량 스크롤 강제 보정: Y=' + targetY.toFixed(0) + 'px');
                     }
@@ -924,8 +1105,8 @@ struct BFCacheSnapshot: Codable {
                     correctionApplied = true;
                     
                     // 보정 후 위치 재측정
-                    currentX = window.scrollX || window.pageXOffset || 0;
-                    currentY = window.scrollY || window.pageYOffset || 0;
+                    currentX = isWin ? (window.scrollX || window.pageXOffset || 0) : node.scrollLeft;
+                    currentY = isWin ? (window.scrollY || window.pageYOffset || 0) : node.scrollTop;
                     diffX = Math.abs(currentX - targetX);
                     diffY = Math.abs(currentY - targetY);
                     
@@ -933,37 +1114,15 @@ struct BFCacheSnapshot: Codable {
                     logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 }
                 
-                // 🧹 === 안티클램핑 스페이서 정리 ===
+                // 🧹 안티클램핑 스페이서 정리
                 let spacerCleaned = false;
-                (function cleanupAntiClamp() {
-                    try {
-                        const de = document.documentElement;
-                        const spacer = document.getElementById('__bfcache_spacer__');
-                        
-                        if (spacer) {
-                            spacer.remove();
-                            logs.push('스페이서 제거 완료');
-                            spacerCleaned = true;
-                        }
-                        
-                        if (de.hasAttribute('data-bfcache-orig-minh')) {
-                            const orig = de.getAttribute('data-bfcache-orig-minh') || '';
-                            de.style.minHeight = orig;
-                            de.removeAttribute('data-bfcache-orig-minh');
-                            logs.push('documentElement min-height 복원: "' + orig + '"');
-                        }
-                        
-                        // 내부 스크롤 컨테이너 스페이서도 정리 (있는 경우)
-                        const innerSpacer = document.getElementById('__bfcache_inner_spacer__');
-                        if (innerSpacer) {
-                            innerSpacer.remove();
-                            logs.push('내부 스페이서 제거 완료');
-                        }
-                        
-                    } catch(e) {
-                        logs.push('스페이서 정리 오류: ' + e.message);
-                    }
-                })();
+                try {
+                    __cleanupAntiClamp();
+                    logs.push('스페이서 정리 완료');
+                    spacerCleaned = true;
+                } catch(e) {
+                    logs.push('스페이서 정리 오류: ' + e.message);
+                }
                 
                 const success = diffY <= 150;  // 대용량 스크롤을 위해 성공 기준 완화
                 
@@ -975,6 +1134,7 @@ struct BFCacheSnapshot: Codable {
                     withinTolerance: diffX <= tolerance && diffY <= tolerance,
                     correctionApplied: correctionApplied,
                     spacerCleaned: spacerCleaned,
+                    scrollerType: sc.type,
                     logs: logs
                 };
                 
