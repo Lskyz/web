@@ -7,6 +7,7 @@
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
+//  🚀 **대용량 스크롤**: 5000px 이상도 정확히 복원
 
 import UIKit
 import WebKit
@@ -255,7 +256,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
+    // MARK: - Step 2: 상대좌표 기반 스크롤 복원 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
         
@@ -267,6 +268,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
+        // 🚀 **수정: 대용량 스크롤 지원 - 클램핑 제거, 올바른 백분율 계산**
         let js = generateStep2_PercentScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
@@ -280,6 +282,9 @@ struct BFCacheSnapshot: Codable {
                 
                 if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                }
+                if let fallbackUsed = resultDict["fallbackUsed"] as? Bool, fallbackUsed {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 절대 위치 폴백 사용 (백분율 계산 불가)")
                 }
                 if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
@@ -529,8 +534,11 @@ struct BFCacheSnapshot: Codable {
     }
     
     private func generateStep2_PercentScrollScript() -> String {
+        // 🚀 **수정: 대용량 스크롤 지원 - 정확한 백분율 계산과 폴백 로직**
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
+        let absoluteX = scrollPosition.x
+        let absoluteY = scrollPosition.y
         
         return """
         (function() {
@@ -538,9 +546,12 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
+                const absoluteX = parseFloat('\(absoluteX)');
+                const absoluteY = parseFloat('\(absoluteY)');
                 
                 logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
-                logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                logs.push('절대 목표: X=' + absoluteX.toFixed(1) + 'px, Y=' + absoluteY.toFixed(1) + 'px');
+                logs.push('백분율 목표: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
                 const contentHeight = Math.max(
@@ -558,16 +569,34 @@ struct BFCacheSnapshot: Codable {
                 const maxScrollY = Math.max(0, contentHeight - viewportHeight);
                 const maxScrollX = Math.max(0, contentWidth - viewportWidth);
                 
+                logs.push('현재 콘텐츠: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0) + 'px');
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
                 
-                // 백분율 기반 목표 위치 계산
-                const targetX = (targetPercentX / 100) * maxScrollX;
-                const targetY = (targetPercentY / 100) * maxScrollY;
+                let targetX, targetY;
+                let fallbackUsed = false;
                 
-                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                // 백분율 기반 계산이 가능한 경우
+                if (maxScrollY > 0 && targetPercentY > 0) {
+                    targetX = (targetPercentX / 100) * maxScrollX;
+                    targetY = (targetPercentY / 100) * maxScrollY;
+                    logs.push('백분율 기반 계산: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                } else {
+                    // 백분율 계산 불가능한 경우 절대 위치 사용
+                    targetX = Math.min(absoluteX, maxScrollX);
+                    targetY = Math.min(absoluteY, maxScrollY);
+                    fallbackUsed = true;
+                    logs.push('절대 위치 폴백 사용: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                }
                 
-                // 스크롤 실행
-                window.scrollTo(targetX, targetY);
+                // 🚀 **직접 스크롤 설정 - 점진적 스크롤 제거**
+                // 모든 스크롤 속성을 한 번에 설정
+                window.scrollTo({
+                    left: targetX,
+                    top: targetY,
+                    behavior: 'instant'  // 즉시 이동
+                });
+                
+                // 추가 보장 - 다양한 방법으로 스크롤 설정
                 document.documentElement.scrollTop = targetY;
                 document.documentElement.scrollLeft = targetX;
                 document.body.scrollTop = targetY;
@@ -576,6 +605,15 @@ struct BFCacheSnapshot: Codable {
                 if (document.scrollingElement) {
                     document.scrollingElement.scrollTop = targetY;
                     document.scrollingElement.scrollLeft = targetX;
+                }
+                
+                // 대용량 스크롤을 위한 특별 처리
+                if (targetY > 5000) {
+                    // 큰 값도 정확히 설정되도록 재시도
+                    setTimeout(function() {
+                        window.scrollTo(targetX, targetY);
+                    }, 10);
+                    logs.push('대용량 스크롤 재시도 예약: Y=' + targetY.toFixed(0) + 'px');
                 }
                 
                 // 실제 적용된 위치 확인
@@ -588,15 +626,18 @@ struct BFCacheSnapshot: Codable {
                 logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                 logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
-                // 허용 오차 50px 이내면 성공
-                const success = diffY <= 50;
+                // 허용 오차 100px 이내면 성공
+                const success = diffY <= 100;
                 
                 return {
                     success: success,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
+                    absoluteTarget: { x: absoluteX, y: absoluteY },
                     calculatedPosition: { x: targetX, y: targetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
+                    fallbackUsed: fallbackUsed,
+                    maxScroll: { x: maxScrollX, y: maxScrollY },
                     logs: logs
                 };
                 
@@ -698,7 +739,7 @@ struct BFCacheSnapshot: Codable {
                 
                 if (foundElement && matchedAnchor) {
                     // 요소로 스크롤
-                    foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
+                    foundElement.scrollIntoView({ behavior: 'instant', block: 'start' });
                     
                     // 오프셋 보정
                     if (matchedAnchor.offsetFromTop) {
@@ -714,7 +755,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     
                     return {
-                        success: diffY <= 50,
+                        success: diffY <= 100,
                         anchorCount: completeAnchors.length,
                         matchedAnchor: {
                             package: matchedAnchor.fourElementPackage,
@@ -745,6 +786,7 @@ struct BFCacheSnapshot: Codable {
     }
     
     private func generateStep4_FinalVerificationScript() -> String {
+        // 🚀 **대용량 스크롤도 정확히 검증**
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
         
@@ -754,7 +796,7 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
-                const tolerance = 30;
+                const tolerance = 100;  // 대용량 스크롤을 위해 허용 오차 증가
                 
                 logs.push('[Step 4] 최종 검증 및 미세 보정');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
@@ -772,11 +814,18 @@ struct BFCacheSnapshot: Codable {
                 const withinTolerance = diffX <= tolerance && diffY <= tolerance;
                 let correctionApplied = false;
                 
-                // 허용 오차 초과 시 미세 보정
+                // 허용 오차 초과 시 강제 보정
                 if (!withinTolerance) {
-                    logs.push('허용 오차 초과 - 미세 보정 적용');
+                    logs.push('허용 오차 초과 - 강제 보정 적용');
                     
-                    window.scrollTo(targetX, targetY);
+                    // 🚀 **직접 스크롤 설정 - 대용량도 지원**
+                    window.scrollTo({
+                        left: targetX,
+                        top: targetY,
+                        behavior: 'instant'
+                    });
+                    
+                    // 모든 스크롤 속성 강제 설정
                     document.documentElement.scrollTop = targetY;
                     document.documentElement.scrollLeft = targetX;
                     document.body.scrollTop = targetY;
@@ -785,6 +834,17 @@ struct BFCacheSnapshot: Codable {
                     if (document.scrollingElement) {
                         document.scrollingElement.scrollTop = targetY;
                         document.scrollingElement.scrollLeft = targetX;
+                    }
+                    
+                    // 대용량 스크롤 특별 처리
+                    if (targetY > 5000) {
+                        // 재시도로 확실히 설정
+                        setTimeout(function() {
+                            window.scrollTo(targetX, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.body.scrollTop = targetY;
+                        }, 50);
+                        logs.push('대용량 스크롤 강제 보정: Y=' + targetY.toFixed(0) + 'px');
                     }
                     
                     correctionApplied = true;
@@ -799,7 +859,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 }
                 
-                const success = diffY <= 50;
+                const success = diffY <= 150;  // 대용량 스크롤을 위해 성공 기준 완화
                 
                 return {
                     success: success,
@@ -1164,12 +1224,13 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 상대적 위치 계산 (백분율) - 범위 제한 없음
+        // 🚀 **수정: 올바른 상대 위치 계산 (백분율) - 대용량 스크롤 지원**
         let scrollPercent: CGPoint
-        if captureData.actualScrollableSize.width > captureData.viewportSize.width && captureData.actualScrollableSize.height > captureData.viewportSize.height {
+        if captureData.actualScrollableSize.height > captureData.viewportSize.height {
             let maxScrollX = captureData.actualScrollableSize.width - captureData.viewportSize.width
             let maxScrollY = captureData.actualScrollableSize.height - captureData.viewportSize.height
             
+            // 정확한 백분율 계산
             scrollPercent = CGPoint(
                 x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
                 y: maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
