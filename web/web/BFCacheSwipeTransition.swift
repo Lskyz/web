@@ -47,9 +47,9 @@ struct BFCacheSnapshot: Codable {
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: 0,
-            step1RenderDelay: 0.3,
-            step2RenderDelay: 0.3,
-            step3RenderDelay: 0.3,
+            step1RenderDelay: 0.2,
+            step2RenderDelay: 0.2,
+            step3RenderDelay: 0.2,
             step4RenderDelay: 0.2
         )
     }
