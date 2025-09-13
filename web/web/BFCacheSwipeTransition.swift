@@ -1279,9 +1279,9 @@ extension BFCacheTransitionSystem {
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
-            step1RenderDelay: 0.2,
+            step1RenderDelay: 0.1,
             step2RenderDelay: 0.2,
-            step3RenderDelay: 0.2,
+            step3RenderDelay: 0.1,
             step4RenderDelay: 0.1
         )
         
