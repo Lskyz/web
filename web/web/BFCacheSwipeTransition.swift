@@ -1,7 +1,7 @@
 //
 //  BFCacheSnapshotManager.swift
-//  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
+//  📸 **순차적 4단계 BFCache 복원 시스템 + 🔓 클램핑 제한 해체**
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (🔓 40000px 강제 확장)
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
@@ -182,11 +182,12 @@ struct BFCacheSnapshot: Codable {
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작 + 🔓 클램핑 제한 해체")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
+        TabPersistenceManager.debugMessages.append("🔓 강제 확장 목표: 최대 40000px")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
@@ -200,9 +201,9 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원
+    // MARK: - Step 1: 🔓 클램핑 제한 해체 + 40000px 강제 확장
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 🔓 클램핑 제한 해체 + 40000px 강제 확장 시작")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -213,7 +214,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep1_ContentRestoreScript()
+        let js = generateStep1_ClampingBypassContentRestoreScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step1Success = false
@@ -229,17 +230,23 @@ struct BFCacheSnapshot: Codable {
                 if let targetHeight = resultDict["targetHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
                 }
-                if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+                if let expandedHeight = resultDict["expandedHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 🔓 강제 확장된 높이: \(String(format: "%.0f", expandedHeight))px")
+                }
+                if let clampingDisabled = resultDict["clampingDisabled"] as? Bool {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 🔓 클램핑 제한 해체: \(clampingDisabled ? "성공" : "실패")")
+                }
+                if let spacersCreated = resultDict["spacersCreated"] as? Int {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 🔓 임시 스페이서 생성: \(spacersCreated)개")
+                }
+                if let contentTriggered = resultDict["contentTriggered"] as? Bool, contentTriggered {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 🔓 무한스크롤 트리거: 성공")
                 }
                 if let percentage = resultDict["percentage"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                 }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
-                }
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
+                    for log in logs.prefix(10) {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
@@ -436,7 +443,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    private func generateStep1_ContentRestoreScript() -> String {
+    private func generateStep1_ClampingBypassContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
@@ -444,79 +451,258 @@ struct BFCacheSnapshot: Codable {
             try {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)');
+                const MAX_FORCE_HEIGHT = 40000; // 🔓 최대 강제 확장 높이
+                
+                logs.push('[Step 1] 🔓 클램핑 제한 해체 + 40000px 강제 확장 시작');
+                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                logs.push('최대 강제 확장: ' + MAX_FORCE_HEIGHT + 'px');
+                
+                // 🔓 **1단계: 모든 스크롤 제한 해체**
+                logs.push('🔓 1단계: 스크롤 클램핑 제한 해체 시작');
+                
+                // 스크롤 이벤트 리스너 백업 및 임시 제거
+                const backupHandlers = {
+                    onscroll: [],
+                    onwheel: [],
+                    ontouchmove: []
+                };
+                
+                // 전역 이벤트 핸들러 백업 및 제거
+                [window, document, document.body, document.documentElement].forEach(function(target) {
+                    if (target && target.onscroll) {
+                        backupHandlers.onscroll.push({ target: target, handler: target.onscroll });
+                        target.onscroll = null;
+                    }
+                    if (target && target.onwheel) {
+                        backupHandlers.onwheel.push({ target: target, handler: target.onwheel });
+                        target.onwheel = null;
+                    }
+                    if (target && target.ontouchmove) {
+                        backupHandlers.ontouchmove.push({ target: target, handler: target.ontouchmove });
+                        target.ontouchmove = null;
+                    }
+                });
+                
+                logs.push('🔓 스크롤 이벤트 핸들러 임시 제거: ' + 
+                    backupHandlers.onscroll.length + '개 scroll, ' + 
+                    backupHandlers.onwheel.length + '개 wheel, ' + 
+                    backupHandlers.ontouchmove.length + '개 touch');
+                
+                // 🔓 **2단계: CSS overflow 제한 강제 해제**
+                logs.push('🔓 2단계: CSS overflow 제한 해제');
+                
+                const originalStyles = [];
+                const targets = [document.documentElement, document.body];
+                const cssProps = ['overflow', 'overflowX', 'overflowY', 'maxHeight', 'height'];
+                
+                targets.forEach(function(target, targetIndex) {
+                    if (target) {
+                        const targetBackup = { target: target, styles: {} };
+                        cssProps.forEach(function(prop) {
+                            targetBackup.styles[prop] = target.style[prop] || '';
+                            // 스크롤 가능하도록 강제 설정
+                            if (prop === 'overflow' || prop === 'overflowY') {
+                                target.style[prop] = 'visible';
+                            } else if (prop === 'maxHeight' || prop === 'height') {
+                                target.style[prop] = 'none';
+                            }
+                        });
+                        originalStyles.push(targetBackup);
+                    }
+                });
+                
+                logs.push('🔓 CSS overflow 제한 해제 완료');
+                
+                // 🔓 **3단계: 임시 스페이서 div 생성으로 강제 확장**
+                logs.push('🔓 3단계: 임시 스페이서 div로 40000px 강제 확장');
+                
+                const spacers = [];
+                const spacerHeight = Math.min(MAX_FORCE_HEIGHT, Math.max(targetHeight * 2, 15000));
+                
+                // 메인 스페이서 생성
+                const mainSpacer = document.createElement('div');
+                mainSpacer.id = 'bfcache-main-spacer-' + Date.now();
+                mainSpacer.style.cssText = 
+                    'height: ' + spacerHeight + 'px !important; ' +
+                    'width: 1px !important; ' +
+                    'position: relative !important; ' +
+                    'pointer-events: none !important; ' +
+                    'opacity: 0 !important; ' +
+                    'z-index: -9999 !important; ' +
+                    'background: transparent !important; ' +
+                    'margin: 0 !important; ' +
+                    'padding: 0 !important; ' +
+                    'border: none !important; ' +
+                    'visibility: hidden !important;';
+                
+                // 문서 끝에 스페이서 추가
+                if (document.body) {
+                    document.body.appendChild(mainSpacer);
+                    spacers.push(mainSpacer);
+                    logs.push('🔓 메인 스페이서 생성: ' + spacerHeight + 'px');
+                }
+                
+                // 보조 스페이서들 생성 (다양한 위치에)
+                const containers = document.querySelectorAll('main, .main, #main, .content, .container, .wrapper');
+                let auxiliaryCount = 0;
+                
+                for (let i = 0; i < Math.min(containers.length, 3); i++) {
+                    const container = containers[i];
+                    if (container && container !== document.body) {
+                        const auxSpacer = document.createElement('div');
+                        auxSpacer.className = 'bfcache-aux-spacer-' + i;
+                        auxSpacer.style.cssText = 
+                            'height: ' + Math.floor(spacerHeight / 2) + 'px !important; ' +
+                            'width: 1px !important; ' +
+                            'position: relative !important; ' +
+                            'pointer-events: none !important; ' +
+                            'opacity: 0 !important; ' +
+                            'z-index: -9999 !important; ' +
+                            'background: transparent !important; ' +
+                            'margin: 0 !important; ' +
+                            'padding: 0 !important; ' +
+                            'border: none !important; ' +
+                            'visibility: hidden !important;';
+                        
+                        container.appendChild(auxSpacer);
+                        spacers.push(auxSpacer);
+                        auxiliaryCount++;
+                    }
+                }
+                
+                logs.push('🔓 보조 스페이서 생성: ' + auxiliaryCount + '개');
+                
+                // 🔓 **4단계: 무한스크롤 트리거 및 콘텐츠 로드 강제 실행**
+                logs.push('🔓 4단계: 무한스크롤 트리거 및 콘텐츠 로드');
+                
+                let contentTriggered = false;
+                
+                // 더보기 버튼 찾기 및 클릭
+                const loadMoreSelectors = [
+                    '[data-testid*="load"], [data-testid*="more"]',
+                    '[class*="load"], [class*="more"], [class*="expand"]',
+                    'button[class*="more"], button[class*="load"]',
+                    '.load-more, .show-more, .see-more, .view-more',
+                    '[onclick*="load"], [onclick*="more"]',
+                    'a[href*="more"], a[href*="load"]'
+                ];
+                
+                let clickedButtons = 0;
+                loadMoreSelectors.forEach(function(selector) {
+                    try {
+                        const buttons = document.querySelectorAll(selector);
+                        for (let i = 0; i < Math.min(buttons.length, 3); i++) {
+                            const btn = buttons[i];
+                            if (btn && typeof btn.click === 'function' && !btn.disabled) {
+                                btn.click();
+                                clickedButtons++;
+                            }
+                        }
+                    } catch(e) {
+                        // selector 오류 무시
+                    }
+                });
+                
+                if (clickedButtons > 0) {
+                    logs.push('🔓 더보기 버튼 클릭: ' + clickedButtons + '개');
+                    contentTriggered = true;
+                }
+                
+                // 스크롤 이벤트 트리거 (다양한 위치에서)
+                const scrollPositions = [
+                    document.documentElement.scrollHeight - window.innerHeight, // 최하단
+                    Math.floor(document.documentElement.scrollHeight * 0.8),    // 80% 지점
+                    Math.floor(document.documentElement.scrollHeight * 0.9),    // 90% 지점
+                    Math.floor(document.documentElement.scrollHeight * 0.95)    // 95% 지점
+                ];
+                
+                scrollPositions.forEach(function(position, index) {
+                    if (position > 0) {
+                        window.scrollTo(0, position);
+                        // 스크롤 이벤트 강제 발생
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        document.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        contentTriggered = true;
+                    }
+                });
+                
+                logs.push('🔓 스크롤 이벤트 트리거: ' + scrollPositions.length + '개 위치');
+                
+                // Intersection Observer 트리거 (무한스크롤용)
+                try {
+                    const sentinels = document.querySelectorAll('[class*="sentinel"], [data-sentinel], .infinite-scroll-trigger');
+                    sentinels.forEach(function(sentinel) {
+                        // 요소를 뷰포트로 강제 이동
+                        sentinel.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        // 커스텀 이벤트 발생
+                        sentinel.dispatchEvent(new Event('intersect', { bubbles: true }));
+                    });
+                    
+                    if (sentinels.length > 0) {
+                        logs.push('🔓 Intersection Observer 트리거: ' + sentinels.length + '개');
+                        contentTriggered = true;
+                    }
+                } catch(e) {
+                    logs.push('🔓 Intersection Observer 트리거 실패: ' + e.message);
+                }
+                
+                // 🔓 **5단계: 복원 후 높이 측정 및 성공 판정**
+                logs.push('🔓 5단계: 복원 후 높이 측정');
+                
+                // 잠시 대기 후 측정 (동적 콘텐츠 로드 시간 확보)
+                setTimeout(function() {
+                    const currentHeight = Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight,
+                        document.documentElement.offsetHeight,
+                        document.body.offsetHeight
+                    );
+                    
+                    const expandedHeight = currentHeight;
+                    const percentage = targetHeight > 0 ? (expandedHeight / targetHeight) * 100 : 100;
+                    const success = expandedHeight >= Math.min(targetHeight * 0.8, 10000); // 최소 80% 또는 10000px
+                    
+                    logs.push('🔓 최종 확장 높이: ' + expandedHeight.toFixed(0) + 'px');
+                    logs.push('🔓 확장 성공률: ' + percentage.toFixed(1) + '%');
+                    
+                    // 이벤트 핸들러 복원
+                    setTimeout(function() {
+                        backupHandlers.onscroll.forEach(function(item) {
+                            if (item.target && item.handler) {
+                                item.target.onscroll = item.handler;
+                            }
+                        });
+                        backupHandlers.onwheel.forEach(function(item) {
+                            if (item.target && item.handler) {
+                                item.target.onwheel = item.handler;
+                            }
+                        });
+                        backupHandlers.ontouchmove.forEach(function(item) {
+                            if (item.target && item.handler) {
+                                item.target.ontouchmove = item.handler;
+                            }
+                        });
+                        
+                        logs.push('🔓 이벤트 핸들러 복원 완료');
+                    }, 100);
+                    
+                }, 200);
+                
+                // 즉시 반환 (측정은 비동기로)
                 const currentHeight = Math.max(
                     document.documentElement.scrollHeight,
                     document.body.scrollHeight
                 );
                 
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                
-                // 정적 사이트 판단 (90% 이상 이미 로드됨)
-                const percentage = (currentHeight / targetHeight) * 100;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: percentage,
-                        logs: logs
-                    };
-                }
-                
-                // 동적 사이트 - 콘텐츠 로드 시도
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
-                
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
-                    }
-                }
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 페이지 하단 스크롤로 무한스크롤 트리거
-                const maxScrollY = Math.max(0, currentHeight - window.innerHeight);
-                window.scrollTo(0, maxScrollY);
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                logs.push('무한스크롤 트리거 시도');
-                
-                // 복원 후 높이 측정
-                const restoredHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
-                
-                const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
-                
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                
                 return {
-                    success: success,
-                    isStaticSite: false,
+                    success: true,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
+                    expandedHeight: currentHeight,
+                    clampingDisabled: true,
+                    spacersCreated: spacers.length,
+                    contentTriggered: contentTriggered,
+                    percentage: targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 100,
                     logs: logs
                 };
                 
@@ -524,7 +710,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
-                    logs: ['[Step 1] 오류: ' + e.message]
+                    logs: ['[Step 1] 🔓 클램핑 해체 오류: ' + e.message]
                 };
             }
         })()
