@@ -5,7 +5,6 @@
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 4요소 패키지 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
-//  🔄 **Vue 무한스크롤**: Vue.js 라이브러리 활용 무한스크롤 복원
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 
@@ -36,26 +35,22 @@ struct BFCacheSnapshot: Codable {
         let enablePercentRestore: Bool      // Step 2 활성화
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
-        let enableVueInfiniteScroll: Bool   // 🔄 Vue 무한스크롤 복원 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
         let step1RenderDelay: Double        // Step 1 후 렌더링 대기 (0.8초)
         let step2RenderDelay: Double        // Step 2 후 렌더링 대기 (0.3초)
         let step3RenderDelay: Double        // Step 3 후 렌더링 대기 (0.5초)
         let step4RenderDelay: Double        // Step 4 후 렌더링 대기 (0.3초)
-        let vueScrollDelay: Double          // 🔄 Vue 무한스크롤 대기 (0.6초)
         
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            enableVueInfiniteScroll: true,
             savedContentHeight: 0,
             step1RenderDelay: 0.8,
             step2RenderDelay: 0.3,
             step3RenderDelay: 0.5,
-            step4RenderDelay: 0.3,
-            vueScrollDelay: 0.6
+            step4RenderDelay: 0.3
         )
     }
     
@@ -160,13 +155,11 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            enableVueInfiniteScroll: restorationConfig.enableVueInfiniteScroll,
             savedContentHeight: max(actualScrollableSize.height, contentSize.height),
             step1RenderDelay: restorationConfig.step1RenderDelay,
             step2RenderDelay: restorationConfig.step2RenderDelay,
             step3RenderDelay: restorationConfig.step3RenderDelay,
-            step4RenderDelay: restorationConfig.step4RenderDelay,
-            vueScrollDelay: restorationConfig.vueScrollDelay
+            step4RenderDelay: restorationConfig.step4RenderDelay
         )
     }
     
@@ -178,7 +171,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 4단계 + Vue 무한스크롤 복원 시스템**
+    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
     
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
@@ -186,17 +179,15 @@ struct BFCacheSnapshot: Codable {
         weak var webView: WKWebView?
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
-        var vueInfiniteScrollDetected: Bool = false
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 + Vue 무한스크롤 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("🔄 Vue 무한스크롤 복원: \(restorationConfig.enableVueInfiniteScroll ? "활성화" : "비활성화")")
-        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s, Vue=\(restorationConfig.vueScrollDelay)s")
+        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -205,63 +196,13 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // Vue 무한스크롤 감지 및 준비
-        if restorationConfig.enableVueInfiniteScroll {
-            detectAndPrepareVueInfiniteScroll(context: context) { updatedContext in
-                self.executeStep1_RestoreContentHeight(context: updatedContext)
-            }
-        } else {
-            executeStep1_RestoreContentHeight(context: context)
-        }
+        // Step 1 시작
+        executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - 🔄 **새로운: Vue 무한스크롤 감지 및 준비**
-    private func detectAndPrepareVueInfiniteScroll(context: RestorationContext, completion: @escaping (RestorationContext) -> Void) {
-        TabPersistenceManager.debugMessages.append("🔄 Vue 무한스크롤 감지 및 준비 시작")
-        
-        let js = generateVueInfiniteScrollDetectionScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🔄 Vue 무한스크롤 감지 실패: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                let isVueApp = (resultDict["isVueApp"] as? Bool) ?? false
-                let hasInfiniteScroll = (resultDict["hasInfiniteScroll"] as? Bool) ?? false
-                let vueVersion = resultDict["vueVersion"] as? String ?? "unknown"
-                let infiniteScrollType = resultDict["infiniteScrollType"] as? String ?? "unknown"
-                
-                updatedContext.vueInfiniteScrollDetected = isVueApp && hasInfiniteScroll
-                
-                TabPersistenceManager.debugMessages.append("🔄 Vue 앱 감지: \(isVueApp)")
-                TabPersistenceManager.debugMessages.append("🔄 Vue 버전: \(vueVersion)")
-                TabPersistenceManager.debugMessages.append("🔄 무한스크롤 감지: \(hasInfiniteScroll)")
-                TabPersistenceManager.debugMessages.append("🔄 무한스크롤 타입: \(infiniteScrollType)")
-                
-                if let components = resultDict["vueComponents"] as? [String] {
-                    TabPersistenceManager.debugMessages.append("🔄 감지된 Vue 컴포넌트: \(components.joined(separator: ", "))")
-                }
-                
-                if let libraries = resultDict["detectedLibraries"] as? [String] {
-                    TabPersistenceManager.debugMessages.append("🔄 감지된 라이브러리: \(libraries.joined(separator: ", "))")
-                }
-                
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🔄 Vue 무한스크롤 감지 완료: \(updatedContext.vueInfiniteScrollDetected ? "감지됨" : "미감지")")
-            completion(updatedContext)
-        }
-    }
-    
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원 (Vue 무한스크롤 고려)
+    // MARK: - Step 1: 저장 콘텐츠 높이 복원
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작 (Vue 무한스크롤 고려)")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -272,7 +213,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep1_VueAwareContentRestoreScript(vueDetected: context.vueInfiniteScrollDetected)
+        let js = generateStep1_ContentRestoreScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step1Success = false
@@ -294,8 +235,8 @@ struct BFCacheSnapshot: Codable {
                 if let percentage = resultDict["percentage"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                 }
-                if let vueActions = resultDict["vueInfiniteScrollActions"] as? [String] {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Vue 무한스크롤 액션: \(vueActions.joined(separator: ", "))")
+                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                 }
                 if let logs = resultDict["logs"] as? [String] {
                     for log in logs.prefix(5) {
@@ -314,9 +255,9 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (Vue 지원)
+    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (Vue 지원)")
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
@@ -326,7 +267,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep2_VueAwarePercentScrollScript(vueDetected: context.vueInfiniteScrollDetected)
+        let js = generateStep2_PercentScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step2Success = false
@@ -346,13 +287,8 @@ struct BFCacheSnapshot: Codable {
                 if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
                 }
-                if let vueScrollResult = resultDict["vueScrollResult"] as? [String: Any] {
-                    if let success = vueScrollResult["success"] as? Bool {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] Vue 스크롤 복원: \(success ? "성공" : "실패")")
-                    }
-                    if let method = vueScrollResult["method"] as? String {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] Vue 스크롤 방법: \(method)")
-                    }
+                if let difference = resultDict["difference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
                     for log in logs.prefix(5) {
@@ -370,67 +306,8 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
             TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
             
-            // Vue 무한스크롤이 감지되었다면 Vue 전용 복원 단계 추가
-            if updatedContext.vueInfiniteScrollDetected {
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                    self.executeVueStep_InfiniteScrollRestore(context: updatedContext)
-                }
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                    self.executeStep3_AnchorRestore(context: updatedContext)
-                }
-            }
-        }
-    }
-    
-    // MARK: - 🔄 **새로운: Vue 무한스크롤 전용 복원 단계**
-    private func executeVueStep_InfiniteScrollRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔄 [Vue Step] Vue 무한스크롤 전용 복원 시작")
-        
-        let js = generateVueInfiniteScrollRestoreScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var vueSuccess = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🔄 [Vue Step] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                vueSuccess = (resultDict["success"] as? Bool) ?? false
-                
-                if let method = resultDict["restorationMethod"] as? String {
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 복원 방법: \(method)")
-                }
-                if let scrollPosition = resultDict["restoredScrollPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 복원된 위치: X=\(String(format: "%.1f", scrollPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", scrollPosition["y"] ?? 0))px")
-                }
-                if let itemsLoaded = resultDict["itemsLoaded"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 로드된 아이템 수: \(itemsLoaded)개")
-                }
-                if let scrollContainer = resultDict["scrollContainer"] as? String {
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 스크롤 컨테이너: \(scrollContainer)")
-                }
-                if let vueComponents = resultDict["vueComponentsUsed"] as? [String] {
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 사용된 Vue 컴포넌트: \(vueComponents.joined(separator: ", "))")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(8) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                // Vue 무한스크롤 복원 성공 시 전체 성공으로 간주
-                if vueSuccess {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("🔄 [Vue Step] ✅ Vue 무한스크롤 복원 성공")
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🔄 [Vue Step] 완료: \(vueSuccess ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Vue Step] 렌더링 대기: \(self.restorationConfig.vueScrollDelay)초")
-            
-            // Vue 단계 후 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.vueScrollDelay) {
+            // 성공/실패 관계없이 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: updatedContext)
             }
         }
@@ -548,395 +425,15 @@ struct BFCacheSnapshot: Codable {
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
-                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache + Vue 무한스크롤 복원 완료: \(finalSuccess ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
                 context.completion(finalSuccess)
             }
         }
     }
     
-    // MARK: - 🔄 **새로운: Vue 무한스크롤 감지 JavaScript**
-    private func generateVueInfiniteScrollDetectionScript() -> String {
-        return """
-        (function() {
-            try {
-                const logs = [];
-                logs.push('[Vue Detection] Vue 무한스크롤 감지 시작');
-                
-                // Vue 앱 감지
-                let isVueApp = false;
-                let vueVersion = 'unknown';
-                let vueComponents = [];
-                let detectedLibraries = [];
-                
-                // Vue 2/3 글로벌 객체 확인
-                if (window.Vue) {
-                    isVueApp = true;
-                    vueVersion = window.Vue.version || '2.x';
-                    logs.push('Vue 글로벌 객체 감지: ' + vueVersion);
-                }
-                
-                // Vue 3 앱 인스턴스 확인
-                if (window.__VUE__) {
-                    isVueApp = true;
-                    vueVersion = '3.x';
-                    logs.push('Vue 3 앱 감지');
-                }
-                
-                // DOM에서 Vue 컴포넌트 흔적 찾기
-                const vueElements = document.querySelectorAll('[data-v-], [v-], .vue-component, [id*="vue"], [class*="vue"]');
-                if (vueElements.length > 0) {
-                    isVueApp = true;
-                    logs.push('Vue DOM 흔적 감지: ' + vueElements.length + '개 요소');
-                }
-                
-                // 무한스크롤 감지
-                let hasInfiniteScroll = false;
-                let infiniteScrollType = 'unknown';
-                
-                // 1. Intersection Observer 기반 무한스크롤 감지
-                const intersectionObserverElements = document.querySelectorAll('[data-infinite], .infinite-scroll, [class*="infinite"], [data-testid*="infinite"]');
-                if (intersectionObserverElements.length > 0) {
-                    hasInfiniteScroll = true;
-                    infiniteScrollType = 'intersection-observer';
-                    logs.push('Intersection Observer 무한스크롤 감지: ' + intersectionObserverElements.length + '개');
-                }
-                
-                // 2. VueUse useInfiniteScroll 감지
-                if (window.VueUse || document.querySelector('[data-vueuse-infinite]')) {
-                    hasInfiniteScroll = true;
-                    infiniteScrollType = 'vueuse';
-                    detectedLibraries.push('VueUse');
-                    logs.push('VueUse useInfiniteScroll 감지');
-                }
-                
-                // 3. 일반적인 무한스크롤 패턴 감지
-                const scrollPatterns = [
-                    '.load-more', '.show-more', '[data-load-more]',
-                    '.infinite-loader', '.infinite-loading',
-                    '[data-testid="load-more"]', '[data-testid="infinite-scroll"]'
-                ];
-                
-                for (let i = 0; i < scrollPatterns.length; i++) {
-                    const pattern = scrollPatterns[i];
-                    if (document.querySelector(pattern)) {
-                        hasInfiniteScroll = true;
-                        if (infiniteScrollType === 'unknown') {
-                            infiniteScrollType = 'load-more-button';
-                        }
-                        logs.push('무한스크롤 패턴 감지: ' + pattern);
-                    }
-                }
-                
-                // 4. Vue 컴포넌트명 추출
-                const componentSelectors = [
-                    '[data-v-]', '[v-for]', '.vue-component',
-                    '[class*="list-item"]', '[class*="feed-item"]'
-                ];
-                
-                for (let i = 0; i < componentSelectors.length; i++) {
-                    const selector = componentSelectors[i];
-                    const elements = document.querySelectorAll(selector);
-                    if (elements.length > 0) {
-                        vueComponents.push(selector + '(' + elements.length + ')');
-                    }
-                }
-                
-                // 5. Vue Router 감지
-                if (window.$router || window.VueRouter || document.querySelector('[data-router-view]')) {
-                    detectedLibraries.push('Vue Router');
-                    logs.push('Vue Router 감지');
-                }
-                
-                // 6. Vuex/Pinia 상태 관리 감지
-                if (window.$store || window.Vuex || window.Pinia) {
-                    detectedLibraries.push('State Management');
-                    logs.push('상태 관리 라이브러리 감지');
-                }
-                
-                // 7. TanStack Query (Vue Query) 감지
-                if (window.VueQuery || document.querySelector('[data-tanstack]')) {
-                    detectedLibraries.push('TanStack Query');
-                    hasInfiniteScroll = true;
-                    infiniteScrollType = 'tanstack-query';
-                    logs.push('TanStack Query 무한스크롤 감지');
-                }
-                
-                logs.push('Vue 감지 완료: 앱=' + isVueApp + ', 무한스크롤=' + hasInfiniteScroll);
-                
-                return {
-                    isVueApp: isVueApp,
-                    vueVersion: vueVersion,
-                    hasInfiniteScroll: hasInfiniteScroll,
-                    infiniteScrollType: infiniteScrollType,
-                    vueComponents: vueComponents,
-                    detectedLibraries: detectedLibraries,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    isVueApp: false,
-                    hasInfiniteScroll: false,
-                    error: e.message,
-                    logs: ['Vue 감지 실패: ' + e.message]
-                };
-            }
-        })()
-        """
-    }
+    // MARK: - JavaScript 생성 메서드들
     
-    // MARK: - 🔄 **새로운: Vue 무한스크롤 복원 JavaScript**
-    private func generateVueInfiniteScrollRestoreScript() -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                
-                logs.push('[Vue Infinite Scroll] Vue 무한스크롤 복원 시작');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                
-                let restorationMethod = 'unknown';
-                let scrollContainer = null;
-                let itemsLoaded = 0;
-                let vueComponentsUsed = [];
-                
-                // 1. Vue Router scrollBehavior 활용 시도
-                if (window.$router && window.$router.options && window.$router.options.scrollBehavior) {
-                    logs.push('Vue Router scrollBehavior 감지');
-                    try {
-                        // Vue Router의 scrollBehavior 함수 호출
-                        const scrollResult = window.$router.options.scrollBehavior(
-                            { meta: { scrollPos: { top: targetY, left: targetX } } },
-                            {},
-                            { top: targetY, left: targetX }
-                        );
-                        
-                        if (scrollResult && typeof scrollResult.then === 'function') {
-                            // Promise 기반 scrollBehavior
-                            scrollResult.then(function(position) {
-                                window.scrollTo(position.left || position.x || 0, position.top || position.y || 0);
-                            });
-                        } else if (scrollResult) {
-                            // 직접 scroll
-                            window.scrollTo(scrollResult.left || scrollResult.x || 0, scrollResult.top || scrollResult.y || 0);
-                        }
-                        
-                        restorationMethod = 'vue-router';
-                        vueComponentsUsed.push('Vue Router');
-                        logs.push('Vue Router scrollBehavior 사용');
-                    } catch(e) {
-                        logs.push('Vue Router scrollBehavior 실패: ' + e.message);
-                    }
-                }
-                
-                // 2. VueUse useScroll 활용 시도
-                if (window.VueUse && window.VueUse.useScroll) {
-                    logs.push('VueUse useScroll 감지');
-                    try {
-                        // VueUse useScroll로 스크롤 복원
-                        const scrollElement = document.documentElement || document.body;
-                        
-                        // useScroll의 x, y 값 설정 시도
-                        if (window.VueUse.useScroll) {
-                            // 직접 스크롤 (smooth behavior)
-                            scrollElement.scrollTo({
-                                left: targetX,
-                                top: targetY,
-                                behavior: 'smooth'
-                            });
-                            
-                            restorationMethod = 'vueuse-scroll';
-                            vueComponentsUsed.push('VueUse');
-                            logs.push('VueUse smooth scroll 적용');
-                        }
-                    } catch(e) {
-                        logs.push('VueUse useScroll 실패: ' + e.message);
-                    }
-                }
-                
-                // 3. Vue 무한스크롤 컨테이너 감지 및 복원
-                const infiniteScrollContainers = [
-                    document.querySelector('.infinite-scroll-container'),
-                    document.querySelector('[data-infinite-scroll]'),
-                    document.querySelector('.scroll-container'),
-                    document.querySelector('[data-testid*="scroll"]'),
-                    document.querySelector('.vue-virtual-scroll'),
-                    document.querySelector('[data-vueuse-infinite]')
-                ];
-                
-                for (let i = 0; i < infiniteScrollContainers.length; i++) {
-                    const container = infiniteScrollContainers[i];
-                    if (container) {
-                        scrollContainer = container.tagName + (container.className ? '.' + container.className.split(' ')[0] : '');
-                        
-                        // Vue 무한스크롤 전용 복원 로직
-                        try {
-                            // recordScrollPosition과 restoreScrollPosition 패턴 적용
-                            const currentScrollHeight = container.scrollHeight;
-                            const currentScrollTop = container.scrollTop;
-                            
-                            // 목표 위치까지 콘텐츠 로드가 필요한지 확인
-                            if (targetY > currentScrollHeight - container.clientHeight) {
-                                logs.push('추가 콘텐츠 로드 필요: 목표=' + targetY.toFixed(0) + ', 현재최대=' + (currentScrollHeight - container.clientHeight).toFixed(0));
-                                
-                                // 무한스크롤 트리거를 위해 하단으로 스크롤
-                                let loadAttempts = 0;
-                                const maxLoadAttempts = 5;
-                                
-                                function loadMoreContent() {
-                                    if (loadAttempts >= maxLoadAttempts) {
-                                        logs.push('최대 로드 시도 초과');
-                                        return;
-                                    }
-                                    
-                                    loadAttempts++;
-                                    
-                                    // previousScrollHeightMinusScrollTop 계산 (Medium 글 패턴)
-                                    const previousScrollHeightMinusScrollTop = container.scrollHeight - container.scrollTop;
-                                    
-                                    // 하단으로 스크롤하여 무한스크롤 트리거
-                                    container.scrollTop = container.scrollHeight - container.clientHeight;
-                                    
-                                    // Intersection Observer 무한스크롤 트리거
-                                    const loadTriggers = container.querySelectorAll('.load-more, [data-infinite], .infinite-loading');
-                                    for (let j = 0; j < loadTriggers.length; j++) {
-                                        const trigger = loadTriggers[j];
-                                        if (trigger && typeof trigger.click === 'function') {
-                                            trigger.click();
-                                            itemsLoaded++;
-                                        }
-                                    }
-                                    
-                                    // 스크롤 이벤트 트리거
-                                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
-                                    
-                                    // 짧은 대기 후 위치 복원 확인
-                                    setTimeout(function() {
-                                        const newScrollHeight = container.scrollHeight;
-                                        
-                                        if (newScrollHeight > currentScrollHeight) {
-                                            // 새 콘텐츠가 로드됨 - restoreScrollPosition 적용
-                                            const newScrollTop = newScrollHeight - previousScrollHeightMinusScrollTop;
-                                            container.scrollTop = newScrollTop;
-                                            
-                                            logs.push('콘텐츠 로드 후 위치 복원: ' + newScrollTop.toFixed(0) + 'px');
-                                            itemsLoaded++;
-                                            
-                                            // 목표에 도달했는지 확인
-                                            if (targetY <= newScrollHeight - container.clientHeight) {
-                                                container.scrollTop = targetY;
-                                                logs.push('목표 위치 도달: ' + targetY.toFixed(0) + 'px');
-                                            } else {
-                                                loadMoreContent(); // 더 로드 필요
-                                            }
-                                        } else {
-                                            // 더 이상 로드할 콘텐츠 없음
-                                            container.scrollTop = Math.min(targetY, container.scrollHeight - container.clientHeight);
-                                            logs.push('최대 가능 위치로 복원: ' + container.scrollTop.toFixed(0) + 'px');
-                                        }
-                                    }, 200);
-                                }
-                                
-                                loadMoreContent();
-                            } else {
-                                // 바로 복원 가능
-                                container.scrollTop = targetY;
-                                logs.push('즉시 복원: ' + targetY.toFixed(0) + 'px');
-                            }
-                            
-                            restorationMethod = 'vue-infinite-container';
-                            vueComponentsUsed.push('Vue Infinite Scroll Container');
-                            
-                        } catch(e) {
-                            logs.push('Vue 무한스크롤 컨테이너 복원 실패: ' + e.message);
-                        }
-                        break;
-                    }
-                }
-                
-                // 4. TanStack Query (Vue Query) 무한스크롤 복원
-                if (window.VueQuery || (window.__VUE_DEVTOOLS_GLOBAL_HOOK__ && window.__VUE_DEVTOOLS_GLOBAL_HOOK__.Vue)) {
-                    logs.push('TanStack Query 무한스크롤 처리');
-                    try {
-                        // TanStack Query는 자동으로 스크롤 복원을 지원
-                        // 추가적인 스크롤 복원 로직
-                        window.scrollTo({
-                            left: targetX,
-                            top: targetY,
-                            behavior: 'auto' // TanStack Query는 즉시 복원
-                        });
-                        
-                        restorationMethod = 'tanstack-query';
-                        vueComponentsUsed.push('TanStack Query');
-                        logs.push('TanStack Query 스크롤 복원');
-                    } catch(e) {
-                        logs.push('TanStack Query 복원 실패: ' + e.message);
-                    }
-                }
-                
-                // 5. 기본 Vue 앱 스크롤 복원 (fallback)
-                if (restorationMethod === 'unknown') {
-                    logs.push('기본 Vue 스크롤 복원 사용');
-                    
-                    // Vue 앱의 스크롤 컨테이너 찾기
-                    const vueApp = document.querySelector('#app, [data-v-], .vue-app, [id*="vue"]');
-                    if (vueApp) {
-                        // Vue 앱 내부에서 스크롤
-                        const scrollableElement = vueApp.querySelector('.scrollable, [style*="overflow"]') || vueApp;
-                        
-                        if (scrollableElement.scrollHeight > scrollableElement.clientHeight) {
-                            scrollableElement.scrollTop = targetY;
-                            scrollContainer = 'vue-app-container';
-                        } else {
-                            // 전체 페이지 스크롤
-                            window.scrollTo(targetX, targetY);
-                            scrollContainer = 'window';
-                        }
-                        
-                        restorationMethod = 'vue-app-scroll';
-                        vueComponentsUsed.push('Vue App');
-                        logs.push('Vue 앱 스크롤 복원');
-                    }
-                }
-                
-                // 최종 위치 확인
-                const finalScrollX = window.scrollX || window.pageXOffset || 0;
-                const finalScrollY = window.scrollY || window.pageYOffset || 0;
-                
-                const success = Math.abs(finalScrollY - targetY) <= 100; // 100px 허용 오차
-                
-                logs.push('Vue 무한스크롤 복원 완료: ' + restorationMethod);
-                logs.push('최종 위치: X=' + finalScrollX.toFixed(1) + 'px, Y=' + finalScrollY.toFixed(1) + 'px');
-                
-                return {
-                    success: success,
-                    restorationMethod: restorationMethod,
-                    restoredScrollPosition: { x: finalScrollX, y: finalScrollY },
-                    itemsLoaded: itemsLoaded,
-                    scrollContainer: scrollContainer,
-                    vueComponentsUsed: vueComponentsUsed,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['Vue 무한스크롤 복원 실패: ' + e.message]
-                };
-            }
-        })()
-        """
-    }
-    
-    // MARK: - JavaScript 생성 메서드들 (Vue 지원 추가)
-    
-    private func generateStep1_VueAwareContentRestoreScript(vueDetected: Bool) -> String {
+    private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
@@ -944,20 +441,16 @@ struct BFCacheSnapshot: Codable {
             try {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)');
-                const vueDetected = \(vueDetected);
-                const vueInfiniteScrollActions = [];
-                
                 const currentHeight = Math.max(
                     document.documentElement.scrollHeight,
                     document.body.scrollHeight
                 );
                 
-                logs.push('[Step 1] Vue 인식 콘텐츠 높이 복원 시작');
-                logs.push('Vue 감지됨: ' + vueDetected);
+                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 
-                // 정적 사이트 판단
+                // 정적 사이트 판단 (90% 이상 이미 로드됨)
                 const percentage = (currentHeight / targetHeight) * 100;
                 const isStaticSite = percentage >= 90;
                 
@@ -970,55 +463,14 @@ struct BFCacheSnapshot: Codable {
                         targetHeight: targetHeight,
                         restoredHeight: currentHeight,
                         percentage: percentage,
-                        vueInfiniteScrollActions: vueInfiniteScrollActions,
                         logs: logs
                     };
                 }
                 
-                // Vue 무한스크롤 특화 콘텐츠 로드
-                if (vueDetected) {
-                    logs.push('Vue 무한스크롤 콘텐츠 로드 시도');
-                    
-                    // 1. Vue 무한스크롤 컴포넌트 트리거
-                    const vueInfiniteElements = document.querySelectorAll(
-                        '[data-infinite], [data-vueuse-infinite], .infinite-scroll, .vue-infinite'
-                    );
-                    
-                    for (let i = 0; i < vueInfiniteElements.length; i++) {
-                        const element = vueInfiniteElements[i];
-                        
-                        // Intersection Observer 트리거
-                        if (element.scrollIntoView) {
-                            element.scrollIntoView({ behavior: 'auto', block: 'end' });
-                            vueInfiniteScrollActions.push('intersection-observer-trigger');
-                        }
-                        
-                        // 클릭 이벤트 트리거
-                        if (typeof element.click === 'function') {
-                            element.click();
-                            vueInfiniteScrollActions.push('click-trigger');
-                        }
-                    }
-                    
-                    // 2. Vue Query / TanStack Query 무한스크롤
-                    if (window.VueQuery || window.__VUE_DEVTOOLS_GLOBAL_HOOK__) {
-                        // Vue Query의 자동 로딩 대기
-                        logs.push('Vue Query 자동 로딩 대기');
-                        vueInfiniteScrollActions.push('vue-query-auto-load');
-                    }
-                    
-                    // 3. VueUse useInfiniteScroll 트리거
-                    const vueUseElements = document.querySelectorAll('[data-vueuse-infinite]');
-                    for (let i = 0; i < vueUseElements.length; i++) {
-                        const element = vueUseElements[i];
-                        
-                        // 스크롤 이벤트 트리거
-                        element.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        vueInfiniteScrollActions.push('vueuse-scroll-event');
-                    }
-                }
+                // 동적 사이트 - 콘텐츠 로드 시도
+                logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                // 기존 로직 유지 (더보기 버튼 등)
+                // 더보기 버튼 찾기
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
                     'button[class*="more"], .load-more, .show-more'
@@ -1030,7 +482,6 @@ struct BFCacheSnapshot: Codable {
                     if (btn && typeof btn.click === 'function') {
                         btn.click();
                         clicked++;
-                        vueInfiniteScrollActions.push('load-more-button');
                     }
                 }
                 
@@ -1043,7 +494,6 @@ struct BFCacheSnapshot: Codable {
                 window.scrollTo(0, maxScrollY);
                 window.dispatchEvent(new Event('scroll', { bubbles: true }));
                 logs.push('무한스크롤 트리거 시도');
-                vueInfiniteScrollActions.push('scroll-trigger');
                 
                 // 복원 후 높이 측정
                 const restoredHeight = Math.max(
@@ -1052,21 +502,18 @@ struct BFCacheSnapshot: Codable {
                 );
                 
                 const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80;
+                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
                 
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                logs.push('Vue 액션: ' + vueInfiniteScrollActions.join(', '));
                 
                 return {
                     success: success,
                     isStaticSite: false,
-                    vueDetected: vueDetected,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
                     percentage: finalPercentage,
-                    vueInfiniteScrollActions: vueInfiniteScrollActions,
                     logs: logs
                 };
                 
@@ -1074,14 +521,14 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
-                    logs: ['[Step 1] Vue 인식 콘텐츠 복원 오류: ' + e.message]
+                    logs: ['[Step 1] 오류: ' + e.message]
                 };
             }
         })()
         """
     }
     
-    private func generateStep2_VueAwarePercentScrollScript(vueDetected: Bool) -> String {
+    private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
         
@@ -1091,10 +538,8 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
-                const vueDetected = \(vueDetected);
                 
-                logs.push('[Step 2] Vue 인식 상대좌표 스크롤 복원');
-                logs.push('Vue 감지됨: ' + vueDetected);
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
@@ -1121,83 +566,16 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
-                let vueScrollResult = { success: false, method: 'none' };
+                // 스크롤 실행
+                window.scrollTo(targetX, targetY);
+                document.documentElement.scrollTop = targetY;
+                document.documentElement.scrollLeft = targetX;
+                document.body.scrollTop = targetY;
+                document.body.scrollLeft = targetX;
                 
-                // Vue 특화 스크롤 복원
-                if (vueDetected) {
-                    logs.push('Vue 특화 스크롤 복원 시도');
-                    
-                    // 1. Vue Router scrollBehavior 활용
-                    if (window.$router && window.$router.options && window.$router.options.scrollBehavior) {
-                        try {
-                            const routerScrollBehavior = window.$router.options.scrollBehavior;
-                            const scrollResult = routerScrollBehavior(
-                                { meta: { scrollPos: { top: targetY, left: targetX } } },
-                                {},
-                                { top: targetY, left: targetX }
-                            );
-                            
-                            if (scrollResult && typeof scrollResult.then === 'function') {
-                                scrollResult.then(function(position) {
-                                    window.scrollTo(position.left || 0, position.top || 0);
-                                });
-                            } else if (scrollResult) {
-                                window.scrollTo(scrollResult.left || 0, scrollResult.top || 0);
-                            }
-                            
-                            vueScrollResult = { success: true, method: 'vue-router-scrollbehavior' };
-                            logs.push('Vue Router scrollBehavior 사용됨');
-                        } catch(e) {
-                            logs.push('Vue Router scrollBehavior 실패: ' + e.message);
-                        }
-                    }
-                    
-                    // 2. VueUse useScroll smooth 스크롤
-                    if (!vueScrollResult.success && window.VueUse) {
-                        try {
-                            // VueUse smooth scroll
-                            window.scrollTo({
-                                left: targetX,
-                                top: targetY,
-                                behavior: 'smooth'
-                            });
-                            
-                            vueScrollResult = { success: true, method: 'vueuse-smooth-scroll' };
-                            logs.push('VueUse smooth scroll 사용됨');
-                        } catch(e) {
-                            logs.push('VueUse smooth scroll 실패: ' + e.message);
-                        }
-                    }
-                    
-                    // 3. Vue 앱 컨테이너 스크롤
-                    if (!vueScrollResult.success) {
-                        const vueApp = document.querySelector('#app, [data-v-], .vue-app');
-                        if (vueApp) {
-                            const scrollableContainer = vueApp.querySelector('.scrollable, [style*="overflow-y"]');
-                            if (scrollableContainer && scrollableContainer.scrollHeight > scrollableContainer.clientHeight) {
-                                scrollableContainer.scrollTop = targetY;
-                                vueScrollResult = { success: true, method: 'vue-app-container' };
-                                logs.push('Vue 앱 컨테이너 스크롤 사용됨');
-                            }
-                        }
-                    }
-                }
-                
-                // 기본 스크롤 실행 (Vue 실패 시 또는 Vue 미감지 시)
-                if (!vueScrollResult.success) {
-                    window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
-                    
-                    if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetY;
-                        document.scrollingElement.scrollLeft = targetX;
-                    }
-                    
-                    vueScrollResult = { success: true, method: 'default-scroll' };
-                    logs.push('기본 스크롤 사용됨');
+                if (document.scrollingElement) {
+                    document.scrollingElement.scrollTop = targetY;
+                    document.scrollingElement.scrollLeft = targetX;
                 }
                 
                 // 실제 적용된 위치 확인
@@ -1215,12 +593,10 @@ struct BFCacheSnapshot: Codable {
                 
                 return {
                     success: success,
-                    vueDetected: vueDetected,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
                     calculatedPosition: { x: targetX, y: targetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
-                    vueScrollResult: vueScrollResult,
                     logs: logs
                 };
                 
@@ -1228,7 +604,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
-                    logs: ['[Step 2] Vue 인식 스크롤 복원 오류: ' + e.message]
+                    logs: ['[Step 2] 오류: ' + e.message]
                 };
             }
         })()
@@ -1804,19 +1180,17 @@ extension BFCacheTransitionSystem {
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         
-        // 🔄 **순차 실행 설정 생성 (Vue 무한스크롤 지원)**
+        // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            enableVueInfiniteScroll: true, // 🔄 Vue 무한스크롤 활성화
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
             step1RenderDelay: 0.8,
             step2RenderDelay: 0.3,
             step3RenderDelay: 0.5,
-            step4RenderDelay: 0.3,
-            vueScrollDelay: 0.6 // 🔄 Vue 무한스크롤 전용 대기시간
+            step4RenderDelay: 0.3
         )
         
         let snapshot = BFCacheSnapshot(
