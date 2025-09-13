@@ -36,6 +36,7 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool        // Step 3 활성화
         let enableFinalVerification: Bool    // Step 4 활성화
         let savedContentHeight: CGFloat      // 저장 시점 콘텐츠 높이
+        let savedContentWidth: CGFloat       // 🔧 **추가: 저장 시점 콘텐츠 폭**
         let targetPageNumber: Int            // 📄 **목표 페이지 번호**
         let estimatedItemsPerPage: Int       // 📄 **페이지당 예상 아이템 수**
         let paginationType: PaginationType   // 📄 **페이지네이션 타입**
@@ -57,12 +58,13 @@ struct BFCacheSnapshot: Codable {
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: 0,
+            savedContentWidth: 0,
             targetPageNumber: 1,
             estimatedItemsPerPage: 20,
             paginationType: .infiniteScroll,
-            step1RenderDelay: 1.2,
+            step1RenderDelay: 0.5,
             step2RenderDelay: 0.3,
-            step3RenderDelay: 0.5,
+            step3RenderDelay: 0.3,
             step4RenderDelay: 0.3
         )
     }
@@ -186,6 +188,7 @@ struct BFCacheSnapshot: Codable {
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
             savedContentHeight: max(actualScrollableSize.height, contentSize.height),
+            savedContentWidth: max(actualScrollableSize.width, contentSize.width), // 🔧 **추가: 저장된 폭 계산**
             targetPageNumber: calculatedPageNumber,
             estimatedItemsPerPage: estimatedItemsPerPage,
             paginationType: detectedPaginationType,
@@ -220,7 +223,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
-        TabPersistenceManager.debugMessages.append("📊 저장된 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
+        TabPersistenceManager.debugMessages.append("📊 저장된 콘텐츠 크기: \(String(format: "%.0f", restorationConfig.savedContentWidth))x\(String(format: "%.0f", restorationConfig.savedContentHeight))px") // 🔧 **수정: 폭도 표시**
         TabPersistenceManager.debugMessages.append("📄 목표 페이지: \(restorationConfig.targetPageNumber)페이지 (\(restorationConfig.estimatedItemsPerPage)개/페이지)")
         TabPersistenceManager.debugMessages.append("📄 페이지네이션 타입: \(restorationConfig.paginationType.rawValue)")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
@@ -784,12 +787,14 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚀 **Step 2: 클램핑 우회 스크롤 복원 스크립트 (핵심) - 임시 요소 유지**
+    // 🚀 **Step 2: 클램핑 우회 스크롤 복원 스크립트 (핵심) - 저장된 콘텐츠 크기 기반 계산**
     private func generateStep2_ClampingBypassScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
         let absoluteTargetX = scrollPosition.x
         let absoluteTargetY = scrollPosition.y
+        let savedContentHeight = restorationConfig.savedContentHeight  // 🔧 **추가**
+        let savedContentWidth = restorationConfig.savedContentWidth    // 🔧 **추가**
         
         return """
         (function() {
@@ -799,10 +804,13 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 const absoluteTargetX = parseFloat('\(absoluteTargetX)');
                 const absoluteTargetY = parseFloat('\(absoluteTargetY)');
+                const savedContentHeight = parseFloat('\(savedContentHeight)'); // 🔧 **추가**
+                const savedContentWidth = parseFloat('\(savedContentWidth)');   // 🔧 **추가**
                 
                 logs.push('🚀 [Step 2] 클램핑 우회 스크롤 복원 시작');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 logs.push('목표 절대값: X=' + absoluteTargetX.toFixed(1) + 'px, Y=' + absoluteTargetY.toFixed(1) + 'px');
+                logs.push('저장된 콘텐츠 크기: ' + savedContentWidth.toFixed(0) + ' x ' + savedContentHeight.toFixed(0) + 'px'); // 🔧 **추가**
                 
                 // 🚫 브라우저 자동 스크롤 복원 완전 차단
                 if (typeof history !== 'undefined' && history.scrollRestoration) {
@@ -811,98 +819,161 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
-                const contentHeight = Math.max(
+                const currentContentHeight = Math.max(
                     document.documentElement.scrollHeight,
                     document.body.scrollHeight
                 );
-                const contentWidth = Math.max(
+                const currentContentWidth = Math.max(
                     document.documentElement.scrollWidth,
                     document.body.scrollWidth
                 );
                 const viewportHeight = window.innerHeight;
                 const viewportWidth = window.innerWidth;
                 
-                // 최대 스크롤 가능 거리
-                const maxScrollY = Math.max(0, contentHeight - viewportHeight);
-                const maxScrollX = Math.max(0, contentWidth - viewportWidth);
+                logs.push('현재 콘텐츠 크기: ' + currentContentWidth.toFixed(0) + ' x ' + currentContentHeight.toFixed(0) + 'px'); // 🔧 **추가**
                 
-                logs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
-                logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
+                // 🔧 **핵심 수정: 저장된 콘텐츠 크기 기준으로 최대 스크롤 계산**
+                const maxScrollYFromSaved = Math.max(0, savedContentHeight - viewportHeight);
+                const maxScrollXFromSaved = Math.max(0, savedContentWidth - viewportWidth);
                 
-                // 백분율 기반 목표 위치 계산
-                const calculatedTargetX = (targetPercentX / 100) * maxScrollX;
-                const calculatedTargetY = (targetPercentY / 100) * maxScrollY;
+                // 현재 콘텐츠 기준 최대 스크롤 (비교용)
+                const maxScrollYFromCurrent = Math.max(0, currentContentHeight - viewportHeight);
+                const maxScrollXFromCurrent = Math.max(0, currentContentWidth - viewportWidth);
+                
+                logs.push('저장된 크기 기준 최대 스크롤: X=' + maxScrollXFromSaved.toFixed(0) + 'px, Y=' + maxScrollYFromSaved.toFixed(0) + 'px');
+                logs.push('현재 크기 기준 최대 스크롤: X=' + maxScrollXFromCurrent.toFixed(0) + 'px, Y=' + maxScrollYFromCurrent.toFixed(0) + 'px');
+                
+                // 🔧 **핵심 수정: 저장된 크기 기준으로 백분율 계산**
+                const calculatedTargetX = (targetPercentX / 100) * maxScrollXFromSaved;
+                const calculatedTargetY = (targetPercentY / 100) * maxScrollYFromSaved;
                 
                 // 절대값과 백분율 중 더 정확한 값 선택 (절대값 우선)
                 const finalTargetX = absoluteTargetX > 0 ? absoluteTargetX : calculatedTargetX;
                 const finalTargetY = absoluteTargetY > 0 ? absoluteTargetY : calculatedTargetY;
                 
-                logs.push('계산된 백분율 위치: X=' + calculatedTargetX.toFixed(1) + 'px, Y=' + calculatedTargetY.toFixed(1) + 'px');
+                logs.push('저장된 크기 기준 백분율 위치: X=' + calculatedTargetX.toFixed(1) + 'px, Y=' + calculatedTargetY.toFixed(1) + 'px'); // 🔧 **수정**
                 logs.push('최종 목표 위치: X=' + finalTargetX.toFixed(1) + 'px, Y=' + finalTargetY.toFixed(1) + 'px');
                 
                 let usedMethod = 'none';
                 let success = false;
                 let tempElementId = null; // 🔧 **임시 요소 ID 저장**
                 
-                // 🎯 **클램핑 우회 방법 결정**
+                // 🔧 **수정: 클램핑 우회 조건 개선**
                 const CLAMPING_THRESHOLD = 3000; // 3000px 이상일 때 클램핑 우회 적용
-                const needsBypass = finalTargetY > CLAMPING_THRESHOLD;
+                const needsBypass = finalTargetY > CLAMPING_THRESHOLD || 
+                                   currentContentHeight < savedContentHeight * 0.8; // 🔧 **추가: 콘텐츠 부족 조건**
                 
-                logs.push('클램핑 우회 필요: ' + (needsBypass ? 'YES (>' + CLAMPING_THRESHOLD + 'px)' : 'NO'));
+                logs.push('클램핑 우회 필요: ' + (needsBypass ? 'YES' : 'NO'));
+                if (needsBypass) {
+                    if (finalTargetY > CLAMPING_THRESHOLD) {
+                        logs.push('우회 사유: 목표 위치 > ' + CLAMPING_THRESHOLD + 'px');
+                    }
+                    if (currentContentHeight < savedContentHeight * 0.8) {
+                        logs.push('우회 사유: 콘텐츠 부족 (현재: ' + currentContentHeight.toFixed(0) + 'px < 저장된*0.8: ' + (savedContentHeight * 0.8).toFixed(0) + 'px)');
+                    }
+                }
                 
                 if (needsBypass) {
-                    // 🚀 **방법 1: 임시 앵커 + scrollIntoView**
-                    try {
-                        logs.push('🎯 방법 1 시도: 임시 앵커 + scrollIntoView');
-                        
-                        const tempAnchor = document.createElement('div');
-                        tempElementId = 'bfcache-temp-anchor-' + Date.now();
-                        tempAnchor.id = tempElementId;
-                        tempAnchor.style.cssText = 
-                            'position: absolute; ' +
-                            'top: ' + finalTargetY + 'px; ' +
-                            'left: ' + finalTargetX + 'px; ' +
-                            'width: 1px; ' +
-                            'height: 1px; ' +
-                            'visibility: hidden; ' +
-                            'pointer-events: none; ' +
-                            'z-index: -9999;';
-                        
-                        document.body.appendChild(tempAnchor);
-                        
-                        // scrollIntoView로 바로 점프
-                        tempAnchor.scrollIntoView({ 
-                            behavior: 'auto', 
-                            block: 'start',
-                            inline: 'start'
-                        });
-                        
-                        // 위치 확인
-                        const afterScrollY = window.scrollY || window.pageYOffset || 0;
-                        const diffY = Math.abs(afterScrollY - finalTargetY);
-                        
-                        if (diffY <= 200) {
-                            success = true;
-                            usedMethod = 'temp_anchor_scrollIntoView';
-                            logs.push('🎯 방법 1 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                            logs.push('🔧 임시 요소 유지: ' + tempElementId);
-                            // 🔧 **임시 요소를 제거하지 않음**
-                        } else {
-                            logs.push('🎯 방법 1 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                            // 실패시 임시 요소 제거
-                            if (tempAnchor.parentNode) {
-                                tempAnchor.parentNode.removeChild(tempAnchor);
-                                tempElementId = null;
+                    // 🔧 **수정: 방법 1 - 임시 높이 확장 우선 (콘텐츠 부족 시)**
+                    if (currentContentHeight < savedContentHeight * 0.8) {
+                        try {
+                            logs.push('🎯 방법 1 시도: 임시 높이 확장 (콘텐츠 부족 대응)');
+                            
+                            const tempDiv = document.createElement('div');
+                            tempElementId = 'bfcache-temp-height-' + Date.now();
+                            tempDiv.id = tempElementId;
+                            tempDiv.style.cssText = 
+                                'position: absolute; ' +
+                                'top: 0; ' +
+                                'left: 0; ' +
+                                'width: 1px; ' +
+                                'height: ' + (savedContentHeight + 1000) + 'px; ' + // 🔧 **수정: 저장된 높이 + 여유분**
+                                'visibility: hidden; ' +
+                                'pointer-events: none; ' +
+                                'z-index: -9999;';
+                            
+                            document.body.appendChild(tempDiv);
+                            
+                            // 확장된 높이로 스크롤
+                            window.scrollTo(finalTargetX, finalTargetY);
+                            
+                            // 위치 확인
+                            const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                            const diffY = Math.abs(afterScrollY - finalTargetY);
+                            
+                            if (diffY <= 200) {
+                                success = true;
+                                usedMethod = 'temp_height_expansion_priority';
+                                logs.push('🎯 방법 1 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                                logs.push('🔧 임시 요소 유지: ' + tempElementId);
+                                // 🔧 **임시 요소를 제거하지 않음**
+                            } else {
+                                logs.push('🎯 방법 1 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                                // 실패시 임시 요소 제거
+                                if (tempDiv.parentNode) {
+                                    tempDiv.parentNode.removeChild(tempDiv);
+                                    tempElementId = null;
+                                }
                             }
+                        } catch(e) {
+                            logs.push('🎯 방법 1 오류: ' + e.message);
                         }
-                    } catch(e) {
-                        logs.push('🎯 방법 1 오류: ' + e.message);
                     }
                     
-                    // 🚀 **방법 2: scrollTop 직접 설정 (방법 1 실패 시)**
+                    // 🚀 **방법 2: 임시 앵커 + scrollIntoView (방법 1 실패 시 또는 일반 클램핑)**
                     if (!success) {
                         try {
-                            logs.push('🎯 방법 2 시도: scrollTop 직접 설정');
+                            logs.push('🎯 방법 2 시도: 임시 앵커 + scrollIntoView');
+                            
+                            const tempAnchor = document.createElement('div');
+                            tempElementId = 'bfcache-temp-anchor-' + Date.now();
+                            tempAnchor.id = tempElementId;
+                            tempAnchor.style.cssText = 
+                                'position: absolute; ' +
+                                'top: ' + finalTargetY + 'px; ' +
+                                'left: ' + finalTargetX + 'px; ' +
+                                'width: 1px; ' +
+                                'height: 1px; ' +
+                                'visibility: hidden; ' +
+                                'pointer-events: none; ' +
+                                'z-index: -9999;';
+                            
+                            document.body.appendChild(tempAnchor);
+                            
+                            // scrollIntoView로 바로 점프
+                            tempAnchor.scrollIntoView({ 
+                                behavior: 'auto', 
+                                block: 'start',
+                                inline: 'start'
+                            });
+                            
+                            // 위치 확인
+                            const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                            const diffY = Math.abs(afterScrollY - finalTargetY);
+                            
+                            if (diffY <= 200) {
+                                success = true;
+                                usedMethod = 'temp_anchor_scrollIntoView';
+                                logs.push('🎯 방법 2 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                                logs.push('🔧 임시 요소 유지: ' + tempElementId);
+                                // 🔧 **임시 요소를 제거하지 않음**
+                            } else {
+                                logs.push('🎯 방법 2 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                                // 실패시 임시 요소 제거
+                                if (tempAnchor.parentNode) {
+                                    tempAnchor.parentNode.removeChild(tempAnchor);
+                                    tempElementId = null;
+                                }
+                            }
+                        } catch(e) {
+                            logs.push('🎯 방법 2 오류: ' + e.message);
+                        }
+                    }
+                    
+                    // 🚀 **방법 3: scrollTop 직접 설정 (방법 1,2 실패 시)**
+                    if (!success) {
+                        try {
+                            logs.push('🎯 방법 3 시도: scrollTop 직접 설정');
                             
                             // 여러 방법으로 scrollTop 설정
                             document.documentElement.scrollTop = finalTargetY;
@@ -931,55 +1002,9 @@ struct BFCacheSnapshot: Codable {
                             if (diffY <= 200) {
                                 success = true;
                                 usedMethod = 'direct_scrollTop';
-                                logs.push('🎯 방법 2 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                            } else {
-                                logs.push('🎯 방법 2 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                            }
-                        } catch(e) {
-                            logs.push('🎯 방법 2 오류: ' + e.message);
-                        }
-                    }
-                    
-                    // 🚀 **방법 3: 임시 높이 확장 (방법 1,2 실패 시) - 임시 요소 유지**
-                    if (!success) {
-                        try {
-                            logs.push('🎯 방법 3 시도: 임시 높이 확장');
-                            
-                            const tempDiv = document.createElement('div');
-                            tempElementId = 'bfcache-temp-height-' + Date.now();
-                            tempDiv.id = tempElementId;
-                            tempDiv.style.cssText = 
-                                'position: absolute; ' +
-                                'top: 0; ' +
-                                'left: 0; ' +
-                                'width: 1px; ' +
-                                'height: ' + (finalTargetY + 2000) + 'px; ' +
-                                'visibility: hidden; ' +
-                                'pointer-events: none; ' +
-                                'z-index: -9999;';
-                            
-                            document.body.appendChild(tempDiv);
-                            
-                            // 확장된 높이로 스크롤
-                            window.scrollTo(finalTargetX, finalTargetY);
-                            
-                            // 위치 확인
-                            const afterScrollY = window.scrollY || window.pageYOffset || 0;
-                            const diffY = Math.abs(afterScrollY - finalTargetY);
-                            
-                            if (diffY <= 200) {
-                                success = true;
-                                usedMethod = 'temp_height_expansion';
                                 logs.push('🎯 방법 3 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                                logs.push('🔧 임시 요소 유지: ' + tempElementId);
-                                // 🔧 **임시 요소를 제거하지 않음**
                             } else {
                                 logs.push('🎯 방법 3 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
-                                // 실패시 임시 요소 제거
-                                if (tempDiv.parentNode) {
-                                    tempDiv.parentNode.removeChild(tempDiv);
-                                    tempElementId = null;
-                                }
                             }
                         } catch(e) {
                             logs.push('🎯 방법 3 오류: ' + e.message);
@@ -1035,11 +1060,13 @@ struct BFCacheSnapshot: Codable {
                     success: success,
                     usedMethod: usedMethod,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
-                    calculatedPosition: { x: calculatedTargetX, y: calculatedTargetY },
+                    calculatedPosition: { x: calculatedTargetX, y: calculatedTargetY }, // 🔧 **수정: 저장된 크기 기준 계산값**
                     finalTarget: { x: finalTargetX, y: finalTargetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
                     bypassApplied: needsBypass,
+                    savedContentSize: { width: savedContentWidth, height: savedContentHeight }, // 🔧 **추가**
+                    currentContentSize: { width: currentContentWidth, height: currentContentHeight }, // 🔧 **추가**
                     tempElementId: tempElementId, // 🔧 **임시 요소 ID 반환**
                     logs: logs
                 };
@@ -1755,6 +1782,7 @@ extension BFCacheTransitionSystem {
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            savedContentWidth: max(captureData.actualScrollableSize.width, captureData.contentSize.width), // 🔧 **추가**
             targetPageNumber: 1, // 기본값, jsState에서 실제 값 추출됨
             estimatedItemsPerPage: 20, // 기본값, jsState에서 실제 값 추출됨
             paginationType: .infiniteScroll, // 기본값, jsState에서 실제 값 추출됨
