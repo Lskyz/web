@@ -1,8 +1,8 @@
 //
 //  BFCacheSnapshotManager.swift
-//  📸 **순차적 4단계 BFCache 복원 시스템**
+//  📸 **순차적 4단계 BFCache 복원 시스템 (클램핑 문제 해결)**
 //  📄 **Step 1**: 페이지네이션 방식 복원 (무한스크롤 사이트 전용)
-//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
+//  📏 **Step 2**: 클램핑 우회 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
@@ -242,7 +242,7 @@ struct BFCacheSnapshot: Codable {
             TabPersistenceManager.debugMessages.append("📄 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
+                self.executeStep2_ClampingBypassScroll(context: context)
             }
             return
         }
@@ -290,60 +290,63 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
+                self.executeStep2_ClampingBypassScroll(context: context)
             }
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
-    private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
+    // MARK: - Step 2: 🚀 **클램핑 우회 스크롤 복원 (핵심)**
+    private func executeStep2_ClampingBypassScroll(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🚀 [Step 2] 클램핑 우회 스크롤 복원 시작")
         
         guard restorationConfig.enablePercentRestore else {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
+            TabPersistenceManager.debugMessages.append("🚀 [Step 2] 비활성화됨 - 스킵")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: context)
             }
             return
         }
         
-        let js = generateStep2_PercentScrollScript()
+        let js = generateStep2_ClampingBypassScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step2Success = false
             var updatedContext = context
             
             if let error = error {
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("🚀 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 
                 if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
                 }
                 if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
                 }
                 if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
                 }
                 if let difference = resultDict["difference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                }
+                if let method = resultDict["usedMethod"] as? String {
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] 사용된 클램핑 우회 방법: \(method)")
                 }
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
+                    for log in logs.prefix(8) {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
                 
-                // 상대좌표 복원 성공 시 전체 성공으로 간주
+                // 클램핑 우회 성공 시 전체 성공으로 간주
                 if step2Success {
                     updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+                    TabPersistenceManager.debugMessages.append("🚀 [Step 2] ✅ 클램핑 우회 성공 - 전체 복원 성공으로 간주")
                 }
             }
             
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("🚀 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
             TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
@@ -476,7 +479,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 📄 **신규: Step 1 페이지네이션 복원 스크립트**
+    // 📄 **Step 1 페이지네이션 복원 스크립트**
     private func generateStep1_PaginationRestoreScript() -> String {
         let targetPage = restorationConfig.targetPageNumber
         let itemsPerPage = restorationConfig.estimatedItemsPerPage
@@ -716,9 +719,12 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    private func generateStep2_PercentScrollScript() -> String {
+    // 🚀 **Step 2: 클램핑 우회 스크롤 복원 스크립트 (핵심)**
+    private func generateStep2_ClampingBypassScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
+        let absoluteTargetX = scrollPosition.x
+        let absoluteTargetY = scrollPosition.y
         
         return """
         (function() {
@@ -726,9 +732,18 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
+                const absoluteTargetX = parseFloat('\(absoluteTargetX)');
+                const absoluteTargetY = parseFloat('\(absoluteTargetY)');
                 
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
+                logs.push('🚀 [Step 2] 클램핑 우회 스크롤 복원 시작');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                logs.push('목표 절대값: X=' + absoluteTargetX.toFixed(1) + 'px, Y=' + absoluteTargetY.toFixed(1) + 'px');
+                
+                // 🚫 브라우저 자동 스크롤 복원 완전 차단
+                if (typeof history !== 'undefined' && history.scrollRestoration) {
+                    history.scrollRestoration = 'manual';
+                    logs.push('브라우저 자동 스크롤 복원 비활성화');
+                }
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
                 const contentHeight = Math.max(
@@ -746,45 +761,213 @@ struct BFCacheSnapshot: Codable {
                 const maxScrollY = Math.max(0, contentHeight - viewportHeight);
                 const maxScrollX = Math.max(0, contentWidth - viewportWidth);
                 
+                logs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
                 
                 // 백분율 기반 목표 위치 계산
-                const targetX = (targetPercentX / 100) * maxScrollX;
-                const targetY = (targetPercentY / 100) * maxScrollY;
+                const calculatedTargetX = (targetPercentX / 100) * maxScrollX;
+                const calculatedTargetY = (targetPercentY / 100) * maxScrollY;
                 
-                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                // 절대값과 백분율 중 더 정확한 값 선택 (절대값 우선)
+                const finalTargetX = absoluteTargetX > 0 ? absoluteTargetX : calculatedTargetX;
+                const finalTargetY = absoluteTargetY > 0 ? absoluteTargetY : calculatedTargetY;
                 
-                // 스크롤 실행
-                window.scrollTo(targetX, targetY);
-                document.documentElement.scrollTop = targetY;
-                document.documentElement.scrollLeft = targetX;
-                document.body.scrollTop = targetY;
-                document.body.scrollLeft = targetX;
+                logs.push('계산된 백분율 위치: X=' + calculatedTargetX.toFixed(1) + 'px, Y=' + calculatedTargetY.toFixed(1) + 'px');
+                logs.push('최종 목표 위치: X=' + finalTargetX.toFixed(1) + 'px, Y=' + finalTargetY.toFixed(1) + 'px');
                 
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = targetY;
-                    document.scrollingElement.scrollLeft = targetX;
+                let usedMethod = 'none';
+                let success = false;
+                
+                // 🎯 **클램핑 우회 방법 결정**
+                const CLAMPING_THRESHOLD = 3000; // 3000px 이상일 때 클램핑 우회 적용
+                const needsBypass = finalTargetY > CLAMPING_THRESHOLD;
+                
+                logs.push('클램핑 우회 필요: ' + (needsBypass ? 'YES (>' + CLAMPING_THRESHOLD + 'px)' : 'NO'));
+                
+                if (needsBypass) {
+                    // 🚀 **방법 1: 임시 앵커 + scrollIntoView**
+                    try {
+                        logs.push('🎯 방법 1 시도: 임시 앵커 + scrollIntoView');
+                        
+                        const tempAnchor = document.createElement('div');
+                        tempAnchor.id = 'bfcache-temp-anchor-' + Date.now();
+                        tempAnchor.style.cssText = 
+                            'position: absolute; ' +
+                            'top: ' + finalTargetY + 'px; ' +
+                            'left: ' + finalTargetX + 'px; ' +
+                            'width: 1px; ' +
+                            'height: 1px; ' +
+                            'visibility: hidden; ' +
+                            'pointer-events: none; ' +
+                            'z-index: -9999;';
+                        
+                        document.body.appendChild(tempAnchor);
+                        
+                        // scrollIntoView로 바로 점프
+                        tempAnchor.scrollIntoView({ 
+                            behavior: 'auto', 
+                            block: 'start',
+                            inline: 'start'
+                        });
+                        
+                        // 위치 확인
+                        const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                        const diffY = Math.abs(afterScrollY - finalTargetY);
+                        
+                        // 임시 요소 제거
+                        if (tempAnchor.parentNode) {
+                            tempAnchor.parentNode.removeChild(tempAnchor);
+                        }
+                        
+                        if (diffY <= 200) {
+                            success = true;
+                            usedMethod = 'temp_anchor_scrollIntoView';
+                            logs.push('🎯 방법 1 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                        } else {
+                            logs.push('🎯 방법 1 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                        }
+                    } catch(e) {
+                        logs.push('🎯 방법 1 오류: ' + e.message);
+                    }
+                    
+                    // 🚀 **방법 2: scrollTop 직접 설정 (방법 1 실패 시)**
+                    if (!success) {
+                        try {
+                            logs.push('🎯 방법 2 시도: scrollTop 직접 설정');
+                            
+                            // 여러 방법으로 scrollTop 설정
+                            document.documentElement.scrollTop = finalTargetY;
+                            document.documentElement.scrollLeft = finalTargetX;
+                            document.body.scrollTop = finalTargetY;
+                            document.body.scrollLeft = finalTargetX;
+                            
+                            if (document.scrollingElement) {
+                                document.scrollingElement.scrollTop = finalTargetY;
+                                document.scrollingElement.scrollLeft = finalTargetX;
+                            }
+                            
+                            // 강제 스크롤 (WebKit 특화)
+                            if (typeof window.scrollTo === 'function') {
+                                window.scrollTo({
+                                    top: finalTargetY,
+                                    left: finalTargetX,
+                                    behavior: 'auto'
+                                });
+                            }
+                            
+                            // 위치 확인
+                            const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                            const diffY = Math.abs(afterScrollY - finalTargetY);
+                            
+                            if (diffY <= 200) {
+                                success = true;
+                                usedMethod = 'direct_scrollTop';
+                                logs.push('🎯 방법 2 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                            } else {
+                                logs.push('🎯 방법 2 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                            }
+                        } catch(e) {
+                            logs.push('🎯 방법 2 오류: ' + e.message);
+                        }
+                    }
+                    
+                    // 🚀 **방법 3: 임시 높이 확장 (방법 1,2 실패 시)**
+                    if (!success) {
+                        try {
+                            logs.push('🎯 방법 3 시도: 임시 높이 확장');
+                            
+                            const tempDiv = document.createElement('div');
+                            tempDiv.id = 'bfcache-temp-height-' + Date.now();
+                            tempDiv.style.cssText = 
+                                'position: absolute; ' +
+                                'top: 0; ' +
+                                'left: 0; ' +
+                                'width: 1px; ' +
+                                'height: ' + (finalTargetY + 2000) + 'px; ' +
+                                'visibility: hidden; ' +
+                                'pointer-events: none; ' +
+                                'z-index: -9999;';
+                            
+                            document.body.appendChild(tempDiv);
+                            
+                            // 확장된 높이로 스크롤
+                            window.scrollTo(finalTargetX, finalTargetY);
+                            
+                            // 위치 확인
+                            const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                            const diffY = Math.abs(afterScrollY - finalTargetY);
+                            
+                            // 임시 요소 제거
+                            if (tempDiv.parentNode) {
+                                tempDiv.parentNode.removeChild(tempDiv);
+                            }
+                            
+                            if (diffY <= 200) {
+                                success = true;
+                                usedMethod = 'temp_height_expansion';
+                                logs.push('🎯 방법 3 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                            } else {
+                                logs.push('🎯 방법 3 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                            }
+                        } catch(e) {
+                            logs.push('🎯 방법 3 오류: ' + e.message);
+                        }
+                    }
+                    
+                } else {
+                    // 🔧 **일반 스크롤 (클램핑 우회 불필요)**
+                    logs.push('🔧 일반 스크롤 방법 사용');
+                    
+                    try {
+                        // 기본 scrollTo 사용
+                        window.scrollTo(finalTargetX, finalTargetY);
+                        document.documentElement.scrollTop = finalTargetY;
+                        document.documentElement.scrollLeft = finalTargetX;
+                        document.body.scrollTop = finalTargetY;
+                        document.body.scrollLeft = finalTargetX;
+                        
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = finalTargetY;
+                            document.scrollingElement.scrollLeft = finalTargetX;
+                        }
+                        
+                        // 위치 확인
+                        const afterScrollY = window.scrollY || window.pageYOffset || 0;
+                        const diffY = Math.abs(afterScrollY - finalTargetY);
+                        
+                        if (diffY <= 50) {
+                            success = true;
+                            usedMethod = 'standard_scrollTo';
+                            logs.push('🔧 일반 스크롤 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                        } else {
+                            logs.push('🔧 일반 스크롤 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                        }
+                    } catch(e) {
+                        logs.push('🔧 일반 스크롤 오류: ' + e.message);
+                    }
                 }
                 
-                // 실제 적용된 위치 확인
+                // 최종 위치 측정
                 const actualX = window.scrollX || window.pageXOffset || 0;
                 const actualY = window.scrollY || window.pageYOffset || 0;
                 
-                const diffX = Math.abs(actualX - targetX);
-                const diffY = Math.abs(actualY - targetY);
+                const diffX = Math.abs(actualX - finalTargetX);
+                const diffY = Math.abs(actualY - finalTargetY);
                 
-                logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                // 허용 오차 50px 이내면 성공
-                const success = diffY <= 50;
+                logs.push('최종 결과: ' + (success ? '성공' : '실패'));
+                logs.push('사용된 방법: ' + usedMethod);
+                logs.push('최종 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                logs.push('최종 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
                 return {
                     success: success,
+                    usedMethod: usedMethod,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
-                    calculatedPosition: { x: targetX, y: targetY },
+                    calculatedPosition: { x: calculatedTargetX, y: calculatedTargetY },
+                    finalTarget: { x: finalTargetX, y: finalTargetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
+                    bypassApplied: needsBypass,
                     logs: logs
                 };
                 
@@ -792,7 +975,8 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
-                    logs: ['[Step 2] 오류: ' + e.message]
+                    usedMethod: 'error',
+                    logs: ['🚀 [Step 2] 클램핑 우회 스크롤 오류: ' + e.message]
                 };
             }
         })()
