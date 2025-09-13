@@ -1255,11 +1255,11 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 상대적 위치 계산 (백분율) - 범위 제한 없음
+        // 🔧 **수정: 백분율 계산 로직 수정 - OR 조건으로 변경**
         let scrollPercent: CGPoint
-        if captureData.actualScrollableSize.width > captureData.viewportSize.width && captureData.actualScrollableSize.height > captureData.viewportSize.height {
-            let maxScrollX = captureData.actualScrollableSize.width - captureData.viewportSize.width
-            let maxScrollY = captureData.actualScrollableSize.height - captureData.viewportSize.height
+        if captureData.actualScrollableSize.height > captureData.viewportSize.height || captureData.actualScrollableSize.width > captureData.viewportSize.width {
+            let maxScrollX = max(0, captureData.actualScrollableSize.width - captureData.viewportSize.width)
+            let maxScrollY = max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height)
             
             scrollPercent = CGPoint(
                 x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
@@ -1270,6 +1270,7 @@ extension BFCacheTransitionSystem {
         }
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
         
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
@@ -1303,7 +1304,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **새로운: 무한스크롤 전용 앵커 JavaScript 생성**
+    // 🚀 **수정: JavaScript 반환 구조 정리**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
@@ -1312,7 +1313,6 @@ extension BFCacheTransitionSystem {
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
-                const captureStats = {};
                 const pageAnalysis = {};
                 
                 // 기본 정보 수집
@@ -1613,14 +1613,14 @@ extension BFCacheTransitionSystem {
                     }
                     
                     anchorStats.finalAnchors = anchors.length;
-                    captureStats.anchorStats = anchorStats;
                     
                     detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
                     console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
                     
+                    // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
                         anchors: anchors,
-                        stats: captureStats
+                        stats: anchorStats
                     };
                 }
                 
@@ -1862,7 +1862,6 @@ extension BFCacheTransitionSystem {
                 const endTime = Date.now();
                 const captureTime = endTime - startTime;
                 
-                captureStats.captureTime = captureTime;
                 pageAnalysis.capturePerformance = {
                     totalTime: captureTime,
                     anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
@@ -1882,7 +1881,7 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                // ✅ **수정: Promise 없이 직접 반환**
+                // ✅ **수정: 정리된 반환 구조**
                 return {
                     infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
                     scroll: { 
@@ -1907,7 +1906,7 @@ extension BFCacheTransitionSystem {
                     },
                     actualViewportRect: actualViewportRect,     // 🚀 **실제 보이는 영역 정보**
                     detailedLogs: detailedLogs,                 // 📊 **상세 로그 배열**
-                    captureStats: captureStats,                 // 📊 **캡처 통계**
+                    captureStats: infiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
                     pageAnalysis: pageAnalysis,                 // 📊 **페이지 분석 결과**
                     captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
