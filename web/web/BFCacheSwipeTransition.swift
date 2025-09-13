@@ -2,7 +2,7 @@
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
-//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
+//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선) + 🚀 **대용량 스크롤 처리**
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
@@ -255,7 +255,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
+    // MARK: - Step 2: 🚀 **대용량 스크롤 처리 통합 상대좌표 기반 스크롤 (최우선)**
     private func executeStep2_PercentScroll(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
         
@@ -267,6 +267,116 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
+        // 🚀 **대용량 스크롤 여부 판단**
+        let targetY = scrollPosition.y
+        let isLargeScroll = targetY > 5000
+        
+        if isLargeScroll {
+            TabPersistenceManager.debugMessages.append("🚀 [Step 2] 대용량 스크롤 감지: \(String(format: "%.1f", targetY))px - 특별 처리 모드")
+            executeLargeScrollRestore(context: context)
+        } else {
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 일반 스크롤: \(String(format: "%.1f", targetY))px - 표준 처리 모드")
+            executeStandardScrollRestore(context: context)
+        }
+    }
+    
+    // 🚀 **대용량 스크롤 전용 처리 (5000px+)**
+    private func executeLargeScrollRestore(context: RestorationContext) {
+        guard let webView = context.webView else {
+            executeStep3_AnchorRestore(context: context)
+            return
+        }
+        
+        let targetY = scrollPosition.y
+        TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] 시작: 목표 Y=\(String(format: "%.1f", targetY))px")
+        
+        // 🔧 **1단계: 네이티브 스크롤 제한 해제 (안전한 방법 우선)**
+        DispatchQueue.main.async {
+            // 기본적인 스크롤 제한 해제
+            webView.scrollView.contentInsetAdjustmentBehavior = .never
+            webView.scrollView.bounces = true
+            
+            // 🔧 **Private API는 try-catch로 안전하게 시도**
+            do {
+                // setValue는 NSObject 메서드이므로 예외 처리
+                if webView.responds(to: NSSelectorFromString("setValue:forKey:")) {
+                    webView.setValue(UIEdgeInsets.zero, forKey: "_obscuredInsets")
+                    TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] _obscuredInsets 해제 성공")
+                }
+            } catch {
+                TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] _obscuredInsets 해제 실패 (무시하고 계속): \(error.localizedDescription)")
+            }
+            
+            // 🔧 **2단계: JavaScript 우선 실행**
+            let js = self.generateLargeScrollJavaScript(targetY: targetY)
+            
+            webView.evaluateJavaScript(js) { result, error in
+                var step2Success = false
+                var jsSuccess = false
+                var actualY: Double = 0
+                
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] JavaScript 오류: \(error.localizedDescription)")
+                } else if let resultDict = result as? [String: Any] {
+                    jsSuccess = (resultDict["success"] as? Bool) ?? false
+                    actualY = (resultDict["scrollY"] as? Double) ?? 0
+                    
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
+                    
+                    let difference = abs(actualY - targetY)
+                    step2Success = jsSuccess && difference < 100 // 대용량 스크롤은 100px 허용 오차
+                    
+                    TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] JS 결과: 목표=\(String(format: "%.1f", targetY))px, 실제=\(String(format: "%.1f", actualY))px, 차이=\(String(format: "%.1f", difference))px")
+                }
+                
+                if step2Success {
+                    TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] JavaScript 복원 성공!")
+                    
+                    // 성공 시 전체 복원 성공으로 간주
+                    var updatedContext = context
+                    updatedContext.overallSuccess = true
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
+                        self.executeStep3_AnchorRestore(context: updatedContext)
+                    }
+                } else {
+                    // 🔧 **3단계: JavaScript 실패 시 네이티브 폴백**
+                    TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] JavaScript 실패 - 네이티브 폴백 시도")
+                    
+                    DispatchQueue.main.async {
+                        webView.scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+                        
+                        // 네이티브 스크롤 결과 확인
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            let nativeScrollY = webView.scrollView.contentOffset.y
+                            let nativeDifference = abs(nativeScrollY - targetY)
+                            
+                            TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] 네이티브 결과: 실제=\(String(format: "%.1f", nativeScrollY))px, 차이=\(String(format: "%.1f", nativeDifference))px")
+                            
+                            var updatedContext = context
+                            if nativeDifference < 100 {
+                                TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] 네이티브 폴백 성공!")
+                                updatedContext.overallSuccess = true
+                            } else {
+                                TabPersistenceManager.debugMessages.append("🚀 [대용량 스크롤] 네이티브 폴백도 실패 - 다음 단계에서 재시도")
+                            }
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
+                                self.executeStep3_AnchorRestore(context: updatedContext)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 📏 **일반 스크롤 처리 (5000px 미만)**
+    private func executeStandardScrollRestore(context: RestorationContext) {
         let js = generateStep2_PercentScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
@@ -525,6 +635,135 @@ struct BFCacheSnapshot: Codable {
                     success: false,
                     error: e.message,
                     logs: ['[Step 1] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    // 🚀 **대용량 스크롤 전용 JavaScript 생성**
+    private func generateLargeScrollJavaScript(targetY: CGFloat) -> String {
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const targetY = parseFloat('\(targetY)');
+                
+                logs.push('🚀 [대용량 스크롤] JavaScript 실행 시작');
+                logs.push('목표 Y 위치: ' + targetY.toFixed(1) + 'px');
+                
+                // 현재 스크롤 위치 확인
+                const initialScrollY = window.scrollY || window.pageYOffset || 0;
+                logs.push('현재 스크롤: ' + initialScrollY.toFixed(1) + 'px');
+                
+                // 1. 모든 스크롤 제한 해제
+                try {
+                    document.body.style.overflow = 'auto';
+                    document.documentElement.style.overflow = 'auto';
+                    document.body.style.height = 'auto';
+                    document.documentElement.style.height = 'auto';
+                    logs.push('CSS 스크롤 제한 해제 완료');
+                } catch(e) {
+                    logs.push('CSS 스크롤 제한 해제 실패: ' + e.message);
+                }
+                
+                // 2. 콘텐츠 크기 확인
+                const contentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight,
+                    document.documentElement.offsetHeight,
+                    document.body.offsetHeight
+                );
+                const viewportHeight = window.innerHeight;
+                const maxScrollY = Math.max(0, contentHeight - viewportHeight);
+                
+                logs.push('콘텐츠 높이: ' + contentHeight.toFixed(0) + 'px');
+                logs.push('뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
+                logs.push('최대 스크롤: ' + maxScrollY.toFixed(0) + 'px');
+                
+                // 3. 목표 위치가 최대 스크롤을 초과하는지 확인
+                const adjustedTargetY = Math.min(targetY, maxScrollY);
+                if (adjustedTargetY !== targetY) {
+                    logs.push('목표 위치 조정: ' + targetY.toFixed(1) + 'px -> ' + adjustedTargetY.toFixed(1) + 'px');
+                }
+                
+                // 4. 다중 스크롤 방법 순차 실행
+                const scrollMethods = [
+                    function() {
+                        window.scrollTo(0, adjustedTargetY);
+                        return 'window.scrollTo()';
+                    },
+                    function() {
+                        document.documentElement.scrollTop = adjustedTargetY;
+                        return 'documentElement.scrollTop';
+                    },
+                    function() {
+                        document.body.scrollTop = adjustedTargetY;
+                        return 'body.scrollTop';
+                    },
+                    function() {
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = adjustedTargetY;
+                            return 'scrollingElement.scrollTop';
+                        }
+                        return null;
+                    }
+                ];
+                
+                let successfulMethod = null;
+                for (let i = 0; i < scrollMethods.length; i++) {
+                    try {
+                        const methodName = scrollMethods[i]();
+                        if (methodName) {
+                            const currentY = window.scrollY || window.pageYOffset || 0;
+                            const difference = Math.abs(currentY - adjustedTargetY);
+                            logs.push(methodName + ' 실행 -> 현재: ' + currentY.toFixed(1) + 'px, 차이: ' + difference.toFixed(1) + 'px');
+                            
+                            if (difference < 50) {
+                                successfulMethod = methodName;
+                                logs.push('✅ ' + methodName + ' 성공!');
+                                break;
+                            }
+                        }
+                    } catch(e) {
+                        logs.push('스크롤 방법 ' + i + ' 실패: ' + e.message);
+                    }
+                }
+                
+                // 5. 최종 위치 확인
+                const finalScrollY = window.scrollY || window.pageYOffset || 0;
+                const finalDifference = Math.abs(finalScrollY - adjustedTargetY);
+                const success = finalDifference < 100; // 대용량 스크롤은 100px 허용 오차
+                
+                logs.push('최종 스크롤 위치: ' + finalScrollY.toFixed(1) + 'px');
+                logs.push('목표와의 차이: ' + finalDifference.toFixed(1) + 'px');
+                logs.push('성공 여부: ' + (success ? '성공' : '실패'));
+                
+                // 6. 스크롤 이벤트 트리거 (다른 스크립트가 감지할 수 있도록)
+                try {
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                    logs.push('스크롤/리사이즈 이벤트 트리거 완료');
+                } catch(e) {
+                    logs.push('이벤트 트리거 실패: ' + e.message);
+                }
+                
+                return {
+                    success: success,
+                    scrollY: finalScrollY,
+                    targetY: adjustedTargetY,
+                    difference: finalDifference,
+                    successfulMethod: successfulMethod,
+                    contentHeight: contentHeight,
+                    maxScrollY: maxScrollY,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['🚀 [대용량 스크롤] JavaScript 실행 실패: ' + e.message]
                 };
             }
         })()
