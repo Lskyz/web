@@ -2,9 +2,9 @@
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템 (클램핑 문제 해결)**
 //  📄 **Step 1**: 페이지네이션 방식 복원 (무한스크롤 사이트 전용) - 강화됨
-//  📏 **Step 2**: 클램핑 우회 상대좌표 기반 스크롤 복원 (최우선)
-//  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
-//  ✅ **Step 4**: 최종 검증 및 미세 보정
+//  📏 **Step 2**: 클램핑 우회 상대좌표 기반 스크롤 복원 (최우선) - 임시 요소 유지
+//  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원 - 임시 요소 유지
+//  ✅ **Step 4**: 최종 검증 및 미세 보정 - 임시 요소 제거
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 
@@ -16,7 +16,7 @@ import SwiftUI
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
-    let scrollPosition: CGPoint  // ⚡ CGFloat 기반 정밀 스크롤
+    let scrollPosition: CGPoint  // ⚡ CGFloat 기본 정밀 스크롤
     let scrollPositionPercent: CGPoint  // 🔄 상대적 위치 (백분율)
     let contentSize: CGSize  // 📐 콘텐츠 크기 정보
     let viewportSize: CGSize  // 📱 뷰포트 크기 정보
@@ -212,6 +212,7 @@ struct BFCacheSnapshot: Codable {
         weak var webView: WKWebView?
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
+        var tempElementsCreated: [String] = [] // 🔧 **NEW: 임시 요소 ID 추적**
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
@@ -225,25 +226,25 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
-        let context = RestorationContext(
+        var context = RestorationContext(
             snapshot: self,
             webView: webView,
             completion: completion
         )
         
         // Step 1 시작
-        executeStep1_PaginationRestore(context: context)
+        executeStep1_PaginationRestore(context: &context)
     }
     
     // MARK: - Step 1: 📄 **페이지네이션 방식 복원 (강화됨 - 콘텐츠 로드 우선)**
-    private func executeStep1_PaginationRestore(context: RestorationContext) {
+    private func executeStep1_PaginationRestore(context: inout RestorationContext) {
         TabPersistenceManager.debugMessages.append("📄 [Step 1] 페이지네이션 방식 복원 시작 (강화된 콘텐츠 로드)")
         
         guard restorationConfig.enablePaginationRestore else {
             TabPersistenceManager.debugMessages.append("📄 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep2_ClampingBypassScroll(context: context)
+                self.executeStep2_ClampingBypassScroll(context: &context)
             }
             return
         }
@@ -294,19 +295,19 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_ClampingBypassScroll(context: context)
+                self.executeStep2_ClampingBypassScroll(context: &context)
             }
         }
     }
     
-    // MARK: - Step 2: 🚀 **클램핑 우회 스크롤 복원 (핵심)**
-    private func executeStep2_ClampingBypassScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🚀 [Step 2] 클램핑 우회 스크롤 복원 시작")
+    // MARK: - Step 2: 🚀 **클램핑 우회 스크롤 복원 (핵심) - 임시 요소 유지**
+    private func executeStep2_ClampingBypassScroll(context: inout RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🚀 [Step 2] 클램핑 우회 스크롤 복원 시작 (임시 요소 유지)")
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("🚀 [Step 2] 비활성화됨 - 스킵")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: context)
+                self.executeStep3_AnchorRestore(context: &context)
             }
             return
         }
@@ -315,7 +316,6 @@ struct BFCacheSnapshot: Codable {
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step2Success = false
-            var updatedContext = context
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🚀 [Step 2] JavaScript 오류: \(error.localizedDescription)")
@@ -343,9 +343,15 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
+                // 🔧 **NEW: 임시 요소 ID 저장**
+                if let tempElements = resultDict["tempElementIds"] as? [String] {
+                    context.tempElementsCreated.append(contentsOf: tempElements)
+                    TabPersistenceManager.debugMessages.append("🔧 [Step 2] 임시 요소 생성됨: \(tempElements.count)개 - Step 4까지 유지")
+                }
+                
                 // 클램핑 우회 성공 시 전체 성공으로 간주
                 if step2Success {
-                    updatedContext.overallSuccess = true
+                    context.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("🚀 [Step 2] ✅ 클램핑 우회 성공 - 전체 복원 성공으로 간주")
                 }
             }
@@ -355,19 +361,19 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: updatedContext)
+                self.executeStep3_AnchorRestore(context: &context)
             }
         }
     }
     
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
-    private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
+    // MARK: - Step 3: 무한스크롤 전용 앵커 복원 - 임시 요소 유지
+    private func executeStep3_AnchorRestore(context: inout RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작 (임시 요소 유지)")
         
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
+                self.executeStep4_FinalVerification(context: &context)
             }
             return
         }
@@ -422,14 +428,14 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
+                self.executeStep4_FinalVerification(context: &context)
             }
         }
     }
     
-    // MARK: - Step 4: 최종 검증 및 미세 보정
-    private func executeStep4_FinalVerification(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
+    // MARK: - Step 4: 최종 검증 및 미세 보정 + 임시 요소 제거
+    private func executeStep4_FinalVerification(context: inout RestorationContext) {
+        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작 + 임시 요소 제거")
         
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
@@ -437,7 +443,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep4_FinalVerificationScript()
+        let js = generateStep4_FinalVerificationScript(tempElementIds: context.tempElementsCreated)
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step4Success = false
@@ -461,6 +467,9 @@ struct BFCacheSnapshot: Codable {
                 }
                 if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
+                }
+                if let removedElements = resultDict["removedTempElements"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🗑️ [Step 4] 임시 요소 제거됨: \(removedElements)개")
                 }
                 if let logs = resultDict["logs"] as? [String] {
                     for log in logs.prefix(5) {
@@ -768,7 +777,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚀 **Step 2: 클램핑 우회 스크롤 복원 스크립트 (핵심)**
+    // 🚀 **Step 2: 클램핑 우회 스크롤 복원 스크립트 (핵심) - 임시 요소 유지**
     private func generateStep2_ClampingBypassScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
@@ -783,8 +792,9 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 const absoluteTargetX = parseFloat('\(absoluteTargetX)');
                 const absoluteTargetY = parseFloat('\(absoluteTargetY)');
+                const tempElementIds = []; // 🔧 **임시 요소 ID 추적**
                 
-                logs.push('🚀 [Step 2] 클램핑 우회 스크롤 복원 시작');
+                logs.push('🚀 [Step 2] 클램핑 우회 스크롤 복원 시작 (임시 요소 유지)');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 logs.push('목표 절대값: X=' + absoluteTargetX.toFixed(1) + 'px, Y=' + absoluteTargetY.toFixed(1) + 'px');
                 
@@ -839,7 +849,8 @@ struct BFCacheSnapshot: Codable {
                         logs.push('🎯 방법 1 시도: 임시 앵커 + scrollIntoView');
                         
                         const tempAnchor = document.createElement('div');
-                        tempAnchor.id = 'bfcache-temp-anchor-' + Date.now();
+                        const tempAnchorId = 'bfcache-temp-anchor-' + Date.now();
+                        tempAnchor.id = tempAnchorId;
                         tempAnchor.style.cssText = 
                             'position: absolute; ' +
                             'top: ' + finalTargetY + 'px; ' +
@@ -851,6 +862,7 @@ struct BFCacheSnapshot: Codable {
                             'z-index: -9999;';
                         
                         document.body.appendChild(tempAnchor);
+                        tempElementIds.push(tempAnchorId); // 🔧 **ID 저장**
                         
                         // scrollIntoView로 바로 점프
                         tempAnchor.scrollIntoView({ 
@@ -863,15 +875,13 @@ struct BFCacheSnapshot: Codable {
                         const afterScrollY = window.scrollY || window.pageYOffset || 0;
                         const diffY = Math.abs(afterScrollY - finalTargetY);
                         
-                        // 임시 요소 제거
-                        if (tempAnchor.parentNode) {
-                            tempAnchor.parentNode.removeChild(tempAnchor);
-                        }
+                        // 🔧 **임시 요소 제거하지 않음 - Step 4에서 제거**
                         
                         if (diffY <= 200) {
                             success = true;
                             usedMethod = 'temp_anchor_scrollIntoView';
                             logs.push('🎯 방법 1 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                            logs.push('🔧 임시 앵커 유지: ' + tempAnchorId + ' (Step 4에서 제거)');
                         } else {
                             logs.push('🎯 방법 1 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
                         }
@@ -926,7 +936,8 @@ struct BFCacheSnapshot: Codable {
                             logs.push('🎯 방법 3 시도: 임시 높이 확장');
                             
                             const tempDiv = document.createElement('div');
-                            tempDiv.id = 'bfcache-temp-height-' + Date.now();
+                            const tempDivId = 'bfcache-temp-height-' + Date.now();
+                            tempDiv.id = tempDivId;
                             tempDiv.style.cssText = 
                                 'position: absolute; ' +
                                 'top: 0; ' +
@@ -938,6 +949,7 @@ struct BFCacheSnapshot: Codable {
                                 'z-index: -9999;';
                             
                             document.body.appendChild(tempDiv);
+                            tempElementIds.push(tempDivId); // 🔧 **ID 저장**
                             
                             // 확장된 높이로 스크롤
                             window.scrollTo(finalTargetX, finalTargetY);
@@ -946,15 +958,13 @@ struct BFCacheSnapshot: Codable {
                             const afterScrollY = window.scrollY || window.pageYOffset || 0;
                             const diffY = Math.abs(afterScrollY - finalTargetY);
                             
-                            // 임시 요소 제거
-                            if (tempDiv.parentNode) {
-                                tempDiv.parentNode.removeChild(tempDiv);
-                            }
+                            // 🔧 **임시 요소 제거하지 않음 - Step 4에서 제거**
                             
                             if (diffY <= 200) {
                                 success = true;
                                 usedMethod = 'temp_height_expansion';
                                 logs.push('🎯 방법 3 성공: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
+                                logs.push('🔧 임시 높이 확장 유지: ' + tempDivId + ' (Step 4에서 제거)');
                             } else {
                                 logs.push('🎯 방법 3 실패: ' + afterScrollY.toFixed(1) + 'px (오차: ' + diffY.toFixed(1) + 'px)');
                             }
@@ -1007,6 +1017,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('사용된 방법: ' + usedMethod);
                 logs.push('최종 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                 logs.push('최종 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                logs.push('🔧 생성된 임시 요소: ' + tempElementIds.length + '개');
                 
                 return {
                     success: success,
@@ -1017,6 +1028,7 @@ struct BFCacheSnapshot: Codable {
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
                     bypassApplied: needsBypass,
+                    tempElementIds: tempElementIds, // 🔧 **임시 요소 ID 반환**
                     logs: logs
                 };
                 
@@ -1025,6 +1037,7 @@ struct BFCacheSnapshot: Codable {
                     success: false,
                     error: e.message,
                     usedMethod: 'error',
+                    tempElementIds: [],
                     logs: ['🚀 [Step 2] 클램핑 우회 스크롤 오류: ' + e.message]
                 };
             }
@@ -1044,7 +1057,7 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (임시 요소 유지)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -1227,6 +1240,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     logs.push('매칭 신뢰도: ' + confidence + '%');
+                    logs.push('🔧 임시 요소는 유지됨 (Step 4에서 제거)');
                     
                     return {
                         success: diffY <= 100, // 무한스크롤은 100px 허용 오차
@@ -1243,6 +1257,7 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 logs.push('무한스크롤 앵커 매칭 실패');
+                logs.push('🔧 임시 요소는 유지됨 (Step 4에서 제거)');
                 return {
                     success: false,
                     anchorCount: anchors.length,
@@ -1260,9 +1275,11 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    private func generateStep4_FinalVerificationScript() -> String {
+    // 🔧 **Step 4: 최종 검증 및 미세 보정 + 임시 요소 제거**
+    private func generateStep4_FinalVerificationScript(tempElementIds: [String]) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
+        let tempElementIdsJSON = tempElementIds.isEmpty ? "[]" : "[\"\(tempElementIds.joined(separator: "\", \""))\"]"
         
         return """
         (function() {
@@ -1271,9 +1288,11 @@ struct BFCacheSnapshot: Codable {
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const tolerance = 30;
+                const tempElementIds = \(tempElementIdsJSON);
                 
-                logs.push('[Step 4] 최종 검증 및 미세 보정');
+                logs.push('[Step 4] 최종 검증 및 미세 보정 + 임시 요소 제거');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('제거할 임시 요소: ' + tempElementIds.length + '개');
                 
                 // 현재 위치 확인
                 let currentX = window.scrollX || window.pageXOffset || 0;
@@ -1315,6 +1334,63 @@ struct BFCacheSnapshot: Codable {
                     logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 }
                 
+                // 🗑️ **임시 요소 제거**
+                let removedCount = 0;
+                for (let i = 0; i < tempElementIds.length; i++) {
+                    try {
+                        const element = document.getElementById(tempElementIds[i]);
+                        if (element && element.parentNode) {
+                            element.parentNode.removeChild(element);
+                            removedCount++;
+                            logs.push('🗑️ 임시 요소 제거: ' + tempElementIds[i]);
+                        }
+                    } catch(e) {
+                        logs.push('🗑️ 임시 요소 제거 실패: ' + tempElementIds[i] + ' - ' + e.message);
+                    }
+                }
+                
+                logs.push('🗑️ 임시 요소 제거 완료: ' + removedCount + '/' + tempElementIds.length + '개');
+                
+                // 🔧 **임시 요소 제거 후 스크롤 위치 재확인 및 보정**
+                if (removedCount > 0) {
+                    // 잠시 대기 후 위치 재확인
+                    const finalCurrentX = window.scrollX || window.pageXOffset || 0;
+                    const finalCurrentY = window.scrollY || window.pageYOffset || 0;
+                    const finalDiffX = Math.abs(finalCurrentX - targetX);
+                    const finalDiffY = Math.abs(finalCurrentY - targetY);
+                    
+                    logs.push('임시 요소 제거 후 위치: X=' + finalCurrentX.toFixed(1) + 'px, Y=' + finalCurrentY.toFixed(1) + 'px');
+                    logs.push('임시 요소 제거 후 차이: X=' + finalDiffX.toFixed(1) + 'px, Y=' + finalDiffY.toFixed(1) + 'px');
+                    
+                    // 클램핑으로 인한 위치 변화가 있으면 최종 보정
+                    if (finalDiffY > 100) {
+                        logs.push('🔧 클램핑 감지 - 최종 보정 적용');
+                        
+                        // 현재 가능한 최대 스크롤 위치 확인
+                        const maxScrollY = Math.max(0, 
+                            Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight
+                        );
+                        
+                        const correctedTargetY = Math.min(targetY, maxScrollY);
+                        
+                        window.scrollTo(targetX, correctedTargetY);
+                        document.documentElement.scrollTop = correctedTargetY;
+                        document.body.scrollTop = correctedTargetY;
+                        
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = correctedTargetY;
+                        }
+                        
+                        logs.push('🔧 최종 보정: 목표=' + targetY.toFixed(1) + 'px → 보정=' + correctedTargetY.toFixed(1) + 'px (max=' + maxScrollY.toFixed(1) + 'px)');
+                        
+                        // 최종 위치 업데이트
+                        currentX = window.scrollX || window.pageXOffset || 0;
+                        currentY = window.scrollY || window.pageYOffset || 0;
+                        diffX = Math.abs(currentX - targetX);
+                        diffY = Math.abs(currentY - correctedTargetY);
+                    }
+                }
+                
                 const success = diffY <= 50;
                 
                 return {
@@ -1324,6 +1400,7 @@ struct BFCacheSnapshot: Codable {
                     finalDifference: { x: diffX, y: diffY },
                     withinTolerance: diffX <= tolerance && diffY <= tolerance,
                     correctionApplied: correctionApplied,
+                    removedTempElements: removedCount,
                     logs: logs
                 };
                 
@@ -1331,6 +1408,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
+                    removedTempElements: 0,
                     logs: ['[Step 4] 오류: ' + e.message]
                 };
             }
