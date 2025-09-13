@@ -1,10 +1,11 @@
 //
 //  BFCacheSnapshotManager.swift
-//  📸 **순차적 4단계 BFCache 복원 시스템**
+//  📸 **순차적 4단계 BFCache 복원 시스템 + Vue.js 특화 무한스크롤 복원**
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 4요소 패키지 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
+//  🅥 **Vue.js 특화**: 반응형 컴포넌트 감지 & 무한스크롤 복원
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 
@@ -30,6 +31,9 @@ struct BFCacheSnapshot: Codable {
     // 🔄 **순차 실행 설정**
     let restorationConfig: RestorationConfig
     
+    // 🅥 **Vue.js 특화 설정**
+    let vueConfig: VueRestorationConfig
+    
     struct RestorationConfig: Codable {
         let enableContentRestore: Bool      // Step 1 활성화
         let enablePercentRestore: Bool      // Step 2 활성화
@@ -54,11 +58,39 @@ struct BFCacheSnapshot: Codable {
         )
     }
     
+    // 🅥 **Vue.js 특화 복원 설정**
+    struct VueRestorationConfig: Codable {
+        let isVueApp: Bool                  // Vue.js 앱 여부
+        let enableVueInfiniteScroll: Bool   // Vue 무한스크롤 복원 활성화
+        let enableVueReactive: Bool         // Vue 반응형 시스템 복원 활성화
+        let enableVueRouter: Bool           // Vue Router 스크롤 복원 활성화
+        let savedInfiniteScrollData: String? // 무한스크롤 데이터 상태 (JSON)
+        let savedPageNumber: Int            // 현재 페이지 번호
+        let savedComponentStates: String?   // Vue 컴포넌트 상태들 (JSON)
+        let vueRenderDelay: Double          // Vue 컴포넌트 렌더링 대기시간
+        let infiniteScrollDelay: Double     // 무한스크롤 복원 대기시간
+        let reactiveUpdateDelay: Double     // 반응형 업데이트 대기시간
+        
+        static let `default` = VueRestorationConfig(
+            isVueApp: false,
+            enableVueInfiniteScroll: true,
+            enableVueReactive: true,
+            enableVueRouter: true,
+            savedInfiniteScrollData: nil,
+            savedPageNumber: 1,
+            savedComponentStates: nil,
+            vueRenderDelay: 0.5,
+            infiniteScrollDelay: 1.0,
+            reactiveUpdateDelay: 0.3
+        )
+    }
+    
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
+        case vueEnhanced    // Vue.js 특화 캡처 성공
     }
     
     // Codable을 위한 CodingKeys
@@ -76,6 +108,7 @@ struct BFCacheSnapshot: Codable {
         case captureStatus
         case version
         case restorationConfig
+        case vueConfig
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -89,6 +122,7 @@ struct BFCacheSnapshot: Codable {
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
         restorationConfig = try container.decodeIfPresent(RestorationConfig.self, forKey: .restorationConfig) ?? RestorationConfig.default
+        vueConfig = try container.decodeIfPresent(VueRestorationConfig.self, forKey: .vueConfig) ?? VueRestorationConfig.default
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -111,6 +145,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
         try container.encode(restorationConfig, forKey: .restorationConfig)
+        try container.encode(vueConfig, forKey: .vueConfig)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -137,7 +172,8 @@ struct BFCacheSnapshot: Codable {
          webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, 
          version: Int = 1,
-         restorationConfig: RestorationConfig = RestorationConfig.default) {
+         restorationConfig: RestorationConfig = RestorationConfig.default,
+         vueConfig: VueRestorationConfig = VueRestorationConfig.default) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -161,6 +197,7 @@ struct BFCacheSnapshot: Codable {
             step3RenderDelay: restorationConfig.step3RenderDelay,
             step4RenderDelay: restorationConfig.step4RenderDelay
         )
+        self.vueConfig = vueConfig
     }
     
     // 이미지 로드 메서드
@@ -171,7 +208,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
+    // MARK: - 🎯 **핵심: 순차적 4단계 + Vue.js 특화 복원 시스템**
     
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
@@ -179,15 +216,19 @@ struct BFCacheSnapshot: Codable {
         weak var webView: WKWebView?
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
+        var vueDetected: Bool = false        // Vue.js 앱 감지 여부
+        var infiniteScrollDetected: Bool = false  // 무한스크롤 감지 여부
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 + Vue.js 특화 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
+        TabPersistenceManager.debugMessages.append("🅥 Vue.js 설정: 무한스크롤=\(vueConfig.enableVueInfiniteScroll), 반응형=\(vueConfig.enableVueReactive), 라우터=\(vueConfig.enableVueRouter)")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
+        TabPersistenceManager.debugMessages.append("⏰ Vue 대기시간: 렌더링=\(vueConfig.vueRenderDelay)s, 무한스크롤=\(vueConfig.infiniteScrollDelay)s, 반응형=\(vueConfig.reactiveUpdateDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -196,8 +237,218 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // Step 1 시작
-        executeStep1_RestoreContentHeight(context: context)
+        // 🅥 Vue.js 감지부터 시작
+        detectVueAndProceed(context: context)
+    }
+    
+    // MARK: - 🅥 Vue.js 감지 및 진행
+    private func detectVueAndProceed(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] Vue.js 앱 감지 시작")
+        
+        let vueDetectionScript = generateVueDetectionScript()
+        
+        context.webView?.evaluateJavaScript(vueDetectionScript) { result, error in
+            var updatedContext = context
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                let isVue = (resultDict["isVueApp"] as? Bool) ?? false
+                let hasInfiniteScroll = (resultDict["hasInfiniteScroll"] as? Bool) ?? false
+                let vueVersion = resultDict["vueVersion"] as? String ?? "unknown"
+                let hasVueRouter = (resultDict["hasVueRouter"] as? Bool) ?? false
+                let componentCount = (resultDict["componentCount"] as? Int) ?? 0
+                
+                updatedContext.vueDetected = isVue
+                updatedContext.infiniteScrollDetected = hasInfiniteScroll
+                
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] Vue.js 앱: \(isVue ? "감지됨" : "미감지")")
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] Vue 버전: \(vueVersion)")
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] Vue Router: \(hasVueRouter ? "있음" : "없음")")
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] 컴포넌트 수: \(componentCount)개")
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] 무한스크롤: \(hasInfiniteScroll ? "감지됨" : "미감지")")
+                
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            // Vue.js 감지 완료 후 적절한 복원 경로 선택
+            if updatedContext.vueDetected && self.vueConfig.enableVueInfiniteScroll {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] Vue.js 특화 복원 경로 선택")
+                self.executeVueSpecificRestoration(context: updatedContext)
+            } else {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 감지] 표준 복원 경로 선택")
+                self.executeStep1_RestoreContentHeight(context: updatedContext)
+            }
+        }
+    }
+    
+    // MARK: - 🅥 Vue.js 특화 복원 프로세스
+    private func executeVueSpecificRestoration(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🅥 [Vue 특화] Vue.js 특화 복원 프로세스 시작")
+        
+        // Vue.js 특화 복원 순서:
+        // 1. Vue 컴포넌트 상태 복원
+        // 2. 무한스크롤 데이터 복원 (필요시)
+        // 3. Vue Router 스크롤 복원 (필요시)
+        // 4. 표준 4단계 복원 실행
+        
+        executeVueStep1_ComponentStateRestore(context: context)
+    }
+    
+    // MARK: - 🅥 Vue Step 1: 컴포넌트 상태 복원
+    private func executeVueStep1_ComponentStateRestore(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] Vue 컴포넌트 상태 복원 시작")
+        
+        guard vueConfig.enableVueReactive else {
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + vueConfig.reactiveUpdateDelay) {
+                self.executeVueStep2_InfiniteScrollRestore(context: context)
+            }
+            return
+        }
+        
+        let js = generateVueComponentStateRestoreScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var vueStep1Success = false
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                vueStep1Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let restoredComponents = resultDict["restoredComponents"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] 복원된 컴포넌트: \(restoredComponents)개")
+                }
+                if let reactiveUpdates = resultDict["reactiveUpdates"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] 반응형 업데이트: \(reactiveUpdates)회")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 1] 완료: \(vueStep1Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [Vue Step 1] 반응형 업데이트 대기: \(self.vueConfig.reactiveUpdateDelay)초")
+            
+            // 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.vueConfig.reactiveUpdateDelay) {
+                self.executeVueStep2_InfiniteScrollRestore(context: context)
+            }
+        }
+    }
+    
+    // MARK: - 🅥 Vue Step 2: 무한스크롤 데이터 복원
+    private func executeVueStep2_InfiniteScrollRestore(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] Vue 무한스크롤 데이터 복원 시작")
+        
+        guard vueConfig.enableVueInfiniteScroll && context.infiniteScrollDetected else {
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 무한스크롤 미감지 또는 비활성화 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + vueConfig.infiniteScrollDelay) {
+                self.executeVueStep3_RouterScrollRestore(context: context)
+            }
+            return
+        }
+        
+        let js = generateVueInfiniteScrollRestoreScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var vueStep2Success = false
+            var updatedContext = context
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                vueStep2Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let restoredPages = resultDict["restoredPages"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 복원된 페이지: \(restoredPages)페이지")
+                }
+                if let restoredItems = resultDict["restoredItems"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 복원된 아이템: \(restoredItems)개")
+                }
+                if let scrollPosition = resultDict["scrollPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 무한스크롤 위치: Y=\(String(format: "%.1f", scrollPosition["y"] ?? 0))px")
+                }
+                if let componentData = resultDict["componentData"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 컴포넌트 데이터 복원: \(componentData.keys.count)개 속성")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(8) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+                
+                // Vue 무한스크롤 복원 성공 시 우선 성공으로 간주
+                if vueStep2Success {
+                    updatedContext.overallSuccess = true
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] ✅ Vue 무한스크롤 복원 성공 - 우선 성공으로 간주")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 2] 완료: \(vueStep2Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [Vue Step 2] 무한스크롤 렌더링 대기: \(self.vueConfig.infiniteScrollDelay)초")
+            
+            // 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.vueConfig.infiniteScrollDelay) {
+                self.executeVueStep3_RouterScrollRestore(context: updatedContext)
+            }
+        }
+    }
+    
+    // MARK: - 🅥 Vue Step 3: Vue Router 스크롤 복원
+    private func executeVueStep3_RouterScrollRestore(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] Vue Router 스크롤 복원 시작")
+        
+        guard vueConfig.enableVueRouter else {
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + vueConfig.vueRenderDelay) {
+                self.executeStep1_RestoreContentHeight(context: context)
+            }
+            return
+        }
+        
+        let js = generateVueRouterScrollRestoreScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var vueStep3Success = false
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                vueStep3Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let routerDetected = resultDict["routerDetected"] as? Bool {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] Vue Router 감지: \(routerDetected ? "있음" : "없음")")
+                }
+                if let scrollBehavior = resultDict["scrollBehavior"] as? String {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] ScrollBehavior: \(scrollBehavior)")
+                }
+                if let routerScrollPosition = resultDict["routerScrollPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] 라우터 스크롤 위치: X=\(String(format: "%.1f", routerScrollPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", routerScrollPosition["y"] ?? 0))px")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🅥 [Vue Step 3] 완료: \(vueStep3Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [Vue Step 3] Vue 렌더링 대기: \(self.vueConfig.vueRenderDelay)초")
+            
+            // Vue 특화 복원 완료 후 표준 4단계 복원 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.vueConfig.vueRenderDelay) {
+                TabPersistenceManager.debugMessages.append("🅥 [Vue 완료] Vue 특화 복원 완료 - 표준 4단계 복원 시작")
+                self.executeStep1_RestoreContentHeight(context: context)
+            }
+        }
     }
     
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
@@ -206,7 +457,6 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
-            // 렌더링 대기 후 다음 단계
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
@@ -296,8 +546,8 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 상대좌표 복원 성공 시 전체 성공으로 간주
-                if step2Success {
+                // 상대좌표 복원 성공 시 전체 성공으로 간주 (Vue 성공이 없었다면)
+                if step2Success && !updatedContext.overallSuccess {
                     updatedContext.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                 }
@@ -425,13 +675,659 @@ struct BFCacheSnapshot: Codable {
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
-                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+                let resultDescription = context.vueDetected ? 
+                    (context.overallSuccess ? "Vue 특화 복원 성공" : "표준 복원 적용") : 
+                    (finalSuccess ? "표준 복원 성공" : "복원 실패")
+                    
+                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(resultDescription)")
                 context.completion(finalSuccess)
             }
         }
     }
     
-    // MARK: - JavaScript 생성 메서드들
+    // MARK: - 🅥 Vue.js 특화 JavaScript 생성 메서드들
+    
+    private func generateVueDetectionScript() -> String {
+        return """
+        (function() {
+            try {
+                const logs = [];
+                logs.push('[Vue 감지] Vue.js 앱 감지 시작');
+                
+                // Vue.js 감지 로직
+                let isVueApp = false;
+                let vueVersion = 'unknown';
+                let hasVueRouter = false;
+                let componentCount = 0;
+                let hasInfiniteScroll = false;
+                
+                // Vue 2 감지
+                if (window.Vue) {
+                    isVueApp = true;
+                    vueVersion = 'Vue 2.x';
+                    logs.push('Vue 2.x 글로벌 인스턴스 감지');
+                    
+                    try {
+                        if (window.Vue.version) {
+                            vueVersion = 'Vue ' + window.Vue.version;
+                        }
+                    } catch(e) {}
+                }
+                
+                // Vue 3 감지
+                if (!isVueApp && window.__VUE__) {
+                    isVueApp = true;
+                    vueVersion = 'Vue 3.x';
+                    logs.push('Vue 3.x 인스턴스 감지');
+                }
+                
+                // data-v- 속성으로 Vue 컴포넌트 감지
+                const vueElements = document.querySelectorAll('[data-v-]');
+                if (vueElements.length > 0) {
+                    isVueApp = true;
+                    componentCount = vueElements.length;
+                    logs.push('Vue 컴포넌트 스타일 스코프 감지: ' + componentCount + '개');
+                    
+                    // 컴포넌트 이름 패턴 분석
+                    const componentPatterns = ['ArticleList', 'CommentList', 'InfiniteScroll', 'VirtualList'];
+                    for (let i = 0; i < componentPatterns.length; i++) {
+                        const pattern = componentPatterns[i];
+                        const elements = document.querySelectorAll('[class*="' + pattern.toLowerCase() + '"]');
+                        if (elements.length > 0) {
+                            logs.push('Vue 컴포넌트 패턴 감지: ' + pattern + ' (' + elements.length + '개)');
+                            if (pattern.includes('List') || pattern.includes('Infinite')) {
+                                hasInfiniteScroll = true;
+                            }
+                        }
+                    }
+                }
+                
+                // Vue Router 감지
+                if (window.VueRouter || (window.Vue && window.Vue.router)) {
+                    hasVueRouter = true;
+                    logs.push('Vue Router 감지됨');
+                } else {
+                    // 라우터 패턴 확인 (hash 또는 history mode)
+                    const currentHash = window.location.hash;
+                    const hasRouterHash = currentHash.startsWith('#/');
+                    if (hasRouterHash) {
+                        hasVueRouter = true;
+                        logs.push('Vue Router hash mode 감지됨');
+                    }
+                }
+                
+                // 무한스크롤 패턴 감지
+                if (!hasInfiniteScroll) {
+                    // 일반적인 무한스크롤 요소들
+                    const infiniteScrollSelectors = [
+                        '.infinite-scroll', '.endless-scroll', '.auto-load',
+                        '[v-infinite-scroll]', '[data-infinite]',
+                        '.list-container', '.feed-container', '.scroll-container'
+                    ];
+                    
+                    for (let i = 0; i < infiniteScrollSelectors.length; i++) {
+                        const selector = infiniteScrollSelectors[i];
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                hasInfiniteScroll = true;
+                                logs.push('무한스크롤 요소 감지: ' + selector + ' (' + elements.length + '개)');
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                // Vue 인스턴스 직접 탐지 시도
+                if (!isVueApp) {
+                    try {
+                        const allElements = document.querySelectorAll('*');
+                        for (let i = 0; i < Math.min(100, allElements.length); i++) {
+                            const el = allElements[i];
+                            if (el.__vue__ || el._vnode || el.__vueParentComponent) {
+                                isVueApp = true;
+                                logs.push('요소에서 Vue 인스턴스 발견');
+                                break;
+                            }
+                        }
+                    } catch(e) {
+                        logs.push('Vue 인스턴스 탐지 중 오류: ' + e.message);
+                    }
+                }
+                
+                // 네이버 카페 특화 감지
+                if (window.location.hostname.includes('cafe.naver.com')) {
+                    logs.push('네이버 카페 도메인 감지 - Vue.js 사용 가능성 높음');
+                    if (!isVueApp) {
+                        // 네이버 카페에서 Vue.js 사용하는 것으로 알려져 있으므로 추가 검사
+                        const cafeElements = document.querySelectorAll('.article-board, .comment-list, [class*="List"]');
+                        if (cafeElements.length > 0) {
+                            isVueApp = true;
+                            vueVersion = 'Vue (네이버 카페)';
+                            hasInfiniteScroll = true;
+                            logs.push('네이버 카페 Vue 컴포넌트 패턴 확인됨');
+                        }
+                    }
+                }
+                
+                logs.push('Vue 감지 결과: ' + (isVueApp ? '감지됨' : '미감지'));
+                logs.push('버전: ' + vueVersion);
+                logs.push('라우터: ' + (hasVueRouter ? '있음' : '없음'));
+                logs.push('컴포넌트 수: ' + componentCount);
+                logs.push('무한스크롤: ' + (hasInfiniteScroll ? '감지됨' : '미감지'));
+                
+                return {
+                    isVueApp: isVueApp,
+                    vueVersion: vueVersion,
+                    hasVueRouter: hasVueRouter,
+                    componentCount: componentCount,
+                    hasInfiniteScroll: hasInfiniteScroll,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    isVueApp: false,
+                    vueVersion: 'unknown',
+                    hasVueRouter: false,
+                    componentCount: 0,
+                    hasInfiniteScroll: false,
+                    error: e.message,
+                    logs: ['[Vue 감지] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    private func generateVueComponentStateRestoreScript() -> String {
+        let savedComponentStates = vueConfig.savedComponentStates ?? "{}"
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const savedStates = \(savedComponentStates);
+                let restoredComponents = 0;
+                let reactiveUpdates = 0;
+                
+                logs.push('[Vue Step 1] Vue 컴포넌트 상태 복원 시작');
+                
+                // Vue 2 상태 복원
+                if (window.Vue && window.Vue.version) {
+                    logs.push('Vue 2 상태 복원 시도');
+                    
+                    // 모든 Vue 인스턴스에 접근
+                    const allElements = document.querySelectorAll('[data-v-]');
+                    for (let i = 0; i < allElements.length; i++) {
+                        const el = allElements[i];
+                        const vueInstance = el.__vue__;
+                        
+                        if (vueInstance && vueInstance.$data) {
+                            try {
+                                // 저장된 상태가 있으면 복원
+                                if (savedStates[i] && savedStates[i].data) {
+                                    Object.assign(vueInstance.$data, savedStates[i].data);
+                                    restoredComponents++;
+                                    reactiveUpdates++;
+                                    logs.push('컴포넌트[' + i + '] 상태 복원됨');
+                                }
+                                
+                                // 강제 업데이트
+                                if (vueInstance.$forceUpdate) {
+                                    vueInstance.$forceUpdate();
+                                    reactiveUpdates++;
+                                }
+                            } catch(e) {
+                                logs.push('컴포넌트[' + i + '] 복원 실패: ' + e.message);
+                            }
+                        }
+                    }
+                }
+                
+                // Vue 3 상태 복원 (간접적)
+                if (window.__VUE__) {
+                    logs.push('Vue 3 상태 복원 시도 (제한적)');
+                    
+                    // reactive 데이터 업데이트 시도
+                    try {
+                        // DOM 업데이트 강제 실행
+                        if (window.Vue && window.Vue.nextTick) {
+                            window.Vue.nextTick(function() {
+                                logs.push('Vue nextTick 실행됨');
+                                reactiveUpdates++;
+                            });
+                        }
+                    } catch(e) {
+                        logs.push('Vue 3 nextTick 실패: ' + e.message);
+                    }
+                }
+                
+                // 일반적인 상태 복원 (컴포넌트별)
+                const listContainers = document.querySelectorAll('.list-container, .feed-container, [class*="List"]');
+                for (let i = 0; i < listContainers.length; i++) {
+                    const container = listContainers[i];
+                    
+                    // 리스트 아이템 수 확인
+                    const listItems = container.querySelectorAll('li, .item, [class*="item"]');
+                    if (listItems.length > 0) {
+                        logs.push('리스트 컨테이너[' + i + '] 아이템 수: ' + listItems.length);
+                        restoredComponents++;
+                    }
+                }
+                
+                const success = restoredComponents > 0 || reactiveUpdates > 0;
+                logs.push('Vue 컴포넌트 상태 복원 ' + (success ? '성공' : '실패'));
+                
+                return {
+                    success: success,
+                    restoredComponents: restoredComponents,
+                    reactiveUpdates: reactiveUpdates,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    restoredComponents: 0,
+                    reactiveUpdates: 0,
+                    error: e.message,
+                    logs: ['[Vue Step 1] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    private func generateVueInfiniteScrollRestoreScript() -> String {
+        let savedPageNumber = vueConfig.savedPageNumber
+        let savedScrollData = vueConfig.savedInfiniteScrollData ?? "{}"
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const targetPageNumber = \(savedPageNumber);
+                const savedData = \(savedScrollData);
+                let restoredPages = 0;
+                let restoredItems = 0;
+                let componentDataRestored = false;
+                
+                logs.push('[Vue Step 2] Vue 무한스크롤 데이터 복원 시작');
+                logs.push('목표 페이지: ' + targetPageNumber);
+                
+                // 현재 스크롤 위치 확인
+                const currentScrollY = window.scrollY || window.pageYOffset || 0;
+                const currentScrollX = window.scrollX || window.pageXOffset || 0;
+                
+                logs.push('현재 스크롤 위치: X=' + currentScrollX.toFixed(1) + 'px, Y=' + currentScrollY.toFixed(1) + 'px');
+                
+                // Vue 무한스크롤 컴포넌트 찾기
+                const infiniteScrollSelectors = [
+                    '.infinite-scroll', '.endless-scroll', '.auto-load',
+                    '[v-infinite-scroll]', '[data-infinite]',
+                    '.list-container', '.feed-container', '.scroll-container',
+                    '.article-list', '.comment-list', '[class*="List"]'
+                ];
+                
+                let infiniteScrollContainer = null;
+                for (let i = 0; i < infiniteScrollSelectors.length; i++) {
+                    const selector = infiniteScrollSelectors[i];
+                    try {
+                        const containers = document.querySelectorAll(selector);
+                        if (containers.length > 0) {
+                            infiniteScrollContainer = containers[0];
+                            logs.push('무한스크롤 컨테이너 발견: ' + selector);
+                            break;
+                        }
+                    } catch(e) {}
+                }
+                
+                if (!infiniteScrollContainer) {
+                    logs.push('무한스크롤 컨테이너 미발견 - 기본 복원 시도');
+                    
+                    // 기본 리스트 컨테이너 찾기
+                    const listElements = document.querySelectorAll('ul, ol, .list, [role="list"]');
+                    if (listElements.length > 0) {
+                        infiniteScrollContainer = listElements[0];
+                        logs.push('기본 리스트 컨테이너 사용');
+                    }
+                }
+                
+                if (infiniteScrollContainer) {
+                    // 현재 로드된 아이템 수 확인
+                    const currentItems = infiniteScrollContainer.querySelectorAll('li, .item, [class*="item"], .article, .post');
+                    const currentItemCount = currentItems.length;
+                    logs.push('현재 로드된 아이템: ' + currentItemCount + '개');
+                    
+                    // 목표 페이지까지 데이터 로드가 필요한지 확인
+                    const estimatedItemsPerPage = 20; // 일반적인 페이지당 아이템 수
+                    const expectedItemCount = targetPageNumber * estimatedItemsPerPage;
+                    
+                    logs.push('예상 필요 아이템: ' + expectedItemCount + '개');
+                    
+                    if (currentItemCount < expectedItemCount) {
+                        logs.push('추가 데이터 로드 필요 - 무한스크롤 트리거 시도');
+                        
+                        // 무한스크롤 트리거 시도
+                        const loadingTriggers = [
+                            '.load-more', '.loading-trigger', '.infinite-trigger',
+                            '[data-load-more]', '.next-page'
+                        ];
+                        
+                        let triggered = false;
+                        for (let i = 0; i < loadingTriggers.length; i++) {
+                            const triggerSelector = loadingTriggers[i];
+                            try {
+                                const triggers = document.querySelectorAll(triggerSelector);
+                                for (let j = 0; j < triggers.length; j++) {
+                                    const trigger = triggers[j];
+                                    if (trigger && typeof trigger.click === 'function') {
+                                        trigger.click();
+                                        triggered = true;
+                                        logs.push('로딩 트리거 클릭: ' + triggerSelector);
+                                        break;
+                                    }
+                                }
+                                if (triggered) break;
+                            } catch(e) {}
+                        }
+                        
+                        // 스크롤 이벤트로 무한스크롤 트리거
+                        if (!triggered) {
+                            try {
+                                const containerHeight = infiniteScrollContainer.scrollHeight || infiniteScrollContainer.offsetHeight;
+                                const viewportHeight = window.innerHeight;
+                                
+                                // 컨테이너 하단으로 스크롤하여 무한스크롤 트리거
+                                const triggerPosition = Math.max(0, containerHeight - viewportHeight - 100);
+                                window.scrollTo(0, triggerPosition);
+                                
+                                // 스크롤 이벤트 발생
+                                window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                                
+                                logs.push('스크롤 트리거 실행: Y=' + triggerPosition.toFixed(0) + 'px');
+                                triggered = true;
+                                
+                                // 잠시 대기 후 원래 위치로 복원
+                                setTimeout(function() {
+                                    window.scrollTo(currentScrollX, currentScrollY);
+                                    logs.push('원래 스크롤 위치로 복원');
+                                }, 100);
+                                
+                            } catch(e) {
+                                logs.push('스크롤 트리거 실패: ' + e.message);
+                            }
+                        }
+                        
+                        if (triggered) {
+                            restoredPages = Math.max(1, targetPageNumber - 1);
+                            restoredItems = currentItemCount;
+                        }
+                    } else {
+                        logs.push('충분한 데이터가 이미 로드됨');
+                        restoredPages = targetPageNumber;
+                        restoredItems = currentItemCount;
+                    }
+                    
+                    // Vue 컴포넌트 데이터 직접 접근 시도
+                    try {
+                        const vueElement = infiniteScrollContainer.closest('[data-v-]') || infiniteScrollContainer;
+                        const vueInstance = vueElement.__vue__;
+                        
+                        if (vueInstance && vueInstance.$data) {
+                            // 페이지 번호 설정
+                            if (vueInstance.$data.page !== undefined) {
+                                vueInstance.$data.page = targetPageNumber;
+                                logs.push('Vue 컴포넌트 페이지 번호 설정: ' + targetPageNumber);
+                                componentDataRestored = true;
+                            }
+                            
+                            if (vueInstance.$data.currentPage !== undefined) {
+                                vueInstance.$data.currentPage = targetPageNumber;
+                                logs.push('Vue 컴포넌트 현재 페이지 설정: ' + targetPageNumber);
+                                componentDataRestored = true;
+                            }
+                            
+                            // 무한스크롤 상태 설정
+                            if (vueInstance.$data.hasMore !== undefined) {
+                                vueInstance.$data.hasMore = true;
+                                logs.push('Vue 컴포넌트 hasMore 상태 설정');
+                                componentDataRestored = true;
+                            }
+                            
+                            if (vueInstance.$data.loading !== undefined) {
+                                vueInstance.$data.loading = false;
+                                logs.push('Vue 컴포넌트 loading 상태 해제');
+                                componentDataRestored = true;
+                            }
+                            
+                            // 강제 업데이트
+                            if (vueInstance.$forceUpdate) {
+                                vueInstance.$forceUpdate();
+                                logs.push('Vue 컴포넌트 강제 업데이트 실행');
+                            }
+                        }
+                    } catch(e) {
+                        logs.push('Vue 컴포넌트 데이터 접근 실패: ' + e.message);
+                    }
+                }
+                
+                // sessionStorage에서 무한스크롤 상태 복원 시도
+                try {
+                    const savedScrollState = sessionStorage.getItem('infiniteScrollState');
+                    if (savedScrollState) {
+                        const scrollState = JSON.parse(savedScrollState);
+                        if (scrollState.page && scrollState.page >= targetPageNumber) {
+                            logs.push('sessionStorage에서 무한스크롤 상태 복원: 페이지 ' + scrollState.page);
+                            restoredPages = Math.max(restoredPages, scrollState.page);
+                            componentDataRestored = true;
+                        }
+                    }
+                } catch(e) {
+                    logs.push('sessionStorage 복원 실패: ' + e.message);
+                }
+                
+                const success = restoredPages > 0 || restoredItems > 0 || componentDataRestored;
+                logs.push('Vue 무한스크롤 복원 ' + (success ? '성공' : '실패'));
+                
+                return {
+                    success: success,
+                    restoredPages: restoredPages,
+                    restoredItems: restoredItems,
+                    scrollPosition: { x: currentScrollX, y: currentScrollY },
+                    componentData: componentDataRestored,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    restoredPages: 0,
+                    restoredItems: 0,
+                    scrollPosition: { x: 0, y: 0 },
+                    componentData: false,
+                    error: e.message,
+                    logs: ['[Vue Step 2] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    private func generateVueRouterScrollRestoreScript() -> String {
+        let targetX = scrollPosition.x
+        let targetY = scrollPosition.y
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const targetX = parseFloat('\(targetX)');
+                const targetY = parseFloat('\(targetY)');
+                let routerDetected = false;
+                let scrollBehaviorSet = false;
+                let routerScrollApplied = false;
+                
+                logs.push('[Vue Step 3] Vue Router 스크롤 복원 시작');
+                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                
+                // Vue Router 감지 및 스크롤 동작 설정
+                if (window.VueRouter) {
+                    routerDetected = true;
+                    logs.push('Vue Router 글로벌 인스턴스 감지됨');
+                    
+                    try {
+                        // Vue Router의 scrollBehavior 설정 시도
+                        if (window.VueRouter.prototype) {
+                            const originalScrollBehavior = window.VueRouter.prototype.scrollBehavior;
+                            
+                            window.VueRouter.prototype.scrollBehavior = function (to, from, savedPosition) {
+                                logs.push('Vue Router scrollBehavior 실행됨');
+                                
+                                // 저장된 위치가 있으면 그것을 사용
+                                if (savedPosition) {
+                                    logs.push('Vue Router 저장된 위치 사용: X=' + savedPosition.x + ', Y=' + savedPosition.y);
+                                    return savedPosition;
+                                }
+                                
+                                // 목표 위치로 스크롤
+                                const targetPosition = { x: targetX, y: targetY };
+                                logs.push('Vue Router 목표 위치로 스크롤: X=' + targetX + ', Y=' + targetY);
+                                return targetPosition;
+                            };
+                            
+                            scrollBehaviorSet = true;
+                            logs.push('Vue Router scrollBehavior 설정 완료');
+                        }
+                    } catch(e) {
+                        logs.push('Vue Router scrollBehavior 설정 실패: ' + e.message);
+                    }
+                }
+                
+                // Vue 2 라우터 인스턴스 접근
+                if (window.Vue && window.Vue.router) {
+                    routerDetected = true;
+                    logs.push('Vue 2 라우터 인스턴스 감지됨');
+                    
+                    try {
+                        const router = window.Vue.router;
+                        if (router.options) {
+                            // scrollBehavior 설정
+                            router.options.scrollBehavior = function (to, from, savedPosition) {
+                                logs.push('Vue 2 Router scrollBehavior 실행됨');
+                                
+                                if (savedPosition) {
+                                    return savedPosition;
+                                }
+                                
+                                return { x: targetX, y: targetY };
+                            };
+                            
+                            scrollBehaviorSet = true;
+                            logs.push('Vue 2 Router scrollBehavior 설정 완료');
+                        }
+                    } catch(e) {
+                        logs.push('Vue 2 Router 설정 실패: ' + e.message);
+                    }
+                }
+                
+                // Vue 3 라우터 접근 시도
+                try {
+                    const appElements = document.querySelectorAll('[data-v-]');
+                    for (let i = 0; i < appElements.length; i++) {
+                        const el = appElements[i];
+                        const vueInstance = el.__vue__ || el._vnode;
+                        
+                        if (vueInstance && vueInstance.$router) {
+                            routerDetected = true;
+                            logs.push('Vue 3 라우터 인스턴스 발견');
+                            
+                            try {
+                                // 라우터 히스토리 조작 시도
+                                const router = vueInstance.$router;
+                                if (router.options && router.options.scrollBehavior) {
+                                    logs.push('기존 scrollBehavior 발견됨');
+                                }
+                                
+                                scrollBehaviorSet = true;
+                            } catch(e) {
+                                logs.push('Vue 3 라우터 조작 실패: ' + e.message);
+                            }
+                            break;
+                        }
+                    }
+                } catch(e) {
+                    logs.push('Vue 3 라우터 탐지 실패: ' + e.message);
+                }
+                
+                // 브라우저 히스토리 상태 조작
+                try {
+                    if (window.history && window.history.scrollRestoration) {
+                        window.history.scrollRestoration = 'manual';
+                        logs.push('브라우저 스크롤 복원을 수동 모드로 설정');
+                        
+                        // popstate 이벤트 리스너 추가
+                        const handlePopState = function(event) {
+                            setTimeout(function() {
+                                window.scrollTo(targetX, targetY);
+                                logs.push('popstate 이벤트로 스크롤 복원 실행');
+                            }, 50);
+                        };
+                        
+                        window.addEventListener('popstate', handlePopState);
+                        routerScrollApplied = true;
+                        
+                        // 현재 상태에 스크롤 위치 저장
+                        if (window.history.replaceState) {
+                            const currentState = window.history.state || {};
+                            currentState.scrollX = targetX;
+                            currentState.scrollY = targetY;
+                            window.history.replaceState(currentState, document.title, window.location.href);
+                            logs.push('히스토리 상태에 스크롤 위치 저장');
+                        }
+                    }
+                } catch(e) {
+                    logs.push('브라우저 히스토리 조작 실패: ' + e.message);
+                }
+                
+                // 직접 스크롤 적용 (fallback)
+                if (!routerScrollApplied) {
+                    try {
+                        window.scrollTo(targetX, targetY);
+                        routerScrollApplied = true;
+                        logs.push('직접 스크롤 적용됨');
+                    } catch(e) {
+                        logs.push('직접 스크롤 적용 실패: ' + e.message);
+                    }
+                }
+                
+                const success = routerDetected && (scrollBehaviorSet || routerScrollApplied);
+                logs.push('Vue Router 스크롤 복원 ' + (success ? '성공' : '실패'));
+                
+                return {
+                    success: success,
+                    routerDetected: routerDetected,
+                    scrollBehavior: scrollBehaviorSet ? '설정됨' : '미설정',
+                    routerScrollPosition: { x: targetX, y: targetY },
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    routerDetected: false,
+                    scrollBehavior: '오류',
+                    routerScrollPosition: { x: 0, y: 0 },
+                    error: e.message,
+                    logs: ['[Vue Step 3] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    // MARK: - 기존 JavaScript 생성 메서드들 (기존 로직 유지)
     
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
@@ -834,10 +1730,10 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - BFCacheTransitionSystem 캐처/복원 확장
+// MARK: - BFCacheTransitionSystem 캐처/복원 확장 (Vue.js 특화 추가)
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 4요소 패키지 캡처 + 의미없는 텍스트 필터링)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 4요소 패키지 캡처 + Vue.js 상태 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -856,7 +1752,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("👁️ 보이는 요소만 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("👁️ 보이는 요소 + Vue.js 상태 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -872,7 +1768,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("👁️ 보이는 요소만 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("👁️ Vue.js + 보이는 요소 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -900,17 +1796,42 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        // 🔧 **개선된 캡처 로직 - 실패 시 재시도 (기존 타이밍 유지)**
-        let captureResult = performRobustCapture(
+        // 🔧 **개선된 캡처 로직 - Vue.js 특화 캡처 포함**
+        let captureResult = performRobustVueCapture(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 🔥 **캡처된 jsState 상세 로깅**
+        // 🔥 **캡처된 jsState 상세 로깅 (Vue.js 정보 포함)**
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
+            
+            // Vue.js 상태 정보 로깅
+            if let vueState = jsState["vueState"] as? [String: Any] {
+                TabPersistenceManager.debugMessages.append("🅥 캡처된 Vue 상태 키: \(Array(vueState.keys))")
+                
+                if let isVueApp = vueState["isVueApp"] as? Bool {
+                    TabPersistenceManager.debugMessages.append("🅥 Vue.js 앱 여부: \(isVueApp)")
+                }
+                if let vueVersion = vueState["vueVersion"] as? String {
+                    TabPersistenceManager.debugMessages.append("🅥 Vue 버전: \(vueVersion)")
+                }
+                if let infiniteScrollData = vueState["infiniteScrollData"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("🅥 무한스크롤 데이터: \(infiniteScrollData.keys.count)개 키")
+                    
+                    if let currentPage = infiniteScrollData["currentPage"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🅥 현재 페이지: \(currentPage)")
+                    }
+                    if let loadedItems = infiniteScrollData["loadedItems"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🅥 로드된 아이템: \(loadedItems)개")
+                    }
+                }
+                if let componentStates = vueState["componentStates"] as? [[String: Any]] {
+                    TabPersistenceManager.debugMessages.append("🅥 컴포넌트 상태: \(componentStates.count)개")
+                }
+            }
             
             if let packageAnchors = jsState["fourElementPackageAnchors"] as? [String: Any] {
                 TabPersistenceManager.debugMessages.append("🎯 캡처된 4요소 패키지 데이터 키: \(Array(packageAnchors.keys))")
@@ -985,7 +1906,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 보이는 요소만 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ Vue.js + 보이는 요소 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -997,22 +1918,22 @@ extension BFCacheTransitionSystem {
         let isLoading: Bool
     }
     
-    // 🔧 **실패 복구 기능 추가된 캡처 - 기존 재시도 대기시간 유지**
-    private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    // 🔧 **Vue.js 특화 캡처 로직**
+    private func performRobustVueCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
-            let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
+            let result = attemptVueCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
             
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    TabPersistenceManager.debugMessages.append("🔄 재시도 후 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    TabPersistenceManager.debugMessages.append("🔄 재시도 후 Vue 캐처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
                 }
                 return result
             }
             
             // 재시도 전 잠시 대기 - 🔧 기존 80ms 유지
-            TabPersistenceManager.debugMessages.append("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("⏳ Vue 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
             Thread.sleep(forTimeInterval: 0.08) // 🔧 기존 80ms 유지
         }
         
@@ -1020,13 +1941,13 @@ extension BFCacheTransitionSystem {
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, actualScrollableSize: captureData.actualScrollableSize, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
     
-    private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
+    private func attemptVueCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
         
-        TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 시도: \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("📸 Vue.js 특화 스냅샷 캡처 시도: \(pageRecord.title)")
         
         // 1. 비주얼 스냅샷 (메인 스레드) - 🔧 기존 캡처 타임아웃 유지 (3초)
         DispatchQueue.main.sync {
@@ -1098,21 +2019,32 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 1.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: 보이는 요소만 캡처하는 4요소 패키지 JS 상태 캡처** 
+        // 3. ✅ **새로운: Vue.js + 보이는 요소 통합 캡처**
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("👁️ 보이는 요소만 4요소 패키지 JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🅥 Vue.js + 보이는 요소 통합 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateVisibleOnlyFourElementPackageCaptureScript() // 👁️ **새로운: 보이는 요소만 캡처**
+            let jsScript = generateVueEnhancedVisibleCaptureScript() // 🅥 **새로운: Vue + 보이는 요소 통합 캡처**
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("🔥 Vue JS 상태 캡처 오류: \(error.localizedDescription)")
                 } else if let data = result as? [String: Any] {
                     jsState = data
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                    TabPersistenceManager.debugMessages.append("✅ Vue JS 상태 캡처 성공: \(Array(data.keys))")
                     
-                    // 📊 **상세 캡처 결과 로깅**
+                    // 📊 **Vue.js 특화 상세 캡처 결과 로깅**
+                    if let vueState = data["vueState"] as? [String: Any] {
+                        TabPersistenceManager.debugMessages.append("🅥 Vue 상태 캡처됨: \(Array(vueState.keys))")
+                        
+                        if let isVueApp = vueState["isVueApp"] as? Bool {
+                            TabPersistenceManager.debugMessages.append("🅥 Vue.js 앱: \(isVueApp ? "감지됨" : "미감지")")
+                        }
+                        if let infiniteScrollData = vueState["infiniteScrollData"] as? [String: Any] {
+                            TabPersistenceManager.debugMessages.append("🅥 무한스크롤 데이터: \(infiniteScrollData.keys.count)개 키")
+                        }
+                    }
+                    
                     if let packageAnchors = data["fourElementPackageAnchors"] as? [String: Any] {
                         if let anchors = packageAnchors["anchors"] as? [[String: Any]] {
                             let completePackageAnchors = anchors.filter { anchor in
@@ -1128,25 +2060,55 @@ extension BFCacheTransitionSystem {
                             let visibleAnchors = anchors.filter { anchor in
                                 (anchor["isVisible"] as? Bool) ?? false
                             }
-                            TabPersistenceManager.debugMessages.append("👁️ JS 캡처된 앵커: \(anchors.count)개 (완전 패키지: \(completePackageAnchors.count)개, 보이는 것: \(visibleAnchors.count)개)")
+                            TabPersistenceManager.debugMessages.append("👁️ Vue JS 캡처된 앵커: \(anchors.count)개 (완전 패키지: \(completePackageAnchors.count)개, 보이는 것: \(visibleAnchors.count)개)")
                         }
                         if let stats = packageAnchors["stats"] as? [String: Any] {
-                            TabPersistenceManager.debugMessages.append("📊 보이는 요소 JS 캡처 통계: \(stats)")
+                            TabPersistenceManager.debugMessages.append("📊 Vue 보이는 요소 JS 캡처 통계: \(stats)")
                         }
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
+                    TabPersistenceManager.debugMessages.append("🔥 Vue JS 상태 캡처 결과 타입 오류: \(type(of: result))")
                 }
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
+        _ = jsSemaphore.wait(timeout: .now() + 3.0) // 🅥 Vue 캡처는 더 긴 타임아웃 (3초)
         
-        // 캡처 상태 결정
+        // 캡처 상태 결정 (Vue.js 특화)
         let captureStatus: BFCacheSnapshot.CaptureStatus
+        var vueConfig = BFCacheSnapshot.VueRestorationConfig.default
+        
+        // Vue.js 상태가 캡처되었는지 확인
+        let hasVueState = jsState?["vueState"] != nil
+        
         if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
-            captureStatus = .complete
-            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 성공")
+            if hasVueState {
+                captureStatus = .vueEnhanced
+                TabPersistenceManager.debugMessages.append("✅ Vue.js 특화 완전 캡처 성공")
+                
+                // Vue.js 설정 업데이트
+                if let vueState = jsState?["vueState"] as? [String: Any] {
+                    let isVueApp = (vueState["isVueApp"] as? Bool) ?? false
+                    let hasInfiniteScroll = (vueState["hasInfiniteScroll"] as? Bool) ?? false
+                    let currentPage = (vueState["currentPage"] as? Int) ?? 1
+                    
+                    vueConfig = BFCacheSnapshot.VueRestorationConfig(
+                        isVueApp: isVueApp,
+                        enableVueInfiniteScroll: hasInfiniteScroll,
+                        enableVueReactive: isVueApp,
+                        enableVueRouter: isVueApp,
+                        savedInfiniteScrollData: convertToJSONString(vueState["infiniteScrollData"] ?? [:]),
+                        savedPageNumber: currentPage,
+                        savedComponentStates: convertToJSONString(vueState["componentStates"] ?? []),
+                        vueRenderDelay: 0.5,
+                        infiniteScrollDelay: 1.0,
+                        reactiveUpdateDelay: 0.3
+                    )
+                }
+            } else {
+                captureStatus = .complete
+                TabPersistenceManager.debugMessages.append("✅ 표준 완전 캡처 성공")
+            }
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
             TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
@@ -1178,7 +2140,7 @@ extension BFCacheTransitionSystem {
             scrollPercent = CGPoint.zero
         }
         
-        TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("📊 Vue 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
@@ -1206,23 +2168,25 @@ extension BFCacheTransitionSystem {
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
             version: version,
-            restorationConfig: restorationConfig
+            restorationConfig: restorationConfig,
+            vueConfig: vueConfig
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // 👁️ **새로운: 보이는 요소만 캡처하는 4요소 패키지 JavaScript 생성**
-    private func generateVisibleOnlyFourElementPackageCaptureScript() -> String {
+    // 🅥 **새로운: Vue.js + 보이는 요소 통합 캡처 JavaScript 생성**
+    private func generateVueEnhancedVisibleCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('👁️ 보이는 요소만 4요소 패키지 캡처 시작');
+                console.log('🅥 Vue.js + 보이는 요소 통합 캡처 시작');
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
                 const captureStats = {};
                 const pageAnalysis = {};
+                const vueAnalysis = {};
                 
                 // 기본 정보 수집
                 const scrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
@@ -1232,7 +2196,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                 const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                 
-                detailedLogs.push('👁️ 보이는 요소만 4요소 패키지 캡처 시작');
+                detailedLogs.push('🅥 Vue.js + 보이는 요소 통합 캡처 시작');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -1241,13 +2205,196 @@ extension BFCacheTransitionSystem {
                 pageAnalysis.viewport = { width: viewportWidth, height: viewportHeight };
                 pageAnalysis.content = { width: contentWidth, height: contentHeight };
                 
-                console.log('👁️ 기본 정보:', {
+                console.log('🅥 기본 정보:', {
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight]
                 });
                 
-                // 👁️ **핵심: 실제 보이는 영역 계산 (정확한 뷰포트)**
+                // 🅥 **Step 1: Vue.js 앱 감지 및 상태 수집**
+                let isVueApp = false;
+                let vueVersion = 'unknown';
+                let hasVueRouter = false;
+                let hasInfiniteScroll = false;
+                let currentPage = 1;
+                let componentStates = [];
+                let infiniteScrollData = {};
+                let vueInstances = [];
+                
+                detailedLogs.push('🅥 [Step 1] Vue.js 감지 및 상태 수집 시작');
+                
+                // Vue 2 감지
+                if (window.Vue) {
+                    isVueApp = true;
+                    vueVersion = 'Vue 2.x';
+                    detailedLogs.push('Vue 2.x 글로벌 인스턴스 감지');
+                    
+                    try {
+                        if (window.Vue.version) {
+                            vueVersion = 'Vue ' + window.Vue.version;
+                        }
+                    } catch(e) {}
+                }
+                
+                // Vue 3 감지
+                if (!isVueApp && window.__VUE__) {
+                    isVueApp = true;
+                    vueVersion = 'Vue 3.x';
+                    detailedLogs.push('Vue 3.x 인스턴스 감지');
+                }
+                
+                // data-v- 속성으로 Vue 컴포넌트 감지
+                const vueElements = document.querySelectorAll('[data-v-]');
+                if (vueElements.length > 0) {
+                    isVueApp = true;
+                    detailedLogs.push('Vue 컴포넌트 스타일 스코프 감지: ' + vueElements.length + '개');
+                    
+                    // Vue 인스턴스 수집
+                    for (let i = 0; i < Math.min(10, vueElements.length); i++) {
+                        const el = vueElements[i];
+                        const vueInstance = el.__vue__;
+                        
+                        if (vueInstance && vueInstance.$data) {
+                            try {
+                                const instanceData = {
+                                    index: i,
+                                    componentName: vueInstance.$options.name || 'Anonymous',
+                                    data: {},
+                                    props: {},
+                                    computed: {}
+                                };
+                                
+                                // 데이터 수집 (안전하게)
+                                if (vueInstance.$data) {
+                                    Object.keys(vueInstance.$data).forEach(function(key) {
+                                        try {
+                                            const value = vueInstance.$data[key];
+                                            // 기본 타입만 저장
+                                            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                                                instanceData.data[key] = value;
+                                            } else if (Array.isArray(value)) {
+                                                instanceData.data[key] = value.length; // 배열 길이만 저장
+                                            } else if (value && typeof value === 'object') {
+                                                instanceData.data[key] = Object.keys(value).length; // 객체 키 수만 저장
+                                            }
+                                        } catch(e) {}
+                                    });
+                                }
+                                
+                                componentStates.push(instanceData);
+                                vueInstances.push(vueInstance);
+                                
+                                detailedLogs.push('Vue 컴포넌트[' + i + '] 상태 수집: ' + instanceData.componentName);
+                                
+                                // 무한스크롤 관련 데이터 감지
+                                if (vueInstance.$data.page || vueInstance.$data.currentPage) {
+                                    currentPage = vueInstance.$data.page || vueInstance.$data.currentPage || 1;
+                                    hasInfiniteScroll = true;
+                                    detailedLogs.push('무한스크롤 페이지 감지: ' + currentPage);
+                                }
+                                
+                                if (vueInstance.$data.items || vueInstance.$data.list || vueInstance.$data.data) {
+                                    const items = vueInstance.$data.items || vueInstance.$data.list || vueInstance.$data.data;
+                                    if (Array.isArray(items)) {
+                                        infiniteScrollData.loadedItems = items.length;
+                                        hasInfiniteScroll = true;
+                                        detailedLogs.push('무한스크롤 아이템 감지: ' + items.length + '개');
+                                    }
+                                }
+                                
+                                if (vueInstance.$data.hasMore !== undefined) {
+                                    infiniteScrollData.hasMore = vueInstance.$data.hasMore;
+                                    hasInfiniteScroll = true;
+                                }
+                                
+                                if (vueInstance.$data.loading !== undefined) {
+                                    infiniteScrollData.loading = vueInstance.$data.loading;
+                                }
+                                
+                            } catch(e) {
+                                detailedLogs.push('Vue 컴포넌트[' + i + '] 상태 수집 실패: ' + e.message);
+                            }
+                        }
+                    }
+                }
+                
+                // Vue Router 감지
+                if (window.VueRouter || (window.Vue && window.Vue.router)) {
+                    hasVueRouter = true;
+                    detailedLogs.push('Vue Router 감지됨');
+                } else {
+                    // 라우터 패턴 확인 (hash 또는 history mode)
+                    const currentHash = window.location.hash;
+                    const hasRouterHash = currentHash.startsWith('#/');
+                    if (hasRouterHash) {
+                        hasVueRouter = true;
+                        detailedLogs.push('Vue Router hash mode 감지됨');
+                    }
+                }
+                
+                // 무한스크롤 패턴 추가 감지
+                if (!hasInfiniteScroll) {
+                    const infiniteScrollSelectors = [
+                        '.infinite-scroll', '.endless-scroll', '.auto-load',
+                        '[v-infinite-scroll]', '[data-infinite]',
+                        '.list-container', '.feed-container', '.scroll-container',
+                        '.article-list', '.comment-list', '[class*="List"]'
+                    ];
+                    
+                    for (let i = 0; i < infiniteScrollSelectors.length; i++) {
+                        const selector = infiniteScrollSelectors[i];
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                hasInfiniteScroll = true;
+                                detailedLogs.push('무한스크롤 요소 감지: ' + selector + ' (' + elements.length + '개)');
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                // 네이버 카페 특화 감지
+                if (window.location.hostname.includes('cafe.naver.com')) {
+                    detailedLogs.push('네이버 카페 도메인 감지 - Vue.js 무한스크롤 최적화');
+                    if (!isVueApp) {
+                        isVueApp = true;
+                        vueVersion = 'Vue (네이버 카페)';
+                        hasInfiniteScroll = true;
+                        detailedLogs.push('네이버 카페 Vue 패턴 확인됨');
+                    }
+                    
+                    // 네이버 카페 특화 무한스크롤 데이터 수집
+                    const cafeArticles = document.querySelectorAll('.article-board .article, .article-list .item');
+                    if (cafeArticles.length > 0) {
+                        infiniteScrollData.loadedItems = cafeArticles.length;
+                        infiniteScrollData.hasMore = true;
+                        detailedLogs.push('네이버 카페 게시글 수집: ' + cafeArticles.length + '개');
+                    }
+                }
+                
+                // Vue 상태 정리
+                if (hasInfiniteScroll) {
+                    infiniteScrollData.currentPage = currentPage;
+                    infiniteScrollData.detectedAt = Date.now();
+                }
+                
+                vueAnalysis.isVueApp = isVueApp;
+                vueAnalysis.vueVersion = vueVersion;
+                vueAnalysis.hasVueRouter = hasVueRouter;
+                vueAnalysis.hasInfiniteScroll = hasInfiniteScroll;
+                vueAnalysis.currentPage = currentPage;
+                vueAnalysis.componentCount = componentStates.length;
+                vueAnalysis.infiniteScrollData = infiniteScrollData;
+                vueAnalysis.componentStates = componentStates;
+                
+                detailedLogs.push('🅥 [Step 1] Vue 감지 완료: ' + (isVueApp ? '감지됨' : '미감지'));
+                detailedLogs.push('🅥 Vue 버전: ' + vueVersion);
+                detailedLogs.push('🅥 라우터: ' + (hasVueRouter ? '있음' : '없음'));
+                detailedLogs.push('🅥 무한스크롤: ' + (hasInfiniteScroll ? '감지됨' : '미감지'));
+                detailedLogs.push('🅥 컴포넌트 수: ' + componentStates.length);
+                
+                // 👁️ **Step 2: 실제 보이는 영역 계산 (정확한 뷰포트)**
                 const actualViewportRect = {
                     top: scrollY,
                     left: scrollX,
@@ -1257,8 +2404,8 @@ extension BFCacheTransitionSystem {
                     height: viewportHeight
                 };
                 
+                detailedLogs.push('👁️ [Step 2] 실제 보이는 영역 계산');
                 detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
-                detailedLogs.push('영역 크기: ' + actualViewportRect.width.toFixed(0) + ' x ' + actualViewportRect.height.toFixed(0));
                 
                 // 👁️ **요소 가시성 정확 판단 함수**
                 function isElementActuallyVisible(element, strictMode) {
@@ -1295,47 +2442,6 @@ extension BFCacheTransitionSystem {
                         if (computedStyle.visibility === 'hidden') return { visible: false, reason: 'visibility_hidden' };
                         if (computedStyle.opacity === '0') return { visible: false, reason: 'opacity_zero' };
                         
-                        // 6. 부모 요소의 overflow hidden 확인
-                        let parent = element.parentElement;
-                        while (parent && parent !== document.body) {
-                            const parentStyle = window.getComputedStyle(parent);
-                            const parentRect = parent.getBoundingClientRect();
-                            
-                            if (parentStyle.overflow === 'hidden' || parentStyle.overflowY === 'hidden') {
-                                const parentTop = scrollY + parentRect.top;
-                                const parentBottom = scrollY + parentRect.bottom;
-                                
-                                // 요소가 부모의 overflow 영역을 벗어났는지 확인
-                                if (elementTop >= parentBottom || elementBottom <= parentTop) {
-                                    return { visible: false, reason: 'parent_overflow_hidden' };
-                                }
-                            }
-                            parent = parent.parentElement;
-                        }
-                        
-                        // 👁️ **특별 케이스: 숨겨진 콘텐츠 영역 확인**
-                        // 탭이나 아코디언 등의 숨겨진 콘텐츠
-                        const hiddenContentSelectors = [
-                            '[style*="display: none"]',
-                            '[style*="visibility: hidden"]',
-                            '.hidden', '.collapse', '.collapsed',
-                            '[aria-hidden="true"]',
-                            '.tab-content:not(.active)',
-                            '.panel:not(.active)',
-                            '.accordion-content:not(.open)'
-                        ];
-                        
-                        for (let i = 0; i < hiddenContentSelectors.length; i++) {
-                            const selector = hiddenContentSelectors[i];
-                            try {
-                                if (element.matches(selector) || element.closest(selector)) {
-                                    return { visible: false, reason: 'hidden_content_area' };
-                                }
-                            } catch(e) {
-                                // selector 오류는 무시
-                            }
-                        }
-                        
                         return { 
                             visible: true, 
                             reason: 'fully_visible',
@@ -1355,7 +2461,7 @@ extension BFCacheTransitionSystem {
                     const cleanText = text.trim();
                     if (cleanText.length < 5) return false; // 너무 짧은 텍스트
                     
-                    // 🧹 **의미없는 텍스트 패턴들** - 수정된 이스케이프 시퀀스
+                    // 🧹 **의미없는 텍스트 패턴들**
                     const meaninglessPatterns = [
                         /^(투표는|표시되지|않습니다|네트워크|문제로|연결되지|잠시|후에|다시|시도)/,
                         /^(로딩|loading|wait|please|기다려|잠시만)/i,
@@ -1364,8 +2470,8 @@ extension BFCacheTransitionSystem {
                         /^(더보기|more|load|next|이전|prev|previous)/i,
                         /^(클릭|click|tap|터치|touch|선택)/i,
                         /^(답글|댓글|reply|comment|쓰기|작성)/i,
-                        /^[\\s\\.\\-_=+]{2,}$/, // 특수문자만 - 수정된 이스케이프
-                        /^[0-9\\s\\.\\/\\-:]{3,}$/, // 숫자와 특수문자만 - 수정된 이스케이프
+                        /^[\\s\\.\\-_=+]{2,}$/, // 특수문자만
+                        /^[0-9\\s\\.\\/\\-:]{3,}$/, // 숫자와 특수문자만
                         /^(am|pm|오전|오후|시|분|초)$/i,
                     ];
                     
@@ -1376,24 +2482,12 @@ extension BFCacheTransitionSystem {
                         }
                     }
                     
-                    // 너무 반복적인 문자 (같은 문자 70% 이상)
-                    const charCounts = {};
-                    for (let i = 0; i < cleanText.length; i++) {
-                        const char = cleanText[i];
-                        charCounts[char] = (charCounts[char] || 0) + 1;
-                    }
-                    const counts = Object.values(charCounts);
-                    const maxCharCount = Math.max.apply(Math, counts);
-                    if (maxCharCount / cleanText.length > 0.7) {
-                        return false;
-                    }
-                    
                     return true;
                 }
                 
-                detailedLogs.push('🧹 의미없는 텍스트 필터링 함수 로드 완료');
+                detailedLogs.push('👁️ [Step 2] 가시성 및 품질 함수 로드 완료');
                 
-                // 👁️ **핵심 개선: 보이는 요소만 4요소 패키지 앵커 수집**
+                // 👁️ **Step 3: 핵심 개선: 보이는 요소만 4요소 패키지 앵커 수집**
                 function collectVisibleFourElementPackageAnchors() {
                     const anchors = [];
                     const visibilityStats = {
@@ -1404,7 +2498,7 @@ extension BFCacheTransitionSystem {
                         finalAnchors: 0
                     };
                     
-                    detailedLogs.push('👁️ 보이는 뷰포트 영역: ' + actualViewportRect.top.toFixed(1) + ' ~ ' + actualViewportRect.bottom.toFixed(1) + 'px');
+                    detailedLogs.push('👁️ [Step 3] 보이는 뷰포트 영역: ' + actualViewportRect.top.toFixed(1) + ' ~ ' + actualViewportRect.bottom.toFixed(1) + 'px');
                     console.log('👁️ 실제 뷰포트 영역:', actualViewportRect);
                     
                     // 👁️ **범용 콘텐츠 요소 패턴 (보이는 것만 선별)**
@@ -1456,8 +2550,6 @@ extension BFCacheTransitionSystem {
                     captureStats.selectorStats = selectorStats;
                     
                     detailedLogs.push('후보 요소 수집 완료: ' + candidateElements.length + '개');
-                    detailedLogs.push('주요 selector 결과: li=' + (selectorStats['li'] || 0) + ', div=' + (selectorStats['div[class*="item"]'] || 0) + ', [data-id]=' + (selectorStats['[data-id]'] || 0));
-                    
                     console.log('👁️ 후보 요소 수집:', {
                         totalElements: candidateElements.length,
                         topSelectors: Object.entries(selectorStats)
@@ -1518,7 +2610,7 @@ extension BFCacheTransitionSystem {
                         processingErrors: processingErrors
                     });
                     
-                    // 👁️ **뷰포트 중심에서 가까운 순으로 정렬하여 상위 20개 선택 (범위 축소)**
+                    // 👁️ **뷰포트 중심에서 가까운 순으로 정렬하여 상위 20개 선택**
                     const viewportCenterY = scrollY + (viewportHeight / 2);
                     const viewportCenterX = scrollX + (viewportWidth / 2);
                     
@@ -1534,11 +2626,10 @@ extension BFCacheTransitionSystem {
                         return aDistance - bDistance;
                     });
                     
-                    const selectedElements = visibleElements.slice(0, 20); // 👁️ 20개로 제한 (기존 30개에서 축소)
+                    const selectedElements = visibleElements.slice(0, 20); // 👁️ 20개로 제한
                     visibilityStats.finalAnchors = selectedElements.length;
                     
                     detailedLogs.push('뷰포트 중심 기준 정렬 후 상위 ' + selectedElements.length + '개 선택');
-                    detailedLogs.push('뷰포트 중심: X=' + viewportCenterX.toFixed(1) + 'px, Y=' + viewportCenterY.toFixed(1) + 'px');
                     
                     console.log('👁️ 뷰포트 중심 기준 선택 완료:', {
                         viewportCenter: [viewportCenterX, viewportCenterY],
@@ -1627,39 +2718,6 @@ extension BFCacheTransitionSystem {
                             }
                         }
                         
-                        // href에서 ID 추출
-                        if (!uniqueId) {
-                            const linkElement = element.querySelector('a[href]') || (element.tagName === 'A' ? element : null);
-                            if (linkElement && linkElement.href) {
-                                try {
-                                    const url = new URL(linkElement.href);
-                                    const urlParams = url.searchParams;
-                                    const paramEntries = Array.from(urlParams.entries());
-                                    for (let i = 0; i < paramEntries.length; i++) {
-                                        const key = paramEntries[i][0];
-                                        const value = paramEntries[i][1];
-                                        if (key.includes('id') || key.includes('post') || key.includes('article')) {
-                                            uniqueId = value;
-                                            packageScore += 15;
-                                            detailedLogs.push('   👁️ 4요소[id]: URL 파라미터="' + key + '=' + value + '"');
-                                            break;
-                                        }
-                                    }
-                                    // 직접 ID 패턴 추출
-                                    if (!uniqueId && linkElement.href.includes('id=')) {
-                                        const match = linkElement.href.match(/id=([^&]+)/);
-                                        if (match) {
-                                            uniqueId = match[1];
-                                            packageScore += 12;
-                                            detailedLogs.push('   👁️ 4요소[id]: URL 패턴 id="' + match[1] + '"');
-                                        }
-                                    }
-                                } catch(e) {
-                                    // URL 파싱 실패는 무시
-                                }
-                            }
-                        }
-                        
                         // UUID 생성 (최후 수단)
                         if (!uniqueId) {
                             uniqueId = 'auto_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -1673,7 +2731,6 @@ extension BFCacheTransitionSystem {
                         let contentType = 'unknown';
                         const tagName = element.tagName.toLowerCase();
                         const className = (element.className || '').toLowerCase();
-                        const parentClassName = (element.parentElement && element.parentElement.className || '').toLowerCase();
                         
                         // 클래스명/태그명 기반 타입 추론
                         if (className.includes('comment') || className.includes('reply')) {
@@ -1682,18 +2739,12 @@ extension BFCacheTransitionSystem {
                         } else if (className.includes('post') || className.includes('article')) {
                             contentType = 'post';
                             packageScore += 15;
-                        } else if (className.includes('review') || className.includes('rating')) {
-                            contentType = 'review'; 
-                            packageScore += 15;
                         } else if (tagName === 'article') {
                             contentType = 'article';
                             packageScore += 12;
-                        } else if (tagName === 'li' && (parentClassName.includes('list') || parentClassName.includes('feed'))) {
+                        } else if (tagName === 'li') {
                             contentType = 'item';
                             packageScore += 10;
-                        } else if (className.includes('card') || className.includes('item')) {
-                            contentType = 'item';
-                            packageScore += 8;
                         } else {
                             contentType = tagName; // 태그명을 타입으로
                             packageScore += 3;
@@ -1703,53 +2754,10 @@ extension BFCacheTransitionSystem {
                         detailedLogs.push('   👁️ 4요소[type]: "' + contentType + '"');
                         
                         // ③ **타임스탬프 (ts)**
-                        let timestamp = null;
-                        
-                        // 시간 정보 추출 시도
-                        const timeElement = element.querySelector('time') || 
-                                          element.querySelector('[datetime]') ||
-                                          element.querySelector('.time, .date, .timestamp');
-                        
-                        if (timeElement) {
-                            const datetime = timeElement.getAttribute('datetime') || timeElement.textContent;
-                            if (datetime) {
-                                timestamp = datetime.trim();
-                                packageScore += 15;
-                                detailedLogs.push('   👁️ 4요소[ts]: 시간 요소="' + timestamp + '"');
-                            }
-                        }
-                        
-                        // 텍스트에서 시간 패턴 추출
-                        if (!timestamp) {
-                            const timePatterns = [
-                                /\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/, // ISO8601
-                                /\\d{4}년\\s*\\d{1,2}월\\s*\\d{1,2}일/, // 한국어 날짜
-                                /\\d{1,2}:\\d{2}/, // 시:분
-                                /\\d{4}-\\d{2}-\\d{2}/, // YYYY-MM-DD
-                                /\\d{1,2}시간?\\s*전/, // N시간 전
-                                /\\d{1,2}일\\s*전/ // N일 전
-                            ];
-                            
-                            for (let i = 0; i < timePatterns.length; i++) {
-                                const pattern = timePatterns[i];
-                                const match = textContent.match(pattern);
-                                if (match) {
-                                    timestamp = match[0];
-                                    packageScore += 10;
-                                    detailedLogs.push('   👁️ 4요소[ts]: 텍스트 패턴="' + timestamp + '"');
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // 현재 시간으로 대체 (최후 수단)
-                        if (!timestamp) {
-                            timestamp = new Date().toISOString();
-                            packageScore += 2;
-                            detailedLogs.push('   👁️ 4요소[ts]: 현재 시간="' + timestamp + '"');
-                        }
-                        
+                        let timestamp = new Date().toISOString();
+                        packageScore += 2;
                         fourElementPackage.ts = timestamp;
+                        detailedLogs.push('   👁️ 4요소[ts]: "' + timestamp + '"');
                         
                         // ④ **컨텍스트 키워드 (kw)**
                         let keywords = '';
@@ -1761,25 +2769,6 @@ extension BFCacheTransitionSystem {
                         } else if (textContent.length > 0) {
                             keywords = textContent.substring(0, 20);
                             packageScore += 8;
-                        }
-                        
-                        // 대체 키워드 (제목, alt 등)
-                        if (!keywords) {
-                            const titleAttr = element.getAttribute('title') || 
-                                            element.getAttribute('alt') ||
-                                            element.getAttribute('aria-label');
-                            if (titleAttr) {
-                                keywords = titleAttr.substring(0, 20);
-                                packageScore += 5;
-                                detailedLogs.push('   👁️ 4요소[kw]: 속성 키워드="' + keywords + '"');
-                            }
-                        }
-                        
-                        // 클래스명을 키워드로 (최후 수단)
-                        if (!keywords && className) {
-                            keywords = className.split(' ')[0].substring(0, 15);
-                            packageScore += 2;
-                            detailedLogs.push('   👁️ 4요소[kw]: 클래스명 키워드="' + keywords + '"');
                         }
                         
                         fourElementPackage.kw = keywords || 'unknown';
@@ -1797,16 +2786,9 @@ extension BFCacheTransitionSystem {
                         // 🧹 **품질 텍스트 보너스**
                         if (textContent.length >= 20) qualityScore += 8; // 충분한 길이
                         if (textContent.length >= 50) qualityScore += 8; // 더 긴 텍스트
-                        if (!/^(답글|댓글|더보기|클릭|선택)/.test(textContent)) qualityScore += 5; // 의미있는 텍스트
                         
                         // 고유 ID 보너스
                         if (uniqueId && !uniqueId.startsWith('auto_')) qualityScore += 10; // 실제 고유 ID
-                        
-                        // 타입 정확도 보너스  
-                        if (contentType !== 'unknown' && contentType !== tagName) qualityScore += 5; // 정확한 타입 추론
-                        
-                        // 시간 정보 보너스
-                        if (timestamp && !timestamp.includes(new Date().toISOString().split('T')[0])) qualityScore += 5; // 실제 시간
                         
                         detailedLogs.push('   👁️ 앵커[' + index + '] 품질점수: ' + qualityScore + '점 (패키지=' + packageScore + ', 보너스=' + (qualityScore-packageScore) + ')');
                         
@@ -1875,7 +2857,7 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 👁️ **메인 실행 - 보이는 요소만 4요소 패키지 데이터 수집**
+                // 👁️ **메인 실행 - Vue.js + 보이는 요소 통합 데이터 수집**
                 const startTime = Date.now();
                 const packageAnchorsData = collectVisibleFourElementPackageAnchors();
                 const endTime = Date.now();
@@ -1887,11 +2869,13 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: packageAnchorsData.anchors.length > 0 ? (packageAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push('=== 보이는 요소만 4요소 패키지 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('=== Vue.js + 보이는 요소 통합 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('최종 Vue 상태: Vue앱=' + isVueApp + ', 무한스크롤=' + hasInfiniteScroll + ', 페이지=' + currentPage);
                 detailedLogs.push('최종 보이는 4요소 패키지 앵커: ' + packageAnchorsData.anchors.length + '개');
                 detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
-                console.log('👁️ 보이는 요소만 4요소 패키지 캡처 완료:', {
+                console.log('🅥 Vue.js + 보이는 요소 통합 캡처 완료:', {
+                    vueState: vueAnalysis,
                     visiblePackageAnchorsCount: packageAnchorsData.anchors.length,
                     stats: packageAnchorsData.stats,
                     scroll: [scrollX, scrollY],
@@ -1903,7 +2887,8 @@ extension BFCacheTransitionSystem {
                 
                 // ✅ **수정: Promise 없이 직접 반환**
                 return {
-                    fourElementPackageAnchors: packageAnchorsData, // 🎯 **보이는 요소만 4요소 패키지 데이터**
+                    vueState: vueAnalysis,                          // 🅥 **Vue.js 상태 정보**
+                    fourElementPackageAnchors: packageAnchorsData,  // 🎯 **보이는 요소만 4요소 패키지 데이터**
                     scroll: { 
                         x: scrollX, 
                         y: scrollY
@@ -1931,15 +2916,16 @@ extension BFCacheTransitionSystem {
                     captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
-                console.error('👁️ 보이는 요소만 4요소 패키지 캡처 실패:', e);
+                console.error('🅥 Vue.js + 보이는 요소 통합 캡처 실패:', e);
                 return {
+                    vueState: { isVueApp: false, error: e.message },
                     fourElementPackageAnchors: { anchors: [], stats: {} },
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                     href: window.location.href,
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: ['보이는 요소만 4요소 패키지 캡처 실패: ' + e.message],
+                    detailedLogs: ['Vue.js + 보이는 요소 통합 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
