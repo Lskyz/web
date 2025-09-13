@@ -1204,7 +1204,7 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **새로운: 무한스크롤 전용 앵커 캡처**
+            let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -1304,7 +1304,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **수정: JavaScript 반환 구조 정리**
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
@@ -1431,6 +1431,52 @@ extension BFCacheTransitionSystem {
                     return Math.abs(hash).toString(36);
                 }
                 
+                // 🚀 **수정된: data-v-* 속성 찾기 함수**
+                function findDataVAttribute(element) {
+                    if (!element || !element.attributes) return null;
+                    
+                    for (let i = 0; i < element.attributes.length; i++) {
+                        const attr = element.attributes[i];
+                        if (attr.name.startsWith('data-v-')) {
+                            return attr.name;
+                        }
+                    }
+                    return null;
+                }
+                
+                // 🚀 **수정된: Vue 컴포넌트 요소 수집**
+                function collectVueComponentElements() {
+                    const vueElements = [];
+                    
+                    // 1. 모든 요소를 순회하면서 data-v-* 속성을 가진 요소 찾기
+                    const allElements = document.querySelectorAll('*');
+                    
+                    for (let i = 0; i < allElements.length; i++) {
+                        const element = allElements[i];
+                        const dataVAttr = findDataVAttribute(element);
+                        
+                        if (dataVAttr) {
+                            const visibilityResult = isElementActuallyVisible(element, true);
+                            
+                            if (visibilityResult.visible) {
+                                const elementText = (element.textContent || '').trim();
+                                if (isQualityText(elementText)) {
+                                    vueElements.push({
+                                        element: element,
+                                        dataVAttr: dataVAttr,
+                                        rect: visibilityResult.rect,
+                                        textContent: elementText,
+                                        visibilityResult: visibilityResult
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    
+                    detailedLogs.push('Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
+                    return vueElements;
+                }
+                
                 // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
@@ -1449,53 +1495,20 @@ extension BFCacheTransitionSystem {
                     detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
                     
                     // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
-                    const vueElements = document.querySelectorAll('[data-v-*], [class*="Vue"], [class*="vue-"], .__vue__');
-                    const vueComponentElements = [];
+                    const vueComponentElements = collectVueComponentElements();
+                    anchorStats.totalCandidates += vueComponentElements.length;
+                    anchorStats.actuallyVisible += vueComponentElements.length;
                     
-                    for (let i = 0; i < vueElements.length; i++) {
-                        const element = vueElements[i];
-                        const attributes = element.attributes;
-                        
-                        // data-v-* 속성 찾기
-                        let dataVAttr = null;
-                        for (let j = 0; j < attributes.length; j++) {
-                            const attr = attributes[j];
-                            if (attr.name.startsWith('data-v-')) {
-                                dataVAttr = attr.name;
-                                break;
-                            }
-                        }
-                        
-                        if (dataVAttr) {
-                            const visibilityResult = isElementActuallyVisible(element, true);
-                            anchorStats.visibilityChecked++;
-                            
-                            if (visibilityResult.visible) {
-                                const elementText = (element.textContent || '').trim();
-                                if (isQualityText(elementText)) {
-                                    vueComponentElements.push({
-                                        element: element,
-                                        dataVAttr: dataVAttr,
-                                        rect: visibilityResult.rect,
-                                        textContent: elementText,
-                                        visibilityResult: visibilityResult
-                                    });
-                                    anchorStats.actuallyVisible++;
-                                }
-                            }
-                        }
-                    }
-                    
-                    anchorStats.totalCandidates += vueElements.length;
-                    detailedLogs.push('Vue.js 컴포넌트 후보: ' + vueElements.length + '개, 유효: ' + vueComponentElements.length + '개');
-                    
-                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용)**
+                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
                     const contentSelectors = [
                         'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
                         '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
-                        '.news', '.media', '.content-item', 'div[class*="item"]', 
-                        'div[class*="post"]', 'div[class*="card"]', '[data-testid]', 
-                        '[data-id]', '[data-key]', '[data-item-id]'
+                        '.news', '.media', '.content-item', '[class*="item"]', 
+                        '[class*="post"]', '[class*="card"]', '[data-testid]', 
+                        '[data-id]', '[data-key]', '[data-item-id]',
+                        // 네이버 카페 특화 선택자 추가
+                        '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
+                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
                     ];
                     
                     let contentElements = [];
@@ -1521,12 +1534,12 @@ extension BFCacheTransitionSystem {
                         if (!processedElements.has(element)) {
                             processedElements.add(element);
                             
-                            const visibilityResult = isElementActuallyVisible(element, true);
+                            const visibilityResult = isElementActuallyVisible(element, false); // 🔧 덜 엄격한 가시성 검사
                             anchorStats.visibilityChecked++;
                             
                             if (visibilityResult.visible) {
                                 const elementText = (element.textContent || '').trim();
-                                if (isQualityText(elementText)) {
+                                if (elementText.length > 5) { // 🔧 텍스트 길이 조건 완화
                                     uniqueContentElements.push({
                                         element: element,
                                         rect: visibilityResult.rect,
@@ -1541,7 +1554,7 @@ extension BFCacheTransitionSystem {
                     
                     detailedLogs.push('일반 콘텐츠 후보: ' + contentElements.length + '개, 유효: ' + uniqueContentElements.length + '개');
                     
-                    // 🚀 **3. 뷰포트 중심 기준으로 상위 15개씩 선택**
+                    // 🚀 **3. 뷰포트 중심 기준으로 상위 20개씩 선택 (증가)**
                     const viewportCenterY = scrollY + (viewportHeight / 2);
                     const viewportCenterX = scrollX + (viewportWidth / 2);
                     
@@ -1563,8 +1576,8 @@ extension BFCacheTransitionSystem {
                         return aDistance - bDistance;
                     });
                     
-                    const selectedVueElements = vueComponentElements.slice(0, 15);
-                    const selectedContentElements = uniqueContentElements.slice(0, 15);
+                    const selectedVueElements = vueComponentElements.slice(0, 20); // 🔧 20개로 증가
+                    const selectedContentElements = uniqueContentElements.slice(0, 20); // 🔧 20개로 증가
                     
                     detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
                     
@@ -1598,8 +1611,8 @@ extension BFCacheTransitionSystem {
                                 anchorStats.virtualIndexAnchors++;
                             }
                             
-                            // Structural Path 앵커 (보조)
-                            if (i < 5) { // 상위 5개만
+                            // Structural Path 앵커 (보조) - 상위 10개만
+                            if (i < 10) {
                                 const pathAnchor = createStructuralPathAnchor(selectedContentElements[i], i);
                                 if (pathAnchor) {
                                     anchors.push(pathAnchor);
@@ -1624,7 +1637,7 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🚀 **Vue Component 앵커 생성**
+                // 🚀 **수정된: Vue Component 앵커 생성**
                 function createVueComponentAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
@@ -1644,13 +1657,14 @@ extension BFCacheTransitionSystem {
                             index: index
                         };
                         
-                        // 클래스명에서 컴포넌트 이름 추출
+                        // 클래스명에서 컴포넌트 이름 추출 - 네이버 카페 특화
                         const classList = Array.from(element.classList);
                         for (let i = 0; i < classList.length; i++) {
                             const className = classList[i];
-                            if (className.includes('Article') || className.includes('Comment') || 
-                                className.includes('Item') || className.includes('List') ||
-                                className.includes('Card') || className.includes('Post')) {
+                            if (className.includes('Article') || className.includes('List') || 
+                                className.includes('Item') || className.includes('Comment') ||
+                                className.includes('Card') || className.includes('Post') ||
+                                className.includes('Multi') || className.includes('Link')) {
                                 vueComponent.name = className;
                                 break;
                             }
@@ -1752,7 +1766,7 @@ extension BFCacheTransitionSystem {
                             listIndex: index,
                             pageIndex: Math.floor(index / 10), // 10개씩 페이지 단위
                             offsetInPage: absoluteTop,
-                            estimatedTotal: document.querySelectorAll('li, .item, .list-item').length
+                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length
                         };
                         
                         const qualityScore = 70; // Virtual Index는 70점
