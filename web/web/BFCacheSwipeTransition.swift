@@ -1,10 +1,11 @@
 //
 //  BFCacheSnapshotManager.swift
-//  📸 **순차적 4단계 BFCache 복원 시스템**
+//  📸 **순차적 4단계 BFCache 복원 시스템 + 우선복원 데이터로딩**
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 4요소 패키지 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
+//  🗃️ **NEW**: 상태보존 + 복원위치 우선로드 + 나머지 순차로드
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 
@@ -30,6 +31,9 @@ struct BFCacheSnapshot: Codable {
     // 🔄 **순차 실행 설정**
     let restorationConfig: RestorationConfig
     
+    // 🗃️ **NEW: 우선복원 데이터로딩 설정**
+    let priorityRestorationConfig: PriorityRestorationConfig
+    
     struct RestorationConfig: Codable {
         let enableContentRestore: Bool      // Step 1 활성화
         let enablePercentRestore: Bool      // Step 2 활성화
@@ -51,6 +55,31 @@ struct BFCacheSnapshot: Codable {
             step2RenderDelay: 0.3,
             step3RenderDelay: 0.5,
             step4RenderDelay: 0.3
+        )
+    }
+    
+    // 🗃️ **NEW: 우선복원 설정 (프리로딩 교체)**
+    struct PriorityRestorationConfig: Codable {
+        let enableStatePreservation: Bool       // 상태보존 활성화
+        let enablePriorityRestoration: Bool     // 우선복원 활성화
+        let enableRemainingLoad: Bool           // 나머지 로드 활성화
+        let priorityLoadDelay: Double           // 우선 로드 대기시간 (0.4초)
+        let remainingLoadDelay: Double          // 나머지 로드 대기시간 (0.3초)
+        let stateCheckDelay: Double             // 상태확인 대기시간 (0.2초)
+        let maxRetryCount: Int                  // 최대 재시도 횟수
+        let preservedStateKey: String           // sessionStorage 키
+        let viewportBufferRatio: Double         // 뷰포트 버퍼 비율 (1.5 = 150%)
+        
+        static let `default` = PriorityRestorationConfig(
+            enableStatePreservation: true,
+            enablePriorityRestoration: true,
+            enableRemainingLoad: true,
+            priorityLoadDelay: 0.4,
+            remainingLoadDelay: 0.3,
+            stateCheckDelay: 0.2,
+            maxRetryCount: 3,
+            preservedStateKey: "bfcache_preserved_state",
+            viewportBufferRatio: 1.5
         )
     }
     
@@ -76,6 +105,7 @@ struct BFCacheSnapshot: Codable {
         case captureStatus
         case version
         case restorationConfig
+        case priorityRestorationConfig
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -89,6 +119,7 @@ struct BFCacheSnapshot: Codable {
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
         restorationConfig = try container.decodeIfPresent(RestorationConfig.self, forKey: .restorationConfig) ?? RestorationConfig.default
+        priorityRestorationConfig = try container.decodeIfPresent(PriorityRestorationConfig.self, forKey: .priorityRestorationConfig) ?? PriorityRestorationConfig.default
         
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
@@ -111,6 +142,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
         try container.encode(restorationConfig, forKey: .restorationConfig)
+        try container.encode(priorityRestorationConfig, forKey: .priorityRestorationConfig)
         
         // JSON encode for [String: Any]
         if let js = jsState {
@@ -137,7 +169,8 @@ struct BFCacheSnapshot: Codable {
          webViewSnapshotPath: String? = nil, 
          captureStatus: CaptureStatus = .partial, 
          version: Int = 1,
-         restorationConfig: RestorationConfig = RestorationConfig.default) {
+         restorationConfig: RestorationConfig = RestorationConfig.default,
+         priorityRestorationConfig: PriorityRestorationConfig = PriorityRestorationConfig.default) {
         self.pageRecord = pageRecord
         self.domSnapshot = domSnapshot
         self.scrollPosition = scrollPosition
@@ -161,6 +194,7 @@ struct BFCacheSnapshot: Codable {
             step3RenderDelay: restorationConfig.step3RenderDelay,
             step4RenderDelay: restorationConfig.step4RenderDelay
         )
+        self.priorityRestorationConfig = priorityRestorationConfig
     }
     
     // 이미지 로드 메서드
@@ -171,7 +205,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
+    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템 + 우선복원 데이터로딩**
     
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
@@ -179,15 +213,18 @@ struct BFCacheSnapshot: Codable {
         weak var webView: WKWebView?
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
+        var priorityDataLoaded: Bool = false
+        var remainingDataLoaded: Bool = false
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 + 우선복원 데이터로딩 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
+        TabPersistenceManager.debugMessages.append("🗃️ 우선복원 설정: 우선로드=\(priorityRestorationConfig.priorityLoadDelay)s, 나머지로드=\(priorityRestorationConfig.remainingLoadDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -196,8 +233,153 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // Step 1 시작
-        executeStep1_RestoreContentHeight(context: context)
+        // 🗃️ **NEW: 상태보존 먼저 확인**
+        if priorityRestorationConfig.enableStatePreservation {
+            executeStatePreservationCheck(context: context)
+        } else {
+            // Step 1 시작
+            executeStep1_RestoreContentHeight(context: context)
+        }
+    }
+    
+    // MARK: - 🗃️ **NEW: 상태보존 확인 및 우선복원**
+    private func executeStatePreservationCheck(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🗃️ [상태보존] 저장된 상태 확인 시작")
+        
+        let js = generateStatePreservationCheckScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var hasPreservedState = false
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🗃️ [상태보존] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                hasPreservedState = (resultDict["hasPreservedState"] as? Bool) ?? false
+                
+                if let preservedDataCount = resultDict["preservedDataCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🗃️ [상태보존] 저장된 데이터: \(preservedDataCount)개")
+                }
+                if let scrollData = resultDict["scrollData"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🗃️ [상태보존] 저장된 스크롤: X=\(String(format: "%.1f", scrollData["x"] ?? 0))px, Y=\(String(format: "%.1f", scrollData["y"] ?? 0))px")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(3) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🗃️ [상태보존] 완료: \(hasPreservedState ? "저장된 상태 있음" : "상태 없음")")
+            TabPersistenceManager.debugMessages.append("⏰ [상태보존] 상태확인 대기: \(self.priorityRestorationConfig.stateCheckDelay)초")
+            
+            // 상태확인 대기 후 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.priorityRestorationConfig.stateCheckDelay) {
+                if hasPreservedState && self.priorityRestorationConfig.enablePriorityRestoration {
+                    // 우선복원 실행
+                    self.executePriorityDataRestoration(context: context)
+                } else {
+                    // 일반 복원 실행
+                    self.executeStep1_RestoreContentHeight(context: context)
+                }
+            }
+        }
+    }
+    
+    // MARK: - 🗃️ **NEW: 우선복원 데이터로딩 (복원위치부터)**
+    private func executePriorityDataRestoration(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🎯 [우선복원] 복원위치 기준 우선 데이터로딩 시작")
+        
+        let js = generatePriorityDataRestorationScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var prioritySuccess = false
+            var updatedContext = context
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🎯 [우선복원] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                prioritySuccess = (resultDict["success"] as? Bool) ?? false
+                
+                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🎯 [우선복원] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                }
+                if let priorityArea = resultDict["priorityArea"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🎯 [우선복원] 우선영역: top=\(String(format: "%.1f", priorityArea["top"] ?? 0))px, height=\(String(format: "%.1f", priorityArea["height"] ?? 0))px")
+                }
+                if let loadedCount = resultDict["loadedDataCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🎯 [우선복원] 우선로드 데이터: \(loadedCount)개")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+                
+                if prioritySuccess {
+                    updatedContext.priorityDataLoaded = true
+                    updatedContext.overallSuccess = true
+                    TabPersistenceManager.debugMessages.append("🎯 [우선복원] ✅ 우선데이터 로딩 성공")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🎯 [우선복원] 완료: \(prioritySuccess ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [우선복원] 우선로드 대기: \(self.priorityRestorationConfig.priorityLoadDelay)초")
+            
+            // 우선로드 대기 후 나머지 데이터 로드 시작
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.priorityRestorationConfig.priorityLoadDelay) {
+                if self.priorityRestorationConfig.enableRemainingLoad {
+                    self.executeRemainingDataLoad(context: updatedContext)
+                } else {
+                    // 일반 Step 1 실행
+                    self.executeStep1_RestoreContentHeight(context: updatedContext)
+                }
+            }
+        }
+    }
+    
+    // MARK: - 🗃️ **NEW: 나머지 데이터 순차로드**
+    private func executeRemainingDataLoad(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("📦 [나머지로드] 복원위치 외 영역 순차 데이터로딩 시작")
+        
+        let js = generateRemainingDataLoadScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var remainingSuccess = false
+            var updatedContext = context
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📦 [나머지로드] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                remainingSuccess = (resultDict["success"] as? Bool) ?? false
+                
+                if let totalLoadedCount = resultDict["totalLoadedCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("📦 [나머지로드] 총 로드된 데이터: \(totalLoadedCount)개")
+                }
+                if let remainingAreas = resultDict["remainingAreas"] as? [[String: Double]] {
+                    TabPersistenceManager.debugMessages.append("📦 [나머지로드] 나머지 영역: \(remainingAreas.count)개 구간")
+                }
+                if let loadingProgress = resultDict["loadingProgress"] as? Double {
+                    TabPersistenceManager.debugMessages.append("📦 [나머지로드] 로딩 진행률: \(String(format: "%.1f", loadingProgress))%")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+                
+                if remainingSuccess {
+                    updatedContext.remainingDataLoaded = true
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("📦 [나머지로드] 완료: \(remainingSuccess ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [나머지로드] 나머지로드 대기: \(self.priorityRestorationConfig.remainingLoadDelay)초")
+            
+            // 나머지로드 대기 후 Step 1 실행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.priorityRestorationConfig.remainingLoadDelay) {
+                self.executeStep1_RestoreContentHeight(context: updatedContext)
+            }
+        }
     }
     
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
@@ -426,12 +608,441 @@ struct BFCacheSnapshot: Codable {
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
                 TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("🗃️ 우선복원 데이터: \(context.priorityDataLoaded ? "로드됨" : "로드안됨"), 나머지 데이터: \(context.remainingDataLoaded ? "로드됨" : "로드안됨")")
                 context.completion(finalSuccess)
             }
         }
     }
     
-    // MARK: - JavaScript 생성 메서드들
+    // MARK: - 🗃️ **NEW: JavaScript 생성 메서드들 (상태보존 및 우선복원)**
+    
+    private func generateStatePreservationCheckScript() -> String {
+        let preservedStateKey = priorityRestorationConfig.preservedStateKey
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const preservedStateKey = '\(preservedStateKey)';
+                
+                logs.push('[상태보존] 저장된 상태 확인 시작');
+                
+                // sessionStorage에서 저장된 상태 확인
+                let preservedData = null;
+                let hasPreservedState = false;
+                
+                try {
+                    const storedData = sessionStorage.getItem(preservedStateKey);
+                    if (storedData) {
+                        preservedData = JSON.parse(storedData);
+                        hasPreservedState = true;
+                        logs.push('sessionStorage에서 상태 발견');
+                    } else {
+                        logs.push('sessionStorage에 저장된 상태 없음');
+                    }
+                } catch(e) {
+                    logs.push('sessionStorage 접근 실패: ' + e.message);
+                }
+                
+                // 메모리에서 확인 (window 객체)
+                if (!hasPreservedState && window.bfcachePreservedState) {
+                    preservedData = window.bfcachePreservedState;
+                    hasPreservedState = true;
+                    logs.push('메모리(window)에서 상태 발견');
+                }
+                
+                let preservedDataCount = 0;
+                let scrollData = null;
+                
+                if (hasPreservedState && preservedData) {
+                    if (preservedData.contentData) {
+                        preservedDataCount = Object.keys(preservedData.contentData).length;
+                    }
+                    if (preservedData.scrollPosition) {
+                        scrollData = preservedData.scrollPosition;
+                    }
+                }
+                
+                logs.push('저장된 상태: ' + (hasPreservedState ? '있음' : '없음'));
+                if (hasPreservedState) {
+                    logs.push('데이터 항목: ' + preservedDataCount + '개');
+                }
+                
+                return {
+                    hasPreservedState: hasPreservedState,
+                    preservedDataCount: preservedDataCount,
+                    scrollData: scrollData,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    hasPreservedState: false,
+                    error: e.message,
+                    logs: ['[상태보존] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    private func generatePriorityDataRestorationScript() -> String {
+        let targetX = scrollPosition.x
+        let targetY = scrollPosition.y
+        let bufferRatio = priorityRestorationConfig.viewportBufferRatio
+        let preservedStateKey = priorityRestorationConfig.preservedStateKey
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const targetX = parseFloat('\(targetX)');
+                const targetY = parseFloat('\(targetY)');
+                const bufferRatio = parseFloat('\(bufferRatio)');
+                const preservedStateKey = '\(preservedStateKey)';
+                
+                logs.push('[우선복원] 복원위치 기준 우선 데이터로딩 시작');
+                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('버퍼 비율: ' + (bufferRatio * 100).toFixed(0) + '%');
+                
+                // 현재 뷰포트 정보
+                const viewportHeight = window.innerHeight;
+                const viewportWidth = window.innerWidth;
+                
+                // 우선 복원 영역 계산 (목표 위치 기준)
+                const priorityArea = {
+                    top: targetY - (viewportHeight * (bufferRatio - 1) / 2),
+                    bottom: targetY + viewportHeight + (viewportHeight * (bufferRatio - 1) / 2),
+                    left: targetX - (viewportWidth * (bufferRatio - 1) / 2),
+                    right: targetX + viewportWidth + (viewportWidth * (bufferRatio - 1) / 2),
+                    height: viewportHeight * bufferRatio,
+                    width: viewportWidth * bufferRatio
+                };
+                
+                logs.push('우선영역: top=' + priorityArea.top.toFixed(1) + 'px, height=' + priorityArea.height.toFixed(0) + 'px');
+                
+                // 1. 먼저 목표 위치로 스크롤 복원
+                window.scrollTo(targetX, targetY);
+                document.documentElement.scrollTop = targetY;
+                document.documentElement.scrollLeft = targetX;
+                document.body.scrollTop = targetY;
+                document.body.scrollLeft = targetX;
+                
+                if (document.scrollingElement) {
+                    document.scrollingElement.scrollTop = targetY;
+                    document.scrollingElement.scrollLeft = targetX;
+                }
+                
+                const actualX = window.scrollX || window.pageXOffset || 0;
+                const actualY = window.scrollY || window.pageYOffset || 0;
+                
+                logs.push('스크롤 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                
+                // 2. 저장된 상태에서 우선영역 데이터 복원
+                let preservedData = null;
+                let loadedDataCount = 0;
+                
+                try {
+                    const storedData = sessionStorage.getItem(preservedStateKey);
+                    if (storedData) {
+                        preservedData = JSON.parse(storedData);
+                    }
+                } catch(e) {
+                    // sessionStorage 실패 시 메모리에서 확인
+                    if (window.bfcachePreservedState) {
+                        preservedData = window.bfcachePreservedState;
+                    }
+                }
+                
+                if (preservedData && preservedData.contentData) {
+                    logs.push('저장된 데이터에서 우선영역 복원 시도');
+                    
+                    // 우선영역에 해당하는 요소들 복원
+                    const contentData = preservedData.contentData;
+                    const dataKeys = Object.keys(contentData);
+                    
+                    for (let i = 0; i < dataKeys.length; i++) {
+                        const key = dataKeys[i];
+                        const data = contentData[key];
+                        
+                        if (data.position && data.content) {
+                            const elementY = data.position.y || 0;
+                            
+                            // 우선영역 내 요소인지 확인
+                            if (elementY >= priorityArea.top && elementY <= priorityArea.bottom) {
+                                // 요소 복원 시도
+                                const element = document.querySelector('[data-bfcache-id="' + key + '"]') ||
+                                              document.getElementById(data.id) ||
+                                              document.querySelector(data.selector);
+                                
+                                if (element && data.content) {
+                                    element.innerHTML = data.content;
+                                    loadedDataCount++;
+                                    
+                                    // 이미지 지연 로딩 해제
+                                    const lazyImages = element.querySelectorAll('img[data-src], img[loading="lazy"]');
+                                    for (let j = 0; j < lazyImages.length; j++) {
+                                        const img = lazyImages[j];
+                                        if (img.dataset.src) {
+                                            img.src = img.dataset.src;
+                                            img.removeAttribute('data-src');
+                                        }
+                                        img.removeAttribute('loading');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    logs.push('우선영역 데이터 복원: ' + loadedDataCount + '개 요소');
+                }
+                
+                // 3. 무한스크롤/더보기 등 동적 콘텐츠 로딩 트리거
+                const triggerButtons = document.querySelectorAll(
+                    '.load-more, .show-more, [data-testid*="load"], ' +
+                    'button[class*="more"], button[class*="load"]'
+                );
+                
+                let triggeredCount = 0;
+                for (let i = 0; i < Math.min(3, triggerButtons.length); i++) {
+                    const btn = triggerButtons[i];
+                    const btnRect = btn.getBoundingClientRect();
+                    const btnY = actualY + btnRect.top;
+                    
+                    // 우선영역 내 버튼만 클릭
+                    if (btnY >= priorityArea.top && btnY <= priorityArea.bottom) {
+                        if (btn && typeof btn.click === 'function') {
+                            btn.click();
+                            triggeredCount++;
+                        }
+                    }
+                }
+                
+                if (triggeredCount > 0) {
+                    logs.push('우선영역 더보기 버튼 ' + triggeredCount + '개 클릭');
+                }
+                
+                // 4. 우선영역 스크롤 이벤트 트리거
+                window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                window.dispatchEvent(new Event('resize', { bubbles: true }));
+                
+                const success = actualY >= targetY - 50 && actualY <= targetY + 50;
+                
+                return {
+                    success: success,
+                    restoredPosition: { x: actualX, y: actualY },
+                    priorityArea: {
+                        top: priorityArea.top,
+                        bottom: priorityArea.bottom,
+                        height: priorityArea.height,
+                        width: priorityArea.width
+                    },
+                    loadedDataCount: loadedDataCount,
+                    triggeredButtons: triggeredCount,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[우선복원] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    private func generateRemainingDataLoadScript() -> String {
+        let preservedStateKey = priorityRestorationConfig.preservedStateKey
+        let bufferRatio = priorityRestorationConfig.viewportBufferRatio
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const preservedStateKey = '\(preservedStateKey)';
+                const bufferRatio = parseFloat('\(bufferRatio)');
+                
+                logs.push('[나머지로드] 복원위치 외 영역 순차 데이터로딩 시작');
+                
+                // 현재 위치 및 뷰포트 정보
+                const currentY = window.scrollY || window.pageYOffset || 0;
+                const currentX = window.scrollX || window.pageXOffset || 0;
+                const viewportHeight = window.innerHeight;
+                const viewportWidth = window.innerWidth;
+                const contentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight
+                );
+                
+                // 우선영역 재계산
+                const priorityArea = {
+                    top: currentY - (viewportHeight * (bufferRatio - 1) / 2),
+                    bottom: currentY + viewportHeight + (viewportHeight * (bufferRatio - 1) / 2)
+                };
+                
+                // 나머지 영역 정의 (우선영역 제외)
+                const remainingAreas = [];
+                
+                // 상단 영역
+                if (priorityArea.top > 0) {
+                    remainingAreas.push({
+                        name: 'top',
+                        top: 0,
+                        bottom: priorityArea.top,
+                        priority: 2
+                    });
+                }
+                
+                // 하단 영역
+                if (priorityArea.bottom < contentHeight) {
+                    remainingAreas.push({
+                        name: 'bottom',
+                        top: priorityArea.bottom,
+                        bottom: contentHeight,
+                        priority: 1  // 하단이 더 우선순위 높음
+                    });
+                }
+                
+                logs.push('나머지 영역: ' + remainingAreas.length + '개 구간');
+                
+                // 저장된 데이터 로드
+                let preservedData = null;
+                try {
+                    const storedData = sessionStorage.getItem(preservedStateKey);
+                    if (storedData) {
+                        preservedData = JSON.parse(storedData);
+                    }
+                } catch(e) {
+                    if (window.bfcachePreservedState) {
+                        preservedData = window.bfcachePreservedState;
+                    }
+                }
+                
+                let totalLoadedCount = 0;
+                let loadingProgress = 0;
+                
+                if (preservedData && preservedData.contentData) {
+                    const contentData = preservedData.contentData;
+                    const dataKeys = Object.keys(contentData);
+                    let processedCount = 0;
+                    
+                    // 우선순위 순으로 나머지 영역 처리
+                    remainingAreas.sort((a, b) => a.priority - b.priority);
+                    
+                    for (let areaIndex = 0; areaIndex < remainingAreas.length; areaIndex++) {
+                        const area = remainingAreas[areaIndex];
+                        let areaLoadCount = 0;
+                        
+                        logs.push('나머지 영역 처리: ' + area.name + ' (' + area.top.toFixed(0) + ' ~ ' + area.bottom.toFixed(0) + 'px)');
+                        
+                        for (let i = 0; i < dataKeys.length; i++) {
+                            const key = dataKeys[i];
+                            const data = contentData[key];
+                            
+                            if (data.position && data.content) {
+                                const elementY = data.position.y || 0;
+                                
+                                // 해당 영역 내 요소인지 확인
+                                if (elementY >= area.top && elementY <= area.bottom) {
+                                    const element = document.querySelector('[data-bfcache-id="' + key + '"]') ||
+                                                  document.getElementById(data.id) ||
+                                                  document.querySelector(data.selector);
+                                    
+                                    if (element && data.content) {
+                                        element.innerHTML = data.content;
+                                        areaLoadCount++;
+                                        totalLoadedCount++;
+                                        
+                                        // 이미지 지연 로딩 해제
+                                        const lazyImages = element.querySelectorAll('img[data-src], img[loading="lazy"]');
+                                        for (let j = 0; j < lazyImages.length; j++) {
+                                            const img = lazyImages[j];
+                                            if (img.dataset.src) {
+                                                img.src = img.dataset.src;
+                                                img.removeAttribute('data-src');
+                                            }
+                                            img.removeAttribute('loading');
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            processedCount++;
+                        }
+                        
+                        logs.push('영역 ' + area.name + ' 로드: ' + areaLoadCount + '개 요소');
+                        
+                        // 점진적 로딩을 위한 약간의 대기
+                        if (areaIndex < remainingAreas.length - 1) {
+                            // 다음 영역 처리 전 잠시 대기 (비동기로 처리하지 않음)
+                        }
+                    }
+                    
+                    loadingProgress = dataKeys.length > 0 ? (processedCount / dataKeys.length) * 100 : 100;
+                }
+                
+                // 무한스크롤 등 동적 콘텐츠 로딩 트리거 (나머지 영역)
+                const moreButtons = document.querySelectorAll(
+                    '.load-more, .show-more, [data-testid*="load"], ' +
+                    'button[class*="more"], button[class*="load"]'
+                );
+                
+                let remainingTriggered = 0;
+                for (let i = 0; i < moreButtons.length; i++) {
+                    const btn = moreButtons[i];
+                    const btnRect = btn.getBoundingClientRect();
+                    const btnY = currentY + btnRect.top;
+                    
+                    // 나머지 영역 내 버튼인지 확인
+                    let inRemainingArea = false;
+                    for (let j = 0; j < remainingAreas.length; j++) {
+                        const area = remainingAreas[j];
+                        if (btnY >= area.top && btnY <= area.bottom) {
+                            inRemainingArea = true;
+                            break;
+                        }
+                    }
+                    
+                    if (inRemainingArea && btn && typeof btn.click === 'function') {
+                        btn.click();
+                        remainingTriggered++;
+                    }
+                }
+                
+                if (remainingTriggered > 0) {
+                    logs.push('나머지 영역 더보기 버튼 ' + remainingTriggered + '개 클릭');
+                }
+                
+                const success = totalLoadedCount > 0 || remainingTriggered > 0;
+                
+                return {
+                    success: success,
+                    totalLoadedCount: totalLoadedCount,
+                    remainingAreas: remainingAreas.map(area => ({
+                        name: area.name,
+                        top: area.top,
+                        bottom: area.bottom,
+                        priority: area.priority
+                    })),
+                    loadingProgress: loadingProgress,
+                    triggeredButtons: remainingTriggered,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[나머지로드] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    // MARK: - JavaScript 생성 메서드들 (기존 Step 1-4)
     
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
@@ -908,6 +1519,9 @@ extension BFCacheTransitionSystem {
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
+        // 🗃️ **NEW: 상태보존 데이터 추가 캡처**
+        performStatePreservationCapture(webView: webView, captureResult: captureResult)
+        
         // 🔥 **캡처된 jsState 상세 로깅**
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
@@ -986,6 +1600,168 @@ extension BFCacheTransitionSystem {
         }
         
         TabPersistenceManager.debugMessages.append("✅ 보이는 요소만 직렬 캡처 완료: \(task.pageRecord.title)")
+    }
+    
+    // 🗃️ **NEW: 상태보존 데이터 캡처**
+    private func performStatePreservationCapture(webView: WKWebView, captureResult: (snapshot: BFCacheSnapshot, image: UIImage?)) {
+        TabPersistenceManager.debugMessages.append("🗃️ 상태보존 데이터 캡처 시작")
+        
+        let statePreservationScript = generateStatePreservationCaptureScript()
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(statePreservationScript) { result, error in
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🗃️ 상태보존 캡처 실패: \(error.localizedDescription)")
+                } else if let resultDict = result as? [String: Any] {
+                    if let preservedCount = resultDict["preservedDataCount"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🗃️ 상태보존 캡처 성공: \(preservedCount)개 요소")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(3) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
+                } else {
+                    TabPersistenceManager.debugMessages.append("🗃️ 상태보존 캡처 결과 없음")
+                }
+                semaphore.signal()
+            }
+        }
+        
+        _ = semaphore.wait(timeout: .now() + 1.0)
+        TabPersistenceManager.debugMessages.append("🗃️ 상태보존 데이터 캡처 완료")
+    }
+    
+    private func generateStatePreservationCaptureScript() -> String {
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const preservedStateKey = 'bfcache_preserved_state';
+                
+                logs.push('[상태보존] 현재 페이지 상태 캡처 시작');
+                
+                // 현재 스크롤 위치 저장
+                const currentScrollPosition = {
+                    x: window.scrollX || window.pageXOffset || 0,
+                    y: window.scrollY || window.pageYOffset || 0
+                };
+                
+                // 현재 뷰포트 정보
+                const viewportInfo = {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                };
+                
+                // 콘텐츠 정보
+                const contentInfo = {
+                    width: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth
+                    ),
+                    height: Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight
+                    )
+                };
+                
+                // 페이지의 주요 콘텐츠 요소들 데이터 저장
+                const contentData = {};
+                let preservedCount = 0;
+                
+                // 콘텐츠 요소 선택자들
+                const contentSelectors = [
+                    '.item', '.list-item', '.card', '.post', '.article',
+                    'article', 'li', 'tr',
+                    '[data-id]', '[data-testid]', '[data-key]'
+                ];
+                
+                for (let i = 0; i < contentSelectors.length && preservedCount < 50; i++) {
+                    const selector = contentSelectors[i];
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        for (let j = 0; j < elements.length && preservedCount < 50; j++) {
+                            const element = elements[j];
+                            const rect = element.getBoundingClientRect();
+                            
+                            if (rect.width > 0 && rect.height > 0) {
+                                const elementId = element.id || 
+                                                element.getAttribute('data-id') || 
+                                                element.getAttribute('data-testid') ||
+                                                'elem_' + preservedCount;
+                                
+                                // 중복 방지
+                                if (!contentData[elementId]) {
+                                    contentData[elementId] = {
+                                        id: elementId,
+                                        selector: selector,
+                                        content: element.innerHTML.substring(0, 1000), // 첫 1000자만
+                                        position: {
+                                            x: currentScrollPosition.x + rect.left,
+                                            y: currentScrollPosition.y + rect.top
+                                        },
+                                        size: {
+                                            width: rect.width,
+                                            height: rect.height
+                                        },
+                                        tagName: element.tagName.toLowerCase(),
+                                        className: element.className || ''
+                                    };
+                                    
+                                    // 요소에 식별자 추가 (복원 시 사용)
+                                    element.setAttribute('data-bfcache-id', elementId);
+                                    preservedCount++;
+                                }
+                            }
+                        }
+                    } catch(e) {
+                        // selector 오류는 무시
+                    }
+                }
+                
+                // 상태 데이터 패키지
+                const stateData = {
+                    url: window.location.href,
+                    title: document.title,
+                    timestamp: Date.now(),
+                    scrollPosition: currentScrollPosition,
+                    viewportInfo: viewportInfo,
+                    contentInfo: contentInfo,
+                    contentData: contentData,
+                    preservedCount: preservedCount
+                };
+                
+                // sessionStorage에 저장
+                try {
+                    sessionStorage.setItem(preservedStateKey, JSON.stringify(stateData));
+                    logs.push('sessionStorage에 상태 저장 성공');
+                } catch(e) {
+                    logs.push('sessionStorage 저장 실패: ' + e.message);
+                }
+                
+                // 메모리에도 백업 저장
+                window.bfcachePreservedState = stateData;
+                logs.push('메모리에 상태 백업 저장');
+                
+                logs.push('상태보존 완료: ' + preservedCount + '개 요소');
+                
+                return {
+                    success: true,
+                    preservedDataCount: preservedCount,
+                    scrollPosition: currentScrollPosition,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[상태보존] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
     }
     
     private struct CaptureData {
@@ -1193,6 +1969,19 @@ extension BFCacheTransitionSystem {
             step4RenderDelay: 0.3
         )
         
+        // 🗃️ **NEW: 우선복원 설정 생성**
+        let priorityRestorationConfig = BFCacheSnapshot.PriorityRestorationConfig(
+            enableStatePreservation: true,
+            enablePriorityRestoration: true,
+            enableRemainingLoad: true,
+            priorityLoadDelay: 0.4,
+            remainingLoadDelay: 0.3,
+            stateCheckDelay: 0.2,
+            maxRetryCount: 3,
+            preservedStateKey: "bfcache_preserved_state",
+            viewportBufferRatio: 1.5
+        )
+        
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -1206,7 +1995,8 @@ extension BFCacheTransitionSystem {
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
             version: version,
-            restorationConfig: restorationConfig
+            restorationConfig: restorationConfig,
+            priorityRestorationConfig: priorityRestorationConfig
         )
         
         return (snapshot, visualSnapshot)
