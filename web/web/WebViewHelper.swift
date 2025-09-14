@@ -179,19 +179,18 @@ func makeDesktopModeScript() -> WKUserScript {
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
 }
 
-// MARK: - 🔧 완전히 리팩토링된 이미지 저장 스크립트 (안전성 최우선)
+// MARK: - 🔧 터치 이벤트 제거된 이미지 저장 스크립트 (롱프레스 전용)
 func makeImageSaveScript() -> WKUserScript {
     let scriptSource = #"""
     (function(){
       'use strict';
       
       // 전역 설치 중복 방지
-      if (window.__IMG_SAVE_V2_INSTALLED__) return;
-      window.__IMG_SAVE_V2_INSTALLED__ = true;
+      if (window.__IMG_SAVE_V3_INSTALLED__) return;
+      window.__IMG_SAVE_V3_INSTALLED__ = true;
       
-      // 디바운싱과 쓰로틀링을 위한 상태
+      // 디바운싱을 위한 상태
       let lastSaveTime = 0;
-      let pendingSave = null;
       const MIN_SAVE_INTERVAL = 500; // 최소 500ms 간격
       
       // 안전한 이미지 URL 검증
@@ -264,7 +263,7 @@ func makeImageSaveScript() -> WKUserScript {
         }
       }
       
-      // 컨텍스트 메뉴 이벤트 핸들러 (롱프레스)
+      // 컨텍스트 메뉴 이벤트 핸들러 (롱프레스 전용)
       function handleContextMenu(event) {
         // 이벤트 기본 검증
         if (!event || !event.target) return;
@@ -310,39 +309,7 @@ func makeImageSaveScript() -> WKUserScript {
         }
       }
       
-      // 터치 이벤트 추적 (일반 터치와 롱프레스 구분용)
-      let touchStartTime = 0;
-      let touchTarget = null;
-      
-      function handleTouchStart(event) {
-        try {
-          if (event.touches.length === 1) {
-            touchStartTime = Date.now();
-            touchTarget = event.target;
-          }
-        } catch(e) {
-          // 에러 무시
-        }
-      }
-      
-      function handleTouchEnd(event) {
-        try {
-          const touchDuration = Date.now() - touchStartTime;
-          
-          // 300ms 미만의 터치는 일반 탭으로 간주
-          if (touchDuration < 300) {
-            // 일반 탭이면 아무것도 하지 않음
-            event.stopPropagation();
-          }
-          
-          touchStartTime = 0;
-          touchTarget = null;
-        } catch(e) {
-          // 에러 무시
-        }
-      }
-      
-      // 이벤트 리스너 등록 (캡처 단계에서 처리)
+      // 이벤트 리스너 등록 - 컨텍스트 메뉴(롱프레스)만 처리
       try {
         // 컨텍스트 메뉴 (롱프레스) 이벤트만 처리
         document.addEventListener('contextmenu', handleContextMenu, { 
@@ -350,18 +317,7 @@ func makeImageSaveScript() -> WKUserScript {
           passive: true 
         });
         
-        // 터치 이벤트로 일반 탭 구분 (선택적)
-        document.addEventListener('touchstart', handleTouchStart, { 
-          capture: true, 
-          passive: true 
-        });
-        
-        document.addEventListener('touchend', handleTouchEnd, { 
-          capture: true, 
-          passive: true 
-        });
-        
-        console.log('✅ 이미지 저장 스크립트 V2 초기화 완료 (롱프레스 전용)');
+        console.log('✅ 이미지 저장 스크립트 V3 초기화 완료 (롱프레스 전용, 터치 이벤트 제거)');
       } catch(e) {
         console.error('⚠️ 이벤트 리스너 등록 실패:', e.message);
       }
