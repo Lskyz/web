@@ -10,7 +10,6 @@
 		3322308E2E3B73F100EB7526 /* exportOptions.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3322308C2E3B71DB00EB7526 /* exportOptions.plist */; };
 		332230902E3D85B600EB7526 /* web.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 3322308F2E3D85B600EB7526 /* web.mp3 */; };
 		332230922E3D88F700EB7526 /* avp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332230912E3D88F700EB7526 /* avp.swift */; };
-		334015872E76C16100233EAA /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = 334015862E76C16100233EAA /* VLCKitSPM */; };
 		3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */; };
 		3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241D2E3B6D5500A5963D /* ContentView.swift */; };
 		336424202E3B6D5700A5963D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3364241F2E3B6D5700A5963D /* Assets.xcassets */; };
@@ -71,7 +70,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				334015872E76C16100233EAA /* VLCKitSPM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,9 +156,6 @@
 			dependencies = (
 			);
 			name = web;
-			packageProductDependencies = (
-				334015862E76C16100233EAA /* VLCKitSPM */,
-			);
 			productName = web;
 			productReference = 336424182E3B6D5500A5963D /* web.app */;
 			productType = "com.apple.product-type.application";
@@ -233,9 +228,6 @@
 				Base,
 			);
 			mainGroup = 3364240F2E3B6D5400A5963D;
-			packageReferences = (
-				334015852E76C16100233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */,
-			);
 			productRefGroup = 336424192E3B6D5500A5963D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -622,25 +614,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		334015852E76C16100233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/tylerjonesio/vlckit-spm";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.6.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		334015862E76C16100233EAA /* VLCKitSPM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 334015852E76C16100233EAA /* XCRemoteSwiftPackageReference "vlckit-spm" */;
-			productName = VLCKitSPM;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 336424102E3B6D5400A5963D /* Project object */;
 }
