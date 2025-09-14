@@ -147,7 +147,7 @@ private class PIPControllerDelegate: NSObject, AVPictureInPictureControllerDeleg
     }
 }
 
-// MARK: - 📡 **RTSP 스트림 매니저**
+// MARK: - 📡 **RTSP 스트림 매니저 (완전 개선)**
 class RTSPStreamManager: ObservableObject {
     static let shared = RTSPStreamManager()
     
@@ -273,58 +273,88 @@ class RTSPStreamManager: ObservableObject {
     }
 }
 
-// MARK: - 📡 **RTSP 플레이어 관찰자 (NSObject 기반)**
-private class RTSPPlayerObserver: NSObject {
-    weak var rtspManager: RTSPStreamManager?
-    
-    init(rtspManager: RTSPStreamManager) {
-        self.rtspManager = rtspManager
-        super.init()
-    }
-    
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "status", let playerItem = object as? AVPlayerItem {
-            rtspManager?.handlePlayerItemStatus(playerItem.status)
-        } else if keyPath == "timeControlStatus", let player = object as? AVPlayer {
-            rtspManager?.handlePlayerTimeControlStatus(player.timeControlStatus)
-        }
-    }
-}
-
-// MARK: - 📡 **VLC 미디어 플레이어 매니저 (RTSP 전용)**
+// MARK: - 📡 **VLC 미디어 플레이어 매니저 (완전 개선)**
 class VLCMediaPlayerManager: ObservableObject {
     static let shared = VLCMediaPlayerManager()
     
     @Published var mediaPlayer: VLCMediaPlayer?
     @Published var isPlaying: Bool = false
+    @Published var playerView: UIView?
     
     private init() {
         TabPersistenceManager.debugMessages.append("📡 VLC 미디어 플레이어 매니저 초기화")
     }
     
+    // 🚨 **핵심 수정**: 올바른 VLC 플레이어 설정
     func setupPlayer(for url: URL) {
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 설정 시작: \(url.absoluteString)")
+        
         // 기존 플레이어 정리
         cleanupPlayer()
         
-        // 새 플레이어 생성
+        // 🎯 **핵심**: 새 UIView 생성 (VLC 렌더링용)
+        let videoView = UIView()
+        videoView.backgroundColor = .black
+        playerView = videoView
+        
+        // 🎯 **핵심**: VLC 플레이어 생성 및 델리게이트 우선 설정
         mediaPlayer = VLCMediaPlayer()
         
-        if let player = mediaPlayer {
-            // VLC 미디어 생성 및 설정
-            let media = VLCMedia(url: url)
-            player.media = media
-            
-            // 델리게이트 설정
-            player.delegate = VLCPlayerDelegate.shared
-            
-            TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 설정 완료: \(url.absoluteString)")
-        } else {
+        guard let player = mediaPlayer else {
             TabPersistenceManager.debugMessages.append("❌ VLC 플레이어 생성 실패")
+            return
         }
+        
+        // 🚨 **가장 중요**: 델리게이트를 drawable보다 먼저 설정
+        player.delegate = VLCPlayerDelegate.shared
+        
+        // 🚨 **핵심**: drawable을 새로 생성한 UIView로 설정
+        player.drawable = videoView
+        
+        // 🎯 **RTSP 최적화 미디어 생성**
+        let media = VLCMedia(url: url)
+        
+        // 📡 **RTSP 스트림 최적화 옵션 추가**
+        let rtspOptions: [String: Any] = [
+            // 네트워크 캐싱 (밀리초)
+            "--network-caching": 1000,
+            
+            // RTSP TCP 사용 (UDP 대신)
+            "--rtsp-tcp": true,
+            
+            // 코덱 설정
+            "--codec": "avcodec",
+            
+            // 하드웨어 가속 비활성화 (안정성)
+            "--avcodec-hw": "none",
+            
+            // 버퍼 크기 설정
+            "--rtsp-frame-buffer-size": 500000,
+            
+            // 재연결 시도
+            "--rtsp-timeout": 30,
+            
+            // 로그 레벨 (디버그용)
+            "--verbose": 2,
+            
+            // iOS 특화 옵션
+            "--vout": "ios_eagl",
+            "--aout": "audiounit_ios"
+        ]
+        
+        media.addOptions(rtspOptions)
+        player.media = media
+        
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 설정 완료: 델리게이트 → drawable → 미디어 순서")
     }
     
     func play() {
-        mediaPlayer?.play()
+        guard let player = mediaPlayer else {
+            TabPersistenceManager.debugMessages.append("❌ VLC 플레이어가 없어서 재생 불가")
+            return
+        }
+        
+        player.play()
         isPlaying = true
         TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 재생 시작")
     }
@@ -345,34 +375,57 @@ class VLCMediaPlayerManager: ObservableObject {
         if let player = mediaPlayer {
             player.stop()
             player.delegate = nil
+            player.drawable = nil
             mediaPlayer = nil
+            playerView = nil
             isPlaying = false
             TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 정리 완료")
         }
     }
     
-    func setDrawable(_ drawable: Any?) {
-        mediaPlayer?.drawable = drawable
-    }
+    // 사용하지 않는 setDrawable 메서드 제거
+    // func setDrawable(_ drawable: Any?) { ... } // 제거됨
 }
 
-// MARK: - 📡 **VLC 플레이어 델리게이트**
+// MARK: - 📡 **VLC 플레이어 델리게이트 (완전 개선)**
 private class VLCPlayerDelegate: NSObject, VLCMediaPlayerDelegate {
     static let shared = VLCPlayerDelegate()
     
     private override init() {
         super.init()
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 델리게이트 초기화")
     }
     
+    // 🚨 **핵심**: 플레이어 상태 변경 감지
     func mediaPlayerStateChanged(_ aNotification: Notification) {
-        guard let player = aNotification.object as? VLCMediaPlayer else { return }
+        guard let player = aNotification.object as? VLCMediaPlayer else { 
+            TabPersistenceManager.debugMessages.append("⚠️ VLC 델리게이트: 플레이어 객체 없음")
+            return 
+        }
         
         let state = player.state
+        TabPersistenceManager.debugMessages.append("📡 VLC 상태 변경: \(state.rawValue)")
+        
+        // RTSP 매니저에 상태 전달
         RTSPStreamManager.shared.handleVLCPlayerState(state)
         
         // 재생 상태 업데이트
         DispatchQueue.main.async {
             VLCMediaPlayerManager.shared.isPlaying = (state == .playing)
+        }
+    }
+    
+    // 📡 **추가**: 플레이어 시간 변경 감지
+    func mediaPlayerTimeChanged(_ aNotification: Notification) {
+        // 필요시 구현
+    }
+    
+    // 📡 **추가**: 미디어 끝남 감지
+    func mediaPlayerReachedEnd(_ aNotification: Notification) {
+        TabPersistenceManager.debugMessages.append("📡 VLC 미디어 재생 완료")
+        DispatchQueue.main.async {
+            VLCMediaPlayerManager.shared.isPlaying = false
+            RTSPStreamManager.shared.connectionState = .disconnected
         }
     }
 }
@@ -402,6 +455,7 @@ struct AVPlayerView: View {
         ZStack {
             // 플레이어 컨테이너 - RTSP인지에 따라 VLC 또는 AVPlayer 사용
             if isRTSPStream {
+                // 📡 **VLC 플레이어 사용 (RTSP)**
                 VLCPlayerView(url: url)
                     .onAppear {
                         setupRTSPPlayer()
@@ -409,18 +463,21 @@ struct AVPlayerView: View {
                     .onDisappear {
                         cleanupRTSPPlayer()
                     }
-            } else if let player = player {
-                AVPlayerControllerView(player: player)
-                    .onAppear {
-                        setupAVPlayer()
-                        
-                        // 🎬 **핵심**: AVPlayerViewController 매니저에 PIP 설정
-                        AVPlayerViewControllerManager.shared.setupPIPController(for: player)
-                        
-                        // 자동 재생 시작
-                        player.play()
-                        TabPersistenceManager.debugMessages.append("🎬 비디오 재생 시작: \(url)")
-                    }
+            } else {
+                // 🎬 **AVPlayer 사용 (일반 비디오)**
+                if let player = player {
+                    AVPlayerControllerView(player: player)
+                        .onAppear {
+                            setupAVPlayer()
+                            
+                            // 🎬 **핵심**: AVPlayerViewController 매니저에 PIP 설정
+                            AVPlayerViewControllerManager.shared.setupPIPController(for: player)
+                            
+                            // 자동 재생 시작
+                            player.play()
+                            TabPersistenceManager.debugMessages.append("🎬 비디오 재생 시작: \(url)")
+                        }
+                }
             }
 
             // MARK: - PIP 토글 버튼 + RTSP 상태 표시
@@ -607,11 +664,18 @@ struct AVPlayerView: View {
         }
     }
     
-    // MARK: - 📡 **RTSP 플레이어 설정 (VLC 사용)**
+    // MARK: - 📡 **RTSP 플레이어 설정 (VLC 사용) - 🚨 완전 수정**
     private func setupRTSPPlayer() {
+        TabPersistenceManager.debugMessages.append("📡 RTSP VLC 플레이어 설정 시작: \(url)")
+        
+        // VLC 매니저를 통해 플레이어 설정
         vlcManager.setupPlayer(for: url)
         
-        TabPersistenceManager.debugMessages.append("📡 RTSP VLC 플레이어 설정 완료: \(url)")
+        // 약간의 지연 후 재생 시작
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            vlcManager.play()
+            TabPersistenceManager.debugMessages.append("📡 RTSP VLC 플레이어 재생 시작")
+        }
     }
     
     // MARK: - 📡 **RTSP 플레이어 정리**
@@ -696,29 +760,46 @@ struct AVPlayerView: View {
     }
 }
 
-// MARK: - 📡 **VLC 플레이어 뷰 (RTSP 전용)**
+// MARK: - 📡 **VLC 플레이어 뷰 (RTSP 전용) - 🚨 완전 수정**
 struct VLCPlayerView: UIViewRepresentable {
     let url: URL
     
     func makeUIView(context: Context) -> UIView {
-        let containerView = UIView()
-        containerView.backgroundColor = .black
+        TabPersistenceManager.debugMessages.append("📡 VLCPlayerView makeUIView 시작")
         
-        // VLC 플레이어 설정
-        let vlcManager = VLCMediaPlayerManager.shared
-        vlcManager.setupPlayer(for: url)
-        vlcManager.setDrawable(containerView)
-        
-        // 자동 재생 시작
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            vlcManager.play()
+        // VLC 매니저에서 playerView 가져오기
+        if let playerView = VLCMediaPlayerManager.shared.playerView {
+            TabPersistenceManager.debugMessages.append("📡 VLC PlayerView 반환: \(playerView)")
+            return playerView
+        } else {
+            TabPersistenceManager.debugMessages.append("⚠️ VLC PlayerView 없음, 빈 뷰 반환")
+            let emptyView = UIView()
+            emptyView.backgroundColor = .black
+            return emptyView
         }
-        
-        return containerView
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
+        TabPersistenceManager.debugMessages.append("📡 VLCPlayerView updateUIView 호출")
         // 필요한 경우 업데이트 로직 추가
+    }
+}
+
+// MARK: - 📡 **RTSP 플레이어 관찰자 (NSObject 기반)**
+private class RTSPPlayerObserver: NSObject {
+    weak var rtspManager: RTSPStreamManager?
+    
+    init(rtspManager: RTSPStreamManager) {
+        self.rtspManager = rtspManager
+        super.init()
+    }
+    
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == "status", let playerItem = object as? AVPlayerItem {
+            rtspManager?.handlePlayerItemStatus(playerItem.status)
+        } else if keyPath == "timeControlStatus", let player = object as? AVPlayer {
+            rtspManager?.handlePlayerTimeControlStatus(player.timeControlStatus)
+        }
     }
 }
 
