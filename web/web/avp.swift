@@ -266,8 +266,13 @@ class RTSPStreamManager: ObservableObject {
             case .opening:
                 self.connectionState = .connecting
                 TabPersistenceManager.debugMessages.append("📡 VLC RTSP 연결 중")
-            default:
-                break
+            case .esAdded:
+                // Elementary stream added - 일반적으로 연결 과정의 일부
+                TabPersistenceManager.debugMessages.append("📡 VLC Elementary Stream 추가됨")
+            case .paused:
+                TabPersistenceManager.debugMessages.append("📡 VLC RTSP 일시정지")
+            @unknown default:
+                TabPersistenceManager.debugMessages.append("📡 VLC 알 수 없는 상태: \(state.rawValue)")
             }
         }
     }
@@ -329,19 +334,33 @@ class VLCMediaPlayerManager: ObservableObject {
         // 🎯 **RTSP 최적화 미디어 생성**
         let media = VLCMedia(url: url)
         
-        // 📡 **RTSP 스트림 최적화 옵션 - iOS 최적화**
-        media.addOptions([
-            "--network-caching=300",        // 🔥 캐싱 시간 단축 (300ms)
-            "--rtsp-tcp",                   // TCP 강제 사용
-            "--codec=avcodec",
-            "--avcodec-hw=any",             // 🔥 하드웨어 가속 허용
-            "--rtsp-frame-buffer-size=500000",
-            "--rtsp-timeout=10",            // 🔥 타임아웃 단축
-            "--verbose=0",                  // 🔥 로그 레벨 줄임
-            "--vout=ios_opengles",         // 🔥 iOS OpenGL 출력
-            "--aout=audiounit_ios",
-            "--live-caching=300"           // 🔥 라이브 스트림 캐싱
-        ])
+        // 📡 **RTSP 스트림 최적화 옵션 - iOS 최적화 (Dictionary 형태로 수정)**
+        let options: [String: Any] = [
+            "network-caching": 300,        // 🔥 캐싱 시간 단축 (300ms)
+            "rtsp-tcp": true,              // TCP 강제 사용
+            "codec": "avcodec",
+            "avcodec-hw": "any",           // 🔥 하드웨어 가속 허용
+            "rtsp-frame-buffer-size": 500000,
+            "rtsp-timeout": 10,            // 🔥 타임아웃 단축
+            "verbose": 0,                  // 🔥 로그 레벨 줄임
+            "vout": "ios_opengles",        // 🔥 iOS OpenGL 출력
+            "aout": "audiounit_ios",
+            "live-caching": 300            // 🔥 라이브 스트림 캐싱
+        ]
+        
+        // VLCMedia에 옵션을 설정하는 방법 수정
+        // VLC iOS에서는 직접 옵션 설정 방식이 다를 수 있으므로, 안전한 방법 사용
+        for (key, value) in options {
+            if let stringValue = value as? String {
+                media.addOption("--\(key)=\(stringValue)")
+            } else if let boolValue = value as? Bool {
+                if boolValue {
+                    media.addOption("--\(key)")
+                }
+            } else {
+                media.addOption("--\(key)=\(value)")
+            }
+        }
         
         player.media = media
         
@@ -425,7 +444,7 @@ private class VLCPlayerDelegate: NSObject, VLCMediaPlayerDelegate {
         }
     }
     
-    // 📡 **상태 설명 헬퍼**
+    // 📡 **상태 설명 헬퍼 - 모든 케이스 포함**
     private func stateDescription(_ state: VLCMediaPlayerState) -> String {
         switch state {
         case .stopped: return "정지"
@@ -435,6 +454,7 @@ private class VLCPlayerDelegate: NSObject, VLCMediaPlayerDelegate {
         case .error: return "오류"
         case .playing: return "재생"
         case .paused: return "일시정지"
+        case .esAdded: return "Elementary Stream 추가됨"
         @unknown default: return "알 수 없음"
         }
     }
