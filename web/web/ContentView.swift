@@ -885,7 +885,7 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("📡 RTSP 스트림 재생 시작: \(rtspURL.absoluteString)")
         } else {
             // 새 탭에서 RTSP 재생
-            let newTab = WebTab()
+            var newTab = WebTab()
             newTab.playerURL = rtspURL
             newTab.showAVPlayer = true
             tabs.append(newTab)
