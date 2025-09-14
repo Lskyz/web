@@ -847,17 +847,18 @@ struct ContentView: View {
         if !showAddressBar { withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true } }
     }
     
-    // MARK: - 📡 **RTSP 및 URL 처리**
+    // MARK: - 📡 **RTSP 및 URL 처리 - 🚨 핵심 수정!**
     
     /// URL 제출 처리 (RTSP 지원 포함)
     private func handleURLSubmission(_ url: URL) {
-        // 📡 **RTSP URL 감지**
+        // 📡 **RTSP URL 감지 및 VLC 플레이어 실행**
         if url.scheme?.lowercased() == "rtsp" {
             handleRTSPURL(url)
+            TabPersistenceManager.debugMessages.append("🎬 RTSP URL 감지, VLC 플레이어로 전환: \(url.absoluteString)")
         } else {
             // 일반 웹 URL 처리
             currentState.currentURL = url
-            TabPersistenceManager.debugMessages.append("웹 URL 이동: \(url)")
+            TabPersistenceManager.debugMessages.append("🌐 웹 URL 이동: \(url.absoluteString)")
         }
         
         // UI 상태 정리
@@ -872,19 +873,21 @@ struct ContentView: View {
         }
     }
     
-    /// RTSP URL 처리
+    /// 🚨 **핵심 수정: RTSP URL을 VLC 플레이어로 직접 연결**
     private func handleRTSPURL(_ rtspURL: URL) {
+        TabPersistenceManager.debugMessages.append("📡 RTSP URL 처리 시작: \(rtspURL.absoluteString)")
+        
         if tabs.indices.contains(selectedTabIndex) {
-            // 현재 탭에서 AVPlayer로 RTSP 재생
+            // 🎬 **핵심**: 현재 탭에서 VLC로 RTSP 재생
             tabs[selectedTabIndex].playerURL = rtspURL
             tabs[selectedTabIndex].showAVPlayer = true
             
             // PIP 관리자에 URL 설정
             pipManager.pipPlayerURL = rtspURL
             
-            TabPersistenceManager.debugMessages.append("📡 RTSP 스트림 재생 시작: \(rtspURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("🎬 현재 탭에서 RTSP → VLC 재생 시작: \(rtspURL.absoluteString)")
         } else {
-            // 새 탭에서 RTSP 재생
+            // 🎬 **새 탭에서 RTSP 재생**
             var newTab = WebTab()
             newTab.playerURL = rtspURL
             newTab.showAVPlayer = true
@@ -895,8 +898,11 @@ struct ContentView: View {
             pipManager.pipPlayerURL = rtspURL
             
             TabPersistenceManager.saveTabs(tabs)
-            TabPersistenceManager.debugMessages.append("📡 새 탭에서 RTSP 스트림 재생: \(rtspURL.absoluteString)")
+            TabPersistenceManager.debugMessages.append("🎬 새 탭에서 RTSP → VLC 재생: \(rtspURL.absoluteString)")
         }
+        
+        // 🎯 **추가**: 현재 URL도 RTSP로 설정 (주소창 동기화)
+        currentState.currentURL = rtspURL
     }
     
     private func handleDashboardNavigation(_ selectedURL: URL) {
