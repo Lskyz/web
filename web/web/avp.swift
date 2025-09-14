@@ -246,11 +246,30 @@ class RTSPStreamManager: ObservableObject {
     }
 }
 
+// MARK: - 📡 **RTSP 플레이어 관찰자 (NSObject 기반)**
+private class RTSPPlayerObserver: NSObject {
+    weak var rtspManager: RTSPStreamManager?
+    
+    init(rtspManager: RTSPStreamManager) {
+        self.rtspManager = rtspManager
+        super.init()
+    }
+    
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == "status", let playerItem = object as? AVPlayerItem {
+            rtspManager?.handlePlayerItemStatus(playerItem.status)
+        } else if keyPath == "timeControlStatus", let player = object as? AVPlayer {
+            rtspManager?.handlePlayerTimeControlStatus(player.timeControlStatus)
+        }
+    }
+}
+
 // MARK: - AVPlayerView: 비디오 재생 UI (PIP 관리자 완전 연동 + RTSP 지원)
 struct AVPlayerView: View {
     let url: URL // 재생할 비디오 URL
     @State private var showPIPControls = true // PIP 버튼 표시 여부
     @State private var player: AVPlayer?
+    @State private var rtspObserver: RTSPPlayerObserver? // KVO 관찰자
     
     // 🎬 **PIP 관리자 상태 감지**
     @StateObject private var pipManager = PIPManager.shared
@@ -467,6 +486,9 @@ struct AVPlayerView: View {
         // RTSP 스트림을 위한 설정
         avPlayer.automaticallyWaitsToMinimizeStalling = false
         
+        // KVO 관찰자 설정
+        rtspObserver = RTSPPlayerObserver(rtspManager: rtspManager)
+        
         // 플레이어 아이템 상태 관찰
         if let playerItem = avPlayer.currentItem {
             NotificationCenter.default.addObserver(
@@ -480,33 +502,33 @@ struct AVPlayerView: View {
                 avPlayer.play()
             }
             
-            // 플레이어 아이템 상태 관찰
-            playerItem.addObserver(self, forKeyPath: "status", options: [.new, .initial], context: nil)
+            // KVO 관찰자 등록
+            if let observer = rtspObserver {
+                playerItem.addObserver(observer, forKeyPath: "status", options: [.new, .initial], context: nil)
+            }
         }
         
         // 플레이어 시간 제어 상태 관찰
-        avPlayer.addObserver(self, forKeyPath: "timeControlStatus", options: [.new, .initial], context: nil)
+        if let observer = rtspObserver {
+            avPlayer.addObserver(observer, forKeyPath: "timeControlStatus", options: [.new, .initial], context: nil)
+        }
         
         TabPersistenceManager.debugMessages.append("📡 RTSP 플레이어 설정 완료")
-    }
-    
-    // MARK: - KVO 관찰자
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "status", let playerItem = object as? AVPlayerItem {
-            rtspManager.handlePlayerItemStatus(playerItem.status)
-        } else if keyPath == "timeControlStatus", let player = object as? AVPlayer {
-            rtspManager.handlePlayerTimeControlStatus(player.timeControlStatus)
-        }
     }
     
     // MARK: - 플레이어 정리
     private func cleanupPlayer() {
         // KVO 관찰자 제거
-        if let playerItem = player?.currentItem {
-            playerItem.removeObserver(self, forKeyPath: "status")
+        if let observer = rtspObserver,
+           let playerItem = player?.currentItem {
+            playerItem.removeObserver(observer, forKeyPath: "status")
         }
-        player?.removeObserver(self, forKeyPath: "timeControlStatus")
         
+        if let observer = rtspObserver {
+            player?.removeObserver(observer, forKeyPath: "timeControlStatus")
+        }
+        
+        rtspObserver = nil
         player?.pause()
         player = nil
         AVPlayerViewControllerManager.shared.playerViewController = nil
