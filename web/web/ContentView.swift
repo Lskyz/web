@@ -129,7 +129,6 @@ struct ContentView: View {
         .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
         .sheet(isPresented: $showHistorySheet, content: historySheet)
         .sheet(isPresented: $showTabManager, content: tabManagerView)
-        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
             debugView()
                 // 🔽 탭매니저처럼 완전 격리 - 키보드 전파 차단
@@ -200,7 +199,11 @@ struct ContentView: View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
             ZStack {
-                if state.currentURL != nil {
+                // 🎬 **수정: AVPlayer를 인라인으로 표시 (fullScreenCover 대신)**
+                if tabs[selectedTabIndex].showAVPlayer, let playerURL = tabs[selectedTabIndex].playerURL {
+                    AVPlayerView(url: playerURL, showInline: true)
+                        .ignoresSafeArea(.keyboard, edges: .all)
+                } else if state.currentURL != nil {
                     if let preservedWebView = pipContainer.getPreservedWebView(for: tabs[selectedTabIndex].id) {
                         preservedWebView.onAppear {
                             TabPersistenceManager.debugMessages.append("🎬 보존된 PIP 웹뷰 사용: 탭 \(String(tabs[selectedTabIndex].id.uuidString.prefix(8)))")
@@ -768,23 +771,7 @@ struct ContentView: View {
         }
         .ignoresSafeArea(.keyboard, edges: .all)
     }
-    private var avPlayerBinding: Binding<Bool> {
-        Binding(
-            get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
-            set: { newValue in
-                if tabs.indices.contains(selectedTabIndex) {
-                    tabs[selectedTabIndex].showAVPlayer = newValue
-                    if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id { pipManager.stopPIP() }
-                }
-            }
-        )
-    }
-    @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
-            AVPlayerView(url: url)
-                .ignoresSafeArea(.keyboard, edges: .all)
-        }
-    }
+    
     @ViewBuilder private func debugView() -> some View { 
         // 🛡️ 탭매니저와 동일한 완전 격리 패턴
         GeometryReader { geometry in
