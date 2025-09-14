@@ -63,7 +63,7 @@ func handleWebViewRefresh(_ sender: UIRefreshControl, webView: WKWebView?) {
     }
 }
 
-// MARK: - 비디오 스크립트 구현체
+// MARK: - 비디오 스크립트 구현체 (클릭 이벤트 리스너 제거됨)
 func makeVideoScript() -> WKUserScript {
     let scriptSource = """
     function processVideos(doc) {
@@ -72,12 +72,7 @@ func makeVideoScript() -> WKUserScript {
             video.volume = 0;
             video.setAttribute('muted','true');
 
-            if (!video.hasAttribute('nativeAVPlayerListener')) {
-                video.addEventListener('click', () => {
-                    window.webkit.messageHandlers.playVideo.postMessage(video.currentSrc || video.src || '');
-                });
-                video.setAttribute('nativeAVPlayerListener', 'true');
-            }
+            // 클릭 이벤트 리스너 제거됨 - 더 이상 playVideo 메시지를 보내지 않음
 
             if (document.pictureInPictureEnabled &&
                 !video.disablePictureInPicture &&
