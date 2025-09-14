@@ -179,68 +179,115 @@ func makeDesktopModeScript() -> WKUserScript {
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
 }
 
-// MARK: - 🔧 수정된 이미지 저장 스크립트 (롱프레스 전용, 썸네일 클릭 문제 해결)
+// MARK: - 🔧 수정된 이미지 저장 스크립트 (강종 방지 강화)
 func makeImageSaveScript() -> WKUserScript {
     let scriptSource = #"""
     (function(){
-      if (window.__IMAGE_SAVE_HOOK_INSTALLED__) return;
-      window.__IMAGE_SAVE_HOOK_INSTALLED__ = true;
+      try {
+        if (window.__IMAGE_SAVE_HOOK_INSTALLED__) return;
+        window.__IMAGE_SAVE_HOOK_INSTALLED__ = true;
 
-      function isProbablyImage(url) {
-        if (!url) return false;
-        if (url.startsWith('data:image/')) return true;
-        try {
-          const u = new URL(url, window.location.href);
-          const ext = (u.pathname.split('.').pop() || "").toLowerCase();
-          if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return true;
-        } catch(e) {}
-        return false;
-      }
-
-      // 📌 오직 contextmenu(롱프레스)에서만 동작 - 터치 이벤트 완전 제거
-      document.addEventListener('contextmenu', function(e){
-        try {
-          let node = e.target, img = null;
-          
-          // IMG 태그 찾기
-          while (node && node !== document) {
-            if (node.tagName === 'IMG') { 
-              img = node; 
-              break; 
+        function isProbablyImage(url) {
+          try {
+            if (!url || typeof url !== 'string') return false;
+            if (url.startsWith('data:image/')) return true;
+            try {
+              const u = new URL(url, window.location.href);
+              const ext = (u.pathname.split('.').pop() || "").toLowerCase();
+              if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return true;
+            } catch(e) {
+              console.log('🔍 URL 파싱 에러 (무시됨):', e.message);
             }
-            node = node.parentNode;
+            return false;
+          } catch(e) {
+            console.log('🔍 isProbablyImage 에러 (무시됨):', e.message);
+            return false;
           }
-          
-          if (!img) return;
+        }
 
-          // 🔧 핵심 수정: 링크(<a>) 안에 포함된 IMG면 제외 → 카드뷰 썸네일 탭은 네비게이션 유지
-          let parent = img.parentElement;
-          while (parent && parent !== document) {
-            if (parent.tagName === 'A') {
-              // 링크 안의 이미지는 이미지 저장 기능 비활성화
-              console.log('🔗 링크 안의 이미지 감지 - 이미지 저장 기능 비활성화');
+        // 📌 오직 contextmenu(롱프레스)에서만 동작 - 모든 단계 안전 처리
+        document.addEventListener('contextmenu', function(e){
+          try {
+            if (!e || !e.target) {
+              console.log('🔍 contextmenu 이벤트 또는 타겟 없음 (무시됨)');
               return;
             }
-            parent = parent.parentElement;
+
+            let node = e.target, img = null;
+            let safetyCount = 0; // 무한루프 방지
+            
+            // IMG 태그 찾기 (안전한 탐색)
+            while (node && node !== document && safetyCount < 20) {
+              try {
+                if (node.tagName === 'IMG') { 
+                  img = node; 
+                  break; 
+                }
+                node = node.parentNode;
+                safetyCount++;
+              } catch(e) {
+                console.log('🔍 DOM 탐색 중 에러 (무시됨):', e.message);
+                break;
+              }
+            }
+            
+            if (!img) return;
+
+            // 🔧 핵심 수정: 링크(<a>) 안에 포함된 IMG면 제외 (안전한 부모 탐색)
+            let parent = img.parentElement;
+            safetyCount = 0; // 리셋
+            while (parent && parent !== document && safetyCount < 20) {
+              try {
+                if (parent.tagName === 'A') {
+                  // 링크 안의 이미지는 이미지 저장 기능 비활성화
+                  console.log('🔗 링크 안의 이미지 감지 - 이미지 저장 기능 비활성화');
+                  return;
+                }
+                parent = parent.parentElement;
+                safetyCount++;
+              } catch(e) {
+                console.log('🔍 부모 탐색 중 에러 (무시됨):', e.message);
+                break;
+              }
+            }
+
+            // 이미지 src 추출 (안전한 방법)
+            let src = null;
+            try {
+              src = img.currentSrc || img.src;
+            } catch(e) {
+              console.log('🔍 이미지 src 추출 에러 (무시됨):', e.message);
+              return;
+            }
+
+            if (!isProbablyImage(src)) return;
+
+            // 메시지 핸들러 호출 (안전한 방법)
+            try {
+              if (window.webkit && 
+                  window.webkit.messageHandlers && 
+                  window.webkit.messageHandlers.saveImage &&
+                  typeof window.webkit.messageHandlers.saveImage.postMessage === 'function') {
+                window.webkit.messageHandlers.saveImage.postMessage({ 
+                  url: src, 
+                  gesture: 'contextmenu' 
+                });
+                console.log('📷 이미지 저장 요청:', src);
+              } else {
+                console.log('🔍 saveImage 메시지 핸들러 없음 (무시됨)');
+              }
+            } catch(e) {
+              console.log('🔍 메시지 핸들러 호출 에러 (무시됨):', e.message);
+            }
+          } catch(err) {
+            console.log('🔍 이미지 저장 처리 전체 에러 (무시됨):', err.message);
           }
+        }, { passive: true });
 
-          const src = img.currentSrc || img.src;
-          if (!isProbablyImage(src)) return;
-
-          // 롱프레스만 처리
-          if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.saveImage) {
-            window.webkit.messageHandlers.saveImage.postMessage({ 
-              url: src, 
-              gesture: 'contextmenu' 
-            });
-            console.log('📷 이미지 저장 요청:', src);
-          }
-        } catch(err) {
-          console.log('이미지 저장 처리 오류:', err);
-        }
-      }, { passive: true });
-
-      console.log('✅ 이미지 저장 훅 초기화 완료 (롱프레스 전용)');
+        console.log('✅ 이미지 저장 훅 초기화 완료 (롱프레스 전용, 강종방지)');
+      } catch(globalErr) {
+        console.log('🔍 이미지 저장 스크립트 전체 초기화 에러 (무시됨):', globalErr.message);
+      }
     })();
     """#
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
