@@ -1,6 +1,8 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+// 🎬 **VLC RTSP 지원 추가**
+import VLCKitSPM
 
 // MARK: - SilentAudioPlayer: 무음 오디오 재생으로 오디오 세션 유지
 class SilentAudioPlayer {
@@ -244,6 +246,31 @@ class RTSPStreamManager: ObservableObject {
             }
         }
     }
+    
+    // 📡 **VLC 전용 상태 처리 추가**
+    func handleVLCPlayerState(_ state: VLCMediaPlayerState) {
+        DispatchQueue.main.async {
+            switch state {
+            case .playing:
+                self.connectionState = .connected
+                TabPersistenceManager.debugMessages.append("📡 VLC RTSP 재생 중")
+            case .buffering:
+                self.connectionState = .buffering
+                TabPersistenceManager.debugMessages.append("📡 VLC RTSP 버퍼링")
+            case .error:
+                self.connectionState = .failed
+                TabPersistenceManager.debugMessages.append("❌ VLC RTSP 오류")
+            case .stopped, .ended:
+                self.connectionState = .disconnected
+                TabPersistenceManager.debugMessages.append("📡 VLC RTSP 중지됨")
+            case .opening:
+                self.connectionState = .connecting
+                TabPersistenceManager.debugMessages.append("📡 VLC RTSP 연결 중")
+            default:
+                break
+            }
+        }
+    }
 }
 
 // MARK: - 📡 **RTSP 플레이어 관찰자 (NSObject 기반)**
@@ -264,7 +291,93 @@ private class RTSPPlayerObserver: NSObject {
     }
 }
 
-// MARK: - AVPlayerView: 비디오 재생 UI (PIP 관리자 완전 연동 + RTSP 지원)
+// MARK: - 📡 **VLC 미디어 플레이어 매니저 (RTSP 전용)**
+class VLCMediaPlayerManager: ObservableObject {
+    static let shared = VLCMediaPlayerManager()
+    
+    @Published var mediaPlayer: VLCMediaPlayer?
+    @Published var isPlaying: Bool = false
+    
+    private init() {
+        TabPersistenceManager.debugMessages.append("📡 VLC 미디어 플레이어 매니저 초기화")
+    }
+    
+    func setupPlayer(for url: URL) {
+        // 기존 플레이어 정리
+        cleanupPlayer()
+        
+        // 새 플레이어 생성
+        mediaPlayer = VLCMediaPlayer()
+        
+        if let player = mediaPlayer {
+            // VLC 미디어 생성 및 설정
+            let media = VLCMedia(url: url)
+            player.media = media
+            
+            // 델리게이트 설정
+            player.delegate = VLCPlayerDelegate.shared
+            
+            TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 설정 완료: \(url.absoluteString)")
+        } else {
+            TabPersistenceManager.debugMessages.append("❌ VLC 플레이어 생성 실패")
+        }
+    }
+    
+    func play() {
+        mediaPlayer?.play()
+        isPlaying = true
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 재생 시작")
+    }
+    
+    func pause() {
+        mediaPlayer?.pause()
+        isPlaying = false
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 일시정지")
+    }
+    
+    func stop() {
+        mediaPlayer?.stop()
+        isPlaying = false
+        TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 정지")
+    }
+    
+    func cleanupPlayer() {
+        if let player = mediaPlayer {
+            player.stop()
+            player.delegate = nil
+            mediaPlayer = nil
+            isPlaying = false
+            TabPersistenceManager.debugMessages.append("📡 VLC 플레이어 정리 완료")
+        }
+    }
+    
+    func setDrawable(_ drawable: Any?) {
+        mediaPlayer?.drawable = drawable
+    }
+}
+
+// MARK: - 📡 **VLC 플레이어 델리게이트**
+private class VLCPlayerDelegate: NSObject, VLCMediaPlayerDelegate {
+    static let shared = VLCPlayerDelegate()
+    
+    private override init() {
+        super.init()
+    }
+    
+    func mediaPlayerStateChanged(_ aNotification: Notification) {
+        guard let player = aNotification.object as? VLCMediaPlayer else { return }
+        
+        let state = player.state
+        RTSPStreamManager.shared.handleVLCPlayerState(state)
+        
+        // 재생 상태 업데이트
+        DispatchQueue.main.async {
+            VLCMediaPlayerManager.shared.isPlaying = (state == .playing)
+        }
+    }
+}
+
+// MARK: - AVPlayerView: 비디오 재생 UI (VLC RTSP 지원 + PIP 관리자 완전 연동)
 struct AVPlayerView: View {
     let url: URL // 재생할 비디오 URL
     @State private var showPIPControls = true // PIP 버튼 표시 여부
@@ -277,6 +390,9 @@ struct AVPlayerView: View {
     // 📡 **RTSP 스트림 관리자**
     @StateObject private var rtspManager = RTSPStreamManager.shared
     
+    // 📡 **VLC 플레이어 관리자**
+    @StateObject private var vlcManager = VLCMediaPlayerManager.shared
+    
     // 📡 **RTSP 스트림 여부 감지**
     private var isRTSPStream: Bool {
         url.scheme?.lowercased() == "rtsp"
@@ -284,11 +400,19 @@ struct AVPlayerView: View {
     
     var body: some View {
         ZStack {
-            // AVPlayer 컨테이너
-            if let player = player {
+            // 플레이어 컨테이너 - RTSP인지에 따라 VLC 또는 AVPlayer 사용
+            if isRTSPStream {
+                VLCPlayerView(url: url)
+                    .onAppear {
+                        setupRTSPPlayer()
+                    }
+                    .onDisappear {
+                        cleanupRTSPPlayer()
+                    }
+            } else if let player = player {
                 AVPlayerControllerView(player: player)
                     .onAppear {
-                        setupPlayer()
+                        setupAVPlayer()
                         
                         // 🎬 **핵심**: AVPlayerViewController 매니저에 PIP 설정
                         AVPlayerViewControllerManager.shared.setupPIPController(for: player)
@@ -309,15 +433,17 @@ struct AVPlayerView: View {
                             rtspStatusView
                         }
                         
-                        // PIP 시작/중지 버튼
-                        Button(action: togglePIP) {
-                            Image(systemName: pipManager.isPIPActive ? "pip.exit" : "pip.enter")
-                                .font(.system(size: 22))
-                                .padding(10)
-                                .background(Color.black.opacity(0.6))
-                                .clipShape(Circle())
+                        // PIP 시작/중지 버튼 (현재는 일반 비디오만 지원)
+                        if !isRTSPStream {
+                            Button(action: togglePIP) {
+                                Image(systemName: pipManager.isPIPActive ? "pip.exit" : "pip.enter")
+                                    .font(.system(size: 22))
+                                    .padding(10)
+                                    .background(Color.black.opacity(0.6))
+                                    .clipShape(Circle())
+                            }
+                            .disabled(!AVPlayerViewControllerManager.shared.isPIPPossible)
                         }
-                        .disabled(!AVPlayerViewControllerManager.shared.isPIPPossible)
                         
                         // PIP 상태 표시
                         if pipManager.isPIPActive {
@@ -355,10 +481,17 @@ struct AVPlayerView: View {
         }
         .onAppear {
             _ = SilentAudioPlayer.shared // 오디오 세션 유지
-            setupPlayer()
             
-            // 🎬 **핵심**: PIP 관련 알림 옵저버 등록
-            setupPIPNotificationObservers()
+            if isRTSPStream {
+                setupRTSPPlayer()
+            } else {
+                setupAVPlayer()
+            }
+            
+            // 🎬 **핵심**: PIP 관련 알림 옵저버 등록 (일반 비디오만)
+            if !isRTSPStream {
+                setupPIPNotificationObservers()
+            }
             
             // 📡 **RTSP 스트림 시작**
             if isRTSPStream {
@@ -368,9 +501,13 @@ struct AVPlayerView: View {
             TabPersistenceManager.debugMessages.append("🎬 AVPlayerView 등장: \(url)")
         }
         .onDisappear {
-            // PIP가 활성 상태가 아니면 플레이어 정리
-            if !pipManager.isPIPActive {
-                cleanupPlayer()
+            if isRTSPStream {
+                cleanupRTSPPlayer()
+            } else {
+                // PIP가 활성 상태가 아니면 플레이어 정리
+                if !pipManager.isPIPActive {
+                    cleanupAVPlayer()
+                }
             }
             
             // 📡 **RTSP 스트림 정리**
@@ -430,6 +567,13 @@ struct AVPlayerView: View {
                             .font(.caption)
                             .fontWeight(.medium)
                             .foregroundColor(.white)
+                        
+                        // VLC 재생 상태 표시
+                        if vlcManager.isPlaying {
+                            Image(systemName: "play.fill")
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                        }
                     }
                     
                     Text(url.absoluteString)
@@ -444,7 +588,7 @@ struct AVPlayerView: View {
                 if rtspManager.connectionState == .failed {
                     Button("재시도") {
                         rtspManager.startRTSPStream(url)
-                        player?.play()
+                        vlcManager.play()
                     }
                     .font(.caption)
                     .padding(.horizontal, 12)
@@ -463,8 +607,21 @@ struct AVPlayerView: View {
         }
     }
     
-    // MARK: - 플레이어 설정
-    private func setupPlayer() {
+    // MARK: - 📡 **RTSP 플레이어 설정 (VLC 사용)**
+    private func setupRTSPPlayer() {
+        vlcManager.setupPlayer(for: url)
+        
+        TabPersistenceManager.debugMessages.append("📡 RTSP VLC 플레이어 설정 완료: \(url)")
+    }
+    
+    // MARK: - 📡 **RTSP 플레이어 정리**
+    private func cleanupRTSPPlayer() {
+        vlcManager.cleanupPlayer()
+        TabPersistenceManager.debugMessages.append("📡 RTSP VLC 플레이어 정리 완료")
+    }
+    
+    // MARK: - AVPlayer 설정 (일반 비디오용)
+    private func setupAVPlayer() {
         let avPlayer = AVPlayer(url: url)
         self.player = avPlayer
         
@@ -473,51 +630,11 @@ struct AVPlayerView: View {
         playerVC.player = avPlayer
         AVPlayerViewControllerManager.shared.playerViewController = playerVC
         
-        // 📡 **RTSP 스트림을 위한 추가 설정**
-        if isRTSPStream {
-            setupRTSPPlayer(avPlayer)
-        }
-        
-        TabPersistenceManager.debugMessages.append("🎬 플레이어 설정 완료: \(url)")
+        TabPersistenceManager.debugMessages.append("🎬 AVPlayer 설정 완료: \(url)")
     }
     
-    // MARK: - 📡 **RTSP 플레이어 설정**
-    private func setupRTSPPlayer(_ avPlayer: AVPlayer) {
-        // RTSP 스트림을 위한 설정
-        avPlayer.automaticallyWaitsToMinimizeStalling = false
-        
-        // KVO 관찰자 설정
-        rtspObserver = RTSPPlayerObserver(rtspManager: rtspManager)
-        
-        // 플레이어 아이템 상태 관찰
-        if let playerItem = avPlayer.currentItem {
-            NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: playerItem,
-                queue: .main
-            ) { _ in
-                // RTSP 스트림은 일반적으로 끝나지 않으므로 재연결 시도
-                TabPersistenceManager.debugMessages.append("📡 RTSP 스트림 종료 감지 - 재연결 시도")
-                avPlayer.seek(to: .zero)
-                avPlayer.play()
-            }
-            
-            // KVO 관찰자 등록
-            if let observer = rtspObserver {
-                playerItem.addObserver(observer, forKeyPath: "status", options: [.new, .initial], context: nil)
-            }
-        }
-        
-        // 플레이어 시간 제어 상태 관찰
-        if let observer = rtspObserver {
-            avPlayer.addObserver(observer, forKeyPath: "timeControlStatus", options: [.new, .initial], context: nil)
-        }
-        
-        TabPersistenceManager.debugMessages.append("📡 RTSP 플레이어 설정 완료")
-    }
-    
-    // MARK: - 플레이어 정리
-    private func cleanupPlayer() {
+    // MARK: - AVPlayer 정리
+    private func cleanupAVPlayer() {
         // KVO 관찰자 제거
         if let observer = rtspObserver,
            let playerItem = player?.currentItem {
@@ -532,7 +649,7 @@ struct AVPlayerView: View {
         player?.pause()
         player = nil
         AVPlayerViewControllerManager.shared.playerViewController = nil
-        TabPersistenceManager.debugMessages.append("🎬 플레이어 정리 완료")
+        TabPersistenceManager.debugMessages.append("🎬 AVPlayer 정리 완료")
     }
     
     // MARK: - 🎬 **PIP 알림 옵저버 설정**
@@ -563,8 +680,10 @@ struct AVPlayerView: View {
         }
     }
 
-    // MARK: - PIP 모드 토글
+    // MARK: - PIP 모드 토글 (일반 비디오만)
     private func togglePIP() {
+        guard !isRTSPStream else { return } // RTSP는 PIP 미지원
+        
         if pipManager.isPIPActive {
             // PIP 중지
             AVPlayerViewControllerManager.shared.stopPIP()
@@ -574,6 +693,32 @@ struct AVPlayerView: View {
             let success = AVPlayerViewControllerManager.shared.startPIP()
             TabPersistenceManager.debugMessages.append("🎬 수동 PIP 시작 \(success ? "성공" : "실패")")
         }
+    }
+}
+
+// MARK: - 📡 **VLC 플레이어 뷰 (RTSP 전용)**
+struct VLCPlayerView: UIViewRepresentable {
+    let url: URL
+    
+    func makeUIView(context: Context) -> UIView {
+        let containerView = UIView()
+        containerView.backgroundColor = .black
+        
+        // VLC 플레이어 설정
+        let vlcManager = VLCMediaPlayerManager.shared
+        vlcManager.setupPlayer(for: url)
+        vlcManager.setDrawable(containerView)
+        
+        // 자동 재생 시작
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            vlcManager.play()
+        }
+        
+        return containerView
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // 필요한 경우 업데이트 로직 추가
     }
 }
 
