@@ -179,115 +179,193 @@ func makeDesktopModeScript() -> WKUserScript {
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
 }
 
-// MARK: - 🔧 수정된 이미지 저장 스크립트 (강종 방지 강화)
+// MARK: - 🔧 완전히 리팩토링된 이미지 저장 스크립트 (안전성 최우선)
 func makeImageSaveScript() -> WKUserScript {
     let scriptSource = #"""
     (function(){
-      try {
-        if (window.__IMAGE_SAVE_HOOK_INSTALLED__) return;
-        window.__IMAGE_SAVE_HOOK_INSTALLED__ = true;
-
-        function isProbablyImage(url) {
+      'use strict';
+      
+      // 전역 설치 중복 방지
+      if (window.__IMG_SAVE_V2_INSTALLED__) return;
+      window.__IMG_SAVE_V2_INSTALLED__ = true;
+      
+      // 디바운싱과 쓰로틀링을 위한 상태
+      let lastSaveTime = 0;
+      let pendingSave = null;
+      const MIN_SAVE_INTERVAL = 500; // 최소 500ms 간격
+      
+      // 안전한 이미지 URL 검증
+      function isValidImageUrl(url) {
+        if (!url || typeof url !== 'string' || url.length === 0) return false;
+        if (url.length > 10000) return false; // 너무 긴 URL 거부
+        
+        // data URL 체크
+        if (url.startsWith('data:image/')) {
+          const parts = url.split(',');
+          if (parts.length !== 2) return false;
+          if (parts[1].length < 10) return false; // 너무 짧은 데이터
+          return true;
+        }
+        
+        // 일반 URL 체크
+        try {
+          const parsedUrl = new URL(url, window.location.href);
+          const ext = parsedUrl.pathname.split('.').pop()?.toLowerCase() || '';
+          const imageExts = ['jpg','jpeg','png','gif','webp','bmp','svg','ico','tiff','tif'];
+          return imageExts.includes(ext) || parsedUrl.pathname.includes('/image');
+        } catch(e) {
+          // URL 파싱 실패는 무시
+          return false;
+        }
+      }
+      
+      // 안전한 부모 노드 탐색
+      function hasAncestorTag(element, tagName, maxDepth = 10) {
+        if (!element || !tagName) return false;
+        let current = element;
+        let depth = 0;
+        
+        while (current && depth < maxDepth) {
           try {
-            if (!url || typeof url !== 'string') return false;
-            if (url.startsWith('data:image/')) return true;
-            try {
-              const u = new URL(url, window.location.href);
-              const ext = (u.pathname.split('.').pop() || "").toLowerCase();
-              if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return true;
-            } catch(e) {
-              console.log('🔍 URL 파싱 에러 (무시됨):', e.message);
-            }
-            return false;
+            if (current.tagName === tagName) return true;
+            current = current.parentElement;
+            depth++;
           } catch(e) {
-            console.log('🔍 isProbablyImage 에러 (무시됨):', e.message);
             return false;
           }
         }
-
-        // 📌 오직 contextmenu(롱프레스)에서만 동작 - 모든 단계 안전 처리
-        document.addEventListener('contextmenu', function(e){
-          try {
-            if (!e || !e.target) {
-              console.log('🔍 contextmenu 이벤트 또는 타겟 없음 (무시됨)');
-              return;
-            }
-
-            let node = e.target, img = null;
-            let safetyCount = 0; // 무한루프 방지
-            
-            // IMG 태그 찾기 (안전한 탐색)
-            while (node && node !== document && safetyCount < 20) {
-              try {
-                if (node.tagName === 'IMG') { 
-                  img = node; 
-                  break; 
-                }
-                node = node.parentNode;
-                safetyCount++;
-              } catch(e) {
-                console.log('🔍 DOM 탐색 중 에러 (무시됨):', e.message);
-                break;
-              }
-            }
-            
-            if (!img) return;
-
-            // 🔧 핵심 수정: 링크(<a>) 안에 포함된 IMG면 제외 (안전한 부모 탐색)
-            let parent = img.parentElement;
-            safetyCount = 0; // 리셋
-            while (parent && parent !== document && safetyCount < 20) {
-              try {
-                if (parent.tagName === 'A') {
-                  // 링크 안의 이미지는 이미지 저장 기능 비활성화
-                  console.log('🔗 링크 안의 이미지 감지 - 이미지 저장 기능 비활성화');
-                  return;
-                }
-                parent = parent.parentElement;
-                safetyCount++;
-              } catch(e) {
-                console.log('🔍 부모 탐색 중 에러 (무시됨):', e.message);
-                break;
-              }
-            }
-
-            // 이미지 src 추출 (안전한 방법)
-            let src = null;
-            try {
-              src = img.currentSrc || img.src;
-            } catch(e) {
-              console.log('🔍 이미지 src 추출 에러 (무시됨):', e.message);
-              return;
-            }
-
-            if (!isProbablyImage(src)) return;
-
-            // 메시지 핸들러 호출 (안전한 방법)
-            try {
-              if (window.webkit && 
-                  window.webkit.messageHandlers && 
-                  window.webkit.messageHandlers.saveImage &&
-                  typeof window.webkit.messageHandlers.saveImage.postMessage === 'function') {
-                window.webkit.messageHandlers.saveImage.postMessage({ 
-                  url: src, 
-                  gesture: 'contextmenu' 
-                });
-                console.log('📷 이미지 저장 요청:', src);
-              } else {
-                console.log('🔍 saveImage 메시지 핸들러 없음 (무시됨)');
-              }
-            } catch(e) {
-              console.log('🔍 메시지 핸들러 호출 에러 (무시됨):', e.message);
-            }
-          } catch(err) {
-            console.log('🔍 이미지 저장 처리 전체 에러 (무시됨):', err.message);
-          }
-        }, { passive: true });
-
-        console.log('✅ 이미지 저장 훅 초기화 완료 (롱프레스 전용, 강종방지)');
-      } catch(globalErr) {
-        console.log('🔍 이미지 저장 스크립트 전체 초기화 에러 (무시됨):', globalErr.message);
+        return false;
       }
+      
+      // 실제 이미지 저장 요청
+      function requestImageSave(url) {
+        const now = Date.now();
+        
+        // 쓰로틀링: 너무 빠른 연속 호출 방지
+        if (now - lastSaveTime < MIN_SAVE_INTERVAL) {
+          console.log('⏳ 이미지 저장 요청 쓰로틀링');
+          return;
+        }
+        
+        lastSaveTime = now;
+        
+        // 메시지 핸들러 안전 호출
+        try {
+          if (window.webkit?.messageHandlers?.saveImage?.postMessage) {
+            window.webkit.messageHandlers.saveImage.postMessage({ 
+              url: url, 
+              gesture: 'longpress',
+              timestamp: now
+            });
+            console.log('📷 이미지 저장 요청 전송:', url.substring(0, 100));
+          }
+        } catch(e) {
+          console.error('⚠️ 이미지 저장 메시지 전송 실패:', e.message);
+        }
+      }
+      
+      // 컨텍스트 메뉴 이벤트 핸들러 (롱프레스)
+      function handleContextMenu(event) {
+        // 이벤트 기본 검증
+        if (!event || !event.target) return;
+        
+        try {
+          const target = event.target;
+          
+          // IMG 태그인지 확인
+          if (target.tagName !== 'IMG') return;
+          
+          // 링크 안의 이미지는 제외 (깔끔한 체크)
+          if (hasAncestorTag(target, 'A', 5)) {
+            console.log('🔗 링크 내부 이미지 - 저장 스킵');
+            return;
+          }
+          
+          // 버튼 안의 이미지는 제외
+          if (hasAncestorTag(target, 'BUTTON', 3)) {
+            console.log('🔘 버튼 내부 이미지 - 저장 스킵');
+            return;
+          }
+          
+          // 이미지 URL 추출
+          const imgUrl = target.currentSrc || target.src || target.getAttribute('data-src');
+          
+          // URL 유효성 검증
+          if (!isValidImageUrl(imgUrl)) {
+            console.log('❌ 유효하지 않은 이미지 URL');
+            return;
+          }
+          
+          // 크기 체크 (1x1 추적 픽셀 등 제외)
+          if (target.naturalWidth <= 1 || target.naturalHeight <= 1) {
+            console.log('🔍 너무 작은 이미지 - 저장 스킵');
+            return;
+          }
+          
+          // 이미지 저장 요청
+          requestImageSave(imgUrl);
+          
+        } catch(err) {
+          console.error('⚠️ 컨텍스트 메뉴 처리 중 오류:', err.message);
+        }
+      }
+      
+      // 터치 이벤트 추적 (일반 터치와 롱프레스 구분용)
+      let touchStartTime = 0;
+      let touchTarget = null;
+      
+      function handleTouchStart(event) {
+        try {
+          if (event.touches.length === 1) {
+            touchStartTime = Date.now();
+            touchTarget = event.target;
+          }
+        } catch(e) {
+          // 에러 무시
+        }
+      }
+      
+      function handleTouchEnd(event) {
+        try {
+          const touchDuration = Date.now() - touchStartTime;
+          
+          // 300ms 미만의 터치는 일반 탭으로 간주
+          if (touchDuration < 300) {
+            // 일반 탭이면 아무것도 하지 않음
+            event.stopPropagation();
+          }
+          
+          touchStartTime = 0;
+          touchTarget = null;
+        } catch(e) {
+          // 에러 무시
+        }
+      }
+      
+      // 이벤트 리스너 등록 (캡처 단계에서 처리)
+      try {
+        // 컨텍스트 메뉴 (롱프레스) 이벤트만 처리
+        document.addEventListener('contextmenu', handleContextMenu, { 
+          capture: true, 
+          passive: true 
+        });
+        
+        // 터치 이벤트로 일반 탭 구분 (선택적)
+        document.addEventListener('touchstart', handleTouchStart, { 
+          capture: true, 
+          passive: true 
+        });
+        
+        document.addEventListener('touchend', handleTouchEnd, { 
+          capture: true, 
+          passive: true 
+        });
+        
+        console.log('✅ 이미지 저장 스크립트 V2 초기화 완료 (롱프레스 전용)');
+      } catch(e) {
+        console.error('⚠️ 이벤트 리스너 등록 실패:', e.message);
+      }
+      
     })();
     """#
     return WKUserScript(source: scriptSource, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
