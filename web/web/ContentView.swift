@@ -500,22 +500,49 @@ struct ContentView: View {
         )
     }
     
+    // 🎯 키보드 상태에 따라 메뉴와 자물쇠 아이콘 숨김/표시하여 주소창 폭 조절
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
-            menuButton
-            siteSecurityIcon
+            // 🎯 메뉴 버튼 - 키보드가 올라오면 숨김
+            if !isTextFieldFocused {
+                menuButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+            
+            // 🎯 사이트 보안 아이콘 - 키보드가 올라오면 숨김
+            if !isTextFieldFocused {
+                siteSecurityIcon
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+            
             urlTextField
+            
             // 🎯 키보드 상태에 따른 동적 버튼 표시
             if isTextFieldFocused {
                 // 키보드가 올라온 상태: 지우기 버튼 (크기 확대)
                 clearButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
             } else {
                 // 키보드가 내려간 상태: 새로고침 버튼
                 refreshButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, barVPadding)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isTextFieldFocused)
     }
     
     // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경 (검은색)
@@ -858,7 +885,6 @@ struct ContentView: View {
 
     // MARK: - 🎬 PIP 상태 변경 핸들러 (ContentView 내부 메서드)
     private func handlePIPStateChange(_ isPIPActive: Bool) {
-        TabPersistenceManager.debugMessages.append("🎬 ContentView PIP 상태 변경: \(isPIPActive ? "활성" : "비활성")")
         if isPIPActive {
             if tabs.indices.contains(selectedTabIndex) {
                 let currentTabID = tabs[selectedTabIndex].id
