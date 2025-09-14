@@ -228,6 +228,9 @@
 				Base,
 			);
 			mainGroup = 3364240F2E3B6D5400A5963D;
+			packageReferences = (
+				334015832E7692B800233EAA /* XCRemoteSwiftPackageReference "VLCKit" */,
+			);
 			productRefGroup = 336424192E3B6D5500A5963D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -614,6 +617,17 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		334015832E7692B800233EAA /* XCRemoteSwiftPackageReference "VLCKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://code.videolan.org/videolan/VLCKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 	};
 	rootObject = 336424102E3B6D5400A5963D /* Project object */;
 }
