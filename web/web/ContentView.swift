@@ -838,6 +838,8 @@ struct ContentView: View {
     
     /// URL 제출 처리 (RTSP 지원 포함)
     private func handleURLSubmission(_ url: URL) {
+        TabPersistenceManager.debugMessages.append("🎯 URL 제출 처리 시작: \(url.absoluteString)")
+        
         // 📡 **RTSP URL 감지 및 VLC 플레이어 실행**
         if url.scheme?.lowercased() == "rtsp" {
             handleRTSPURL(url)
@@ -893,6 +895,8 @@ struct ContentView: View {
     }
     
     private func handleDashboardNavigation(_ selectedURL: URL) {
+        TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션 시작: \(selectedURL.absoluteString)")
+        
         // 📡 **RTSP URL 체크**
         if selectedURL.scheme?.lowercased() == "rtsp" {
             handleRTSPURL(selectedURL)
@@ -967,19 +971,38 @@ struct ContentView: View {
         return (a == 192 && b == 168) || (a == 10) || (a == 172 && (16...31).contains(b)) || (a == 127) || (a == 169 && b == 254)
     }
     
+    // MARK: - 🚨 **핵심 수정: RTSP URL 처리 개선**
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        TabPersistenceManager.debugMessages.append("🔍 URL 파싱 시작: '\(trimmed)'")
         
-        // 📡 **RTSP URL 처리 추가**
-        if trimmed.lowercased().hasPrefix("rtsp://") {
+        // 📡 **1순위: RTSP URL 처리 개선**
+        if trimmed.lowercased().hasPrefix("rtsp://") || trimmed.lowercased().hasPrefix("rtsps://") {
             if let url = URL(string: trimmed) {
-                TabPersistenceManager.debugMessages.append("📡 RTSP URL 감지: \(trimmed)")
+                TabPersistenceManager.debugMessages.append("📡 ✅ RTSP URL 감지 성공: \(trimmed)")
+                return url
+            } else {
+                TabPersistenceManager.debugMessages.append("📡 ❌ RTSP URL 파싱 실패: \(trimmed)")
+                return nil
+            }
+        }
+        
+        // 📡 **2순위: 스킴이 없는 RTSP 패턴 감지**
+        if trimmed.lowercased().contains("rtsp") && !trimmed.hasPrefix("http") {
+            // rtsp:// 가 없으면 자동으로 추가
+            let rtspURL = trimmed.hasPrefix("rtsp") ? trimmed : "rtsp://\(trimmed)"
+            if let url = URL(string: rtspURL) {
+                TabPersistenceManager.debugMessages.append("📡 ✅ RTSP 스킴 자동 추가: \(rtspURL)")
                 return url
             }
         }
         
-        if let url = URL(string: trimmed), url.scheme != nil {
-            if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
+        // 📡 **3순위: 일반 URL 처리 (기존 로직 유지)**
+        if let url = URL(string: trimmed), let scheme = url.scheme {
+            TabPersistenceManager.debugMessages.append("🌐 스킴 감지: \(scheme)")
+            
+            // HTTP를 HTTPS로 자동 전환 (로컬 IP 제외)
+            if scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 comp?.scheme = "https"
                 if let httpsURL = comp?.url {
@@ -989,6 +1012,8 @@ struct ContentView: View {
             }
             return url
         }
+        
+        // 📡 **4순위: 도메인 패턴 감지**
         if trimmed.contains(".") && !trimmed.contains(" ") {
             if isLocalOrPrivateIP(trimmed) {
                 let httpURL = URL(string: "http://\(trimmed)")
@@ -1000,9 +1025,14 @@ struct ContentView: View {
                 return httpsURL
             }
         }
+        
+        // 📡 **5순위: 검색어 처리**
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        return URL(string: "https://www.google.com/search?q=\(encoded)")
+        let searchURL = URL(string: "https://www.google.com/search?q=\(encoded)")
+        TabPersistenceManager.debugMessages.append("🔍 검색어로 처리: \(trimmed)")
+        return searchURL
     }
+    
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
         switch statusCode {
