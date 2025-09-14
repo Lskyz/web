@@ -505,7 +505,14 @@ struct ContentView: View {
             menuButton
             siteSecurityIcon
             urlTextField
-            refreshButton
+            // 🎯 키보드 상태에 따른 동적 버튼 표시
+            if isTextFieldFocused {
+                // 키보드가 올라온 상태: 지우기 버튼 (크기 확대)
+                clearButton
+            } else {
+                // 키보드가 내려간 상태: 새로고침 버튼
+                refreshButton
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, barVPadding)
@@ -582,26 +589,35 @@ struct ContentView: View {
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
             .onSubmit(onTextFieldSubmit)
-            .overlay(textFieldClearButton)
+            // 🎯 overlay 제거 - 별도 버튼으로 분리
     }
-    @ViewBuilder
-    private var textFieldClearButton: some View {
-        HStack {
-            Spacer()
-            if !inputURL.isEmpty && !currentState.isLoading {
-                Button(action: { inputURL = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.trailing, 8)
-            }
+    
+    // 🎯 새로운 크기 확대된 지우기 버튼
+    private var clearButton: some View {
+        Button(action: { 
+            inputURL = "" 
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundColor(.secondary)
         }
+        .frame(width: 32, height: 32)
+        .opacity(!inputURL.isEmpty ? 1.0 : 0.3)
+        .disabled(inputURL.isEmpty)
+        .animation(.easeInOut(duration: 0.15), value: inputURL.isEmpty)
     }
+    
     private var refreshButton: some View {
         Button(action: {
-            if currentState.isLoading { currentState.stopLoading(); TabPersistenceManager.debugMessages.append("로딩 중지") }
-            else { currentState.reload(); TabPersistenceManager.debugMessages.append("페이지 새로고침") }
+            if currentState.isLoading { 
+                currentState.stopLoading()
+                TabPersistenceManager.debugMessages.append("로딩 중지") 
+            } else { 
+                currentState.reload()
+                TabPersistenceManager.debugMessages.append("페이지 새로고침") 
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: currentState.isLoading ? "xmark" : "arrow.clockwise")
                 .font(.system(size: 16))
@@ -609,6 +625,7 @@ struct ContentView: View {
         }
         .frame(width: 24, height: 24)
     }
+    
     private var progressBarView: some View {
         ProgressView(value: max(0.0, min(1.0, currentState.loadingProgress)))
             .progressViewStyle(LinearProgressViewStyle(tint: currentState.currentURL?.scheme == "https" ? .green : .secondary))
@@ -642,8 +659,6 @@ struct ContentView: View {
     // MARK: - 핸들러
     private func onAppearHandler() {
         if let url = currentState.currentURL { inputURL = url.absoluteString; TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)") }
-        TabPersistenceManager.debugMessages.append("페이지 기록 시스템 준비")
-        TabPersistenceManager.debugMessages.append("🎬 ContentView 초기화 - PIP 상태: \(pipManager.isPIPActive ? "활성" : "비활성")")
         siteMenuManager.setCurrentStateModel(currentState)
         siteMenuManager.refreshDownloads()
     }
@@ -657,7 +672,6 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
         }
         TabPersistenceManager.saveTabs(tabs)
-        TabPersistenceManager.debugMessages.append("탭 스냅샷 저장(네비게이션 완료)")
         if !showAddressBar {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
