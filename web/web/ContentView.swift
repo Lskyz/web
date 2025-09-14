@@ -426,11 +426,7 @@ struct ContentView: View {
                             manager: siteMenuManager,
                             onURLSelected: { url in
                                 inputURL = url.absoluteString
-                                currentState.currentURL = url
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                                }
+                                handleURLSubmission(url)
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
@@ -441,11 +437,7 @@ struct ContentView: View {
                             searchText: inputURL,
                             onURLSelected: { url in
                                 inputURL = url.absoluteString
-                                currentState.currentURL = url
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                                }
+                                handleURLSubmission(url)
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
@@ -596,17 +588,19 @@ struct ContentView: View {
         guard let url = currentState.currentURL else { return "globe" }
         if url.scheme == "https" { return "lock.fill" }
         if url.scheme == "http" { return "exclamationmark.triangle.fill" }
+        if url.scheme == "rtsp" { return "antenna.radiowaves.left.and.right" } // 📡 RTSP 아이콘
         return "globe"
     }
     private func getSiteIconColor() -> Color {
         guard let url = currentState.currentURL else { return .secondary }
         if url.scheme == "https" { return .green }
         if url.scheme == "http" { return .orange }
+        if url.scheme == "rtsp" { return .blue } // 📡 RTSP 색상
         return .secondary
     }
     
     private var urlTextField: some View {
-        TextField("URL 또는 검색어", text: $inputURL)
+        TextField("URL 또는 검색어 (RTSP 지원)", text: $inputURL)
             .textFieldStyle(.plain)
             .font(textFont)
             .autocapitalization(.none)
@@ -749,7 +743,7 @@ struct ContentView: View {
                         if let webView = currentState.webView { webView.load(URLRequest(url: nav.url)) }
                     }
                 },
-                onNavigateToURL: { url in currentState.currentURL = url }
+                onNavigateToURL: { url in handleURLSubmission(url) }
             )
         }
         .ignoresSafeArea(.keyboard, edges: .all)
@@ -845,15 +839,73 @@ struct ContentView: View {
     }
     private func onTextFieldSubmit() {
         if let url = fixedURL(from: inputURL) {
-            currentState.currentURL = url
-            TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
+            handleURLSubmission(url)
         }
         isTextFieldFocused = false
     }
     private func onToolbarTap() {
         if !showAddressBar { withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true } }
     }
+    
+    // MARK: - 📡 **RTSP 및 URL 처리**
+    
+    /// URL 제출 처리 (RTSP 지원 포함)
+    private func handleURLSubmission(_ url: URL) {
+        // 📡 **RTSP URL 감지**
+        if url.scheme?.lowercased() == "rtsp" {
+            handleRTSPURL(url)
+        } else {
+            // 일반 웹 URL 처리
+            currentState.currentURL = url
+            TabPersistenceManager.debugMessages.append("웹 URL 이동: \(url)")
+        }
+        
+        // UI 상태 정리
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            isTextFieldFocused = false
+            siteMenuManager.closeSiteMenu()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
+                showAddressBar = false 
+            }
+        }
+    }
+    
+    /// RTSP URL 처리
+    private func handleRTSPURL(_ rtspURL: URL) {
+        if tabs.indices.contains(selectedTabIndex) {
+            // 현재 탭에서 AVPlayer로 RTSP 재생
+            tabs[selectedTabIndex].playerURL = rtspURL
+            tabs[selectedTabIndex].showAVPlayer = true
+            
+            // PIP 관리자에 URL 설정
+            pipManager.pipPlayerURL = rtspURL
+            
+            TabPersistenceManager.debugMessages.append("📡 RTSP 스트림 재생 시작: \(rtspURL.absoluteString)")
+        } else {
+            // 새 탭에서 RTSP 재생
+            let newTab = WebTab()
+            newTab.playerURL = rtspURL
+            newTab.showAVPlayer = true
+            tabs.append(newTab)
+            selectedTabIndex = tabs.count - 1
+            
+            // PIP 관리자에 URL 설정
+            pipManager.pipPlayerURL = rtspURL
+            
+            TabPersistenceManager.saveTabs(tabs)
+            TabPersistenceManager.debugMessages.append("📡 새 탭에서 RTSP 스트림 재생: \(rtspURL.absoluteString)")
+        }
+    }
+    
     private func handleDashboardNavigation(_ selectedURL: URL) {
+        // 📡 **RTSP URL 체크**
+        if selectedURL.scheme?.lowercased() == "rtsp" {
+            handleRTSPURL(selectedURL)
+            return
+        }
+        
         if tabs.indices.contains(selectedTabIndex) {
             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
             tabs[selectedTabIndex].stateModel.loadURLIfReady()
@@ -921,8 +973,18 @@ struct ContentView: View {
         guard (0...255).contains(a) && (0...255).contains(b) && (0...255).contains(c) && (0...255).contains(d) else { return false }
         return (a == 192 && b == 168) || (a == 10) || (a == 172 && (16...31).contains(b)) || (a == 127) || (a == 169 && b == 254)
     }
+    
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 📡 **RTSP URL 처리 추가**
+        if trimmed.lowercased().hasPrefix("rtsp://") {
+            if let url = URL(string: trimmed) {
+                TabPersistenceManager.debugMessages.append("📡 RTSP URL 감지: \(trimmed)")
+                return url
+            }
+        }
+        
         if let url = URL(string: trimmed), url.scheme != nil {
             if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
