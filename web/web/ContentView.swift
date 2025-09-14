@@ -129,6 +129,7 @@ struct ContentView: View {
         .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
         .sheet(isPresented: $showHistorySheet, content: historySheet)
         .sheet(isPresented: $showTabManager, content: tabManagerView)
+        .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
             debugView()
                 // 🔽 탭매니저처럼 완전 격리 - 키보드 전파 차단
@@ -199,11 +200,7 @@ struct ContentView: View {
         if tabs.indices.contains(selectedTabIndex) {
             let state = tabs[selectedTabIndex].stateModel
             ZStack {
-                // 🎬 **수정: AVPlayer를 인라인으로 표시 (fullScreenCover 대신)**
-                if tabs[selectedTabIndex].showAVPlayer, let playerURL = tabs[selectedTabIndex].playerURL {
-                    AVPlayerView(url: playerURL, showInline: true)
-                        .ignoresSafeArea(.keyboard, edges: .all)
-                } else if state.currentURL != nil {
+                if state.currentURL != nil {
                     if let preservedWebView = pipContainer.getPreservedWebView(for: tabs[selectedTabIndex].id) {
                         preservedWebView.onAppear {
                             TabPersistenceManager.debugMessages.append("🎬 보존된 PIP 웹뷰 사용: 탭 \(String(tabs[selectedTabIndex].id.uuidString.prefix(8)))")
@@ -429,7 +426,11 @@ struct ContentView: View {
                             manager: siteMenuManager,
                             onURLSelected: { url in
                                 inputURL = url.absoluteString
-                                handleURLSubmission(url)
+                                currentState.currentURL = url
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
@@ -440,7 +441,11 @@ struct ContentView: View {
                             searchText: inputURL,
                             onURLSelected: { url in
                                 inputURL = url.absoluteString
-                                handleURLSubmission(url)
+                                currentState.currentURL = url
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isTextFieldFocused = false }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
                             },
                             onManageHistory: { siteMenuManager.showHistoryFilterManager = true }
                         )
@@ -591,19 +596,17 @@ struct ContentView: View {
         guard let url = currentState.currentURL else { return "globe" }
         if url.scheme == "https" { return "lock.fill" }
         if url.scheme == "http" { return "exclamationmark.triangle.fill" }
-        if url.scheme == "rtsp" { return "antenna.radiowaves.left.and.right" } // 📡 RTSP 아이콘
         return "globe"
     }
     private func getSiteIconColor() -> Color {
         guard let url = currentState.currentURL else { return .secondary }
         if url.scheme == "https" { return .green }
         if url.scheme == "http" { return .orange }
-        if url.scheme == "rtsp" { return .blue } // 📡 RTSP 색상
         return .secondary
     }
     
     private var urlTextField: some View {
-        TextField("URL 또는 검색어 (RTSP 지원)", text: $inputURL)
+        TextField("URL 또는 검색어", text: $inputURL)
             .textFieldStyle(.plain)
             .font(textFont)
             .autocapitalization(.none)
@@ -746,7 +749,7 @@ struct ContentView: View {
                         if let webView = currentState.webView { webView.load(URLRequest(url: nav.url)) }
                     }
                 },
-                onNavigateToURL: { url in handleURLSubmission(url) }
+                onNavigateToURL: { url in currentState.currentURL = url }
             )
         }
         .ignoresSafeArea(.keyboard, edges: .all)
@@ -771,7 +774,23 @@ struct ContentView: View {
         }
         .ignoresSafeArea(.keyboard, edges: .all)
     }
-    
+    private var avPlayerBinding: Binding<Bool> {
+        Binding(
+            get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
+            set: { newValue in
+                if tabs.indices.contains(selectedTabIndex) {
+                    tabs[selectedTabIndex].showAVPlayer = newValue
+                    if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id { pipManager.stopPIP() }
+                }
+            }
+        )
+    }
+    @ViewBuilder private func avPlayerView() -> some View {
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
+            AVPlayerView(url: url)
+                .ignoresSafeArea(.keyboard, edges: .all)
+        }
+    }
     @ViewBuilder private func debugView() -> some View { 
         // 🛡️ 탭매니저와 동일한 완전 격리 패턴
         GeometryReader { geometry in
@@ -826,83 +845,15 @@ struct ContentView: View {
     }
     private func onTextFieldSubmit() {
         if let url = fixedURL(from: inputURL) {
-            handleURLSubmission(url)
+            currentState.currentURL = url
+            TabPersistenceManager.debugMessages.append("주소창에서 URL 이동: \(url)")
         }
         isTextFieldFocused = false
     }
     private func onToolbarTap() {
         if !showAddressBar { withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true } }
     }
-    
-    // MARK: - 📡 **RTSP 및 URL 처리 - 🚨 핵심 수정!**
-    
-    /// URL 제출 처리 (RTSP 지원 포함)
-    private func handleURLSubmission(_ url: URL) {
-        TabPersistenceManager.debugMessages.append("🎯 URL 제출 처리 시작: \(url.absoluteString)")
-        
-        // 📡 **RTSP URL 감지 및 VLC 플레이어 실행**
-        if url.scheme?.lowercased() == "rtsp" {
-            handleRTSPURL(url)
-            TabPersistenceManager.debugMessages.append("🎬 RTSP URL 감지, VLC 플레이어로 전환: \(url.absoluteString)")
-        } else {
-            // 일반 웹 URL 처리
-            currentState.currentURL = url
-            TabPersistenceManager.debugMessages.append("🌐 웹 URL 이동: \(url.absoluteString)")
-        }
-        
-        // UI 상태 정리
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            isTextFieldFocused = false
-            siteMenuManager.closeSiteMenu()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { 
-                showAddressBar = false 
-            }
-        }
-    }
-    
-    /// 🚨 **핵심 수정: RTSP URL을 VLC 플레이어로 직접 연결**
-    private func handleRTSPURL(_ rtspURL: URL) {
-        TabPersistenceManager.debugMessages.append("📡 RTSP URL 처리 시작: \(rtspURL.absoluteString)")
-        
-        if tabs.indices.contains(selectedTabIndex) {
-            // 🎬 **핵심**: 현재 탭에서 VLC로 RTSP 재생
-            tabs[selectedTabIndex].playerURL = rtspURL
-            tabs[selectedTabIndex].showAVPlayer = true
-            
-            // PIP 관리자에 URL 설정
-            pipManager.pipPlayerURL = rtspURL
-            
-            TabPersistenceManager.debugMessages.append("🎬 현재 탭에서 RTSP → VLC 재생 시작: \(rtspURL.absoluteString)")
-        } else {
-            // 🎬 **새 탭에서 RTSP 재생**
-            var newTab = WebTab()
-            newTab.playerURL = rtspURL
-            newTab.showAVPlayer = true
-            tabs.append(newTab)
-            selectedTabIndex = tabs.count - 1
-            
-            // PIP 관리자에 URL 설정
-            pipManager.pipPlayerURL = rtspURL
-            
-            TabPersistenceManager.saveTabs(tabs)
-            TabPersistenceManager.debugMessages.append("🎬 새 탭에서 RTSP → VLC 재생: \(rtspURL.absoluteString)")
-        }
-        
-        // 🎯 **추가**: 현재 URL도 RTSP로 설정 (주소창 동기화)
-        currentState.currentURL = rtspURL
-    }
-    
     private func handleDashboardNavigation(_ selectedURL: URL) {
-        TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션 시작: \(selectedURL.absoluteString)")
-        
-        // 📡 **RTSP URL 체크**
-        if selectedURL.scheme?.lowercased() == "rtsp" {
-            handleRTSPURL(selectedURL)
-            return
-        }
-        
         if tabs.indices.contains(selectedTabIndex) {
             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
             tabs[selectedTabIndex].stateModel.loadURLIfReady()
@@ -970,39 +921,10 @@ struct ContentView: View {
         guard (0...255).contains(a) && (0...255).contains(b) && (0...255).contains(c) && (0...255).contains(d) else { return false }
         return (a == 192 && b == 168) || (a == 10) || (a == 172 && (16...31).contains(b)) || (a == 127) || (a == 169 && b == 254)
     }
-    
-    // MARK: - 🚨 **핵심 수정: RTSP URL 처리 개선**
     private func fixedURL(from input: String) -> URL? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        TabPersistenceManager.debugMessages.append("🔍 URL 파싱 시작: '\(trimmed)'")
-        
-        // 📡 **1순위: RTSP URL 처리 개선**
-        if trimmed.lowercased().hasPrefix("rtsp://") || trimmed.lowercased().hasPrefix("rtsps://") {
-            if let url = URL(string: trimmed) {
-                TabPersistenceManager.debugMessages.append("📡 ✅ RTSP URL 감지 성공: \(trimmed)")
-                return url
-            } else {
-                TabPersistenceManager.debugMessages.append("📡 ❌ RTSP URL 파싱 실패: \(trimmed)")
-                return nil
-            }
-        }
-        
-        // 📡 **2순위: 스킴이 없는 RTSP 패턴 감지**
-        if trimmed.lowercased().contains("rtsp") && !trimmed.hasPrefix("http") {
-            // rtsp:// 가 없으면 자동으로 추가
-            let rtspURL = trimmed.hasPrefix("rtsp") ? trimmed : "rtsp://\(trimmed)"
-            if let url = URL(string: rtspURL) {
-                TabPersistenceManager.debugMessages.append("📡 ✅ RTSP 스킴 자동 추가: \(rtspURL)")
-                return url
-            }
-        }
-        
-        // 📡 **3순위: 일반 URL 처리 (기존 로직 유지)**
-        if let url = URL(string: trimmed), let scheme = url.scheme {
-            TabPersistenceManager.debugMessages.append("🌐 스킴 감지: \(scheme)")
-            
-            // HTTP를 HTTPS로 자동 전환 (로컬 IP 제외)
-            if scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
+        if let url = URL(string: trimmed), url.scheme != nil {
+            if url.scheme == "http", let host = url.host, !isLocalOrPrivateIP(host) {
                 var comp = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 comp?.scheme = "https"
                 if let httpsURL = comp?.url {
@@ -1012,8 +934,6 @@ struct ContentView: View {
             }
             return url
         }
-        
-        // 📡 **4순위: 도메인 패턴 감지**
         if trimmed.contains(".") && !trimmed.contains(" ") {
             if isLocalOrPrivateIP(trimmed) {
                 let httpURL = URL(string: "http://\(trimmed)")
@@ -1025,14 +945,9 @@ struct ContentView: View {
                 return httpsURL
             }
         }
-        
-        // 📡 **5순위: 검색어 처리**
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let searchURL = URL(string: "https://www.google.com/search?q=\(encoded)")
-        TabPersistenceManager.debugMessages.append("🔍 검색어로 처리: \(trimmed)")
-        return searchURL
+        return URL(string: "https://www.google.com/search?q=\(encoded)")
     }
-    
     private func getErrorMessage(for statusCode: Int, url: String) -> (title: String, message: String) {
         let domain = URL(string: url)?.host ?? "사이트"
         switch statusCode {
