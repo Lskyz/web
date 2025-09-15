@@ -10,6 +10,19 @@
 		3322308E2E3B73F100EB7526 /* exportOptions.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3322308C2E3B71DB00EB7526 /* exportOptions.plist */; };
 		332230902E3D85B600EB7526 /* web.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 3322308F2E3D85B600EB7526 /* web.mp3 */; };
 		332230922E3D88F700EB7526 /* avp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332230912E3D88F700EB7526 /* avp.swift */; };
+		3340158A2E77EBE400233EAA /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = 334015892E77EBE400233EAA /* KSPlayer */; };
+		3340158D2E77ECC200233EAA /* FFmpegKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3340158C2E77ECC200233EAA /* FFmpegKit */; };
+		3340158F2E77ECC200233EAA /* Libavcodec in Frameworks */ = {isa = PBXBuildFile; productRef = 3340158E2E77ECC200233EAA /* Libavcodec */; };
+		334015912E77ECC200233EAA /* Libavfilter in Frameworks */ = {isa = PBXBuildFile; productRef = 334015902E77ECC200233EAA /* Libavfilter */; };
+		334015932E77ECC200233EAA /* Libavformat in Frameworks */ = {isa = PBXBuildFile; productRef = 334015922E77ECC200233EAA /* Libavformat */; };
+		334015952E77ECC200233EAA /* Libavutil in Frameworks */ = {isa = PBXBuildFile; productRef = 334015942E77ECC200233EAA /* Libavutil */; };
+		334015972E77ECC200233EAA /* Libswresample in Frameworks */ = {isa = PBXBuildFile; productRef = 334015962E77ECC200233EAA /* Libswresample */; };
+		334015992E77ECC200233EAA /* Libswscale in Frameworks */ = {isa = PBXBuildFile; productRef = 334015982E77ECC200233EAA /* Libswscale */; };
+		3340159B2E77ECC200233EAA /* libass in Frameworks */ = {isa = PBXBuildFile; productRef = 3340159A2E77ECC200233EAA /* libass */; };
+		3340159D2E77ECC200233EAA /* libmpv in Frameworks */ = {isa = PBXBuildFile; productRef = 3340159C2E77ECC200233EAA /* libmpv */; };
+		3340159F2E77ECC200233EAA /* ffmpeg in Frameworks */ = {isa = PBXBuildFile; productRef = 3340159E2E77ECC200233EAA /* ffmpeg */; };
+		334015A12E77ECC200233EAA /* ffplay in Frameworks */ = {isa = PBXBuildFile; productRef = 334015A02E77ECC200233EAA /* ffplay */; };
+		334015A32E77ECC200233EAA /* ffprobe in Frameworks */ = {isa = PBXBuildFile; productRef = 334015A22E77ECC200233EAA /* ffprobe */; };
 		3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */; };
 		3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241D2E3B6D5500A5963D /* ContentView.swift */; };
 		336424202E3B6D5700A5963D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3364241F2E3B6D5700A5963D /* Assets.xcassets */; };
@@ -70,6 +83,19 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3340159D2E77ECC200233EAA /* libmpv in Frameworks */,
+				3340158D2E77ECC200233EAA /* FFmpegKit in Frameworks */,
+				3340158A2E77EBE400233EAA /* KSPlayer in Frameworks */,
+				3340158F2E77ECC200233EAA /* Libavcodec in Frameworks */,
+				334015A12E77ECC200233EAA /* ffplay in Frameworks */,
+				334015992E77ECC200233EAA /* Libswscale in Frameworks */,
+				334015A32E77ECC200233EAA /* ffprobe in Frameworks */,
+				3340159F2E77ECC200233EAA /* ffmpeg in Frameworks */,
+				334015952E77ECC200233EAA /* Libavutil in Frameworks */,
+				334015972E77ECC200233EAA /* Libswresample in Frameworks */,
+				334015932E77ECC200233EAA /* Libavformat in Frameworks */,
+				3340159B2E77ECC200233EAA /* libass in Frameworks */,
+				334015912E77ECC200233EAA /* Libavfilter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -156,6 +182,21 @@
 			dependencies = (
 			);
 			name = web;
+			packageProductDependencies = (
+				334015892E77EBE400233EAA /* KSPlayer */,
+				3340158C2E77ECC200233EAA /* FFmpegKit */,
+				3340158E2E77ECC200233EAA /* Libavcodec */,
+				334015902E77ECC200233EAA /* Libavfilter */,
+				334015922E77ECC200233EAA /* Libavformat */,
+				334015942E77ECC200233EAA /* Libavutil */,
+				334015962E77ECC200233EAA /* Libswresample */,
+				334015982E77ECC200233EAA /* Libswscale */,
+				3340159A2E77ECC200233EAA /* libass */,
+				3340159C2E77ECC200233EAA /* libmpv */,
+				3340159E2E77ECC200233EAA /* ffmpeg */,
+				334015A02E77ECC200233EAA /* ffplay */,
+				334015A22E77ECC200233EAA /* ffprobe */,
+			);
 			productName = web;
 			productReference = 336424182E3B6D5500A5963D /* web.app */;
 			productType = "com.apple.product-type.application";
@@ -228,6 +269,10 @@
 				Base,
 			);
 			mainGroup = 3364240F2E3B6D5400A5963D;
+			packageReferences = (
+				334015882E77EBE400233EAA /* XCRemoteSwiftPackageReference "KSPlayer" */,
+				3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */,
+			);
 			productRefGroup = 336424192E3B6D5500A5963D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -614,6 +659,93 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		334015882E77EBE400233EAA /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.4;
+			};
+		};
+		3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kingslay/FFmpegKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.1.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		334015892E77EBE400233EAA /* KSPlayer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 334015882E77EBE400233EAA /* XCRemoteSwiftPackageReference "KSPlayer" */;
+			productName = KSPlayer;
+		};
+		3340158C2E77ECC200233EAA /* FFmpegKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = FFmpegKit;
+		};
+		3340158E2E77ECC200233EAA /* Libavcodec */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libavcodec;
+		};
+		334015902E77ECC200233EAA /* Libavfilter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libavfilter;
+		};
+		334015922E77ECC200233EAA /* Libavformat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libavformat;
+		};
+		334015942E77ECC200233EAA /* Libavutil */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libavutil;
+		};
+		334015962E77ECC200233EAA /* Libswresample */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libswresample;
+		};
+		334015982E77ECC200233EAA /* Libswscale */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = Libswscale;
+		};
+		3340159A2E77ECC200233EAA /* libass */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = libass;
+		};
+		3340159C2E77ECC200233EAA /* libmpv */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = libmpv;
+		};
+		3340159E2E77ECC200233EAA /* ffmpeg */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = ffmpeg;
+		};
+		334015A02E77ECC200233EAA /* ffplay */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = ffplay;
+		};
+		334015A22E77ECC200233EAA /* ffprobe */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3340158B2E77ECC200233EAA /* XCRemoteSwiftPackageReference "FFmpegKit" */;
+			productName = ffprobe;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 336424102E3B6D5400A5963D /* Project object */;
 }
