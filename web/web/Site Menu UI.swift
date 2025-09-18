@@ -1124,10 +1124,7 @@ extension SiteMenuSystem {
     }
 }
 
-// MARK: - 🚫 새로운 알림 이름 추가
-extension Notification.Name {
-    static let popupDomainAllowListChanged = Notification.Name("PopupDomainAllowListChanged")
-}
+// MARK: - 🚫 알림 이름은 Site Menu Data.swift에서 정의됨
 
 // MARK: - 🔧 ContentView Extension (동일)
 extension View {
