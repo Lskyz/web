@@ -3,6 +3,7 @@
 //  🧩 사이트 메뉴 시스템 - 데이터 로직 및 관리자
 //  📋 데스크탑 모드, 팝업 차단, 다운로드, 히스토리, 개인정보, 성능 등 모든 기능 통합
 //  🖥️ 데스크탑 모드 델리게이트 연결 강화
+//  🚫 팝업 차단 동기화 개선
 //
 
 import SwiftUI
@@ -63,7 +64,7 @@ struct DownloadItem: Identifiable, Codable {
     }
 }
 
-// MARK: - 🚫 Enhanced PopupBlockManager with Notification System
+// MARK: - 🚫 Enhanced PopupBlockManager with Notification System (수정됨 - 동기화 개선)
 class PopupBlockManager: ObservableObject {
     static let shared = PopupBlockManager()
     
@@ -153,16 +154,22 @@ class PopupBlockManager: ObservableObject {
         saveBlockedPopups()
     }
     
+    // 🚫 수정: 도메인 허용 시 알림 추가
     func allowPopupsForDomain(_ domain: String) {
         allowedDomains.insert(domain)
         saveAllowedDomains()
         NotificationCenter.default.post(name: .popupBlockStateChanged, object: nil)
+        // 🚫 새로운 알림 추가 - 도메인 목록 변경 전용
+        NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
     }
     
+    // 🚫 수정: 도메인 제거 시 알림 추가
     func removeAllowedDomain(_ domain: String) {
         allowedDomains.remove(domain)
         saveAllowedDomains()
         NotificationCenter.default.post(name: .popupBlockStateChanged, object: nil)
+        // 🚫 새로운 알림 추가 - 도메인 목록 변경 전용
+        NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
     }
     
     func isDomainAllowed(_ domain: String) -> Bool {
@@ -214,10 +221,11 @@ class PopupBlockManager: ObservableObject {
     }
 }
 
-// MARK: - 📢 Notification Names
+// MARK: - 📢 Notification Names (수정됨 - 새로운 알림 추가)
 extension Notification.Name {
     static let popupBlocked = Notification.Name("PopupBlocked")
     static let popupBlockStateChanged = Notification.Name("PopupBlockStateChanged")
+    static let popupDomainAllowListChanged = Notification.Name("PopupDomainAllowListChanged") // 🚫 새로 추가
 }
 
 // MARK: - 🎯 Main System (Complete modules)
@@ -696,7 +704,7 @@ enum SiteMenuSystem {
     }
 }
 
-// MARK: - 🎯 Enhanced Unified Manager with Desktop Mode Delegate Connection
+// MARK: - 🎯 Enhanced Unified Manager with Desktop Mode Delegate Connection (수정됨 - 팝업 도메인 동기화 추가)
 class SiteMenuManager: ObservableObject {
     // MARK: - UI State
     @Published var showSiteMenu: Bool = false
@@ -796,6 +804,16 @@ class SiteMenuManager: ObservableObject {
             self?.popupAlertDomain = domain
             self?.popupAlertCount = count
             self?.showPopupBlockedAlert = true
+        }
+        
+        // 🚫 새로 추가: 팝업 도메인 허용 목록 변경 알림 구독
+        NotificationCenter.default.addObserver(
+            forName: .popupDomainAllowListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // 도메인 목록 변경 시 전체 상태 새로고침
+            self?.objectWillChange.send()
         }
     }
     
