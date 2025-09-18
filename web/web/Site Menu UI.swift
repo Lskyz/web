@@ -3,6 +3,7 @@
 //  🧩 사이트 메뉴 시스템 - UI 컴포넌트 모음 (압축 최적화)
 //  📋 공통 레이아웃 래퍼로 VStack 중복 제거
 //  🎯 코드 줄 수 대폭 감소 (기존 대비 ~40% 단축)
+//  🚫 팝업 차단 UI 텍스트 및 동기화 수정
 //
 
 import SwiftUI
@@ -87,7 +88,7 @@ struct Icon: View {
 extension SiteMenuSystem {
     enum UI {
         
-        // MARK: - 🚫 Popup Block Alert View (압축)
+        // MARK: - 🚫 Popup Block Alert View (수정됨 - 허용/차단으로 변경)
         struct PopupBlockedAlert: View {
             let domain: String
             let blockedCount: Int
@@ -107,13 +108,21 @@ extension SiteMenuSystem {
                     
                     VLayout(spacing: 8) {
                         HLayout(spacing: 12) {
-                            Button("이 사이트 허용") { PopupBlockManager.shared.allowPopupsForDomain(domain); isPresented = false }
-                                .foregroundColor(.blue).frame(maxWidth: .infinity)
-                            Button("닫기") { isPresented = false }
-                                .foregroundColor(.primary).frame(maxWidth: .infinity)
+                            Button("허용") { 
+                                PopupBlockManager.shared.allowPopupsForDomain(domain)
+                                // 🚫 즉시 상태 동기화를 위한 알림 추가
+                                NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
+                                isPresented = false 
+                            }
+                            .foregroundColor(.green).frame(maxWidth: .infinity)
+                            Button("차단") { isPresented = false }
+                                .foregroundColor(.red).frame(maxWidth: .infinity)
                         }
-                        Button("팝업 차단 끄기") { PopupBlockManager.shared.isPopupBlocked = false; isPresented = false }
-                            .font(.caption).foregroundColor(.secondary)
+                        Button("팝업 차단 끄기") { 
+                            PopupBlockManager.shared.isPopupBlocked = false
+                            isPresented = false 
+                        }
+                        .font(.caption).foregroundColor(.secondary)
                     }
                 }
                 .padding(24)
@@ -906,7 +915,7 @@ extension SiteMenuSystem {
             }
         }
         
-        // MARK: - 🚫 Popup Domain Manager View (압축)
+        // MARK: - 🚫 Popup Domain Manager View (수정됨 - 동기화 개선)
         struct PopupDomainManagerView: View {
             @Environment(\.dismiss) private var dismiss
             @State private var allowedDomains: [String] = []
@@ -922,7 +931,7 @@ extension SiteMenuSystem {
                             VLayout(spacing: 12) {
                                 Icon("shield.checkered", 28, .secondary)
                                 CompactText("허용된 사이트가 없습니다", .subheadline, .secondary)
-                                CompactText("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'이 사이트 허용' 버튼을 누르세요", .caption, .secondary).multilineTextAlignment(.center)
+                                CompactText("특정 사이트의 팝업을 허용하려면\n해당 사이트에서 팝업 차단 알림이 나타날 때\n'허용' 버튼을 누르세요", .caption, .secondary).multilineTextAlignment(.center)
                             }.frame(maxWidth: .infinity).padding(.vertical, 20).listRowBackground(Color.clear).listRowSeparator(.hidden)
                         } else {
                             ForEach(allowedDomains, id: \.self) { domain in
@@ -933,9 +942,14 @@ extension SiteMenuSystem {
                                         CompactText("팝업 허용됨", .caption, .green)
                                     }
                                     Spacer()
-                                    Button("차단") { PopupBlockManager.shared.removeAllowedDomain(domain); refreshData() }
-                                        .font(.caption).foregroundColor(.red).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.red.opacity(0.1)).cornerRadius(8)
+                                    Button("차단") { 
+                                        PopupBlockManager.shared.removeAllowedDomain(domain)
+                                        refreshData()
+                                        // 🚫 도메인 목록 변경 알림 전송
+                                        NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
+                                    }
+                                    .font(.caption).foregroundColor(.red).padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(Color.red.opacity(0.1)).cornerRadius(8)
                                 }
                             }
                         }
@@ -966,9 +980,14 @@ extension SiteMenuSystem {
                                         CompactText(RelativeDateTimeFormatter().localizedString(for: popup.date, relativeTo: Date()), .caption2, .secondary)
                                     }
                                     Spacer()
-                                    Button("허용") { PopupBlockManager.shared.allowPopupsForDomain(popup.domain); refreshData() }
-                                        .font(.caption).foregroundColor(.green).padding(.horizontal, 8).padding(.vertical, 4)
-                                        .background(Color.green.opacity(0.1)).cornerRadius(8)
+                                    Button("허용") { 
+                                        PopupBlockManager.shared.allowPopupsForDomain(popup.domain)
+                                        refreshData()
+                                        // 🚫 도메인 목록 변경 알림 전송
+                                        NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
+                                    }
+                                    .font(.caption).foregroundColor(.green).padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.1)).cornerRadius(8)
                                 }
                             }
                         }
@@ -990,13 +1009,32 @@ extension SiteMenuSystem {
                         } label: { Image(systemName: "ellipsis.circle") }
                     }
                 }
-                .onAppear { refreshData() }
+                .onAppear { 
+                    refreshData()
+                    // 🚫 도메인 목록 변경 알림 구독
+                    NotificationCenter.default.addObserver(
+                        forName: .popupDomainAllowListChanged,
+                        object: nil,
+                        queue: .main
+                    ) { _ in
+                        refreshData()
+                    }
+                }
+                .onDisappear {
+                    // 🚫 알림 구독 해제
+                    NotificationCenter.default.removeObserver(self, name: .popupDomainAllowListChanged, object: nil)
+                }
                 .alert("도메인 추가", isPresented: $showAddDomainAlert) {
                     TextField("도메인명 (예: example.com)", text: $newDomainText).autocapitalization(.none).disableAutocorrection(true)
                     Button("취소", role: .cancel) { newDomainText = "" }
                     Button("추가") {
                         let trimmedDomain = newDomainText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmedDomain.isEmpty { PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain); refreshData() }
+                        if !trimmedDomain.isEmpty { 
+                            PopupBlockManager.shared.allowPopupsForDomain(trimmedDomain)
+                            refreshData()
+                            // 🚫 도메인 목록 변경 알림 전송
+                            NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
+                        }
                         newDomainText = ""
                     }.disabled(newDomainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } message: { Text("팝업을 허용할 도메인을 입력하세요") }
@@ -1005,6 +1043,8 @@ extension SiteMenuSystem {
                     Button("제거", role: .destructive) {
                         for domain in allowedDomains { PopupBlockManager.shared.removeAllowedDomain(domain) }
                         refreshData()
+                        // 🚫 도메인 목록 변경 알림 전송
+                        NotificationCenter.default.post(name: .popupDomainAllowListChanged, object: nil)
                     }
                 } message: { Text("모든 허용 사이트를 제거하시겠습니까?") }
             }
@@ -1082,6 +1122,11 @@ extension SiteMenuSystem {
             }
         }
     }
+}
+
+// MARK: - 🚫 새로운 알림 이름 추가
+extension Notification.Name {
+    static let popupDomainAllowListChanged = Notification.Name("PopupDomainAllowListChanged")
 }
 
 // MARK: - 🔧 ContentView Extension (동일)
