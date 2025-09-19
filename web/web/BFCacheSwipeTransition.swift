@@ -461,9 +461,11 @@ struct BFCacheSnapshot: Codable {
             try {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)');
+                
+                // 🔧 **수정: document.body null 체크 추가**
                 const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
+                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                    document.body ? (document.body.scrollHeight || 0) : 0
                 );
                 
                 logs.push('[Step 1] 콘텐츠 높이 복원 시작');
@@ -515,10 +517,10 @@ struct BFCacheSnapshot: Codable {
                 window.dispatchEvent(new Event('scroll', { bubbles: true }));
                 logs.push('무한스크롤 트리거 시도');
                 
-                // 복원 후 높이 측정
+                // 복원 후 높이 측정 - 🔧 **수정: document.body null 체크 추가**
                 const restoredHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
+                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                    document.body ? (document.body.scrollHeight || 0) : 0
                 );
                 
                 const finalPercentage = (restoredHeight / targetHeight) * 100;
@@ -562,17 +564,18 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (여유로운 판정)');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
+                // 🔧 **수정: document.body null 체크 추가**
                 // 현재 콘텐츠 크기와 뷰포트 크기
                 const contentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
+                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                    document.body ? (document.body.scrollHeight || 0) : 0
                 );
                 const contentWidth = Math.max(
-                    document.documentElement.scrollWidth,
-                    document.body.scrollWidth
+                    document.documentElement ? (document.documentElement.scrollWidth || 0) : 0,
+                    document.body ? (document.body.scrollWidth || 0) : 0
                 );
-                const viewportHeight = window.innerHeight;
-                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight || 0;
+                const viewportWidth = window.innerWidth || 0;
                 
                 // 최대 스크롤 가능 거리
                 const maxScrollY = Math.max(0, contentHeight - viewportHeight);
@@ -588,10 +591,16 @@ struct BFCacheSnapshot: Codable {
                 
                 // 스크롤 실행
                 window.scrollTo(targetX, targetY);
-                document.documentElement.scrollTop = targetY;
-                document.documentElement.scrollLeft = targetX;
-                document.body.scrollTop = targetY;
-                document.body.scrollLeft = targetX;
+                
+                // 🔧 **수정: document.body null 체크 추가**
+                if (document.documentElement) {
+                    document.documentElement.scrollTop = targetY;
+                    document.documentElement.scrollLeft = targetX;
+                }
+                if (document.body) {
+                    document.body.scrollTop = targetY;
+                    document.body.scrollLeft = targetX;
+                }
                 
                 if (document.scrollingElement) {
                     document.scrollingElement.scrollTop = targetY;
@@ -897,10 +906,16 @@ struct BFCacheSnapshot: Codable {
                     logs.push('허용 오차 초과 - 미세 보정 적용');
                     
                     window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
+                    
+                    // 🔧 **수정: document.body null 체크 추가**
+                    if (document.documentElement) {
+                        document.documentElement.scrollTop = targetY;
+                        document.documentElement.scrollLeft = targetX;
+                    }
+                    if (document.body) {
+                        document.body.scrollTop = targetY;
+                        document.body.scrollLeft = targetX;
+                    }
                     
                     if (document.scrollingElement) {
                         document.scrollingElement.scrollTop = targetY;
@@ -1344,13 +1359,20 @@ extension BFCacheTransitionSystem {
                 const detailedLogs = [];
                 const pageAnalysis = {};
                 
+                // 🔧 **수정: document.body null 체크 추가**
                 // 기본 정보 수집
                 const scrollY = parseFloat(window.scrollY || window.pageYOffset) || 0;
                 const scrollX = parseFloat(window.scrollX || window.pageXOffset) || 0;
                 const viewportHeight = parseFloat(window.innerHeight) || 0;
                 const viewportWidth = parseFloat(window.innerWidth) || 0;
-                const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
-                const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
+                const contentHeight = Math.max(
+                    document.documentElement ? (document.documentElement.scrollHeight || 0) : 0,
+                    document.body ? (document.body.scrollHeight || 0) : 0
+                );
+                const contentWidth = Math.max(
+                    document.documentElement ? (document.documentElement.scrollWidth || 0) : 0,
+                    document.body ? (document.body.scrollWidth || 0) : 0
+                );
                 
                 detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
