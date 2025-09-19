@@ -171,6 +171,22 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
+    // 🔧 **추가: 퍼센트 유효성 검사 메서드**
+    private func isPercentValid() -> Bool {
+        // 둘 다 0이면 무효 (기본값)
+        if scrollPositionPercent.x == 0 && scrollPositionPercent.y == 0 {
+            return false
+        }
+        
+        // 음수이거나 100% 초과하면 무효 (iOS 탄성 스크롤)
+        if scrollPositionPercent.x < 0 || scrollPositionPercent.x > 100 ||
+           scrollPositionPercent.y < 0 || scrollPositionPercent.y > 100 {
+            return false
+        }
+        
+        return true
+    }
+    
     // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
     
     // 복원 컨텍스트 구조체
@@ -188,6 +204,11 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
+        
+        // 🔧 **추가: 퍼센트 유효성 로그**
+        let percentValid = isPercentValid()
+        TabPersistenceManager.debugMessages.append("📊 퍼센트 유효성: \(percentValid ? "유효" : "무효 (Step 2 스킵)")")
+        
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
@@ -262,6 +283,15 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
+                self.executeStep3_AnchorRestore(context: context)
+            }
+            return
+        }
+        
+        // 🔧 **추가: 퍼센트 유효성 검사 - 유효하지 않으면 Step 2 스킵**
+        if !isPercentValid() {
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 퍼센트 무효 - 스킵 (의도치 않은 최상단 점프 방지)")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: context)
             }
@@ -559,8 +589,19 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (여유로운 판정)');
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (iOS 탄성 스크롤 대응)');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                
+                // 🔧 **추가: 퍼센트 범위 검증**
+                if (targetPercentX < 0 || targetPercentX > 100 || targetPercentY < 0 || targetPercentY > 100) {
+                    logs.push('❌ 퍼센트 범위 이상 - iOS 탄성 스크롤 검출');
+                    logs.push('X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                    return {
+                        success: false,
+                        error: 'invalid_percent_range',
+                        logs: logs
+                    };
+                }
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
                 const contentHeight = Math.max(
@@ -580,11 +621,27 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
                 
-                // 백분율 기반 목표 위치 계산
-                const targetX = (targetPercentX / 100) * maxScrollX;
-                const targetY = (targetPercentY / 100) * maxScrollY;
+                // 🔧 **추가: 스크롤 불가능한 축 처리**
+                let targetX = 0, targetY = 0;
+                
+                if (maxScrollX > 0) {
+                    targetX = (targetPercentX / 100) * maxScrollX;
+                } else {
+                    logs.push('X축 스크롤 불가능 - 0으로 고정');
+                }
+                
+                if (maxScrollY > 0) {
+                    targetY = (targetPercentY / 100) * maxScrollY;
+                } else {
+                    logs.push('Y축 스크롤 불가능 - 0으로 고정');
+                }
+                
+                // 🔧 **추가: 범위 클램프**
+                targetX = Math.max(0, Math.min(targetX, maxScrollX));
+                targetY = Math.max(0, Math.min(targetY, maxScrollY));
                 
                 logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('클램프된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 스크롤 실행
                 window.scrollTo(targetX, targetY);
@@ -622,6 +679,7 @@ struct BFCacheSnapshot: Codable {
                     calculatedPosition: { x: targetX, y: targetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
+                    scrollLimits: { maxX: maxScrollX, maxY: maxScrollY },
                     logs: logs
                 };
                 
@@ -879,12 +937,34 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 4] 최종 검증 및 미세 보정 (최우선 판정)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
+                // 🔧 **추가: 목표 위치 범위 검증**
+                const contentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight
+                );
+                const contentWidth = Math.max(
+                    document.documentElement.scrollWidth,
+                    document.body.scrollWidth
+                );
+                const viewportHeight = window.innerHeight;
+                const viewportWidth = window.innerWidth;
+                const maxScrollY = Math.max(0, contentHeight - viewportHeight);
+                const maxScrollX = Math.max(0, contentWidth - viewportWidth);
+                
+                // 🔧 **목표 위치 클램프**
+                const clampedTargetX = Math.max(0, Math.min(targetX, maxScrollX));
+                const clampedTargetY = Math.max(0, Math.min(targetY, maxScrollY));
+                
+                if (clampedTargetX !== targetX || clampedTargetY !== targetY) {
+                    logs.push('목표 위치 클램프: (' + targetX.toFixed(1) + ',' + targetY.toFixed(1) + ') → (' + clampedTargetX.toFixed(1) + ',' + clampedTargetY.toFixed(1) + ')');
+                }
+                
                 // 현재 위치 확인
                 let currentX = window.scrollX || window.pageXOffset || 0;
                 let currentY = window.scrollY || window.pageYOffset || 0;
                 
-                let diffX = Math.abs(currentX - targetX);
-                let diffY = Math.abs(currentY - targetY);
+                let diffX = Math.abs(currentX - clampedTargetX);
+                let diffY = Math.abs(currentY - clampedTargetY);
                 
                 logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
                 logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
@@ -896,15 +976,15 @@ struct BFCacheSnapshot: Codable {
                 if (!withinTolerance) {
                     logs.push('허용 오차 초과 - 미세 보정 적용');
                     
-                    window.scrollTo(targetX, targetY);
-                    document.documentElement.scrollTop = targetY;
-                    document.documentElement.scrollLeft = targetX;
-                    document.body.scrollTop = targetY;
-                    document.body.scrollLeft = targetX;
+                    window.scrollTo(clampedTargetX, clampedTargetY);
+                    document.documentElement.scrollTop = clampedTargetY;
+                    document.documentElement.scrollLeft = clampedTargetX;
+                    document.body.scrollTop = clampedTargetY;
+                    document.body.scrollLeft = clampedTargetX;
                     
                     if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetY;
-                        document.scrollingElement.scrollLeft = targetX;
+                        document.scrollingElement.scrollTop = clampedTargetY;
+                        document.scrollingElement.scrollLeft = clampedTargetX;
                     }
                     
                     correctionApplied = true;
@@ -912,8 +992,8 @@ struct BFCacheSnapshot: Codable {
                     // 보정 후 위치 재측정
                     currentX = window.scrollX || window.pageXOffset || 0;
                     currentY = window.scrollY || window.pageYOffset || 0;
-                    diffX = Math.abs(currentX - targetX);
-                    diffY = Math.abs(currentY - targetY);
+                    diffX = Math.abs(currentX - clampedTargetX);
+                    diffY = Math.abs(currentY - clampedTargetY);
                     
                     logs.push('보정 후 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
                     logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
@@ -930,11 +1010,13 @@ struct BFCacheSnapshot: Codable {
                 
                 return {
                     success: success,
-                    targetPosition: { x: targetX, y: targetY },
+                    targetPosition: { x: clampedTargetX, y: clampedTargetY },
+                    originalTarget: { x: targetX, y: targetY },
                     finalPosition: { x: currentX, y: currentY },
                     finalDifference: { x: diffX, y: diffY },
                     withinTolerance: diffX <= tolerance && diffY <= tolerance,
                     correctionApplied: correctionApplied,
+                    scrollLimits: { maxX: maxScrollX, maxY: maxScrollY },
                     logs: logs
                 };
                 
@@ -1284,16 +1366,25 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 🔧 **수정: 백분율 계산 로직 수정 - OR 조건으로 변경**
+        // 🔧 **수정: iOS 탄성 스크롤 대응 백분율 계산 (클램프 적용)**
         let scrollPercent: CGPoint
         if captureData.actualScrollableSize.height > captureData.viewportSize.height || captureData.actualScrollableSize.width > captureData.viewportSize.width {
             let maxScrollX = max(0, captureData.actualScrollableSize.width - captureData.viewportSize.width)
             let maxScrollY = max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height)
             
-            scrollPercent = CGPoint(
-                x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
-                y: maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
-            )
+            let rawPercentX = maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0
+            let rawPercentY = maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
+            
+            // 🔧 **추가: iOS 탄성 스크롤로 인한 음수/초과 퍼센트 클램프**
+            let clampedPercentX = max(0, min(100, rawPercentX))
+            let clampedPercentY = max(0, min(100, rawPercentY))
+            
+            scrollPercent = CGPoint(x: clampedPercentX, y: clampedPercentY)
+            
+            // 🔧 **클램프 적용 로그**
+            if rawPercentX != clampedPercentX || rawPercentY != clampedPercentY {
+                TabPersistenceManager.debugMessages.append("📏 iOS 탄성 스크롤 클램프: 원본=(\(String(format: "%.2f", rawPercentX))%, \(String(format: "%.2f", rawPercentY))%), 클램프=(\(String(format: "%.2f", clampedPercentX))%, \(String(format: "%.2f", clampedPercentY))%)")
+            }
         } else {
             scrollPercent = CGPoint.zero
         }
