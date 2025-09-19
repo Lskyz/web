@@ -1,8 +1,9 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
+//  🎯 **Step 0**: 가짜 스페이서로 스크롤 범위 잠금 (NEW)
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
-//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선) - 임계값 여유롭게 개선
+//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선) - 2-패스 적용
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정 - 우선순위 높임
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
@@ -31,26 +32,34 @@ struct BFCacheSnapshot: Codable {
     let restorationConfig: RestorationConfig
     
     struct RestorationConfig: Codable {
+        let enableSpacerLock: Bool          // Step 0 활성화 (NEW)
         let enableContentRestore: Bool      // Step 1 활성화
         let enablePercentRestore: Bool      // Step 2 활성화
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
+        let step0RenderDelay: Double        // Step 0 후 렌더링 대기 (NEW)
         let step1RenderDelay: Double        // Step 1 후 렌더링 대기 (0.8초)
         let step2RenderDelay: Double        // Step 2 후 렌더링 대기 (0.3초)
         let step3RenderDelay: Double        // Step 3 후 렌더링 대기 (0.5초)
         let step4RenderDelay: Double        // Step 4 후 렌더링 대기 (0.3초)
+        let layoutStabilityQuietMs: Int     // 레이아웃 안정 대기 시간 (NEW)
+        let layoutStabilityMaxMs: Int       // 레이아웃 안정 최대 대기 (NEW)
         
         static let `default` = RestorationConfig(
+            enableSpacerLock: true,
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: 0,
+            step0RenderDelay: 0.1,
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.2,
-            step4RenderDelay: 0.2
+            step4RenderDelay: 0.2,
+            layoutStabilityQuietMs: 180,
+            layoutStabilityMaxMs: 3000
         )
     }
     
@@ -151,15 +160,19 @@ struct BFCacheSnapshot: Codable {
         self.captureStatus = captureStatus
         self.version = version
         self.restorationConfig = RestorationConfig(
+            enableSpacerLock: restorationConfig.enableSpacerLock,
             enableContentRestore: restorationConfig.enableContentRestore,
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
             savedContentHeight: max(actualScrollableSize.height, contentSize.height),
+            step0RenderDelay: restorationConfig.step0RenderDelay,
             step1RenderDelay: restorationConfig.step1RenderDelay,
             step2RenderDelay: restorationConfig.step2RenderDelay,
             step3RenderDelay: restorationConfig.step3RenderDelay,
-            step4RenderDelay: restorationConfig.step4RenderDelay
+            step4RenderDelay: restorationConfig.step4RenderDelay,
+            layoutStabilityQuietMs: restorationConfig.layoutStabilityQuietMs,
+            layoutStabilityMaxMs: restorationConfig.layoutStabilityMaxMs
         )
     }
     
@@ -199,7 +212,7 @@ struct BFCacheSnapshot: Codable {
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작 (스페이서 강화)")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
@@ -209,7 +222,7 @@ struct BFCacheSnapshot: Codable {
         let percentValid = isPercentValid()
         TabPersistenceManager.debugMessages.append("📊 퍼센트 유효성: \(percentValid ? "유효" : "무효 (Step 2 스킵)")")
         
-        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
+        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step0=\(restorationConfig.step0RenderDelay)s, Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -218,8 +231,62 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // Step 1 시작
-        executeStep1_RestoreContentHeight(context: context)
+        // Step 0부터 시작 (NEW)
+        executeStep0_CreateSpacerAndDisableAnchoring(context: context)
+    }
+    
+    // MARK: - Step 0: 가짜 스페이서로 스크롤 범위 잠금 + 앵커링 비활성화 (NEW)
+    private func executeStep0_CreateSpacerAndDisableAnchoring(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🔒 [Step 0] 스페이서 생성 및 스크롤 앵커링 비활성화")
+        
+        guard restorationConfig.enableSpacerLock else {
+            TabPersistenceManager.debugMessages.append("🔒 [Step 0] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step0RenderDelay) {
+                self.executeStep1_RestoreContentHeight(context: context)
+            }
+            return
+        }
+        
+        let js = generateStep0_SpacerAndAnchoringScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var step0Success = false
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🔒 [Step 0] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                step0Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let spacerCreated = resultDict["spacerCreated"] as? Bool {
+                    TabPersistenceManager.debugMessages.append("🔒 [Step 0] 스페이서 생성: \(spacerCreated ? "성공" : "불필요")")
+                }
+                if let spacerHeight = resultDict["spacerHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("🔒 [Step 0] 스페이서 높이: \(String(format: "%.0f", spacerHeight))px")
+                }
+                if let currentHeight = resultDict["currentHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("🔒 [Step 0] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+                }
+                if let targetHeight = resultDict["targetHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("🔒 [Step 0] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                }
+                if let anchoringDisabled = resultDict["anchoringDisabled"] as? Bool {
+                    TabPersistenceManager.debugMessages.append("🔒 [Step 0] 앵커링 비활성화: \(anchoringDisabled ? "완료" : "실패")")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🔒 [Step 0] 완료: \(step0Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 0] 렌더링 대기: \(self.restorationConfig.step0RenderDelay)초")
+            
+            // 성공/실패 관계없이 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step0RenderDelay) {
+                self.executeStep1_RestoreContentHeight(context: context)
+            }
+        }
     }
     
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
@@ -257,7 +324,7 @@ struct BFCacheSnapshot: Codable {
                 if let percentage = resultDict["percentage"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                 }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                if let isStaticSite = resultDict["isStaticSite"] as? Bool, isStaticSite {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                 }
                 if let logs = resultDict["logs"] as? [String] {
@@ -272,14 +339,43 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
+                // Step 2 전에 레이아웃 안정 대기 (NEW)
+                self.waitForLayoutStability(context: context) {
+                    self.executeStep2_PercentScroll(context: context)
+                }
             }
         }
     }
     
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (여유로운 임계값으로 개선)
+    // MARK: - 레이아웃 안정 대기 (NEW)
+    private func waitForLayoutStability(context: RestorationContext, completion: @escaping () -> Void) {
+        TabPersistenceManager.debugMessages.append("⏳ 레이아웃 안정 대기 시작")
+        
+        let js = generateLayoutStabilityWaitScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("⏳ 레이아웃 대기 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                if let waitedMs = resultDict["waitedMs"] as? Double {
+                    TabPersistenceManager.debugMessages.append("⏳ 레이아웃 안정 대기 시간: \(String(format: "%.0f", waitedMs))ms")
+                }
+                if let finalHeight = resultDict["finalHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("⏳ 안정화 후 높이: \(String(format: "%.0f", finalHeight))px")
+                }
+                if let changeCount = resultDict["changeCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("⏳ 높이 변화 횟수: \(changeCount)회")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("⏳ 레이아웃 안정 대기 완료")
+            completion()
+        }
+    }
+    
+    // MARK: - Step 2: 상대좌표 기반 스크롤 (2-패스 적용)
     private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (여유로운 판정)")
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (2-패스)")
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
@@ -298,7 +394,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep2_PercentScrollScript()
+        let js = generateStep2_TwoPassScrollScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step2Success = false
@@ -318,8 +414,11 @@ struct BFCacheSnapshot: Codable {
                     updatedContext.step2AttemptedPosition = CGPoint(x: calculatedX, y: calculatedY)
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedX))px, Y=\(String(format: "%.1f", calculatedY))px")
                 }
-                if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                if let pass1Position = resultDict["pass1Position"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 1-패스 위치: X=\(String(format: "%.1f", pass1Position["x"] ?? 0))px, Y=\(String(format: "%.1f", pass1Position["y"] ?? 0))px")
+                }
+                if let pass2Position = resultDict["pass2Position"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 2-패스 위치: X=\(String(format: "%.1f", pass2Position["x"] ?? 0))px, Y=\(String(format: "%.1f", pass2Position["y"] ?? 0))px")
                 }
                 if let difference = resultDict["difference"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
@@ -422,6 +521,8 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - Step 2 결과로 판정: \(context.step2Success)")
+            // 스페이서 정리
+            cleanupSpacerAndStyles(context: context)
             context.completion(context.step2Success)
             return
         }
@@ -463,6 +564,9 @@ struct BFCacheSnapshot: Codable {
             
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
+                // 스페이서 정리 (NEW)
+                self.cleanupSpacerAndStyles(context: context)
+                
                 // 🔧 **수정: Step 4 결과를 최우선으로 판정, Step 2 결과는 보조**
                 let finalSuccess: Bool
                 if step4Success {
@@ -481,7 +585,243 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
+    // MARK: - 스페이서 및 스타일 정리 (NEW)
+    private func cleanupSpacerAndStyles(context: RestorationContext) {
+        let js = """
+        (function() {
+            try {
+                // 스페이서 제거
+                const spacer = document.getElementById('bfcache-height-spacer');
+                if (spacer) {
+                    spacer.remove();
+                    console.log('🧹 스페이서 제거 완료');
+                }
+                
+                // 스크롤 앵커링 복구
+                const style = document.getElementById('bfcache-restore-toggles');
+                if (style) {
+                    style.remove();
+                    console.log('🧹 스크롤 앵커링 복구 완료');
+                }
+                
+                return { success: true };
+            } catch(e) {
+                return { success: false, error: e.message };
+            }
+        })()
+        """
+        
+        context.webView?.evaluateJavaScript(js) { _, _ in
+            TabPersistenceManager.debugMessages.append("🧹 복원 완료 후 정리 완료")
+        }
+    }
+    
     // MARK: - JavaScript 생성 메서드들
+    
+    // NEW: Step 0 - 스페이서 생성 및 앵커링 비활성화
+    private func generateStep0_SpacerAndAnchoringScript() -> String {
+        let targetHeight = restorationConfig.savedContentHeight
+        
+        return """
+        (function() {
+            try {
+                const logs = [];
+                const targetHeight = parseFloat('\(targetHeight)');
+                const spacerId = 'bfcache-height-spacer';
+                
+                logs.push('[Step 0] 스페이서 생성 및 앵커링 비활성화');
+                
+                // 1. 현재 높이 확인
+                const currentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight
+                );
+                
+                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
+                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                
+                let spacerCreated = false;
+                let spacerHeight = 0;
+                
+                // 2. 스페이서 생성 (높이가 부족한 경우만)
+                if (currentHeight < targetHeight * 0.98) {
+                    let spacer = document.getElementById(spacerId);
+                    if (!spacer) {
+                        spacer = document.createElement('div');
+                        spacer.id = spacerId;
+                        spacer.style.width = '1px';
+                        spacer.style.height = Math.max(0, targetHeight - currentHeight) + 'px';
+                        spacer.style.pointerEvents = 'none';
+                        spacer.style.opacity = '0';
+                        spacer.style.contain = 'layout style size';
+                        spacer.style.position = 'relative'; // absolute 대신 relative 사용
+                        document.body.appendChild(spacer);
+                        
+                        spacerHeight = targetHeight - currentHeight;
+                        spacerCreated = true;
+                        logs.push('스페이서 생성: ' + spacerHeight.toFixed(0) + 'px');
+                        
+                        // ResizeObserver로 자동 조정
+                        const ro = new ResizeObserver(function() {
+                            const h = Math.max(
+                                document.documentElement.scrollHeight,
+                                document.body.scrollHeight
+                            );
+                            const remain = Math.max(0, targetHeight - h + parseFloat(spacer.style.height));
+                            spacer.style.height = remain + 'px';
+                            if (remain === 0) {
+                                spacer.remove();
+                                ro.disconnect();
+                                console.log('스페이서 자동 제거됨');
+                            }
+                        });
+                        ro.observe(document.documentElement);
+                    }
+                } else {
+                    logs.push('높이 충분 - 스페이서 불필요');
+                }
+                
+                // 3. 스크롤 앵커링 및 애니메이션 비활성화
+                const styleId = 'bfcache-restore-toggles';
+                let anchoringDisabled = false;
+                
+                if (!document.getElementById(styleId)) {
+                    const s = document.createElement('style');
+                    s.id = styleId;
+                    s.textContent = `
+                        html, body { overflow-anchor: none !important; }
+                        * { 
+                            animation: none !important; 
+                            transition: none !important;
+                            scroll-behavior: auto !important;
+                        }
+                    `;
+                    document.documentElement.appendChild(s);
+                    anchoringDisabled = true;
+                    logs.push('스크롤 앵커링 비활성화 완료');
+                }
+                
+                // 4. viewport 메타 태그 고정 (iOS 대응)
+                try {
+                    let meta = document.querySelector('meta[name="viewport"]');
+                    if (!meta) {
+                        meta = document.createElement('meta');
+                        meta.name = 'viewport';
+                        document.head.appendChild(meta);
+                    }
+                    meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+                    logs.push('viewport 고정 완료');
+                } catch(e) {
+                    logs.push('viewport 설정 실패: ' + e.message);
+                }
+                
+                return {
+                    success: true,
+                    spacerCreated: spacerCreated,
+                    spacerHeight: spacerHeight,
+                    currentHeight: currentHeight,
+                    targetHeight: targetHeight,
+                    anchoringDisabled: anchoringDisabled,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[Step 0] 오류: ' + e.message]
+                };
+            }
+        })()
+        """
+    }
+    
+    // NEW: 레이아웃 안정 대기 스크립트
+    private func generateLayoutStabilityWaitScript() -> String {
+        let quietMs = restorationConfig.layoutStabilityQuietMs
+        let maxMs = restorationConfig.layoutStabilityMaxMs
+        
+        return """
+        (async function() {
+            try {
+                const quietMs = \(quietMs);
+                const maxMs = \(maxMs);
+                const start = performance.now();
+                let lastChange = performance.now();
+                let changeCount = 0;
+                
+                // 폰트 대기
+                const waitFonts = (document.fonts && document.fonts.ready) 
+                    ? document.fonts.ready.catch(() => {}) 
+                    : Promise.resolve();
+                
+                // 이미지 대기
+                const waitImages = Promise.all(
+                    Array.from(document.images || []).map(function(img) {
+                        if (img.complete) return Promise.resolve();
+                        if (img.decode) return img.decode().catch(() => {});
+                        return new Promise(function(resolve) {
+                            img.addEventListener('load', resolve, { once: true });
+                        });
+                    })
+                );
+                
+                // 높이 변화 감시
+                let prevH = Math.max(
+                    document.documentElement.scrollHeight, 
+                    document.body.scrollHeight
+                );
+                
+                const ro = new ResizeObserver(function() {
+                    const h = Math.max(
+                        document.documentElement.scrollHeight, 
+                        document.body.scrollHeight
+                    );
+                    if (Math.abs(h - prevH) > 5) { // 5px 이상 변화만 감지
+                        prevH = h;
+                        lastChange = performance.now();
+                        changeCount++;
+                    }
+                });
+                ro.observe(document.documentElement);
+                
+                // 안정 구간 대기
+                while (performance.now() - start < maxMs) {
+                    await new Promise(function(r) { requestAnimationFrame(r); });
+                    if (performance.now() - lastChange >= quietMs) break;
+                }
+                
+                ro.disconnect();
+                
+                // 외부 리소스 대기 (최대 400ms)
+                await Promise.race([
+                    Promise.all([waitFonts, waitImages]),
+                    new Promise(function(r) { setTimeout(r, 400); })
+                ]);
+                
+                const finalHeight = Math.max(
+                    document.documentElement.scrollHeight, 
+                    document.body.scrollHeight
+                );
+                
+                const waitedMs = performance.now() - start;
+                
+                return {
+                    success: true,
+                    waitedMs: waitedMs,
+                    finalHeight: finalHeight,
+                    changeCount: changeCount
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message
+                };
+            }
+        })()
+        """
+    }
     
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
@@ -578,7 +918,8 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    private func generateStep2_PercentScrollScript() -> String {
+    // MODIFIED: Step 2 - 2-패스 스크롤 적용
+    private func generateStep2_TwoPassScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
         
@@ -589,13 +930,12 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (iOS 탄성 스크롤 대응)');
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (2-패스)');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
                 // 🔧 **추가: 퍼센트 범위 검증**
                 if (targetPercentX < 0 || targetPercentX > 100 || targetPercentY < 0 || targetPercentY > 100) {
                     logs.push('❌ 퍼센트 범위 이상 - iOS 탄성 스크롤 검출');
-                    logs.push('X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                     return {
                         success: false,
                         error: 'invalid_percent_range',
@@ -621,7 +961,7 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
                 
-                // 🔧 **추가: 스크롤 불가능한 축 처리**
+                // 목표 위치 계산
                 let targetX = 0, targetY = 0;
                 
                 if (maxScrollX > 0) {
@@ -636,14 +976,13 @@ struct BFCacheSnapshot: Codable {
                     logs.push('Y축 스크롤 불가능 - 0으로 고정');
                 }
                 
-                // 🔧 **추가: 범위 클램프**
+                // 범위 클램프
                 targetX = Math.max(0, Math.min(targetX, maxScrollX));
                 targetY = Math.max(0, Math.min(targetY, maxScrollY));
                 
                 logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                logs.push('클램프된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
-                // 스크롤 실행
+                // 🎯 **1-패스: 즉시 적용**
                 window.scrollTo(targetX, targetY);
                 document.documentElement.scrollTop = targetY;
                 document.documentElement.scrollLeft = targetX;
@@ -655,7 +994,30 @@ struct BFCacheSnapshot: Codable {
                     document.scrollingElement.scrollLeft = targetX;
                 }
                 
-                // 🔧 **수정: 레이아웃 지연을 고려한 여유로운 판정 - 100px 허용 오차**
+                const pass1X = window.scrollX || window.pageXOffset || 0;
+                const pass1Y = window.scrollY || window.pageYOffset || 0;
+                logs.push('1-패스 완료: X=' + pass1X.toFixed(1) + ', Y=' + pass1Y.toFixed(1));
+                
+                // 🎯 **2-패스: 다음 프레임에서 재적용 (클램프 우회)**
+                requestAnimationFrame(function() {
+                    // 높이 재측정 (동적 변화 대응)
+                    const newContentHeight = Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight
+                    );
+                    const newMaxScrollY = Math.max(0, newContentHeight - viewportHeight);
+                    const adjustedTargetY = Math.min(targetY, newMaxScrollY);
+                    
+                    window.scrollTo(targetX, adjustedTargetY);
+                    if (document.scrollingElement) {
+                        document.scrollingElement.scrollTop = adjustedTargetY;
+                        document.scrollingElement.scrollLeft = targetX;
+                    }
+                    
+                    console.log('2-패스 스크롤 완료');
+                });
+                
+                // 현재 위치 측정
                 const actualX = window.scrollX || window.pageXOffset || 0;
                 const actualY = window.scrollY || window.pageYOffset || 0;
                 
@@ -664,19 +1026,16 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                 logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                logs.push('※ 주의: scrollTo() 직후 즉시 측정으로 레이아웃 지연 가능');
                 
-                // 🔧 **수정: 허용 오차 100px로 증가 (레이아웃 지연 고려)**
+                // 허용 오차 100px
                 const success = diffY <= 100;
-                
-                if (!success) {
-                    logs.push('Step 2 실패 - Step 4에서 최종 검증 예정');
-                }
                 
                 return {
                     success: success,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
                     calculatedPosition: { x: targetX, y: targetY },
+                    pass1Position: { x: pass1X, y: pass1Y },
+                    pass2Position: { x: targetX, y: targetY }, // 2-패스는 비동기라 예상값
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
                     scrollLimits: { maxX: maxScrollX, maxY: maxScrollY },
@@ -1392,17 +1751,21 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
         
-        // 🔄 **순차 실행 설정 생성**
+        // 🔄 **순차 실행 설정 생성 (스페이서 강화)**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
+            enableSpacerLock: true,  // NEW
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            step0RenderDelay: 0.1,   // NEW
             step1RenderDelay: 0.1,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.1,
-            step4RenderDelay: 0.2
+            step4RenderDelay: 0.2,
+            layoutStabilityQuietMs: 180,  // NEW
+            layoutStabilityMaxMs: 3000    // NEW
         )
         
         let snapshot = BFCacheSnapshot(
@@ -1626,7 +1989,7 @@ extension BFCacheTransitionSystem {
                         '.news', '.media', '.content-item', '[class*="item"]', 
                         '[class*="post"]', '[class*="card"]', '[data-testid]', 
                         '[data-id]', '[data-key]', '[data-item-id]',
-                        // 네이버 카페 특화 선택자 추가
+                        // 일반 선택자 추가
                         '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
                         '[class*="List"]', '[class*="Item"]', '[data-v-]'
                     ];
@@ -1777,7 +2140,7 @@ extension BFCacheTransitionSystem {
                             index: index
                         };
                         
-                        // 클래스명에서 컴포넌트 이름 추출 - 네이버 카페 특화
+                        // 클래스명에서 컴포넌트 이름 추출
                         const classList = Array.from(element.classList);
                         for (let i = 0; i < classList.length; i++) {
                             const className = classList[i];
