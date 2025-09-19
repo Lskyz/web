@@ -2,6 +2,7 @@
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 조합
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🔄 **스냅샷 업데이트 보장** - 떠날 때마다 최신 상태 캡처
+//  🎯 **스냅샷 인덱스 문제 해결** - 제스처 시작 시점 인덱스 저장
 //
 
 import UIKit
@@ -24,11 +25,16 @@ private class GestureContext {
     private var isValid: Bool = true
     private let validationQueue = DispatchQueue(label: "gesture.validation", attributes: .concurrent)
     
+    // 🎯 **추가: 제스처 시작 시점의 인덱스 저장**
+    var gestureStartIndex: Int?
+    
     init(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
         self.tabID = tabID
         self.webView = webView
         self.stateModel = stateModel
-        TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 생성: \(String(gestureID.uuidString.prefix(8)))")
+        // 🎯 **제스처 시작 시점 인덱스 저장**
+        self.gestureStartIndex = stateModel.dataModel.currentPageIndex
+        TabPersistenceManager.debugMessages.append("🧵 제스처 컨텍스트 생성: \(String(gestureID.uuidString.prefix(8))), 시작 인덱스: \(gestureStartIndex ?? -1)")
     }
     
     func validateAndExecute(_ operation: () -> Void) {
@@ -208,6 +214,8 @@ final class BFCacheTransitionSystem: NSObject {
         var initialTransform: CGAffineTransform
         var previewContainer: UIView?
         var currentSnapshot: UIImage?
+        // 🎯 **추가: 제스처 시작 시점 인덱스**
+        var gestureStartIndex: Int?
     }
     
     enum NavigationDirection {
@@ -564,12 +572,13 @@ final class BFCacheTransitionSystem: NSObject {
                 gesture: gesture,
                 tabID: tabID,
                 webView: webView,
-                stateModel: stateModel
+                stateModel: stateModel,
+                gestureStartIndex: context.gestureStartIndex  // 🎯 **제스처 시작 인덱스 전달**
             )
         }
     }
     
-    private func processGestureState(gesture: UIScreenEdgePanGestureRecognizer, tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel) {
+    private func processGestureState(gesture: UIScreenEdgePanGestureRecognizer, tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, gestureStartIndex: Int?) {
         let translation = gesture.translation(in: gesture.view)
         let velocity = gesture.velocity(in: gesture.view)
         let isLeftEdge = (gesture.edges == .left)
@@ -609,7 +618,8 @@ final class BFCacheTransitionSystem: NSObject {
                             webView: webView,
                             stateModel: stateModel,
                             direction: direction,
-                            currentSnapshot: snapshot
+                            currentSnapshot: snapshot,
+                            gestureStartIndex: gestureStartIndex  // 🎯 **제스처 시작 인덱스 전달**
                         )
                     }
                 }
@@ -656,14 +666,16 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?) {
+    private func beginGestureTransitionWithSnapshot(tabID: UUID, webView: WKWebView, stateModel: WebViewStateModel, direction: NavigationDirection, currentSnapshot: UIImage?, gestureStartIndex: Int?) {
         let initialTransform = webView.transform
         
+        // 🎯 **수정: 제스처 시작 인덱스를 사용하여 미리보기 생성**
         let previewContainer = createPreviewContainer(
             webView: webView,
             direction: direction,
             stateModel: stateModel,
-            currentSnapshot: currentSnapshot
+            currentSnapshot: currentSnapshot,
+            gestureStartIndex: gestureStartIndex
         )
         
         let context = TransitionContext(
@@ -674,11 +686,12 @@ final class BFCacheTransitionSystem: NSObject {
             direction: direction,
             initialTransform: initialTransform,
             previewContainer: previewContainer,
-            currentSnapshot: currentSnapshot
+            currentSnapshot: currentSnapshot,
+            gestureStartIndex: gestureStartIndex  // 🎯 **제스처 시작 인덱스 저장**
         )
         setActiveTransition(context, for: tabID)
         
-        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기")")
+        dbg("🎬 직접 전환 시작: \(direction == .back ? "뒤로가기" : "앞으로가기"), 시작 인덱스: \(gestureStartIndex ?? -1)")
     }
     
     private func updateGestureProgress(tabID: UUID, translation: CGFloat, isLeftEdge: Bool) {
@@ -707,7 +720,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage? = nil) -> UIView {
+    private func createPreviewContainer(webView: WKWebView, direction: NavigationDirection, stateModel: WebViewStateModel, currentSnapshot: UIImage? = nil, gestureStartIndex: Int? = nil) -> UIView {
         let container = UIView(frame: webView.bounds)
         container.backgroundColor = .systemBackground
         container.clipsToBounds = true
@@ -740,9 +753,19 @@ final class BFCacheTransitionSystem: NSObject {
         
         container.addSubview(currentView)
         
-        let targetIndex = direction == .back ?
-            stateModel.dataModel.currentPageIndex - 1 :
-            stateModel.dataModel.currentPageIndex + 1
+        // 🎯 **핵심 수정: 제스처 시작 시점의 인덱스를 사용하여 타겟 인덱스 계산**
+        let targetIndex: Int
+        if let startIndex = gestureStartIndex {
+            // 제스처 시작 시점 인덱스 기준으로 계산
+            targetIndex = direction == .back ? startIndex - 1 : startIndex + 1
+            dbg("🎯 타겟 인덱스 계산: 시작 인덱스 \(startIndex) → 타겟 인덱스 \(targetIndex)")
+        } else {
+            // fallback: 현재 인덱스 사용 (하지만 이미 변경되었을 수 있음)
+            targetIndex = direction == .back ?
+                stateModel.dataModel.currentPageIndex - 1 :
+                stateModel.dataModel.currentPageIndex + 1
+            dbg("⚠️ 제스처 시작 인덱스 없음 - 현재 인덱스 사용: \(stateModel.dataModel.currentPageIndex) → \(targetIndex)")
+        }
         
         var targetView: UIView
         
@@ -755,14 +778,15 @@ final class BFCacheTransitionSystem: NSObject {
                 imageView.contentMode = .scaleAspectFill
                 imageView.clipsToBounds = true
                 targetView = imageView
-                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title)")
+                dbg("📸 타겟 페이지 BFCache 스냅샷 사용: \(targetRecord.title) [인덱스: \(targetIndex)]")
             } else {
                 targetView = createInfoCard(for: targetRecord, in: webView.bounds)
-                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title)")
+                dbg("ℹ️ 타겟 페이지 정보 카드 생성: \(targetRecord.title) [인덱스: \(targetIndex)]")
             }
         } else {
             targetView = UIView()
             targetView.backgroundColor = .systemBackground
+            dbg("⚠️ 타겟 인덱스 범위 초과: \(targetIndex)")
         }
         
         targetView.frame = webView.bounds
@@ -1026,7 +1050,7 @@ extension BFCacheTransitionSystem {
     static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         shared.setupGestures(for: webView, stateModel: stateModel)
-        TabPersistenceManager.debugMessages.append("✅ 🚫 강화된 브라우저 차단 대응 BFCache 시스템 설치 완료 (다중 앵커 + 검증)")
+        TabPersistenceManager.debugMessages.append("✅ 🚫 강화된 브라우저 차단 대응 BFCache 시스템 설치 완료 (다중 앵커 + 검증 + 인덱스 수정)")
     }
     
     static func uninstall(from webView: WKWebView) {
@@ -1045,7 +1069,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🚫 강화된 브라우저 차단 대응 BFCache 시스템 제거 완료")
+       
     }
     
     static func goBack(stateModel: WebViewStateModel) {
