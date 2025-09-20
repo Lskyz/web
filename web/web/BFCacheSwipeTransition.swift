@@ -200,8 +200,7 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원
-        private func executeStep1_RestoreContentHeight(context: RestorationContext, pollAttempt: Int = 0) {
+    private func executeStep1_RestoreContentHeight(context: RestorationContext, pollAttempt: Int = 0) {
         TabPersistenceManager.debugMessages.append(" [Step 1] 콘텐츠 높이 복원 단계 시작")
 
         guard restorationConfig.enableContentRestore else {
@@ -215,9 +214,7 @@ struct BFCacheSnapshot: Codable {
         let maxPendingPollAttempts = 24
         let js = generateStep1_ContentRestoreScript()
 
-        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
-            guard let self = self else { return }
-
+        context.webView?.evaluateJavaScript(js) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append(" [Step 1] JavaScript 오류: \(error.localizedDescription)")
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
@@ -280,6 +277,34 @@ struct BFCacheSnapshot: Codable {
             }
             if let targetHeight = resultDict["targetHeight"] as? Double {
                 TabPersistenceManager.debugMessages.append(" [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+            }
+            if let restoredHeight = resultDict["restoredHeight"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+            }
+            if let percentage = resultDict["percentage"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 복원율: \(String(format: "%.1f", percentage))%")
+            }
+            if let tolerance = resultDict["tolerance"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 허용 오차: \(String(format: "%.1f", tolerance))px")
+            }
+            if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 정적 페이지로 판별 - 추가 로딩 불필요")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(5) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
+                }
+            }
+
+            TabPersistenceManager.debugMessages.append(" [Step 1] 완료: \(step1Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append(" [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)s")
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+                self.executeStep2_PercentScroll(context: context)
+            }
+        }
+    }
+
             }
             if let restoredHeight = resultDict["restoredHeight"] as? Double {
                 TabPersistenceManager.debugMessages.append(" [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
@@ -1250,8 +1275,8 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
-        serialQueue.async { [weak self] in
-            self?.performAtomicCapture(task)
+        serialQueue.async {
+            self.performAtomicCapture(task)
         }
     }
     
@@ -1540,8 +1565,7 @@ extension BFCacheTransitionSystem {
         }
         
         // 버전 증가 (스레드 안전)
-        let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
-            guard let self = self else { return 1 }
+        let version: Int = cacheAccessQueue.sync(flags: .barrier) {
             let currentVersion = self._cacheVersion[pageRecord.id] ?? 0
             let newVersion = currentVersion + 1
             self._cacheVersion[pageRecord.id] = newVersion
