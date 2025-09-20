@@ -201,61 +201,115 @@ struct BFCacheSnapshot: Codable {
     }
     
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
-    private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
-        
+        private func executeStep1_RestoreContentHeight(context: RestorationContext, pollAttempt: Int = 0) {
+        TabPersistenceManager.debugMessages.append(" [Step 1] 콘텐츠 높이 복원 단계 시작")
+
         guard restorationConfig.enableContentRestore else {
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
-            // 렌더링 대기 후 다음 단계
+            TabPersistenceManager.debugMessages.append(" [Step 1] 비활성화됨 - 건너뜀")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
             return
         }
-        
+
+        let maxPendingPollAttempts = 24
         let js = generateStep1_ContentRestoreScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step1Success = false
-            
+
+        context.webView?.evaluateJavaScript(js) { [weak self] result, error in
+            guard let self = self else { return }
+
             if let error = error {
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step1Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+                TabPersistenceManager.debugMessages.append(" [Step 1] JavaScript 오류: \(error.localizedDescription)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+                    self.executeStep2_PercentScroll(context: context)
                 }
-                if let targetHeight = resultDict["targetHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                return
+            }
+
+            guard let resultDict = result as? [String: Any] else {
+                TabPersistenceManager.debugMessages.append(" [Step 1] JavaScript 결과를 해석할 수 없음")
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+                    self.executeStep2_PercentScroll(context: context)
                 }
-                if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                }
-                if let percentage = resultDict["percentage"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
-                }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                return
+            }
+
+            if let isPending = resultDict["pending"] as? Bool, isPending {
+                let nextAttempt = pollAttempt + 1
+
+                if let progress = resultDict["progress"] as? [String: Any] {
+                    let attemptNum = progress["attempt"] as? Int ?? nextAttempt
+                    let beforeHeight = progress["beforeHeight"] as? Double
+                    let afterHeight = progress["afterHeight"] as? Double
+
+                    if let beforeHeight = beforeHeight, let afterHeight = afterHeight {
+                        TabPersistenceManager.debugMessages.append(
+                            " [Step 1] 진행 중 - 시도 #\(attemptNum): \(String(format: "%.0f", beforeHeight))→\(String(format: "%.0f", afterHeight))px"
+                        )
+                    } else if let beforeHeight = beforeHeight {
+                        TabPersistenceManager.debugMessages.append(
+                            " [Step 1] 진행 중 - 시도 #\(attemptNum) 현재 높이: \(String(format: "%.0f", beforeHeight))px"
+                        )
+                    } else {
+                        TabPersistenceManager.debugMessages.append(" [Step 1] 진행 중 - 무한스크롤 로딩 대기")
                     }
+                } else {
+                    TabPersistenceManager.debugMessages.append(" [Step 1] 진행 중 - 무한스크롤 로딩 대기")
+                }
+
+                if nextAttempt > maxPendingPollAttempts {
+                    TabPersistenceManager.debugMessages.append(" [Step 1] 최대 대기 횟수 초과 - Step 1 중단")
+                    context.webView?.evaluateJavaScript("delete window.__BFCacheStep1State;", completionHandler: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+                        self.executeStep2_PercentScroll(context: context)
+                    }
+                    return
+                }
+
+                let delay = min(0.6, 0.18 + Double(nextAttempt) * 0.05)
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    self.executeStep1_RestoreContentHeight(context: context, pollAttempt: nextAttempt)
+                }
+                return
+            }
+
+            let step1Success = (resultDict["success"] as? Bool) ?? false
+
+            if let currentHeight = resultDict["currentHeight"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+            }
+            if let targetHeight = resultDict["targetHeight"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+            }
+            if let restoredHeight = resultDict["restoredHeight"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+            }
+            if let percentage = resultDict["percentage"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 복원율: \(String(format: "%.1f", percentage))%")
+            }
+            if let tolerance = resultDict["tolerance"] as? Double {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 허용 오차: \(String(format: "%.1f", tolerance))px")
+            }
+            if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                TabPersistenceManager.debugMessages.append(" [Step 1] 정적 페이지로 판별 - 추가 로딩 불필요")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(5) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
                 }
             }
-            
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
-            
-            // 성공/실패 관계없이 다음 단계 진행
+
+            TabPersistenceManager.debugMessages.append(" [Step 1] 완료: \(step1Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append(" [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)s")
+
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
         }
     }
-    
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
+
+
+// MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
         
@@ -438,12 +492,27 @@ struct BFCacheSnapshot: Codable {
     
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
-        
+
         return """
-        (async function() {
-            try {
-                const logs = [];
-                const targetHeight = Math.max(0, parseFloat('\(targetHeight)'));
+        (function() {
+            const targetHeight = Math.max(0, parseFloat('\(targetHeight)'));
+            const ensureSerializable = (value) => {
+                try {
+                    return JSON.parse(JSON.stringify(value));
+                } catch (e) {
+                    return null;
+                }
+            };
+
+            if (!window.__BFCacheStep1State) {
+                const state = {
+                    status: 'running',
+                    logs: [],
+                    attemptDetails: [],
+                    targetHeight: targetHeight,
+                    startedAt: Date.now()
+                };
+                window.__BFCacheStep1State = state;
 
                 const measureHeight = () => {
                     const documentElement = document.documentElement;
@@ -459,44 +528,6 @@ struct BFCacheSnapshot: Codable {
 
                 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-
-                let currentHeight = measureHeight();
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-
-                if (targetHeight === 0) {
-                    logs.push('목표 높이가 0 - 즉시 성공 처리');
-                    return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: 100,
-                        logs: logs
-                    };
-                }
-
-                const initialRatio = targetHeight > 0 ? (currentHeight / targetHeight) : 1;
-                const tolerance = Math.max(6, targetHeight * 0.005);
-
-                if (initialRatio >= 0.98) {
-                    logs.push('현재 높이가 목표의 98% 이상 - 정적 페이지로 판단');
-                    return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: initialRatio * 100,
-                        logs: logs,
-                        tolerance: tolerance
-                    };
-                }
-
-                logs.push('동적 로딩 시도 - 무한스크롤 트리거 강화 시작');
-
                 const loadButtonSelectors = [
                     '[data-testid*="load"]',
                     '[data-testid*="more"]',
@@ -510,6 +541,7 @@ struct BFCacheSnapshot: Codable {
                     '.load-more', '.show-more',
                     '.infinite-scroll-trigger',
                     '.infinite-scroll-button',
+                    '.infinite-scroll__trigger',
                     'button[aria-label*="더"]',
                     'button[aria-label*="More"]',
                     'button[aria-label*="Load"]',
@@ -569,13 +601,13 @@ struct BFCacheSnapshot: Codable {
                             if (typeof el.click === 'function') {
                                 el.click();
                                 clicked++;
-                                activated.push(entry.selector + '::click');
+                                if (activated.length < 20) activated.push(entry.selector + '::click');
                             } else {
                                 el.dispatchEvent(new Event('click', { bubbles: true }));
-                                activated.push(entry.selector + '::dispatch');
+                                if (activated.length < 20) activated.push(entry.selector + '::dispatch');
                             }
                         } catch (err) {
-                            activated.push(entry.selector + '::error');
+                            if (activated.length < 20) activated.push(entry.selector + '::error');
                         }
                     }
 
@@ -587,9 +619,9 @@ struct BFCacheSnapshot: Codable {
                             el.dispatchEvent(new Event('mouseenter', { bubbles: true }));
                             el.dispatchEvent(new Event('mouseover', { bubbles: true }));
                             el.dispatchEvent(new Event('touchstart', { bubbles: true }));
-                            activated.push(entry.selector + '::sentinel');
+                            if (activated.length < 20) activated.push(entry.selector + '::sentinel');
                         } catch (err) {
-                            activated.push(entry.selector + '::sentinel_error');
+                            if (activated.length < 20) activated.push(entry.selector + '::sentinel_error');
                         }
                     }
 
@@ -599,80 +631,195 @@ struct BFCacheSnapshot: Codable {
                     window.dispatchEvent(new Event('scrollend', { bubbles: true }));
 
                     return {
-                        clicked,
+                        clicked: clicked,
                         buttonCount: buttonEntries.length,
                         sentinelCount: sentinelEntries.length,
-                        activated
+                        activated: activated
                     };
                 };
 
-                const attemptDetails = [];
-                let bestHeight = currentHeight;
-                const maxAttempts = 6;
+                (async () => {
+                    try {
+                        const logs = state.logs;
+                        logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+                        logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
 
-                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                    const beforeHeight = measureHeight();
-                    const maxScrollY = Math.max(0, beforeHeight - window.innerHeight);
-                    window.scrollTo(0, maxScrollY);
+                        let currentHeight = measureHeight();
+                        logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
 
-                    const triggerResult = triggerInfiniteScroll();
+                        if (targetHeight === 0) {
+                            logs.push('목표 높이가 0 - 즉시 성공 처리');
+                            state.result = {
+                                success: true,
+                                isStaticSite: true,
+                                currentHeight: currentHeight,
+                                targetHeight: targetHeight,
+                                restoredHeight: currentHeight,
+                                percentage: 100,
+                                tolerance: 0,
+                                logs: logs.slice(),
+                                attemptDetails: []
+                            };
+                            state.status = 'done';
+                            return;
+                        }
 
-                    await wait(160 + attempt * 60);
+                        const initialRatio = targetHeight > 0 ? (currentHeight / targetHeight) : 1;
+                        const tolerance = Math.max(6, targetHeight * 0.005);
 
-                    const afterHeight = measureHeight();
-                    bestHeight = Math.max(bestHeight, afterHeight);
+                        if (initialRatio >= 0.98) {
+                            logs.push('현재 높이가 목표의 98% 이상 - 정적 페이지로 판단');
+                            state.result = {
+                                success: true,
+                                isStaticSite: true,
+                                currentHeight: currentHeight,
+                                targetHeight: targetHeight,
+                                restoredHeight: currentHeight,
+                                percentage: initialRatio * 100,
+                                tolerance: tolerance,
+                                logs: logs.slice(),
+                                attemptDetails: []
+                            };
+                            state.status = 'done';
+                            return;
+                        }
 
-                    attemptDetails.push({
-                        attempt,
-                        beforeHeight,
-                        afterHeight,
-                        gained: afterHeight - beforeHeight,
-                        triggerResult
-                    });
+                        logs.push('동적 로딩 시도 - 무한스크롤 트리거 강화 시작');
 
-                    logs.push('시도 #' + attempt + ': ' +
-                        '전=' + beforeHeight.toFixed(0) + 'px, 후=' + afterHeight.toFixed(0) + 'px, ' +
-                        '증가=' + (afterHeight - beforeHeight).toFixed(0) + 'px, ' +
-                        '버튼=' + triggerResult.clicked + '/' + triggerResult.buttonCount + ', ' +
-                        '센티널=' + triggerResult.sentinelCount);
+                        const attemptDetails = state.attemptDetails;
+                        let bestHeight = currentHeight;
+                        const maxAttempts = 6;
 
-                    if (afterHeight >= targetHeight - tolerance) {
-                        logs.push('목표 높이에 도달 또는 근접 - 반복 종료');
-                        break;
+                        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                            const beforeHeight = measureHeight();
+                            const maxScrollY = Math.max(0, beforeHeight - window.innerHeight);
+                            window.scrollTo(0, maxScrollY);
+
+                            state.progress = {
+                                attempt: attempt,
+                                beforeHeight: beforeHeight,
+                                targetHeight: targetHeight
+                            };
+
+                            const triggerResult = triggerInfiniteScroll();
+
+                            await wait(160 + attempt * 60);
+
+                            const afterHeight = measureHeight();
+                            bestHeight = Math.max(bestHeight, afterHeight);
+
+                            state.progress = {
+                                attempt: attempt,
+                                beforeHeight: beforeHeight,
+                                afterHeight: afterHeight,
+                                triggerResult: {
+                                    clicked: triggerResult.clicked,
+                                    buttonCount: triggerResult.buttonCount,
+                                    sentinelCount: triggerResult.sentinelCount
+                                }
+                            };
+
+                            attemptDetails.push({
+                                attempt: attempt,
+                                beforeHeight: beforeHeight,
+                                afterHeight: afterHeight,
+                                gained: afterHeight - beforeHeight,
+                                triggerResult: {
+                                    clicked: triggerResult.clicked,
+                                    buttonCount: triggerResult.buttonCount,
+                                    sentinelCount: triggerResult.sentinelCount,
+                                    activated: triggerResult.activated.slice()
+                                }
+                            });
+
+                            logs.push('시도 #' + attempt + ': ' +
+                                '전=' + beforeHeight.toFixed(0) + 'px, 후=' + afterHeight.toFixed(0) + 'px, ' +
+                                '증가=' + (afterHeight - beforeHeight).toFixed(0) + 'px, ' +
+                                '버튼=' + triggerResult.clicked + '/' + triggerResult.buttonCount + ', ' +
+                                '센티널=' + triggerResult.sentinelCount);
+
+                            if (afterHeight >= targetHeight - tolerance) {
+                                logs.push('목표 높이에 도달 또는 근접 - 반복 종료');
+                                break;
+                            }
+
+                            if (afterHeight <= beforeHeight + 2 && triggerResult.clicked === 0 && triggerResult.sentinelCount === 0) {
+                                logs.push('유의미한 트리거 없음 - 반복 종료');
+                                break;
+                            }
+                        }
+
+                        delete state.progress;
+
+                        const restoredHeight = bestHeight;
+                        const percentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
+                        const success = Math.abs(restoredHeight - targetHeight) <= tolerance || restoredHeight >= targetHeight - tolerance;
+
+                        logs.push('최종 높이: ' + restoredHeight.toFixed(0) + 'px');
+                        logs.push('복원율: ' + percentage.toFixed(1) + '% (허용 오차 ' + tolerance.toFixed(1) + 'px)');
+
+                        state.result = {
+                            success: success,
+                            isStaticSite: false,
+                            currentHeight: currentHeight,
+                            targetHeight: targetHeight,
+                            restoredHeight: restoredHeight,
+                            percentage: percentage,
+                            tolerance: tolerance,
+                            logs: logs.slice(),
+                            attemptDetails: attemptDetails.slice()
+                        };
+                    } catch (error) {
+                        const logs = state.logs || [];
+                        const message = error && error.message ? error.message : String(error);
+                        logs.push('[Step 1] 오류: ' + message);
+                        state.result = {
+                            success: false,
+                            error: message,
+                            logs: logs.slice()
+                        };
+                    } finally {
+                        delete state.progress;
+                        state.status = 'done';
                     }
+                })();
+            }
 
-                    if (afterHeight <= beforeHeight + 2 && triggerResult.clicked === 0 && triggerResult.sentinelCount === 0) {
-                        logs.push('유의미한 트리거 없음 - 반복 종료');
-                        break;
-                    }
-                }
+            const state = window.__BFCacheStep1State;
 
-                const restoredHeight = bestHeight;
-                const percentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
-                const success = Math.abs(restoredHeight - targetHeight) <= tolerance || restoredHeight >= targetHeight - tolerance;
-
-                logs.push('최종 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원율: ' + percentage.toFixed(1) + '% (허용 오차 ' + tolerance.toFixed(1) + 'px)');
-
-                return {
-                    success: success,
-                    isStaticSite: false,
-                    currentHeight: currentHeight,
-                    targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: percentage,
-                    logs: logs,
-                    tolerance: tolerance,
-                    attemptDetails: attemptDetails
-                };
-
-            } catch(e) {
+            if (!state) {
                 return {
                     success: false,
-                    error: e.message,
-                    logs: ['[Step 1] 오류: ' + e.message]
+                    error: 'missing_state',
+                    logs: ['[Step 1] 내부 상태를 찾을 수 없음']
                 };
             }
+
+            if (state.status === 'done') {
+                const result = state.result || {
+                    success: false,
+                    error: 'unknown_result',
+                    logs: Array.isArray(state.logs) ? state.logs.slice() : []
+                };
+                delete window.__BFCacheStep1State;
+                const serializableResult = ensureSerializable(result);
+                return serializableResult || {
+                    success: false,
+                    error: 'serialization_failed',
+                    logs: Array.isArray(state.logs) ? state.logs.slice() : []
+                };
+            }
+
+            const pendingPayload = {
+                pending: true,
+                status: state.status,
+                logs: Array.isArray(state.logs) ? state.logs.slice(-10) : [],
+                progress: state.progress ? ensureSerializable(state.progress) : null,
+                startedAt: state.startedAt || null,
+                targetHeight: state.targetHeight || null
+            };
+            const serializablePending = ensureSerializable(pendingPayload);
+            return serializablePending || { pending: true, status: state.status };
         })()
         """
     }
