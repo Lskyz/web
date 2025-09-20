@@ -334,7 +334,7 @@ struct BFCacheSnapshot: Codable {
     }
 
 
-// MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
+    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
         
