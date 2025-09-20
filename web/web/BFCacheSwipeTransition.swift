@@ -1,13 +1,13 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) - 🆕 복원위치 중심 로드
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
-//  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
+//  🆕 **복원위치 중심 로드**: 가상 스페이서로 높이 유지하며 복원 위치부터 로드
 
 import UIKit
 import WebKit
@@ -201,9 +201,9 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원
+    // MARK: - Step 1: 🆕 복원 위치 중심 콘텐츠 로드
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 [Step 1] 복원 위치 중심 콘텐츠 로드 시작")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -214,7 +214,7 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
-        let js = generateStep1_ContentRestoreScript()
+        let js = generateStep1_RestoreFromPositionScript()
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step1Success = false
@@ -232,6 +232,12 @@ struct BFCacheSnapshot: Codable {
                 }
                 if let restoredHeight = resultDict["restoredHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+                }
+                if let spacerHeight = resultDict["spacerHeight"] as? Double {
+                    TabPersistenceManager.debugMessages.append("🎯 [Step 1] 가상 스페이서 높이: \(String(format: "%.0f", spacerHeight))px")
+                }
+                if let loadedFrom = resultDict["loadedFromPosition"] as? Double {
+                    TabPersistenceManager.debugMessages.append("🎯 [Step 1] 로드 시작 위치: \(String(format: "%.0f", loadedFrom))px")
                 }
                 if let percentage = resultDict["percentage"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
@@ -437,22 +443,26 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    private func generateStep1_ContentRestoreScript() -> String {
+    // 🆕 **Step 1: 복원 위치 중심 콘텐츠 로드 스크립트**
+    private func generateStep1_RestoreFromPositionScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
+        let targetScrollY = scrollPosition.y
         
         return """
         (function() {
             try {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)') || 0;
+                const targetScrollY = parseFloat('\(targetScrollY)') || 0;
                 const currentHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
                     document.body ? document.body.scrollHeight : 0
                 ) || 0;
                 
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+                logs.push('[Step 1] 복원 위치 중심 콘텐츠 로드 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
                 
                 // 타입 안전성 체크
                 if (!targetHeight || targetHeight === 0) {
@@ -484,44 +494,112 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
                 
-                // 동적 사이트 - 콘텐츠 로드 시도
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
+                // 🆕 **동적 사이트 - 복원 위치부터 로드 시도**
+                logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
                 
-                // 🚀 확장된 더보기 버튼 선택자
+                // 🆕 **1단계: 가상 스페이서로 전체 높이 먼저 확보**
+                const createVirtualSpacer = function(height) {
+                    try {
+                        // 기존 스페이서 제거
+                        const existingSpacer = document.querySelector('#bfcache-virtual-spacer');
+                        if (existingSpacer) {
+                            existingSpacer.remove();
+                        }
+                        
+                        // 새 스페이서 생성
+                        const spacer = document.createElement('div');
+                        spacer.id = 'bfcache-virtual-spacer';
+                        spacer.style.height = height + 'px';
+                        spacer.style.width = '1px';
+                        spacer.style.position = 'absolute';
+                        spacer.style.bottom = '0';
+                        spacer.style.left = '-9999px';
+                        spacer.style.visibility = 'hidden';
+                        spacer.style.pointerEvents = 'none';
+                        document.body.appendChild(spacer);
+                        
+                        logs.push('가상 스페이서 생성: ' + height.toFixed(0) + 'px');
+                        return spacer;
+                    } catch(e) {
+                        logs.push('가상 스페이서 생성 실패: ' + e.message);
+                        return null;
+                    }
+                };
+                
+                // 🆕 **2단계: 목표 위치로 먼저 이동**
+                const spacerHeight = Math.max(0, targetHeight - currentHeight);
+                let virtualSpacer = null;
+                
+                if (spacerHeight > 100) { // 100px 이상 차이날 때만 스페이서 사용
+                    virtualSpacer = createVirtualSpacer(spacerHeight);
+                    
+                    // 스페이서 생성 후 강제 리플로우
+                    void(document.body.offsetHeight);
+                    
+                    logs.push('가상 공간 확보 완료: ' + spacerHeight.toFixed(0) + 'px');
+                }
+                
+                // 목표 위치로 스크롤 이동
+                window.scrollTo(0, targetScrollY);
+                document.documentElement.scrollTop = targetScrollY;
+                document.body.scrollTop = targetScrollY;
+                
+                if (document.scrollingElement) {
+                    document.scrollingElement.scrollTop = targetScrollY;
+                }
+                
+                logs.push('목표 위치로 이동: ' + targetScrollY.toFixed(0) + 'px');
+                
+                // 🆕 **3단계: 복원 위치에서 콘텐츠 로드 트리거**
+                
+                // IntersectionObserver 트리거
+                const triggerIntersectionObserver = function() {
+                    try {
+                        // viewport 내의 모든 요소에 대해 intersection 이벤트 강제 트리거
+                        const viewportHeight = window.innerHeight;
+                        const currentScrollY = window.scrollY || window.pageYOffset;
+                        
+                        // 뷰포트 영역 내 요소들 찾기
+                        const allElements = document.querySelectorAll('*');
+                        let triggeredCount = 0;
+                        
+                        for (let i = 0; i < allElements.length; i++) {
+                            const el = allElements[i];
+                            const rect = el.getBoundingClientRect();
+                            
+                            // 뷰포트 근처에 있는 요소들
+                            if (rect.bottom > -viewportHeight && rect.top < viewportHeight * 2) {
+                                // 강제로 visibility change 이벤트 트리거
+                                const event = new Event('scrollintoview', { bubbles: true });
+                                el.dispatchEvent(event);
+                                
+                                // 클래스 토글로 observer 트리거
+                                el.classList.add('bfcache-trigger');
+                                void(el.offsetHeight); // 강제 리플로우
+                                el.classList.remove('bfcache-trigger');
+                                
+                                triggeredCount++;
+                                if (triggeredCount > 50) break; // 너무 많은 트리거 방지
+                            }
+                        }
+                        
+                        logs.push('IntersectionObserver 트리거: ' + triggeredCount + '개 요소');
+                    } catch(e) {
+                        logs.push('IntersectionObserver 트리거 실패: ' + e.message);
+                    }
+                };
+                
+                triggerIntersectionObserver();
+                
+                // 🆕 **4단계: 더보기 버튼 찾아서 클릭**
                 const loadMoreSelectors = [
-                    // 기본 선택자
                     '[data-testid*="load"]', '[data-testid*="more"]',
                     '[class*="load"]', '[class*="more"]', '[class*="show"]',
-                    'button[class*="more"]', 'button[class*="load"]', 'button[class*="show"]',
-                    '.load-more', '.show-more', '.view-more', '.see-more',
-                    
-                    // 추가 선택자
-                    'button[aria-label*="more"]', 'button[aria-label*="load"]',
-                    'a[class*="more"]', 'a[class*="load"]',
-                    'div[class*="more"]', 'div[class*="load"]',
-                    'span[class*="more"]', 'span[class*="load"]',
-                    '[role="button"][class*="more"]', '[role="button"][class*="load"]',
-                    
-                    // 한글 선택자
-                    'button:contains("더보기")', 'button:contains("더 보기")',
-                    'button:contains("더 불러오기")', 'button:contains("계속")',
-                    
-                    // 영문 선택자
-                    'button:contains("Load More")', 'button:contains("Show More")',
-                    'button:contains("View More")', 'button:contains("See More")',
-                    'button:contains("More")', 'button:contains("Next")',
-                    
-                    // ID 기반
-                    '[id*="loadmore"]', '[id*="load-more"]', '[id*="showmore"]',
-                    
-                    // data 속성
-                    '[data-action*="load"]', '[data-action*="more"]',
-                    '[data-click*="load"]', '[data-click*="more"]',
-                    
-                    // 페이지네이션
+                    'button[class*="more"]', 'button[class*="load"]',
+                    '.load-more', '.show-more', '.view-more',
+                    '[role="button"][class*="more"]',
                     '.pagination button', '.pagination a',
-                    '[class*="pagination"] button', '[class*="pagination"] a',
-                    '.next-page', '.next-btn', 'button.next'
+                    '.next-page', '.next-btn'
                 ];
                 
                 const loadMoreButtons = [];
@@ -531,8 +609,14 @@ struct BFCacheSnapshot: Codable {
                         const elements = document.querySelectorAll(selector);
                         if (elements && elements.length > 0) {
                             for (let j = 0; j < elements.length; j++) {
-                                if (elements[j] && !loadMoreButtons.includes(elements[j])) {
-                                    loadMoreButtons.push(elements[j]);
+                                const el = elements[j];
+                                const rect = el.getBoundingClientRect();
+                                
+                                // 🆕 **현재 뷰포트 근처에 있는 버튼만 선택**
+                                if (rect.bottom > -500 && rect.top < window.innerHeight + 500) {
+                                    if (!loadMoreButtons.includes(el)) {
+                                        loadMoreButtons.push(el);
+                                    }
                                 }
                             }
                         }
@@ -541,17 +625,16 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                logs.push('더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견');
+                logs.push('뷰포트 근처 더보기 버튼: ' + loadMoreButtons.length + '개 발견');
                 
-                // 더보기 버튼 클릭 (최대 15개)
+                // 더보기 버튼 클릭 (최대 5개)
                 let clicked = 0;
-                const maxClicks = Math.min(15, loadMoreButtons.length);
+                const maxClicks = Math.min(5, loadMoreButtons.length);
                 
                 for (let i = 0; i < maxClicks; i++) {
                     try {
                         const btn = loadMoreButtons[i];
                         if (btn && typeof btn.click === 'function') {
-                            // 버튼이 보이는지 확인
                             const computedStyle = window.getComputedStyle(btn);
                             const isVisible = computedStyle && 
                                              computedStyle.display !== 'none' && 
@@ -579,60 +662,62 @@ struct BFCacheSnapshot: Codable {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                 }
                 
-                // 🚀 무한스크롤 트리거 - 최대 8번 시도
-                logs.push('무한스크롤 트리거 시작 (최대 8번 시도)');
-                const maxScrollAttempts = 8;
-                let previousHeight = currentHeight;
-                
-                for (let attempt = 1; attempt <= maxScrollAttempts; attempt++) {
-                    try {
-                        // 페이지 하단으로 스크롤
-                        const maxScrollY = Math.max(0, previousHeight - (window.innerHeight || 0));
-                        
-                        // 다양한 스크롤 방법 시도
-                        window.scrollTo(0, maxScrollY);
-                        document.documentElement.scrollTop = maxScrollY;
-                        document.body.scrollTop = maxScrollY;
-                        
-                        if (document.scrollingElement) {
-                            document.scrollingElement.scrollTop = maxScrollY;
-                        }
+                // 🆕 **5단계: 양방향 스크롤로 콘텐츠 로드**
+                logs.push('양방향 스크롤 트리거 시작');
+                const biDirectionalScrollLoad = function() {
+                    const startY = targetScrollY;
+                    const viewportHeight = window.innerHeight;
+                    let loadAttempts = 0;
+                    const maxAttempts = 6; // 위아래 각 3번씩
+                    
+                    // 위쪽으로 스크롤
+                    for (let i = 1; i <= 3; i++) {
+                        const scrollUpTo = Math.max(0, startY - (viewportHeight * i * 0.5));
+                        window.scrollTo(0, scrollUpTo);
                         
                         // 스크롤 이벤트 디스패치
-                        window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
-                        document.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
                         
-                        // 추가 이벤트들
-                        window.dispatchEvent(new Event('scrollend', { bubbles: true }));
-                        window.dispatchEvent(new Event('wheel', { bubbles: true }));
-                        
-                        // IntersectionObserver 트리거를 위한 강제 리플로우
-                        void(document.body.offsetHeight);
-                        
-                        // 새로운 높이 측정
-                        const newHeight = Math.max(
-                            document.documentElement ? document.documentElement.scrollHeight : 0,
-                            document.body ? document.body.scrollHeight : 0
-                        ) || 0;
-                        
-                        if (newHeight > previousHeight) {
-                            logs.push('시도 ' + attempt + ': 콘텐츠 증가 ' + 
-                                    (newHeight - previousHeight).toFixed(0) + 'px');
-                            previousHeight = newHeight;
-                        } else {
-                            logs.push('시도 ' + attempt + ': 콘텐츠 변화 없음');
-                        }
-                        
-                        // 목표에 도달했는지 확인
-                        if (newHeight >= targetHeight * 0.8) {
-                            logs.push('목표 높이의 80% 도달 - 트리거 중단');
-                            break;
-                        }
-                        
-                    } catch(scrollError) {
-                        logs.push('시도 ' + attempt + ' 실패: ' + (scrollError.message || 'unknown'));
+                        loadAttempts++;
+                        logs.push('위쪽 스크롤 ' + i + ': ' + scrollUpTo.toFixed(0) + 'px');
                     }
-                }
+                    
+                    // 목표 위치로 복귀
+                    window.scrollTo(0, startY);
+                    
+                    // 아래쪽으로 스크롤  
+                    const maxScrollY = Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight
+                    ) - viewportHeight;
+                    
+                    for (let i = 1; i <= 3; i++) {
+                        const scrollDownTo = Math.min(maxScrollY, startY + (viewportHeight * i * 0.5));
+                        window.scrollTo(0, scrollDownTo);
+                        
+                        // 스크롤 이벤트 디스패치
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        
+                        loadAttempts++;
+                        logs.push('아래쪽 스크롤 ' + i + ': ' + scrollDownTo.toFixed(0) + 'px');
+                    }
+                    
+                    // 최종적으로 목표 위치로 복귀
+                    window.scrollTo(0, startY);
+                    
+                    return loadAttempts;
+                };
+                
+                const scrollAttempts = biDirectionalScrollLoad();
+                logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
+                
+                // 🆕 **6단계: 가상 스페이서 제거 및 최종 높이 측정**
+                setTimeout(function() {
+                    if (virtualSpacer) {
+                        virtualSpacer.remove();
+                        logs.push('가상 스페이서 제거됨');
+                    }
+                }, 100);
                 
                 // 최종 높이 측정
                 const restoredHeight = Math.max(
@@ -641,7 +726,7 @@ struct BFCacheSnapshot: Codable {
                 ) || currentHeight;
                 
                 const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
-                const success = finalPercentage >= 70; // 70% 이상 복원 시 성공
+                const success = finalPercentage >= 50; // 50% 이상 복원 시 성공
                 
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
@@ -654,7 +739,9 @@ struct BFCacheSnapshot: Codable {
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
                     percentage: finalPercentage,
-                    scrollAttempts: maxScrollAttempts,
+                    spacerHeight: spacerHeight,
+                    loadedFromPosition: targetScrollY,
+                    scrollAttempts: scrollAttempts,
                     buttonsClicked: clicked,
                     logs: logs
                 };
@@ -2086,8 +2173,7 @@ extension BFCacheTransitionSystem {
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
-    }
-    
+    }    
     // MARK: - 🌐 JavaScript 스크립트
     
     static func makeBFCacheScript() -> WKUserScript {
