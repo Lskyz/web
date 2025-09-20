@@ -440,86 +440,232 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
-        (function() {
+        (async function() {
             try {
                 const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)');
-                const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
-                
+                const targetHeight = Math.max(0, parseFloat('\(targetHeight)'));
+
+                const measureHeight = () => {
+                    const documentElement = document.documentElement;
+                    const body = document.body;
+                    const scrollingElement = document.scrollingElement;
+                    const heights = [
+                        documentElement ? documentElement.scrollHeight : 0,
+                        body ? body.scrollHeight : 0,
+                        scrollingElement ? scrollingElement.scrollHeight : 0
+                    ];
+                    return Math.max.apply(Math, heights.filter((value) => Number.isFinite(value)));
+                };
+
+                const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
                 logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                
-                // 정적 사이트 판단 (90% 이상 이미 로드됨)
-                const percentage = (currentHeight / targetHeight) * 100;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+
+                let currentHeight = measureHeight();
+                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
+
+                if (targetHeight === 0) {
+                    logs.push('목표 높이가 0 - 즉시 성공 처리');
                     return {
                         success: true,
                         isStaticSite: true,
                         currentHeight: currentHeight,
                         targetHeight: targetHeight,
                         restoredHeight: currentHeight,
-                        percentage: percentage,
+                        percentage: 100,
                         logs: logs
                     };
                 }
-                
-                // 동적 사이트 - 콘텐츠 로드 시도
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
-                
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
+
+                const initialRatio = targetHeight > 0 ? (currentHeight / targetHeight) : 1;
+                const tolerance = Math.max(6, targetHeight * 0.005);
+
+                if (initialRatio >= 0.98) {
+                    logs.push('현재 높이가 목표의 98% 이상 - 정적 페이지로 판단');
+                    return {
+                        success: true,
+                        isStaticSite: true,
+                        currentHeight: currentHeight,
+                        targetHeight: targetHeight,
+                        restoredHeight: currentHeight,
+                        percentage: initialRatio * 100,
+                        logs: logs,
+                        tolerance: tolerance
+                    };
+                }
+
+                logs.push('동적 로딩 시도 - 무한스크롤 트리거 강화 시작');
+
+                const loadButtonSelectors = [
+                    '[data-testid*="load"]',
+                    '[data-testid*="more"]',
+                    '[data-testid*="next"]',
+                    '[class*="load"]',
+                    '[class*="more"]',
+                    '[class*="next"]',
+                    '[class*="infinite"]',
+                    '[data-role="load"]',
+                    '[data-role="trigger"]',
+                    '.load-more', '.show-more',
+                    '.infinite-scroll-trigger',
+                    '.infinite-scroll-button',
+                    'button[aria-label*="더"]',
+                    'button[aria-label*="More"]',
+                    'button[aria-label*="Load"]',
+                    'button[aria-label*="더 보기"]',
+                    'button[aria-label*="더보기"]',
+                    'button[data-action*="more"]',
+                    'a[aria-label*="더"]',
+                    'a[aria-label*="More"]'
+                ];
+
+                const sentinelSelectors = [
+                    '.infinite-scroll-sentinel',
+                    '.infinite-scroll-sensor',
+                    '[data-sentinel]',
+                    '[data-testid*="sentinel"]',
+                    '[data-testid*="trigger"]',
+                    '[data-test*="sentinel"]',
+                    '[data-component*="sentinel"]',
+                    '[class*="sentinel"]',
+                    '[class*="spinner"]',
+                    '[class*="loading"]',
+                    '[class*="progress"]'
+                ];
+
+                const uniqueElements = (selectors) => {
+                    const map = new Map();
+                    for (const selector of selectors) {
+                        try {
+                            const nodes = document.querySelectorAll(selector);
+                            for (let i = 0; i < nodes.length; i++) {
+                                const node = nodes[i];
+                                if (!map.has(node)) {
+                                    map.set(node, {
+                                        element: node,
+                                        selector: selector
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                        }
+                    }
+                    return Array.from(map.values());
+                };
+
+                const triggerInfiniteScroll = () => {
+                    const buttonEntries = uniqueElements(loadButtonSelectors);
+                    const sentinelEntries = uniqueElements(sentinelSelectors);
+                    let clicked = 0;
+                    const activated = [];
+
+                    for (let i = 0; i < Math.min(buttonEntries.length, 8); i++) {
+                        const entry = buttonEntries[i];
+                        const el = entry.element;
+                        try {
+                            el.dispatchEvent(new Event('mouseenter', { bubbles: true }));
+                            el.dispatchEvent(new Event('mouseover', { bubbles: true }));
+                            if (typeof el.click === 'function') {
+                                el.click();
+                                clicked++;
+                                activated.push(entry.selector + '::click');
+                            } else {
+                                el.dispatchEvent(new Event('click', { bubbles: true }));
+                                activated.push(entry.selector + '::dispatch');
+                            }
+                        } catch (err) {
+                            activated.push(entry.selector + '::error');
+                        }
+                    }
+
+                    for (let i = 0; i < Math.min(sentinelEntries.length, 5); i++) {
+                        const entry = sentinelEntries[i];
+                        const el = entry.element;
+                        try {
+                            el.scrollIntoView({ behavior: 'auto', block: 'center' });
+                            el.dispatchEvent(new Event('mouseenter', { bubbles: true }));
+                            el.dispatchEvent(new Event('mouseover', { bubbles: true }));
+                            el.dispatchEvent(new Event('touchstart', { bubbles: true }));
+                            activated.push(entry.selector + '::sentinel');
+                        } catch (err) {
+                            activated.push(entry.selector + '::sentinel_error');
+                        }
+                    }
+
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    window.dispatchEvent(new Event('resize', { bubbles: true }));
+                    window.dispatchEvent(new Event('wheel', { bubbles: true, cancelable: true, deltaY: 1 }));
+                    window.dispatchEvent(new Event('scrollend', { bubbles: true }));
+
+                    return {
+                        clicked,
+                        buttonCount: buttonEntries.length,
+                        sentinelCount: sentinelEntries.length,
+                        activated
+                    };
+                };
+
+                const attemptDetails = [];
+                let bestHeight = currentHeight;
+                const maxAttempts = 6;
+
+                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                    const beforeHeight = measureHeight();
+                    const maxScrollY = Math.max(0, beforeHeight - window.innerHeight);
+                    window.scrollTo(0, maxScrollY);
+
+                    const triggerResult = triggerInfiniteScroll();
+
+                    await wait(160 + attempt * 60);
+
+                    const afterHeight = measureHeight();
+                    bestHeight = Math.max(bestHeight, afterHeight);
+
+                    attemptDetails.push({
+                        attempt,
+                        beforeHeight,
+                        afterHeight,
+                        gained: afterHeight - beforeHeight,
+                        triggerResult
+                    });
+
+                    logs.push('시도 #' + attempt + ': ' +
+                        '전=' + beforeHeight.toFixed(0) + 'px, 후=' + afterHeight.toFixed(0) + 'px, ' +
+                        '증가=' + (afterHeight - beforeHeight).toFixed(0) + 'px, ' +
+                        '버튼=' + triggerResult.clicked + '/' + triggerResult.buttonCount + ', ' +
+                        '센티널=' + triggerResult.sentinelCount);
+
+                    if (afterHeight >= targetHeight - tolerance) {
+                        logs.push('목표 높이에 도달 또는 근접 - 반복 종료');
+                        break;
+                    }
+
+                    if (afterHeight <= beforeHeight + 2 && triggerResult.clicked === 0 && triggerResult.sentinelCount === 0) {
+                        logs.push('유의미한 트리거 없음 - 반복 종료');
+                        break;
                     }
                 }
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 페이지 하단 스크롤로 무한스크롤 트리거
-                const maxScrollY = Math.max(0, currentHeight - window.innerHeight);
-                window.scrollTo(0, maxScrollY);
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                logs.push('무한스크롤 트리거 시도');
-                
-                // 복원 후 높이 측정
-                const restoredHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
-                
-                const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
-                
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                
+
+                const restoredHeight = bestHeight;
+                const percentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
+                const success = Math.abs(restoredHeight - targetHeight) <= tolerance || restoredHeight >= targetHeight - tolerance;
+
+                logs.push('최종 높이: ' + restoredHeight.toFixed(0) + 'px');
+                logs.push('복원율: ' + percentage.toFixed(1) + '% (허용 오차 ' + tolerance.toFixed(1) + 'px)');
+
                 return {
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
-                    logs: logs
+                    percentage: percentage,
+                    logs: logs,
+                    tolerance: tolerance,
+                    attemptDetails: attemptDetails
                 };
-                
+
             } catch(e) {
                 return {
                     success: false,
@@ -530,7 +676,7 @@ struct BFCacheSnapshot: Codable {
         })()
         """
     }
-    
+
     private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
@@ -1273,12 +1419,25 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
         
         // 🔄 **순차 실행 설정 생성**
+        var savedContentHeight = max(captureData.actualScrollableSize.height, captureData.contentSize.height)
+        if let jsState = jsState {
+            if let content = jsState["content"] as? [String: Any],
+               let jsHeight = content["height"] as? Double {
+                savedContentHeight = max(savedContentHeight, CGFloat(jsHeight))
+            }
+            if let actualScrollable = jsState["actualScrollable"] as? [String: Any],
+               let jsActualHeight = actualScrollable["height"] as? Double {
+                savedContentHeight = max(savedContentHeight, CGFloat(jsActualHeight))
+            }
+        }
+        savedContentHeight = ceil(savedContentHeight)
+
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            savedContentHeight: savedContentHeight,
             step1RenderDelay: 0.1,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.1,
