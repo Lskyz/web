@@ -7,6 +7,7 @@
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
+//  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 
 import UIKit
 import WebKit
@@ -443,18 +444,31 @@ struct BFCacheSnapshot: Codable {
         (function() {
             try {
                 const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)');
+                const targetHeight = parseFloat('\(targetHeight)') || 0;
                 const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                    document.documentElement ? document.documentElement.scrollHeight : 0,
+                    document.body ? document.body.scrollHeight : 0
+                ) || 0;
                 
                 logs.push('[Step 1] 콘텐츠 높이 복원 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 
+                // 타입 안전성 체크
+                if (!targetHeight || targetHeight === 0) {
+                    logs.push('목표 높이가 유효하지 않음 - 스킵');
+                    return {
+                        success: false,
+                        currentHeight: currentHeight,
+                        targetHeight: 0,
+                        restoredHeight: currentHeight,
+                        percentage: 100,
+                        logs: logs
+                    };
+                }
+                
                 // 정적 사이트 판단 (90% 이상 이미 로드됨)
-                const percentage = (currentHeight / targetHeight) * 100;
+                const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 100;
                 const isStaticSite = percentage >= 90;
                 
                 if (isStaticSite) {
@@ -473,42 +487,165 @@ struct BFCacheSnapshot: Codable {
                 // 동적 사이트 - 콘텐츠 로드 시도
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
+                // 🚀 확장된 더보기 버튼 선택자
+                const loadMoreSelectors = [
+                    // 기본 선택자
+                    '[data-testid*="load"]', '[data-testid*="more"]',
+                    '[class*="load"]', '[class*="more"]', '[class*="show"]',
+                    'button[class*="more"]', 'button[class*="load"]', 'button[class*="show"]',
+                    '.load-more', '.show-more', '.view-more', '.see-more',
+                    
+                    // 추가 선택자
+                    'button[aria-label*="more"]', 'button[aria-label*="load"]',
+                    'a[class*="more"]', 'a[class*="load"]',
+                    'div[class*="more"]', 'div[class*="load"]',
+                    'span[class*="more"]', 'span[class*="load"]',
+                    '[role="button"][class*="more"]', '[role="button"][class*="load"]',
+                    
+                    // 한글 선택자
+                    'button:contains("더보기")', 'button:contains("더 보기")',
+                    'button:contains("더 불러오기")', 'button:contains("계속")',
+                    
+                    // 영문 선택자
+                    'button:contains("Load More")', 'button:contains("Show More")',
+                    'button:contains("View More")', 'button:contains("See More")',
+                    'button:contains("More")', 'button:contains("Next")',
+                    
+                    // ID 기반
+                    '[id*="loadmore"]', '[id*="load-more"]', '[id*="showmore"]',
+                    
+                    // data 속성
+                    '[data-action*="load"]', '[data-action*="more"]',
+                    '[data-click*="load"]', '[data-click*="more"]',
+                    
+                    // 페이지네이션
+                    '.pagination button', '.pagination a',
+                    '[class*="pagination"] button', '[class*="pagination"] a',
+                    '.next-page', '.next-btn', 'button.next'
+                ];
                 
+                const loadMoreButtons = [];
+                for (let i = 0; i < loadMoreSelectors.length; i++) {
+                    try {
+                        const selector = loadMoreSelectors[i];
+                        const elements = document.querySelectorAll(selector);
+                        if (elements && elements.length > 0) {
+                            for (let j = 0; j < elements.length; j++) {
+                                if (elements[j] && !loadMoreButtons.includes(elements[j])) {
+                                    loadMoreButtons.push(elements[j]);
+                                }
+                            }
+                        }
+                    } catch(selectorError) {
+                        // 선택자 에러 무시
+                    }
+                }
+                
+                logs.push('더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견');
+                
+                // 더보기 버튼 클릭 (최대 15개)
                 let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
+                const maxClicks = Math.min(15, loadMoreButtons.length);
+                
+                for (let i = 0; i < maxClicks; i++) {
+                    try {
+                        const btn = loadMoreButtons[i];
+                        if (btn && typeof btn.click === 'function') {
+                            // 버튼이 보이는지 확인
+                            const computedStyle = window.getComputedStyle(btn);
+                            const isVisible = computedStyle && 
+                                             computedStyle.display !== 'none' && 
+                                             computedStyle.visibility !== 'hidden';
+                            
+                            if (isVisible) {
+                                btn.click();
+                                clicked++;
+                                
+                                // 추가 이벤트 디스패치
+                                const clickEvent = new MouseEvent('click', {
+                                    view: window,
+                                    bubbles: true,
+                                    cancelable: true
+                                });
+                                btn.dispatchEvent(clickEvent);
+                            }
+                        }
+                    } catch(clickError) {
+                        // 클릭 에러 무시
                     }
                 }
                 
                 if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                    logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                 }
                 
-                // 페이지 하단 스크롤로 무한스크롤 트리거
-                const maxScrollY = Math.max(0, currentHeight - window.innerHeight);
-                window.scrollTo(0, maxScrollY);
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                logs.push('무한스크롤 트리거 시도');
+                // 🚀 무한스크롤 트리거 - 최대 8번 시도
+                logs.push('무한스크롤 트리거 시작 (최대 8번 시도)');
+                const maxScrollAttempts = 8;
+                let previousHeight = currentHeight;
                 
-                // 복원 후 높이 측정
+                for (let attempt = 1; attempt <= maxScrollAttempts; attempt++) {
+                    try {
+                        // 페이지 하단으로 스크롤
+                        const maxScrollY = Math.max(0, previousHeight - (window.innerHeight || 0));
+                        
+                        // 다양한 스크롤 방법 시도
+                        window.scrollTo(0, maxScrollY);
+                        document.documentElement.scrollTop = maxScrollY;
+                        document.body.scrollTop = maxScrollY;
+                        
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = maxScrollY;
+                        }
+                        
+                        // 스크롤 이벤트 디스패치
+                        window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
+                        document.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
+                        
+                        // 추가 이벤트들
+                        window.dispatchEvent(new Event('scrollend', { bubbles: true }));
+                        window.dispatchEvent(new Event('wheel', { bubbles: true }));
+                        
+                        // IntersectionObserver 트리거를 위한 강제 리플로우
+                        void(document.body.offsetHeight);
+                        
+                        // 새로운 높이 측정
+                        const newHeight = Math.max(
+                            document.documentElement ? document.documentElement.scrollHeight : 0,
+                            document.body ? document.body.scrollHeight : 0
+                        ) || 0;
+                        
+                        if (newHeight > previousHeight) {
+                            logs.push('시도 ' + attempt + ': 콘텐츠 증가 ' + 
+                                    (newHeight - previousHeight).toFixed(0) + 'px');
+                            previousHeight = newHeight;
+                        } else {
+                            logs.push('시도 ' + attempt + ': 콘텐츠 변화 없음');
+                        }
+                        
+                        // 목표에 도달했는지 확인
+                        if (newHeight >= targetHeight * 0.8) {
+                            logs.push('목표 높이의 80% 도달 - 트리거 중단');
+                            break;
+                        }
+                        
+                    } catch(scrollError) {
+                        logs.push('시도 ' + attempt + ' 실패: ' + (scrollError.message || 'unknown'));
+                    }
+                }
+                
+                // 최종 높이 측정
                 const restoredHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                    document.documentElement ? document.documentElement.scrollHeight : 0,
+                    document.body ? document.body.scrollHeight : 0
+                ) || currentHeight;
                 
-                const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
+                const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
+                const success = finalPercentage >= 70; // 70% 이상 복원 시 성공
                 
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 
                 return {
                     success: success,
@@ -517,14 +654,16 @@ struct BFCacheSnapshot: Codable {
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
                     percentage: finalPercentage,
+                    scrollAttempts: maxScrollAttempts,
+                    buttonsClicked: clicked,
                     logs: logs
                 };
                 
             } catch(e) {
                 return {
                     success: false,
-                    error: e.message,
-                    logs: ['[Step 1] 오류: ' + e.message]
+                    error: e.message || 'Unknown error',
+                    logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
                 };
             }
         })()
