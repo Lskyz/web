@@ -51,7 +51,7 @@ struct BFCacheSnapshot: Codable {
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.2,
-            step4RenderDelay: 0.2
+            step4RenderDelay: 0.3
         )
     }
     
@@ -1419,8 +1419,8 @@ extension BFCacheTransitionSystem {
             enableFinalVerification: true,
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
             step1RenderDelay: 0.2,
-            step2RenderDelay: 0.1,
-            step3RenderDelay: 0.1,
+            step2RenderDelay: 0.2,
+            step3RenderDelay: 0.2,
             step4RenderDelay: 0.3
         )
         
