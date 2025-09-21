@@ -1,7 +1,7 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **가상 스크롤 대응 순차적 5단계 BFCache 복원 시스템**
-//  🆕 **Step 0**: 가상 스크롤 프리렌더링 (백그라운드 콘텐츠 로딩)
+//  🆕 **Step 0**: 가상 스크롤 프리렌더링 (목표 높이 90% 도달까지 무한 반복)
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) - 🆕 복원위치 중심 로드
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
@@ -60,7 +60,7 @@ struct BFCacheSnapshot: Codable {
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.2,
-            step4RenderDelay: 0.5
+            step4RenderDelay: 0.3
         )
     }
     
@@ -220,7 +220,7 @@ struct BFCacheSnapshot: Codable {
         executeStep0_VirtualScrollPreRendering(context: context)
     }
     
-    // MARK: - 🆕 Step 0: 가상 스크롤 프리렌더링
+    // MARK: - 🆕 Step 0: 가상 스크롤 프리렌더링 (목표 높이 90% 도달까지 무한 반복)
     private func executeStep0_VirtualScrollPreRendering(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("🚀 [Step 0] 가상 스크롤 프리렌더링 시작")
         
@@ -509,24 +509,22 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 **Step 0: 가상 스크롤 프리렌더링 스크립트**
+    // 🆕 **Step 0: 가상 스크롤 프리렌더링 스크립트 (목표 높이 90% 도달까지 무한 반복)**
     private func generateStep0_PreRenderingScript() -> String {
         let targetScrollY = scrollPosition.y
-        let preRenderRadius = restorationConfig.preRenderRadius
-        let clampedHeight = restorationConfig.clampedHeight
+        let savedContentHeight = restorationConfig.savedContentHeight
         
         return """
         (function() {
             try {
                 const logs = [];
                 const targetScrollY = parseFloat('\(targetScrollY)') || 0;
-                const preRenderRadius = parseFloat('\(preRenderRadius)') || 3000;
-                const clampedHeight = parseFloat('\(clampedHeight)') || 0;
+                const savedContentHeight = parseFloat('\(savedContentHeight)') || 0;
+                const targetHeight = savedContentHeight;
                 
                 logs.push('[Step 0] 가상 스크롤 프리렌더링 시작');
                 logs.push('목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
-                logs.push('프리렌더 반경: ±' + preRenderRadius.toFixed(0) + 'px');
-                logs.push('클램핑 높이: ' + clampedHeight.toFixed(0) + 'px');
+                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px (90% = ' + (targetHeight * 0.9).toFixed(0) + 'px)');
                 
                 const currentHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
@@ -535,19 +533,12 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
                 
-                // 🚨 클램핑 감지: 현재 높이가 클램핑 높이 근처면 가상 스크롤 사용 중
-                const isVirtualScrolling = clampedHeight > 0 && 
-                                         currentHeight > 0 && 
-                                         Math.abs(currentHeight - clampedHeight) < 500;
-                
-                if (isVirtualScrolling) {
-                    logs.push('🚨 가상 스크롤 감지! 프리렌더링 시작');
-                } else {
-                    logs.push('일반 스크롤 - 프리렌더링 스킵');
+                // 이미 목표의 90% 이상이면 스킵
+                if (currentHeight >= targetHeight * 0.9) {
+                    logs.push('✅ 이미 목표 높이의 90% 이상 도달 - 프리렌더링 스킵');
                     return {
                         success: true,
                         currentHeight: currentHeight,
-                        clampedHeight: 0,
                         preRenderedHeight: currentHeight,
                         scrollAttempts: 0,
                         loadedItems: 0,
@@ -555,27 +546,36 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
                 
-                // 프리렌더링 영역 계산
-                const preRenderStart = Math.max(0, targetScrollY - preRenderRadius);
-                const preRenderEnd = targetScrollY + preRenderRadius;
+                logs.push('🚀 목표 높이의 90% 도달까지 프리렌더링 시작');
                 
-                logs.push('프리렌더 영역: ' + preRenderStart.toFixed(0) + 'px ~ ' + preRenderEnd.toFixed(0) + 'px');
-                
-                // 🚀 프리렌더링 실행: 목표 영역을 여러 번 스크롤하여 콘텐츠 로드
                 const viewportHeight = window.innerHeight;
                 let scrollAttempts = 0;
                 let loadedItems = 0;
+                let previousHeight = currentHeight;
                 
-                // 1단계: 목표 위치로 이동
-                window.scrollTo(0, targetScrollY);
-                scrollAttempts++;
-                logs.push('1단계: 목표 위치로 이동 (' + targetScrollY.toFixed(0) + 'px)');
-                
-                // 2단계: 위쪽 프리렌더링 (목표에서 위로)
-                const upwardSteps = Math.ceil(preRenderRadius / viewportHeight);
-                for (let i = 1; i <= upwardSteps; i++) {
-                    const scrollTo = Math.max(0, targetScrollY - (viewportHeight * i));
-                    window.scrollTo(0, scrollTo);
+                // 목표 높이의 90%에 도달할 때까지 반복
+                while (true) {
+                    const currentScrollHeight = Math.max(
+                        document.documentElement ? document.documentElement.scrollHeight : 0,
+                        document.body ? document.body.scrollHeight : 0
+                    ) || previousHeight;
+                    
+                    // 90% 도달 체크
+                    if (currentScrollHeight >= targetHeight * 0.9) {
+                        logs.push('✅ 목표 높이의 90% 도달! (' + currentScrollHeight.toFixed(0) + 'px >= ' + (targetHeight * 0.9).toFixed(0) + 'px)');
+                        break;
+                    }
+                    
+                    // 높이 증가가 없으면 중단 (무한루프 방지)
+                    if (scrollAttempts > 0 && currentScrollHeight <= previousHeight) {
+                        logs.push('⚠️ 더 이상 높이 증가 없음 - 중단 (' + currentScrollHeight.toFixed(0) + 'px)');
+                        break;
+                    }
+                    
+                    previousHeight = currentScrollHeight;
+                    
+                    // 목표 위치로 스크롤
+                    window.scrollTo(0, targetScrollY);
                     window.dispatchEvent(new Event('scroll', { bubbles: true }));
                     scrollAttempts++;
                     
@@ -593,45 +593,33 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
                     loadedItems += triggered;
-                }
-                logs.push('2단계: 위쪽 프리렌더링 완료 (' + upwardSteps + '단계)');
-                
-                // 3단계: 목표 위치로 복귀
-                window.scrollTo(0, targetScrollY);
-                scrollAttempts++;
-                logs.push('3단계: 목표 위치로 복귀');
-                
-                // 4단계: 아래쪽 프리렌더링 (목표에서 아래로)
-                const downwardSteps = Math.ceil(preRenderRadius / viewportHeight);
-                for (let i = 1; i <= downwardSteps; i++) {
-                    const scrollTo = targetScrollY + (viewportHeight * i);
-                    window.scrollTo(0, scrollTo);
+                    
+                    // 위쪽으로 스크롤
+                    const scrollUpTo = Math.max(0, targetScrollY - viewportHeight);
+                    window.scrollTo(0, scrollUpTo);
                     window.dispatchEvent(new Event('scroll', { bubbles: true }));
                     scrollAttempts++;
                     
-                    // IntersectionObserver 트리거
-                    const elements = document.querySelectorAll('*');
-                    let triggered = 0;
-                    for (let j = 0; j < Math.min(elements.length, 100); j++) {
-                        const el = elements[j];
-                        const rect = el.getBoundingClientRect();
-                        if (rect.top > -viewportHeight && rect.bottom < viewportHeight * 2) {
-                            el.classList.add('bfcache-prerender');
-                            void(el.offsetHeight);
-                            el.classList.remove('bfcache-prerender');
-                            triggered++;
-                        }
+                    // 아래쪽으로 스크롤
+                    const maxScrollY = Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight
+                    ) - viewportHeight;
+                    const scrollDownTo = Math.min(maxScrollY, targetScrollY + viewportHeight);
+                    window.scrollTo(0, scrollDownTo);
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    scrollAttempts++;
+                    
+                    // 로그 업데이트
+                    if (scrollAttempts % 10 === 0) {
+                        logs.push('진행중... 높이: ' + currentScrollHeight.toFixed(0) + 'px / ' + (targetHeight * 0.9).toFixed(0) + 'px (' + ((currentScrollHeight / targetHeight) * 100).toFixed(1) + '%)');
                     }
-                    loadedItems += triggered;
                 }
-                logs.push('4단계: 아래쪽 프리렌더링 완료 (' + downwardSteps + '단계)');
                 
-                // 5단계: 최종적으로 목표 위치로 복귀
+                // 최종 위치로 복귀
                 window.scrollTo(0, targetScrollY);
                 scrollAttempts++;
-                logs.push('5단계: 최종 목표 위치로 복귀');
                 
-                // 프리렌더링 후 높이 측정
                 const preRenderedHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
                     document.body ? document.body.scrollHeight : 0
@@ -641,11 +629,12 @@ struct BFCacheSnapshot: Codable {
                 logs.push('높이 증가: ' + (preRenderedHeight - currentHeight).toFixed(0) + 'px');
                 logs.push('스크롤 시도: ' + scrollAttempts + '회');
                 logs.push('로드된 항목: ' + loadedItems + '개');
+                logs.push('목표 달성률: ' + ((preRenderedHeight / targetHeight) * 100).toFixed(1) + '%');
                 
                 return {
-                    success: preRenderedHeight > currentHeight,
+                    success: preRenderedHeight >= targetHeight * 0.9,
                     currentHeight: currentHeight,
-                    clampedHeight: clampedHeight,
+                    targetHeight: targetHeight,
                     preRenderedHeight: preRenderedHeight,
                     scrollAttempts: scrollAttempts,
                     loadedItems: loadedItems,
