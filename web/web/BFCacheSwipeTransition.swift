@@ -10,6 +10,7 @@
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🆕 **복원위치 중심 로드**: 가상 스페이서로 높이 유지하며 복원 위치부터 로드
 //  🔧 **통합 순차 실행**: 독립 JS가 아닌 단일 컨텍스트 순차 실행
+//  🔧 **Promise 체이닝**: async/await 대신 then 체이닝으로 Swift 호환성 확보
 
 import UIKit
 import WebKit
@@ -210,7 +211,7 @@ struct BFCacheSnapshot: Codable {
             infiniteScrollAnchorDataJSON = dataJSON
         }
         
-        // 🔧 통합 순차 실행 스크립트 생성
+        // 🔧 통합 순차 실행 스크립트 생성 (Promise 체이닝 방식)
         let integratedScript = generateIntegratedSequentialScript(infiniteScrollAnchorDataJSON: infiniteScrollAnchorDataJSON)
         
         // 통합 스크립트 실행
@@ -219,33 +220,42 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("❌ 통합 복원 JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                overallSuccess = (resultDict["success"] as? Bool) ?? false
-                
-                // Step별 결과 로깅
-                if let step0 = resultDict["step0"] as? [String: Any] {
-                    self.logStep0Results(step0)
+            } else if let resultString = result as? String {
+                // JSON 문자열을 파싱
+                if let data = resultString.data(using: .utf8),
+                   let resultDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    
+                    overallSuccess = (resultDict["success"] as? Bool) ?? false
+                    
+                    // Step별 결과 로깅
+                    if let step0 = resultDict["step0"] as? [String: Any] {
+                        self.logStep0Results(step0)
+                    }
+                    if let step1 = resultDict["step1"] as? [String: Any] {
+                        self.logStep1Results(step1)
+                    }
+                    if let step2 = resultDict["step2"] as? [String: Any] {
+                        self.logStep2Results(step2)
+                    }
+                    if let step3 = resultDict["step3"] as? [String: Any] {
+                        self.logStep3Results(step3)
+                    }
+                    if let step4 = resultDict["step4"] as? [String: Any] {
+                        self.logStep4Results(step4)
+                    }
+                    
+                    if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("🎯 최종 복원 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                    }
+                    
+                    if let executionTime = resultDict["executionTime"] as? Double {
+                        TabPersistenceManager.debugMessages.append("⏱️ 전체 실행 시간: \(String(format: "%.2f", executionTime))초")
+                    }
+                } else {
+                    TabPersistenceManager.debugMessages.append("⚠️ JSON 파싱 실패")
                 }
-                if let step1 = resultDict["step1"] as? [String: Any] {
-                    self.logStep1Results(step1)
-                }
-                if let step2 = resultDict["step2"] as? [String: Any] {
-                    self.logStep2Results(step2)
-                }
-                if let step3 = resultDict["step3"] as? [String: Any] {
-                    self.logStep3Results(step3)
-                }
-                if let step4 = resultDict["step4"] as? [String: Any] {
-                    self.logStep4Results(step4)
-                }
-                
-                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🎯 최종 복원 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                }
-                
-                if let executionTime = resultDict["executionTime"] as? Double {
-                    TabPersistenceManager.debugMessages.append("⏱️ 전체 실행 시간: \(String(format: "%.2f", executionTime))초")
-                }
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ 예상치 못한 결과 타입: \(type(of: result))")
             }
             
             TabPersistenceManager.debugMessages.append("🎯 통합 BFCache 복원 완료: \(overallSuccess ? "성공" : "실패")")
@@ -324,7 +334,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🔧 통합 순차 실행 JavaScript 생성
+    // MARK: - 🔧 통합 순차 실행 JavaScript 생성 (Promise 체이닝)
     
     private func generateIntegratedSequentialScript(infiniteScrollAnchorDataJSON: String) -> String {
         let targetX = scrollPosition.x
@@ -337,7 +347,7 @@ struct BFCacheSnapshot: Codable {
         let step4Delay = Int(restorationConfig.step4RenderDelay * 1000)
         
         return """
-        (async function() {
+        (function() {
             const startTime = Date.now();
             const logs = [];
             const results = {
@@ -362,664 +372,674 @@ struct BFCacheSnapshot: Codable {
             logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + ', Y=' + targetScrollY.toFixed(1));
             logs.push('저장된 콘텐츠 높이: ' + savedContentHeight.toFixed(0));
             
+            // 지연 함수를 Promise로 구현
+            function delay(ms) {
+                return new Promise(function(resolve) {
+                    setTimeout(resolve, ms);
+                });
+            }
+            
             // ========== Step 0: 프리렌더링 ==========
-            async function performStep0() {
-                const step0Logs = [];
-                const targetHeight = savedContentHeight;
-                
-                step0Logs.push('[Step 0] 가상 스크롤 프리렌더링 시작');
-                step0Logs.push('목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
-                step0Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px (90% = ' + (targetHeight * 0.9).toFixed(0) + 'px)');
-                
-                const currentHeight = Math.max(
-                    document.documentElement ? document.documentElement.scrollHeight : 0,
-                    document.body ? document.body.scrollHeight : 0
-                ) || 0;
-                
-                step0Logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
-                persistedHeight = currentHeight;  // 초기 높이 저장
-                
-                // 이미 목표의 90% 이상이면 스킵
-                if (currentHeight >= targetHeight * 0.9) {
-                    step0Logs.push('✅ 이미 목표 높이의 90% 이상 도달 - 프리렌더링 스킵');
-                    persistedHeight = currentHeight;
-                    return {
-                        success: true,
-                        currentHeight: currentHeight,
-                        preRenderedHeight: currentHeight,
-                        scrollAttempts: 0,
-                        loadedItems: 0,
-                        logs: step0Logs
-                    };
-                }
-                
-                step0Logs.push('🚀 목표 높이의 90% 도달까지 프리렌더링 시작');
-                
-                const viewportHeight = window.innerHeight;
-                let scrollAttempts = 0;
-                let loadedItems = 0;
-                let previousHeight = currentHeight;
-                
-                // 목표 높이의 90%에 도달할 때까지 반복
-                while (true) {
-                    const currentScrollHeight = Math.max(
+            function performStep0() {
+                return new Promise(function(resolve) {
+                    const step0Logs = [];
+                    const targetHeight = savedContentHeight;
+                    
+                    step0Logs.push('[Step 0] 가상 스크롤 프리렌더링 시작');
+                    step0Logs.push('목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
+                    step0Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px (90% = ' + (targetHeight * 0.9).toFixed(0) + 'px)');
+                    
+                    const currentHeight = Math.max(
                         document.documentElement ? document.documentElement.scrollHeight : 0,
                         document.body ? document.body.scrollHeight : 0
-                    ) || previousHeight;
+                    ) || 0;
                     
-                    persistedHeight = currentScrollHeight;  // 높이 갱신
+                    step0Logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
+                    persistedHeight = currentHeight;  // 초기 높이 저장
                     
-                    // 90% 도달 체크
-                    if (currentScrollHeight >= targetHeight * 0.9) {
-                        step0Logs.push('✅ 목표 높이의 90% 도달! (' + currentScrollHeight.toFixed(0) + 'px >= ' + (targetHeight * 0.9).toFixed(0) + 'px)');
-                        break;
+                    // 이미 목표의 90% 이상이면 스킵
+                    if (currentHeight >= targetHeight * 0.9) {
+                        step0Logs.push('✅ 이미 목표 높이의 90% 이상 도달 - 프리렌더링 스킵');
+                        persistedHeight = currentHeight;
+                        resolve({
+                            success: true,
+                            currentHeight: currentHeight,
+                            preRenderedHeight: currentHeight,
+                            scrollAttempts: 0,
+                            loadedItems: 0,
+                            logs: step0Logs
+                        });
+                        return;
                     }
                     
-                    // 높이 증가가 없으면 중단 (무한루프 방지)
-                    if (scrollAttempts > 0 && currentScrollHeight <= previousHeight) {
-                        step0Logs.push('⚠️ 더 이상 높이 증가 없음 - 중단 (' + currentScrollHeight.toFixed(0) + 'px)');
-                        break;
-                    }
+                    step0Logs.push('🚀 목표 높이의 90% 도달까지 프리렌더링 시작');
                     
-                    previousHeight = currentScrollHeight;
+                    const viewportHeight = window.innerHeight;
+                    let scrollAttempts = 0;
+                    let loadedItems = 0;
+                    let previousHeight = currentHeight;
                     
-                    // 목표 위치로 스크롤 (높이 복원용)
-                    window.scrollTo(0, targetScrollY);
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    scrollAttempts++;
-                    
-                    // IntersectionObserver 트리거
-                    const elements = document.querySelectorAll('*');
-                    let triggered = 0;
-                    for (let j = 0; j < Math.min(elements.length, 100); j++) {
-                        const el = elements[j];
-                        const rect = el.getBoundingClientRect();
-                        if (rect.top > -viewportHeight && rect.bottom < viewportHeight * 2) {
-                            el.classList.add('bfcache-prerender');
-                            void(el.offsetHeight);
-                            el.classList.remove('bfcache-prerender');
-                            triggered++;
+                    // 목표 높이의 90%에 도달할 때까지 반복
+                    function scrollLoop() {
+                        const currentScrollHeight = Math.max(
+                            document.documentElement ? document.documentElement.scrollHeight : 0,
+                            document.body ? document.body.scrollHeight : 0
+                        ) || previousHeight;
+                        
+                        persistedHeight = currentScrollHeight;  // 높이 갱신
+                        
+                        // 90% 도달 체크
+                        if (currentScrollHeight >= targetHeight * 0.9) {
+                            step0Logs.push('✅ 목표 높이의 90% 도달! (' + currentScrollHeight.toFixed(0) + 'px >= ' + (targetHeight * 0.9).toFixed(0) + 'px)');
+                            
+                            const preRenderedHeight = currentScrollHeight;
+                            persistedHeight = preRenderedHeight;  // 최종 높이 저장
+                            
+                            step0Logs.push('프리렌더링 완료: ' + currentHeight.toFixed(0) + 'px → ' + preRenderedHeight.toFixed(0) + 'px');
+                            step0Logs.push('높이 증가: ' + (preRenderedHeight - currentHeight).toFixed(0) + 'px');
+                            step0Logs.push('스크롤 시도: ' + scrollAttempts + '회');
+                            step0Logs.push('로드된 항목: ' + loadedItems + '개');
+                            step0Logs.push('목표 달성률: ' + ((preRenderedHeight / targetHeight) * 100).toFixed(1) + '%');
+                            
+                            resolve({
+                                success: preRenderedHeight >= targetHeight * 0.9,
+                                currentHeight: currentHeight,
+                                targetHeight: targetHeight,
+                                preRenderedHeight: preRenderedHeight,
+                                scrollAttempts: scrollAttempts,
+                                loadedItems: loadedItems,
+                                logs: step0Logs
+                            });
+                            return;
                         }
+                        
+                        // 높이 증가가 없으면 중단 (무한루프 방지)
+                        if (scrollAttempts > 0 && currentScrollHeight <= previousHeight) {
+                            step0Logs.push('⚠️ 더 이상 높이 증가 없음 - 중단 (' + currentScrollHeight.toFixed(0) + 'px)');
+                            
+                            const preRenderedHeight = currentScrollHeight;
+                            persistedHeight = preRenderedHeight;
+                            
+                            resolve({
+                                success: preRenderedHeight >= targetHeight * 0.9,
+                                currentHeight: currentHeight,
+                                targetHeight: targetHeight,
+                                preRenderedHeight: preRenderedHeight,
+                                scrollAttempts: scrollAttempts,
+                                loadedItems: loadedItems,
+                                logs: step0Logs
+                            });
+                            return;
+                        }
+                        
+                        previousHeight = currentScrollHeight;
+                        
+                        // 목표 위치로 스크롤 (높이 복원용)
+                        window.scrollTo(0, targetScrollY);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        scrollAttempts++;
+                        
+                        // IntersectionObserver 트리거
+                        const elements = document.querySelectorAll('*');
+                        let triggered = 0;
+                        for (let j = 0; j < Math.min(elements.length, 100); j++) {
+                            const el = elements[j];
+                            const rect = el.getBoundingClientRect();
+                            if (rect.top > -viewportHeight && rect.bottom < viewportHeight * 2) {
+                                el.classList.add('bfcache-prerender');
+                                void(el.offsetHeight);
+                                el.classList.remove('bfcache-prerender');
+                                triggered++;
+                            }
+                        }
+                        loadedItems += triggered;
+                        
+                        // 위쪽으로 스크롤
+                        const scrollUpTo = Math.max(0, targetScrollY - viewportHeight);
+                        window.scrollTo(0, scrollUpTo);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        scrollAttempts++;
+                        
+                        // 아래쪽으로 스크롤
+                        const maxScrollY = Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight
+                        ) - viewportHeight;
+                        const scrollDownTo = Math.min(maxScrollY, targetScrollY + viewportHeight);
+                        window.scrollTo(0, scrollDownTo);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        scrollAttempts++;
+                        
+                        // 로그 업데이트
+                        if (scrollAttempts % 10 === 0) {
+                            step0Logs.push('진행중... 높이: ' + currentScrollHeight.toFixed(0) + 'px / ' + (targetHeight * 0.9).toFixed(0) + 'px (' + ((currentScrollHeight / targetHeight) * 100).toFixed(1) + '%)');
+                        }
+                        
+                        // 다음 루프 스케줄
+                        setTimeout(scrollLoop, 50);
                     }
-                    loadedItems += triggered;
                     
-                    // 위쪽으로 스크롤
-                    const scrollUpTo = Math.max(0, targetScrollY - viewportHeight);
-                    window.scrollTo(0, scrollUpTo);
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    scrollAttempts++;
-                    
-                    // 아래쪽으로 스크롤
-                    const maxScrollY = Math.max(
-                        document.documentElement.scrollHeight,
-                        document.body.scrollHeight
-                    ) - viewportHeight;
-                    const scrollDownTo = Math.min(maxScrollY, targetScrollY + viewportHeight);
-                    window.scrollTo(0, scrollDownTo);
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    scrollAttempts++;
-                    
-                    // 로그 업데이트
-                    if (scrollAttempts % 10 === 0) {
-                        step0Logs.push('진행중... 높이: ' + currentScrollHeight.toFixed(0) + 'px / ' + (targetHeight * 0.9).toFixed(0) + 'px (' + ((currentScrollHeight / targetHeight) * 100).toFixed(1) + '%)');
-                    }
-                }
-                
-                const preRenderedHeight = Math.max(
-                    document.documentElement ? document.documentElement.scrollHeight : 0,
-                    document.body ? document.body.scrollHeight : 0
-                ) || currentHeight;
-                
-                persistedHeight = preRenderedHeight;  // 최종 높이 저장
-                
-                step0Logs.push('프리렌더링 완료: ' + currentHeight.toFixed(0) + 'px → ' + preRenderedHeight.toFixed(0) + 'px');
-                step0Logs.push('높이 증가: ' + (preRenderedHeight - currentHeight).toFixed(0) + 'px');
-                step0Logs.push('스크롤 시도: ' + scrollAttempts + '회');
-                step0Logs.push('로드된 항목: ' + loadedItems + '개');
-                step0Logs.push('목표 달성률: ' + ((preRenderedHeight / targetHeight) * 100).toFixed(1) + '%');
-                
-                return {
-                    success: preRenderedHeight >= targetHeight * 0.9,
-                    currentHeight: currentHeight,
-                    targetHeight: targetHeight,
-                    preRenderedHeight: preRenderedHeight,
-                    scrollAttempts: scrollAttempts,
-                    loadedItems: loadedItems,
-                    logs: step0Logs
-                };
+                    // 루프 시작
+                    scrollLoop();
+                });
             }
             
             // ========== Step 1: 복원 위치 중심 콘텐츠 로드 ==========
-            async function performStep1() {
-                const step1Logs = [];
-                const targetHeight = savedContentHeight;
-                const currentHeight = persistedHeight;  // Step0에서 유지된 높이 사용
-                
-                step1Logs.push('[Step 1] 복원 위치 중심 콘텐츠 로드 시작');
-                step1Logs.push('Step0에서 유지된 높이: ' + currentHeight.toFixed(0) + 'px');
-                step1Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                step1Logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
-                
-                if (!targetHeight || targetHeight === 0) {
-                    step1Logs.push('목표 높이가 유효하지 않음 - 스킵');
-                    return {
-                        success: false,
-                        currentHeight: currentHeight,
-                        targetHeight: 0,
-                        restoredHeight: currentHeight,
-                        percentage: 100,
-                        logs: step1Logs
-                    };
-                }
-                
-                const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 100;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    step1Logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: percentage,
-                        logs: step1Logs
-                    };
-                }
-                
-                step1Logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
-                
-                const createVirtualSpacer = function(height) {
-                    try {
-                        const existingSpacer = document.querySelector('#bfcache-virtual-spacer');
-                        if (existingSpacer) {
-                            existingSpacer.remove();
-                        }
-                        
-                        const spacer = document.createElement('div');
-                        spacer.id = 'bfcache-virtual-spacer';
-                        spacer.style.height = height + 'px';
-                        spacer.style.width = '1px';
-                        spacer.style.position = 'absolute';
-                        spacer.style.bottom = '0';
-                        spacer.style.left = '-9999px';
-                        spacer.style.visibility = 'hidden';
-                        spacer.style.pointerEvents = 'none';
-                        document.body.appendChild(spacer);
-                        
-                        step1Logs.push('가상 스페이서 생성: ' + height.toFixed(0) + 'px');
-                        return spacer;
-                    } catch(e) {
-                        step1Logs.push('가상 스페이서 생성 실패: ' + e.message);
-                        return null;
+            function performStep1() {
+                return new Promise(function(resolve) {
+                    const step1Logs = [];
+                    const targetHeight = savedContentHeight;
+                    const currentHeight = persistedHeight;  // Step0에서 유지된 높이 사용
+                    
+                    step1Logs.push('[Step 1] 복원 위치 중심 콘텐츠 로드 시작');
+                    step1Logs.push('Step0에서 유지된 높이: ' + currentHeight.toFixed(0) + 'px');
+                    step1Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                    step1Logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
+                    
+                    if (!targetHeight || targetHeight === 0) {
+                        step1Logs.push('목표 높이가 유효하지 않음 - 스킵');
+                        resolve({
+                            success: false,
+                            currentHeight: currentHeight,
+                            targetHeight: 0,
+                            restoredHeight: currentHeight,
+                            percentage: 100,
+                            logs: step1Logs
+                        });
+                        return;
                     }
-                };
-                
-                const spacerHeight = Math.max(0, targetHeight - currentHeight);
-                let virtualSpacer = null;
-                
-                if (spacerHeight > 100) {
-                    virtualSpacer = createVirtualSpacer(spacerHeight);
-                    void(document.body.offsetHeight);
-                    step1Logs.push('가상 공간 확보 완료: ' + spacerHeight.toFixed(0) + 'px');
-                }
-                
-                // 높이 복원용 임시 스크롤만 수행
-                window.scrollTo(0, targetScrollY);
-                step1Logs.push('임시 스크롤 (높이 복원용): ' + targetScrollY.toFixed(0) + 'px');
-                
-                const triggerIntersectionObserver = function() {
-                    try {
-                        const viewportHeight = window.innerHeight;
-                        const currentScrollY = window.scrollY || window.pageYOffset;
-                        const allElements = document.querySelectorAll('*');
-                        let triggeredCount = 0;
-                        
-                        for (let i = 0; i < allElements.length; i++) {
-                            const el = allElements[i];
-                            const rect = el.getBoundingClientRect();
-                            
-                            if (rect.bottom > -viewportHeight && rect.top < viewportHeight * 2) {
-                                const event = new Event('scrollintoview', { bubbles: true });
-                                el.dispatchEvent(event);
-                                
-                                el.classList.add('bfcache-trigger');
-                                void(el.offsetHeight);
-                                el.classList.remove('bfcache-trigger');
-                                
-                                triggeredCount++;
-                                if (triggeredCount > 50) break;
+                    
+                    const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 100;
+                    const isStaticSite = percentage >= 90;
+                    
+                    if (isStaticSite) {
+                        step1Logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+                        resolve({
+                            success: true,
+                            isStaticSite: true,
+                            currentHeight: currentHeight,
+                            targetHeight: targetHeight,
+                            restoredHeight: currentHeight,
+                            percentage: percentage,
+                            logs: step1Logs
+                        });
+                        return;
+                    }
+                    
+                    step1Logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
+                    
+                    const createVirtualSpacer = function(height) {
+                        try {
+                            const existingSpacer = document.querySelector('#bfcache-virtual-spacer');
+                            if (existingSpacer) {
+                                existingSpacer.remove();
                             }
+                            
+                            const spacer = document.createElement('div');
+                            spacer.id = 'bfcache-virtual-spacer';
+                            spacer.style.height = height + 'px';
+                            spacer.style.width = '1px';
+                            spacer.style.position = 'absolute';
+                            spacer.style.bottom = '0';
+                            spacer.style.left = '-9999px';
+                            spacer.style.visibility = 'hidden';
+                            spacer.style.pointerEvents = 'none';
+                            document.body.appendChild(spacer);
+                            
+                            step1Logs.push('가상 스페이서 생성: ' + height.toFixed(0) + 'px');
+                            return spacer;
+                        } catch(e) {
+                            step1Logs.push('가상 스페이서 생성 실패: ' + e.message);
+                            return null;
                         }
-                        
-                        step1Logs.push('IntersectionObserver 트리거: ' + triggeredCount + '개 요소');
-                    } catch(e) {
-                        step1Logs.push('IntersectionObserver 트리거 실패: ' + e.message);
+                    };
+                    
+                    const spacerHeight = Math.max(0, targetHeight - currentHeight);
+                    let virtualSpacer = null;
+                    
+                    if (spacerHeight > 100) {
+                        virtualSpacer = createVirtualSpacer(spacerHeight);
+                        void(document.body.offsetHeight);
+                        step1Logs.push('가상 공간 확보 완료: ' + spacerHeight.toFixed(0) + 'px');
                     }
-                };
-                
-                triggerIntersectionObserver();
-                
-                const loadMoreSelectors = [
-                    '[data-testid*="load"]', '[data-testid*="more"]',
-                    '[class*="load"]', '[class*="more"]', '[class*="show"]',
-                    'button[class*="more"]', 'button[class*="load"]',
-                    '.load-more', '.show-more', '.view-more',
-                    '[role="button"][class*="more"]',
-                    '.pagination button', '.pagination a',
-                    '.next-page', '.next-btn'
-                ];
-                
-                const loadMoreButtons = [];
-                for (let i = 0; i < loadMoreSelectors.length; i++) {
-                    try {
-                        const selector = loadMoreSelectors[i];
-                        const elements = document.querySelectorAll(selector);
-                        if (elements && elements.length > 0) {
-                            for (let j = 0; j < elements.length; j++) {
-                                const el = elements[j];
+                    
+                    // 높이 복원용 임시 스크롤만 수행
+                    window.scrollTo(0, targetScrollY);
+                    step1Logs.push('임시 스크롤 (높이 복원용): ' + targetScrollY.toFixed(0) + 'px');
+                    
+                    const triggerIntersectionObserver = function() {
+                        try {
+                            const viewportHeight = window.innerHeight;
+                            const currentScrollY = window.scrollY || window.pageYOffset;
+                            const allElements = document.querySelectorAll('*');
+                            let triggeredCount = 0;
+                            
+                            for (let i = 0; i < allElements.length; i++) {
+                                const el = allElements[i];
                                 const rect = el.getBoundingClientRect();
                                 
-                                if (rect.bottom > -500 && rect.top < window.innerHeight + 500) {
-                                    if (!loadMoreButtons.includes(el)) {
-                                        loadMoreButtons.push(el);
+                                if (rect.bottom > -viewportHeight && rect.top < viewportHeight * 2) {
+                                    const event = new Event('scrollintoview', { bubbles: true });
+                                    el.dispatchEvent(event);
+                                    
+                                    el.classList.add('bfcache-trigger');
+                                    void(el.offsetHeight);
+                                    el.classList.remove('bfcache-trigger');
+                                    
+                                    triggeredCount++;
+                                    if (triggeredCount > 50) break;
+                                }
+                            }
+                            
+                            step1Logs.push('IntersectionObserver 트리거: ' + triggeredCount + '개 요소');
+                        } catch(e) {
+                            step1Logs.push('IntersectionObserver 트리거 실패: ' + e.message);
+                        }
+                    };
+                    
+                    triggerIntersectionObserver();
+                    
+                    const loadMoreSelectors = [
+                        '[data-testid*="load"]', '[data-testid*="more"]',
+                        '[class*="load"]', '[class*="more"]', '[class*="show"]',
+                        'button[class*="more"]', 'button[class*="load"]',
+                        '.load-more', '.show-more', '.view-more',
+                        '[role="button"][class*="more"]',
+                        '.pagination button', '.pagination a',
+                        '.next-page', '.next-btn'
+                    ];
+                    
+                    const loadMoreButtons = [];
+                    for (let i = 0; i < loadMoreSelectors.length; i++) {
+                        try {
+                            const selector = loadMoreSelectors[i];
+                            const elements = document.querySelectorAll(selector);
+                            if (elements && elements.length > 0) {
+                                for (let j = 0; j < elements.length; j++) {
+                                    const el = elements[j];
+                                    const rect = el.getBoundingClientRect();
+                                    
+                                    if (rect.bottom > -500 && rect.top < window.innerHeight + 500) {
+                                        if (!loadMoreButtons.includes(el)) {
+                                            loadMoreButtons.push(el);
+                                        }
                                     }
                                 }
                             }
+                        } catch(selectorError) {
                         }
-                    } catch(selectorError) {
                     }
-                }
-                
-                step1Logs.push('뷰포트 근처 더보기 버튼: ' + loadMoreButtons.length + '개 발견');
-                
-                let clicked = 0;
-                const maxClicks = Math.min(5, loadMoreButtons.length);
-                
-                for (let i = 0; i < maxClicks; i++) {
-                    try {
-                        const btn = loadMoreButtons[i];
-                        if (btn && typeof btn.click === 'function') {
-                            const computedStyle = window.getComputedStyle(btn);
-                            const isVisible = computedStyle && 
-                                             computedStyle.display !== 'none' && 
-                                             computedStyle.visibility !== 'hidden';
-                            
-                            if (isVisible) {
-                                btn.click();
-                                clicked++;
+                    
+                    step1Logs.push('뷰포트 근처 더보기 버튼: ' + loadMoreButtons.length + '개 발견');
+                    
+                    let clicked = 0;
+                    const maxClicks = Math.min(5, loadMoreButtons.length);
+                    
+                    for (let i = 0; i < maxClicks; i++) {
+                        try {
+                            const btn = loadMoreButtons[i];
+                            if (btn && typeof btn.click === 'function') {
+                                const computedStyle = window.getComputedStyle(btn);
+                                const isVisible = computedStyle && 
+                                                 computedStyle.display !== 'none' && 
+                                                 computedStyle.visibility !== 'hidden';
                                 
-                                const clickEvent = new MouseEvent('click', {
-                                    view: window,
-                                    bubbles: true,
-                                    cancelable: true
-                                });
-                                btn.dispatchEvent(clickEvent);
+                                if (isVisible) {
+                                    btn.click();
+                                    clicked++;
+                                    
+                                    const clickEvent = new MouseEvent('click', {
+                                        view: window,
+                                        bubbles: true,
+                                        cancelable: true
+                                    });
+                                    btn.dispatchEvent(clickEvent);
+                                }
                             }
+                        } catch(clickError) {
                         }
-                    } catch(clickError) {
-                    }
-                }
-                
-                if (clicked > 0) {
-                    step1Logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
-                }
-                
-                step1Logs.push('양방향 스크롤 트리거 시작');
-                const biDirectionalScrollLoad = function() {
-                    const startY = targetScrollY;
-                    const viewportHeight = window.innerHeight;
-                    let loadAttempts = 0;
-                    const maxAttempts = 6;
-                    
-                    for (let i = 1; i <= 3; i++) {
-                        const scrollUpTo = Math.max(0, startY - (viewportHeight * i * 0.5));
-                        window.scrollTo(0, scrollUpTo);
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        loadAttempts++;
-                        step1Logs.push('위쪽 스크롤 ' + i + ': ' + scrollUpTo.toFixed(0) + 'px');
                     }
                     
-                    const maxScrollY = Math.max(
-                        document.documentElement.scrollHeight,
-                        document.body.scrollHeight
-                    ) - viewportHeight;
-                    
-                    for (let i = 1; i <= 3; i++) {
-                        const scrollDownTo = Math.min(maxScrollY, startY + (viewportHeight * i * 0.5));
-                        window.scrollTo(0, scrollDownTo);
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        loadAttempts++;
-                        step1Logs.push('아래쪽 스크롤 ' + i + ': ' + scrollDownTo.toFixed(0) + 'px');
+                    if (clicked > 0) {
+                        step1Logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                     }
                     
-                    return loadAttempts;
-                };
-                
-                const scrollAttempts = biDirectionalScrollLoad();
-                step1Logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
-                
-                setTimeout(function() {
-                    if (virtualSpacer) {
-                        virtualSpacer.remove();
-                        step1Logs.push('가상 스페이서 제거됨');
-                    }
-                }, 100);
-                
-                const restoredHeight = Math.max(
-                    document.documentElement ? document.documentElement.scrollHeight : 0,
-                    document.body ? document.body.scrollHeight : 0
-                ) || currentHeight;
-                
-                persistedHeight = restoredHeight;  // 복원된 높이 저장
-                
-                const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
-                const success = finalPercentage >= 50;
-                
-                step1Logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                step1Logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                step1Logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
-                
-                return {
-                    success: success,
-                    isStaticSite: false,
-                    currentHeight: currentHeight,
-                    targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
-                    spacerHeight: spacerHeight,
-                    loadedFromPosition: targetScrollY,
-                    scrollAttempts: scrollAttempts,
-                    buttonsClicked: clicked,
-                    logs: step1Logs
-                };
+                    step1Logs.push('양방향 스크롤 트리거 시작');
+                    const biDirectionalScrollLoad = function() {
+                        const startY = targetScrollY;
+                        const viewportHeight = window.innerHeight;
+                        let loadAttempts = 0;
+                        const maxAttempts = 6;
+                        
+                        for (let i = 1; i <= 3; i++) {
+                            const scrollUpTo = Math.max(0, startY - (viewportHeight * i * 0.5));
+                            window.scrollTo(0, scrollUpTo);
+                            window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            loadAttempts++;
+                            step1Logs.push('위쪽 스크롤 ' + i + ': ' + scrollUpTo.toFixed(0) + 'px');
+                        }
+                        
+                        const maxScrollY = Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight
+                        ) - viewportHeight;
+                        
+                        for (let i = 1; i <= 3; i++) {
+                            const scrollDownTo = Math.min(maxScrollY, startY + (viewportHeight * i * 0.5));
+                            window.scrollTo(0, scrollDownTo);
+                            window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            loadAttempts++;
+                            step1Logs.push('아래쪽 스크롤 ' + i + ': ' + scrollDownTo.toFixed(0) + 'px');
+                        }
+                        
+                        return loadAttempts;
+                    };
+                    
+                    const scrollAttempts = biDirectionalScrollLoad();
+                    step1Logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
+                    
+                    setTimeout(function() {
+                        if (virtualSpacer) {
+                            virtualSpacer.remove();
+                            step1Logs.push('가상 스페이서 제거됨');
+                        }
+                    }, 100);
+                    
+                    const restoredHeight = Math.max(
+                        document.documentElement ? document.documentElement.scrollHeight : 0,
+                        document.body ? document.body.scrollHeight : 0
+                    ) || currentHeight;
+                    
+                    persistedHeight = restoredHeight;  // 복원된 높이 저장
+                    
+                    const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
+                    const success = finalPercentage >= 50;
+                    
+                    step1Logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+                    step1Logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                    step1Logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
+                    
+                    resolve({
+                        success: success,
+                        isStaticSite: false,
+                        currentHeight: currentHeight,
+                        targetHeight: targetHeight,
+                        restoredHeight: restoredHeight,
+                        percentage: finalPercentage,
+                        spacerHeight: spacerHeight,
+                        loadedFromPosition: targetScrollY,
+                        scrollAttempts: scrollAttempts,
+                        buttonsClicked: clicked,
+                        logs: step1Logs
+                    });
+                });
             }
             
             // ========== Step 2: 절대좌표 기반 스크롤 ==========
-            async function performStep2() {
-                const step2Logs = [];
-                
-                step2Logs.push('[Step 2] 절대좌표 기반 스크롤 복원');
-                step2Logs.push('목표 절대좌표: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
-                
-                // Step0/1에서 유지된 높이 사용
-                const currentHeight = persistedHeight;
-                
-                step2Logs.push('Step0/1에서 유지된 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
-                
-                // 절대좌표로 임시 스크롤 (Step 4에서 최종 확정)
-                const tempY = Math.min(targetScrollY, currentHeight - window.innerHeight);
-                const tempX = targetScrollX;
-                
-                window.scrollTo(tempX, tempY);
-                step2Logs.push('임시 스크롤 설정: X=' + tempX.toFixed(1) + 'px, Y=' + tempY.toFixed(1) + 'px');
-                
-                const actualX = window.scrollX || window.pageXOffset || 0;
-                const actualY = window.scrollY || window.pageYOffset || 0;
-                
-                step2Logs.push('실제 스크롤 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                
-                return {
-                    success: true,
-                    targetPosition: { x: targetScrollX, y: targetScrollY },
-                    currentHeight: currentHeight,
-                    tempPosition: { x: tempX, y: tempY },
-                    actualPosition: { x: actualX, y: actualY },
-                    logs: step2Logs
-                };
-            }
-            
-            // ========== Step 3: 무한스크롤 앵커 복원 ==========
-            async function performStep3() {
-                const step3Logs = [];
-                
-                step3Logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
-                step3Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
-                
-                const currentHeight = persistedHeight;  // 유지된 높이 사용
-                
-                if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
-                    step3Logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
-                    return {
-                        success: false,
-                        anchorCount: 0,
-                        currentHeight: currentHeight,
-                        logs: step3Logs
-                    };
-                }
-                
-                const anchors = infiniteScrollAnchorData.anchors;
-                step3Logs.push('사용 가능한 앵커: ' + anchors.length + '개');
-                
-                const vueComponentAnchors = anchors.filter(function(anchor) {
-                    return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
-                });
-                const contentHashAnchors = anchors.filter(function(anchor) {
-                    return anchor.anchorType === 'contentHash' && anchor.contentHash;
-                });
-                const virtualIndexAnchors = anchors.filter(function(anchor) {
-                    return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
-                });
-                
-                step3Logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
-                step3Logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
-                step3Logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
-                
-                let foundElement = null;
-                let matchedAnchor = null;
-                let matchMethod = '';
-                let confidence = 0;
-                
-                if (!foundElement && vueComponentAnchors.length > 0) {
-                    for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
-                        const anchor = vueComponentAnchors[i];
-                        const vueComp = anchor.vueComponent;
-                        
-                        if (vueComp.dataV) {
-                            const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
-                            for (let j = 0; j < vueElements.length; j++) {
-                                const element = vueElements[j];
-                                if (vueComp.name && element.className.includes(vueComp.name)) {
-                                    if (vueComp.index !== undefined) {
-                                        const elementIndex = Array.from(element.parentElement.children).indexOf(element);
-                                        if (Math.abs(elementIndex - vueComp.index) <= 2) {
-                                            foundElement = element;
-                                            matchedAnchor = anchor;
-                                            matchMethod = 'vue_component_with_index';
-                                            confidence = 95;
-                                            step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
-                                            break;
-                                        }
-                                    } else {
-                                        foundElement = element;
-                                        matchedAnchor = anchor;
-                                        matchMethod = 'vue_component';
-                                        confidence = 85;
-                                        step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
-                                        break;
-                                    }
-                                }
-                            }
-                            if (foundElement) break;
-                        }
-                    }
-                }
-                
-                if (!foundElement && contentHashAnchors.length > 0) {
-                    for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
-                        const anchor = contentHashAnchors[i];
-                        const contentHash = anchor.contentHash;
-                        
-                        if (contentHash.text && contentHash.text.length > 20) {
-                            const searchText = contentHash.text.substring(0, 50);
-                            const allElements = document.querySelectorAll('*');
-                            for (let j = 0; j < allElements.length; j++) {
-                                const element = allElements[j];
-                                const elementText = (element.textContent || '').trim();
-                                if (elementText.includes(searchText)) {
-                                    foundElement = element;
-                                    matchedAnchor = anchor;
-                                    matchMethod = 'content_hash';
-                                    confidence = 80;
-                                    step3Logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
-                                    break;
-                                }
-                            }
-                            if (foundElement) break;
-                        }
-                        
-                        if (!foundElement && contentHash.shortHash) {
-                            const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
-                            if (hashElements.length > 0) {
-                                foundElement = hashElements[0];
-                                matchedAnchor = anchor;
-                                matchMethod = 'short_hash';
-                                confidence = 75;
-                                step3Logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (!foundElement && virtualIndexAnchors.length > 0) {
-                    for (let i = 0; i < virtualIndexAnchors.length && !foundElement; i++) {
-                        const anchor = virtualIndexAnchors[i];
-                        const virtualIndex = anchor.virtualIndex;
-                        
-                        if (virtualIndex.listIndex !== undefined) {
-                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
-                            const targetIndex = virtualIndex.listIndex;
-                            if (targetIndex >= 0 && targetIndex < listElements.length) {
-                                foundElement = listElements[targetIndex];
-                                matchedAnchor = anchor;
-                                matchMethod = 'virtual_index';
-                                confidence = 60;
-                                step3Logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
-                                break;
-                            }
-                        }
-                        
-                        if (!foundElement && virtualIndex.offsetInPage !== undefined) {
-                            const estimatedY = virtualIndex.offsetInPage;
-                            const allElements = document.querySelectorAll('*');
-                            let closestElement = null;
-                            let minDistance = Infinity;
-                            
-                            for (let j = 0; j < allElements.length; j++) {
-                                const element = allElements[j];
-                                const rect = element.getBoundingClientRect();
-                                const elementY = window.scrollY + rect.top;
-                                const distance = Math.abs(elementY - estimatedY);
-                                
-                                if (distance < minDistance && rect.height > 20) {
-                                    minDistance = distance;
-                                    closestElement = element;
-                                }
-                            }
-                            
-                            if (closestElement && minDistance < 200) {
-                                foundElement = closestElement;
-                                matchedAnchor = anchor;
-                                matchMethod = 'page_offset';
-                                confidence = 50;
-                                step3Logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (foundElement && matchedAnchor) {
-                    // 임시로만 스크롤 (Step 4에서 최종 확정)
-                    foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
+            function performStep2() {
+                return new Promise(function(resolve) {
+                    const step2Logs = [];
                     
-                    if (matchedAnchor.offsetFromTop) {
-                        window.scrollBy(0, -matchedAnchor.offsetFromTop);
-                    }
+                    step2Logs.push('[Step 2] 절대좌표 기반 스크롤 복원');
+                    step2Logs.push('목표 절대좌표: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
+                    
+                    // Step0/1에서 유지된 높이 사용
+                    const currentHeight = persistedHeight;
+                    
+                    step2Logs.push('Step0/1에서 유지된 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
+                    
+                    // 절대좌표로 임시 스크롤 (Step 4에서 최종 확정)
+                    const tempY = Math.min(targetScrollY, currentHeight - window.innerHeight);
+                    const tempX = targetScrollX;
+                    
+                    window.scrollTo(tempX, tempY);
+                    step2Logs.push('임시 스크롤 설정: X=' + tempX.toFixed(1) + 'px, Y=' + tempY.toFixed(1) + 'px');
                     
                     const actualX = window.scrollX || window.pageXOffset || 0;
                     const actualY = window.scrollY || window.pageYOffset || 0;
-                    const diffX = Math.abs(actualX - targetScrollX);
-                    const diffY = Math.abs(actualY - targetScrollY);
                     
-                    step3Logs.push('임시 앵커 복원 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                    step3Logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                    step3Logs.push('매칭 신뢰도: ' + confidence + '%');
+                    step2Logs.push('실제 스크롤 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                     
-                    return {
-                        success: diffY <= 100,
-                        anchorCount: anchors.length,
-                        matchedAnchor: {
-                            anchorType: matchedAnchor.anchorType,
-                            matchMethod: matchMethod,
-                            confidence: confidence
-                        },
-                        restoredPosition: { x: actualX, y: actualY },
+                    resolve({
+                        success: true,
+                        targetPosition: { x: targetScrollX, y: targetScrollY },
                         currentHeight: currentHeight,
-                        targetDifference: { x: diffX, y: diffY },
+                        tempPosition: { x: tempX, y: tempY },
+                        actualPosition: { x: actualX, y: actualY },
+                        logs: step2Logs
+                    });
+                });
+            }
+            
+            // ========== Step 3: 무한스크롤 앵커 복원 ==========
+            function performStep3() {
+                return new Promise(function(resolve) {
+                    const step3Logs = [];
+                    
+                    step3Logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                    step3Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
+                    
+                    const currentHeight = persistedHeight;  // 유지된 높이 사용
+                    
+                    if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
+                        step3Logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
+                        resolve({
+                            success: false,
+                            anchorCount: 0,
+                            currentHeight: currentHeight,
+                            logs: step3Logs
+                        });
+                        return;
+                    }
+                    
+                    const anchors = infiniteScrollAnchorData.anchors;
+                    step3Logs.push('사용 가능한 앵커: ' + anchors.length + '개');
+                    
+                    const vueComponentAnchors = anchors.filter(function(anchor) {
+                        return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
+                    });
+                    const contentHashAnchors = anchors.filter(function(anchor) {
+                        return anchor.anchorType === 'contentHash' && anchor.contentHash;
+                    });
+                    const virtualIndexAnchors = anchors.filter(function(anchor) {
+                        return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
+                    });
+                    
+                    step3Logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
+                    step3Logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
+                    step3Logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
+                    
+                    let foundElement = null;
+                    let matchedAnchor = null;
+                    let matchMethod = '';
+                    let confidence = 0;
+                    
+                    if (!foundElement && vueComponentAnchors.length > 0) {
+                        for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
+                            const anchor = vueComponentAnchors[i];
+                            const vueComp = anchor.vueComponent;
+                            
+                            if (vueComp.dataV) {
+                                const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
+                                for (let j = 0; j < vueElements.length; j++) {
+                                    const element = vueElements[j];
+                                    if (vueComp.name && element.className.includes(vueComp.name)) {
+                                        if (vueComp.index !== undefined) {
+                                            const elementIndex = Array.from(element.parentElement.children).indexOf(element);
+                                            if (Math.abs(elementIndex - vueComp.index) <= 2) {
+                                                foundElement = element;
+                                                matchedAnchor = anchor;
+                                                matchMethod = 'vue_component_with_index';
+                                                confidence = 95;
+                                                step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
+                                                break;
+                                            }
+                                        } else {
+                                            foundElement = element;
+                                            matchedAnchor = anchor;
+                                            matchMethod = 'vue_component';
+                                            confidence = 85;
+                                            step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (foundElement) break;
+                            }
+                        }
+                    }
+                    
+                    if (!foundElement && contentHashAnchors.length > 0) {
+                        for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
+                            const anchor = contentHashAnchors[i];
+                            const contentHash = anchor.contentHash;
+                            
+                            if (contentHash.text && contentHash.text.length > 20) {
+                                const searchText = contentHash.text.substring(0, 50);
+                                const allElements = document.querySelectorAll('*');
+                                for (let j = 0; j < allElements.length; j++) {
+                                    const element = allElements[j];
+                                    const elementText = (element.textContent || '').trim();
+                                    if (elementText.includes(searchText)) {
+                                        foundElement = element;
+                                        matchedAnchor = anchor;
+                                        matchMethod = 'content_hash';
+                                        confidence = 80;
+                                        step3Logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
+                                        break;
+                                    }
+                                }
+                                if (foundElement) break;
+                            }
+                            
+                            if (!foundElement && contentHash.shortHash) {
+                                const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
+                                if (hashElements.length > 0) {
+                                    foundElement = hashElements[0];
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'short_hash';
+                                    confidence = 75;
+                                    step3Logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!foundElement && virtualIndexAnchors.length > 0) {
+                        for (let i = 0; i < virtualIndexAnchors.length && !foundElement; i++) {
+                            const anchor = virtualIndexAnchors[i];
+                            const virtualIndex = anchor.virtualIndex;
+                            
+                            if (virtualIndex.listIndex !== undefined) {
+                                const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
+                                const targetIndex = virtualIndex.listIndex;
+                                if (targetIndex >= 0 && targetIndex < listElements.length) {
+                                    foundElement = listElements[targetIndex];
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'virtual_index';
+                                    confidence = 60;
+                                    step3Logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
+                                    break;
+                                }
+                            }
+                            
+                            if (!foundElement && virtualIndex.offsetInPage !== undefined) {
+                                const estimatedY = virtualIndex.offsetInPage;
+                                const allElements = document.querySelectorAll('*');
+                                let closestElement = null;
+                                let minDistance = Infinity;
+                                
+                                for (let j = 0; j < allElements.length; j++) {
+                                    const element = allElements[j];
+                                    const rect = element.getBoundingClientRect();
+                                    const elementY = window.scrollY + rect.top;
+                                    const distance = Math.abs(elementY - estimatedY);
+                                    
+                                    if (distance < minDistance && rect.height > 20) {
+                                        minDistance = distance;
+                                        closestElement = element;
+                                    }
+                                }
+                                
+                                if (closestElement && minDistance < 200) {
+                                    foundElement = closestElement;
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'page_offset';
+                                    confidence = 50;
+                                    step3Logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (foundElement && matchedAnchor) {
+                        // 임시로만 스크롤 (Step 4에서 최종 확정)
+                        foundElement.scrollIntoView({ behavior: 'auto', block: 'start' });
+                        
+                        if (matchedAnchor.offsetFromTop) {
+                            window.scrollBy(0, -matchedAnchor.offsetFromTop);
+                        }
+                        
+                        const actualX = window.scrollX || window.pageXOffset || 0;
+                        const actualY = window.scrollY || window.pageYOffset || 0;
+                        const diffX = Math.abs(actualX - targetScrollX);
+                        const diffY = Math.abs(actualY - targetScrollY);
+                        
+                        step3Logs.push('임시 앵커 복원 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                        step3Logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                        step3Logs.push('매칭 신뢰도: ' + confidence + '%');
+                        
+                        resolve({
+                            success: diffY <= 100,
+                            anchorCount: anchors.length,
+                            matchedAnchor: {
+                                anchorType: matchedAnchor.anchorType,
+                                matchMethod: matchMethod,
+                                confidence: confidence
+                            },
+                            restoredPosition: { x: actualX, y: actualY },
+                            currentHeight: currentHeight,
+                            targetDifference: { x: diffX, y: diffY },
+                            logs: step3Logs
+                        });
+                        return;
+                    }
+                    
+                    step3Logs.push('무한스크롤 앵커 매칭 실패');
+                    resolve({
+                        success: false,
+                        anchorCount: anchors.length,
+                        currentHeight: currentHeight,
                         logs: step3Logs
-                    };
-                }
-                
-                step3Logs.push('무한스크롤 앵커 매칭 실패');
-                return {
-                    success: false,
-                    anchorCount: anchors.length,
-                    currentHeight: currentHeight,
-                    logs: step3Logs
-                };
+                    });
+                });
             }
             
             // ========== Step 4: 최종 검증 ==========
-            async function performStep4() {
-                const step4Logs = [];
-                const tolerance = 30;
-                
-                step4Logs.push('[Step 4] 최종 검증 및 스크롤 확정');
-                step4Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
-                
-                // Step 0-3에서 복원한 최종 높이 확인 (persistedHeight 사용)
-                const finalHeight = persistedHeight;
-                
-                step4Logs.push('Step 0-3에서 유지된 최종 높이: ' + finalHeight.toFixed(0) + 'px');
-                
-                // 이제 최종 스크롤 위치 확정
-                const viewportHeight = window.innerHeight;
-                const maxScrollY = Math.max(0, finalHeight - viewportHeight);
-                const finalTargetY = Math.min(targetScrollY, maxScrollY);
-                
-                step4Logs.push('최대 스크롤 가능: ' + maxScrollY.toFixed(0) + 'px');
-                step4Logs.push('최종 목표 Y: ' + finalTargetY.toFixed(0) + 'px');
-                
-                // 최종 스크롤 확정
-                window.scrollTo(targetScrollX, finalTargetY);
-                document.documentElement.scrollTop = finalTargetY;
-                document.documentElement.scrollLeft = targetScrollX;
-                document.body.scrollTop = finalTargetY;
-                document.body.scrollLeft = targetScrollX;
-                
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = finalTargetY;
-                    document.scrollingElement.scrollLeft = targetScrollX;
-                }
-                
-                const actualX = window.scrollX || window.pageXOffset || 0;
-                const actualY = window.scrollY || window.pageYOffset || 0;
-                
-                const diffX = Math.abs(actualX - targetScrollX);
-                const diffY = Math.abs(actualY - finalTargetY);
-                
-                step4Logs.push('최종 확정 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                step4Logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                const withinTolerance = diffX <= tolerance && diffY <= tolerance;
-                let correctionApplied = false;
-                
-                if (!withinTolerance && diffY > tolerance) {
-                    step4Logs.push('허용 오차 초과 - 미세 보정 적용');
+            function performStep4() {
+                return new Promise(function(resolve) {
+                    const step4Logs = [];
+                    const tolerance = 30;
                     
+                    step4Logs.push('[Step 4] 최종 검증 및 스크롤 확정');
+                    step4Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
+                    
+                    // Step 0-3에서 복원한 최종 높이 확인 (persistedHeight 사용)
+                    const finalHeight = persistedHeight;
+                    
+                    step4Logs.push('Step 0-3에서 유지된 최종 높이: ' + finalHeight.toFixed(0) + 'px');
+                    
+                    // 이제 최종 스크롤 위치 확정
+                    const viewportHeight = window.innerHeight;
+                    const maxScrollY = Math.max(0, finalHeight - viewportHeight);
+                    const finalTargetY = Math.min(targetScrollY, maxScrollY);
+                    
+                    step4Logs.push('최대 스크롤 가능: ' + maxScrollY.toFixed(0) + 'px');
+                    step4Logs.push('최종 목표 Y: ' + finalTargetY.toFixed(0) + 'px');
+                    
+                    // 최종 스크롤 확정
                     window.scrollTo(targetScrollX, finalTargetY);
                     document.documentElement.scrollTop = finalTargetY;
                     document.documentElement.scrollLeft = targetScrollX;
@@ -1031,83 +1051,126 @@ struct BFCacheSnapshot: Codable {
                         document.scrollingElement.scrollLeft = targetScrollX;
                     }
                     
-                    correctionApplied = true;
+                    const actualX = window.scrollX || window.pageXOffset || 0;
+                    const actualY = window.scrollY || window.pageYOffset || 0;
                     
-                    const correctedX = window.scrollX || window.pageXOffset || 0;
-                    const correctedY = window.scrollY || window.pageYOffset || 0;
+                    const diffX = Math.abs(actualX - targetScrollX);
+                    const diffY = Math.abs(actualY - finalTargetY);
                     
-                    step4Logs.push('보정 후 위치: X=' + correctedX.toFixed(1) + 'px, Y=' + correctedY.toFixed(1) + 'px');
-                }
-                
-                const success = diffY <= 50;
-                
-                return {
-                    success: success,
-                    finalHeight: finalHeight,
-                    restoredHeightFromContext: finalHeight,
-                    targetPosition: { x: targetScrollX, y: finalTargetY },
-                    finalPosition: { x: actualX, y: actualY },
-                    finalDifference: { x: diffX, y: diffY },
-                    withinTolerance: withinTolerance,
-                    correctionApplied: correctionApplied,
-                    logs: step4Logs
-                };
+                    step4Logs.push('최종 확정 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                    step4Logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                    
+                    const withinTolerance = diffX <= tolerance && diffY <= tolerance;
+                    let correctionApplied = false;
+                    
+                    if (!withinTolerance && diffY > tolerance) {
+                        step4Logs.push('허용 오차 초과 - 미세 보정 적용');
+                        
+                        window.scrollTo(targetScrollX, finalTargetY);
+                        document.documentElement.scrollTop = finalTargetY;
+                        document.documentElement.scrollLeft = targetScrollX;
+                        document.body.scrollTop = finalTargetY;
+                        document.body.scrollLeft = targetScrollX;
+                        
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = finalTargetY;
+                            document.scrollingElement.scrollLeft = targetScrollX;
+                        }
+                        
+                        correctionApplied = true;
+                        
+                        const correctedX = window.scrollX || window.pageXOffset || 0;
+                        const correctedY = window.scrollY || window.pageYOffset || 0;
+                        
+                        step4Logs.push('보정 후 위치: X=' + correctedX.toFixed(1) + 'px, Y=' + correctedY.toFixed(1) + 'px');
+                    }
+                    
+                    const success = diffY <= 50;
+                    
+                    resolve({
+                        success: success,
+                        finalHeight: finalHeight,
+                        restoredHeightFromContext: finalHeight,
+                        targetPosition: { x: targetScrollX, y: finalTargetY },
+                        finalPosition: { x: actualX, y: actualY },
+                        finalDifference: { x: diffX, y: diffY },
+                        withinTolerance: withinTolerance,
+                        correctionApplied: correctionApplied,
+                        logs: step4Logs
+                    });
+                });
             }
             
-            // 지연 함수
-            function delay(ms) {
-                return new Promise(resolve => setTimeout(resolve, ms));
-            }
-            
-            // ========== 순차 실행 ==========
-            try {
-                logs.push('=== Step 0 실행 ===');
-                results.step0 = await performStep0();
-                logs.push('Step 0 완료, ' + \(step0Delay) + 'ms 대기');
-                await delay(\(step0Delay));
-                
-                logs.push('=== Step 1 실행 ===');
-                results.step1 = await performStep1();
-                logs.push('Step 1 완료, ' + \(step1Delay) + 'ms 대기');
-                await delay(\(step1Delay));
-                
-                logs.push('=== Step 2 실행 ===');
-                results.step2 = await performStep2();
-                logs.push('Step 2 완료, ' + \(step2Delay) + 'ms 대기');
-                await delay(\(step2Delay));
-                
-                logs.push('=== Step 3 실행 ===');
-                results.step3 = await performStep3();
-                logs.push('Step 3 완료, ' + \(step3Delay) + 'ms 대기');
-                await delay(\(step3Delay));
-                
-                logs.push('=== Step 4 실행 ===');
-                results.step4 = await performStep4();
-                logs.push('Step 4 완료, ' + \(step4Delay) + 'ms 대기');
-                await delay(\(step4Delay));
-                
-                // 최종 결과 수집
-                const finalX = window.scrollX || window.pageXOffset || 0;
-                const finalY = window.scrollY || window.pageYOffset || 0;
-                
-                results.finalPosition = { x: finalX, y: finalY };
-                results.success = results.step4.success || results.step2.success;
-                results.executionTime = (Date.now() - startTime) / 1000;
-                
-                logs.push('=== 통합 실행 완료 ===');
-                logs.push('최종 위치: X=' + finalX.toFixed(1) + 'px, Y=' + finalY.toFixed(1) + 'px');
-                logs.push('실행 시간: ' + results.executionTime.toFixed(2) + '초');
-                logs.push('최종 높이: ' + persistedHeight.toFixed(0) + 'px (유지됨)');
-                
-                results.logs = logs;
-                
-            } catch(e) {
-                logs.push('오류 발생: ' + e.message);
-                results.error = e.message;
-                results.logs = logs;
-            }
-            
-            return results;
+            // ========== Promise 체이닝으로 순차 실행 ==========
+            performStep0()
+                .then(function(step0Result) {
+                    results.step0 = step0Result;
+                    logs.push('Step 0 완료, ' + \(step0Delay) + 'ms 대기');
+                    return delay(\(step0Delay));
+                })
+                .then(function() {
+                    logs.push('=== Step 1 실행 ===');
+                    return performStep1();
+                })
+                .then(function(step1Result) {
+                    results.step1 = step1Result;
+                    logs.push('Step 1 완료, ' + \(step1Delay) + 'ms 대기');
+                    return delay(\(step1Delay));
+                })
+                .then(function() {
+                    logs.push('=== Step 2 실행 ===');
+                    return performStep2();
+                })
+                .then(function(step2Result) {
+                    results.step2 = step2Result;
+                    logs.push('Step 2 완료, ' + \(step2Delay) + 'ms 대기');
+                    return delay(\(step2Delay));
+                })
+                .then(function() {
+                    logs.push('=== Step 3 실행 ===');
+                    return performStep3();
+                })
+                .then(function(step3Result) {
+                    results.step3 = step3Result;
+                    logs.push('Step 3 완료, ' + \(step3Delay) + 'ms 대기');
+                    return delay(\(step3Delay));
+                })
+                .then(function() {
+                    logs.push('=== Step 4 실행 ===');
+                    return performStep4();
+                })
+                .then(function(step4Result) {
+                    results.step4 = step4Result;
+                    logs.push('Step 4 완료, ' + \(step4Delay) + 'ms 대기');
+                    return delay(\(step4Delay));
+                })
+                .then(function() {
+                    // 최종 결과 수집
+                    const finalX = window.scrollX || window.pageXOffset || 0;
+                    const finalY = window.scrollY || window.pageYOffset || 0;
+                    
+                    results.finalPosition = { x: finalX, y: finalY };
+                    results.success = results.step4.success || results.step2.success;
+                    results.executionTime = (Date.now() - startTime) / 1000;
+                    
+                    logs.push('=== 통합 실행 완료 ===');
+                    logs.push('최종 위치: X=' + finalX.toFixed(1) + 'px, Y=' + finalY.toFixed(1) + 'px');
+                    logs.push('실행 시간: ' + results.executionTime.toFixed(2) + '초');
+                    logs.push('최종 높이: ' + persistedHeight.toFixed(0) + 'px (유지됨)');
+                    
+                    results.logs = logs;
+                    
+                    // JSON 문자열로 반환
+                    return JSON.stringify(results);
+                })
+                .catch(function(error) {
+                    logs.push('오류 발생: ' + error.message);
+                    results.error = error.message;
+                    results.logs = logs;
+                    
+                    // JSON 문자열로 반환
+                    return JSON.stringify(results);
+                });
         })()
         """
     }
