@@ -9,6 +9,7 @@
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🆕 **복원위치 중심 로드**: 가상 스페이서로 높이 유지하며 복원 위치부터 로드
+//  🔧 **통합 순차 실행**: 독립 JS가 아닌 단일 컨텍스트 순차 실행
 
 import UIKit
 import WebKit
@@ -190,19 +191,10 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 5단계 복원 시스템 (가상 스크롤 대응)**
-    
-    // 복원 컨텍스트 구조체
-    private struct RestorationContext {
-        let snapshot: BFCacheSnapshot
-        weak var webView: WKWebView?
-        let completion: (Bool) -> Void
-        var overallSuccess: Bool = false
-        var restoredHeight: CGFloat = 0  // 🆕 복원된 높이 추적
-    }
+    // MARK: - 🎯 **핵심: 통합 순차 실행 복원 시스템**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 가상 스크롤 대응 5단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 통합 순차 실행 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
@@ -210,200 +202,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🚨 클램핑 감지 높이: \(String(format: "%.0f", restorationConfig.clampedHeight))px")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step0=\(restorationConfig.step0RenderDelay)s, Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
-        // 복원 컨텍스트 생성
-        let context = RestorationContext(
-            snapshot: self,
-            webView: webView,
-            completion: completion
-        )
-        
-        // 🆕 Step 0 시작: 가상 스크롤 프리렌더링
-        executeStep0_VirtualScrollPreRendering(context: context)
-    }
-    
-    // MARK: - 🆕 Step 0: 가상 스크롤 프리렌더링 (목표 높이 90% 도달까지 무한 반복)
-    private func executeStep0_VirtualScrollPreRendering(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🚀 [Step 0] 가상 스크롤 프리렌더링 시작")
-        
-        guard restorationConfig.enablePreRendering else {
-            TabPersistenceManager.debugMessages.append("🚀 [Step 0] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step0RenderDelay) {
-                self.executeStep1_RestoreContentHeight(context: context)
-            }
-            return
-        }
-        
-        let js = generateStep0_PreRenderingScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step0Success = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🚀 [Step 0] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step0Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🚀 [Step 0] 현재 높이: \(String(format: "%.0f", currentHeight))px")
-                }
-                if let clampedHeight = resultDict["clampedHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🚨 [Step 0] 클램핑 감지: \(String(format: "%.0f", clampedHeight))px")
-                }
-                if let preRenderedHeight = resultDict["preRenderedHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🚀 [Step 0] 프리렌더 후 높이: \(String(format: "%.0f", preRenderedHeight))px")
-                    updatedContext.restoredHeight = CGFloat(preRenderedHeight)
-                }
-                if let scrollAttempts = resultDict["scrollAttempts"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🚀 [Step 0] 스크롤 시도: \(scrollAttempts)회")
-                }
-                if let loadedItems = resultDict["loadedItems"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🚀 [Step 0] 로드된 항목: \(loadedItems)개")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🚀 [Step 0] 완료: \(step0Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 0] 렌더링 대기: \(self.restorationConfig.step0RenderDelay)초")
-            
-            // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step0RenderDelay) {
-                self.executeStep1_RestoreContentHeight(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 1: 🆕 복원 위치 중심 콘텐츠 로드
-    private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🎯 [Step 1] 복원 위치 중심 콘텐츠 로드 시작")
-        
-        guard restorationConfig.enableContentRestore else {
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep2_AbsoluteScroll(context: context)
-            }
-            return
-        }
-        
-        let js = generateStep1_RestoreFromPositionScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step1Success = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step1Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
-                }
-                if let targetHeight = resultDict["targetHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
-                }
-                if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                    updatedContext.restoredHeight = max(updatedContext.restoredHeight, CGFloat(restoredHeight))
-                }
-                if let spacerHeight = resultDict["spacerHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🎯 [Step 1] 가상 스페이서 높이: \(String(format: "%.0f", spacerHeight))px")
-                }
-                if let loadedFrom = resultDict["loadedFromPosition"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🎯 [Step 1] 로드 시작 위치: \(String(format: "%.0f", loadedFrom))px")
-                }
-                if let percentage = resultDict["percentage"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
-                }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_AbsoluteScroll(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 2: 절대좌표 기반 스크롤 (최우선)
-    private func executeStep2_AbsoluteScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 절대좌표 기반 스크롤 복원 시작 (최우선)")
-        
-        guard restorationConfig.enableAbsoluteRestore else {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: context)
-            }
-            return
-        }
-        
-        let js = generateStep2_AbsoluteScrollScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step2Success = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step2Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 절대좌표: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
-                }
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 현재 페이지 높이: \(String(format: "%.0f", currentHeight))px")
-                    updatedContext.restoredHeight = max(updatedContext.restoredHeight, CGFloat(currentHeight))
-                }
-                if let tempPosition = resultDict["tempPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 임시 스크롤 위치: X=\(String(format: "%.1f", tempPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", tempPosition["y"] ?? 0))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                if step2Success {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 절대좌표 복원 성공 - 전체 복원 성공으로 간주")
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
-    private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
-        
-        guard restorationConfig.enableAnchorRestore else {
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
-            }
-            return
-        }
-        
+        // 무한스크롤 앵커 데이터 준비
         var infiniteScrollAnchorDataJSON = "null"
         if let jsState = self.jsState,
            let infiniteScrollAnchorData = jsState["infiniteScrollAnchors"] as? [String: Any],
@@ -411,156 +210,190 @@ struct BFCacheSnapshot: Codable {
             infiniteScrollAnchorDataJSON = dataJSON
         }
         
-        let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
+        // 🔧 통합 순차 실행 스크립트 생성
+        let integratedScript = generateIntegratedSequentialScript(infiniteScrollAnchorDataJSON: infiniteScrollAnchorDataJSON)
         
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step3Success = false
-            var updatedContext = context
+        // 통합 스크립트 실행
+        webView.evaluateJavaScript(integratedScript) { result, error in
+            var overallSuccess = false
             
             if let error = error {
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 통합 복원 JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
-                step3Success = (resultDict["success"] as? Bool) ?? false
+                overallSuccess = (resultDict["success"] as? Bool) ?? false
                 
-                if let anchorCount = resultDict["anchorCount"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+                // Step별 결과 로깅
+                if let step0 = resultDict["step0"] as? [String: Any] {
+                    self.logStep0Results(step0)
                 }
-                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                    if let anchorType = matchedAnchor["anchorType"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
-                    }
-                    if let method = matchedAnchor["matchMethod"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
-                    }
-                    if let confidence = matchedAnchor["confidence"] as? Double {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
-                    }
+                if let step1 = resultDict["step1"] as? [String: Any] {
+                    self.logStep1Results(step1)
                 }
-                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 임시 복원 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                if let step2 = resultDict["step2"] as? [String: Any] {
+                    self.logStep2Results(step2)
                 }
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 현재 페이지 높이: \(String(format: "%.0f", currentHeight))px")
-                    updatedContext.restoredHeight = max(updatedContext.restoredHeight, CGFloat(currentHeight))
+                if let step3 = resultDict["step3"] as? [String: Any] {
+                    self.logStep3Results(step3)
                 }
-                if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                if let step4 = resultDict["step4"] as? [String: Any] {
+                    self.logStep4Results(step4)
                 }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 4: 최종 검증 및 스크롤 확정
-    private func executeStep4_FinalVerification(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 스크롤 확정 시작")
-        
-        guard restorationConfig.enableFinalVerification else {
-            TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
-            context.completion(context.overallSuccess)
-            return
-        }
-        
-        let js = generateStep4_FinalVerificationScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step4Success = false
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step4Success = (resultDict["success"] as? Bool) ?? false
                 
-                if let finalHeight = resultDict["finalHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 페이지 높이: \(String(format: "%.0f", finalHeight))px")
-                }
-                if let restoredHeightFromContext = resultDict["restoredHeightFromContext"] as? Double {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] Step0-3에서 복원한 높이: \(String(format: "%.0f", restoredHeightFromContext))px")
-                }
                 if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 확정 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🎯 최종 복원 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
                 }
-                if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
-                }
-                if let finalDifference = resultDict["finalDifference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
-                }
-                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
-                }
-                if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
+                
+                if let executionTime = resultDict["executionTime"] as? Double {
+                    TabPersistenceManager.debugMessages.append("⏱️ 전체 실행 시간: \(String(format: "%.2f", executionTime))초")
                 }
             }
             
-            TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
-                let finalSuccess = context.overallSuccess || step4Success
-                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
-                context.completion(finalSuccess)
-            }
+            TabPersistenceManager.debugMessages.append("🎯 통합 BFCache 복원 완료: \(overallSuccess ? "성공" : "실패")")
+            completion(overallSuccess)
         }
     }
     
-    // MARK: - JavaScript 생성 메서드들
+    // MARK: - Step 결과 로깅 메서드들
     
-    // 🆕 **Step 0: 가상 스크롤 프리렌더링 스크립트 (목표 높이 90% 도달까지 무한 반복)**
-    private func generateStep0_PreRenderingScript() -> String {
-        let targetScrollY = scrollPosition.y
+    private func logStep0Results(_ step0: [String: Any]) {
+        TabPersistenceManager.debugMessages.append("🚀 [Step 0] 결과:")
+        if let success = step0["success"] as? Bool {
+            TabPersistenceManager.debugMessages.append("  성공: \(success)")
+        }
+        if let currentHeight = step0["currentHeight"] as? Double {
+            TabPersistenceManager.debugMessages.append("  시작 높이: \(String(format: "%.0f", currentHeight))px")
+        }
+        if let preRenderedHeight = step0["preRenderedHeight"] as? Double {
+            TabPersistenceManager.debugMessages.append("  프리렌더 후 높이: \(String(format: "%.0f", preRenderedHeight))px")
+        }
+        if let scrollAttempts = step0["scrollAttempts"] as? Int {
+            TabPersistenceManager.debugMessages.append("  스크롤 시도: \(scrollAttempts)회")
+        }
+    }
+    
+    private func logStep1Results(_ step1: [String: Any]) {
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 결과:")
+        if let success = step1["success"] as? Bool {
+            TabPersistenceManager.debugMessages.append("  성공: \(success)")
+        }
+        if let restoredHeight = step1["restoredHeight"] as? Double {
+            TabPersistenceManager.debugMessages.append("  복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+        }
+        if let percentage = step1["percentage"] as? Double {
+            TabPersistenceManager.debugMessages.append("  복원률: \(String(format: "%.1f", percentage))%")
+        }
+    }
+    
+    private func logStep2Results(_ step2: [String: Any]) {
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 결과:")
+        if let success = step2["success"] as? Bool {
+            TabPersistenceManager.debugMessages.append("  성공: \(success)")
+        }
+        if let currentHeight = step2["currentHeight"] as? Double {
+            TabPersistenceManager.debugMessages.append("  현재 페이지 높이: \(String(format: "%.0f", currentHeight))px")
+        }
+        if let actualPosition = step2["actualPosition"] as? [String: Double] {
+            TabPersistenceManager.debugMessages.append("  실제 스크롤 위치: Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+        }
+    }
+    
+    private func logStep3Results(_ step3: [String: Any]) {
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 결과:")
+        if let success = step3["success"] as? Bool {
+            TabPersistenceManager.debugMessages.append("  성공: \(success)")
+        }
+        if let anchorCount = step3["anchorCount"] as? Int {
+            TabPersistenceManager.debugMessages.append("  사용 가능한 앵커: \(anchorCount)개")
+        }
+        if let matchedAnchor = step3["matchedAnchor"] as? [String: Any],
+           let anchorType = matchedAnchor["anchorType"] as? String {
+            TabPersistenceManager.debugMessages.append("  매칭된 앵커 타입: \(anchorType)")
+        }
+    }
+    
+    private func logStep4Results(_ step4: [String: Any]) {
+        TabPersistenceManager.debugMessages.append("✅ [Step 4] 결과:")
+        if let success = step4["success"] as? Bool {
+            TabPersistenceManager.debugMessages.append("  성공: \(success)")
+        }
+        if let finalHeight = step4["finalHeight"] as? Double {
+            TabPersistenceManager.debugMessages.append("  최종 페이지 높이: \(String(format: "%.0f", finalHeight))px")
+        }
+        if let finalPosition = step4["finalPosition"] as? [String: Double] {
+            TabPersistenceManager.debugMessages.append("  최종 확정 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+        }
+    }
+    
+    // MARK: - 🔧 통합 순차 실행 JavaScript 생성
+    
+    private func generateIntegratedSequentialScript(infiniteScrollAnchorDataJSON: String) -> String {
+        let targetX = scrollPosition.x
+        let targetY = scrollPosition.y
         let savedContentHeight = restorationConfig.savedContentHeight
+        let step0Delay = Int(restorationConfig.step0RenderDelay * 1000)
+        let step1Delay = Int(restorationConfig.step1RenderDelay * 1000)
+        let step2Delay = Int(restorationConfig.step2RenderDelay * 1000)
+        let step3Delay = Int(restorationConfig.step3RenderDelay * 1000)
+        let step4Delay = Int(restorationConfig.step4RenderDelay * 1000)
         
         return """
-        (function() {
-            try {
-                const logs = [];
-                const targetScrollY = parseFloat('\(targetScrollY)') || 0;
-                const savedContentHeight = parseFloat('\(savedContentHeight)') || 0;
+        (async function() {
+            const startTime = Date.now();
+            const logs = [];
+            const results = {
+                step0: null,
+                step1: null,
+                step2: null,
+                step3: null,
+                step4: null,
+                success: false,
+                finalPosition: null,
+                executionTime: 0
+            };
+            
+            // 공통 상태 변수 (모든 Step이 공유)
+            let persistedHeight = 0;
+            let targetScrollY = parseFloat('\(targetY)') || 0;
+            let targetScrollX = parseFloat('\(targetX)') || 0;
+            let savedContentHeight = parseFloat('\(savedContentHeight)') || 0;
+            const infiniteScrollAnchorData = \(infiniteScrollAnchorDataJSON);
+            
+            logs.push('🎯 통합 순차 실행 시작');
+            logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + ', Y=' + targetScrollY.toFixed(1));
+            logs.push('저장된 콘텐츠 높이: ' + savedContentHeight.toFixed(0));
+            
+            // ========== Step 0: 프리렌더링 ==========
+            async function performStep0() {
+                const step0Logs = [];
                 const targetHeight = savedContentHeight;
                 
-                logs.push('[Step 0] 가상 스크롤 프리렌더링 시작');
-                logs.push('목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px (90% = ' + (targetHeight * 0.9).toFixed(0) + 'px)');
+                step0Logs.push('[Step 0] 가상 스크롤 프리렌더링 시작');
+                step0Logs.push('목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
+                step0Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px (90% = ' + (targetHeight * 0.9).toFixed(0) + 'px)');
                 
                 const currentHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
                     document.body ? document.body.scrollHeight : 0
                 ) || 0;
                 
-                logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
+                step0Logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
+                persistedHeight = currentHeight;  // 초기 높이 저장
                 
                 // 이미 목표의 90% 이상이면 스킵
                 if (currentHeight >= targetHeight * 0.9) {
-                    logs.push('✅ 이미 목표 높이의 90% 이상 도달 - 프리렌더링 스킵');
+                    step0Logs.push('✅ 이미 목표 높이의 90% 이상 도달 - 프리렌더링 스킵');
+                    persistedHeight = currentHeight;
                     return {
                         success: true,
                         currentHeight: currentHeight,
                         preRenderedHeight: currentHeight,
                         scrollAttempts: 0,
                         loadedItems: 0,
-                        logs: logs
+                        logs: step0Logs
                     };
                 }
                 
-                logs.push('🚀 목표 높이의 90% 도달까지 프리렌더링 시작');
+                step0Logs.push('🚀 목표 높이의 90% 도달까지 프리렌더링 시작');
                 
                 const viewportHeight = window.innerHeight;
                 let scrollAttempts = 0;
@@ -574,15 +407,17 @@ struct BFCacheSnapshot: Codable {
                         document.body ? document.body.scrollHeight : 0
                     ) || previousHeight;
                     
+                    persistedHeight = currentScrollHeight;  // 높이 갱신
+                    
                     // 90% 도달 체크
                     if (currentScrollHeight >= targetHeight * 0.9) {
-                        logs.push('✅ 목표 높이의 90% 도달! (' + currentScrollHeight.toFixed(0) + 'px >= ' + (targetHeight * 0.9).toFixed(0) + 'px)');
+                        step0Logs.push('✅ 목표 높이의 90% 도달! (' + currentScrollHeight.toFixed(0) + 'px >= ' + (targetHeight * 0.9).toFixed(0) + 'px)');
                         break;
                     }
                     
                     // 높이 증가가 없으면 중단 (무한루프 방지)
                     if (scrollAttempts > 0 && currentScrollHeight <= previousHeight) {
-                        logs.push('⚠️ 더 이상 높이 증가 없음 - 중단 (' + currentScrollHeight.toFixed(0) + 'px)');
+                        step0Logs.push('⚠️ 더 이상 높이 증가 없음 - 중단 (' + currentScrollHeight.toFixed(0) + 'px)');
                         break;
                     }
                     
@@ -626,7 +461,7 @@ struct BFCacheSnapshot: Codable {
                     
                     // 로그 업데이트
                     if (scrollAttempts % 10 === 0) {
-                        logs.push('진행중... 높이: ' + currentScrollHeight.toFixed(0) + 'px / ' + (targetHeight * 0.9).toFixed(0) + 'px (' + ((currentScrollHeight / targetHeight) * 100).toFixed(1) + '%)');
+                        step0Logs.push('진행중... 높이: ' + currentScrollHeight.toFixed(0) + 'px / ' + (targetHeight * 0.9).toFixed(0) + 'px (' + ((currentScrollHeight / targetHeight) * 100).toFixed(1) + '%)');
                     }
                 }
                 
@@ -635,11 +470,13 @@ struct BFCacheSnapshot: Codable {
                     document.body ? document.body.scrollHeight : 0
                 ) || currentHeight;
                 
-                logs.push('프리렌더링 완료: ' + currentHeight.toFixed(0) + 'px → ' + preRenderedHeight.toFixed(0) + 'px');
-                logs.push('높이 증가: ' + (preRenderedHeight - currentHeight).toFixed(0) + 'px');
-                logs.push('스크롤 시도: ' + scrollAttempts + '회');
-                logs.push('로드된 항목: ' + loadedItems + '개');
-                logs.push('목표 달성률: ' + ((preRenderedHeight / targetHeight) * 100).toFixed(1) + '%');
+                persistedHeight = preRenderedHeight;  // 최종 높이 저장
+                
+                step0Logs.push('프리렌더링 완료: ' + currentHeight.toFixed(0) + 'px → ' + preRenderedHeight.toFixed(0) + 'px');
+                step0Logs.push('높이 증가: ' + (preRenderedHeight - currentHeight).toFixed(0) + 'px');
+                step0Logs.push('스크롤 시도: ' + scrollAttempts + '회');
+                step0Logs.push('로드된 항목: ' + loadedItems + '개');
+                step0Logs.push('목표 달성률: ' + ((preRenderedHeight / targetHeight) * 100).toFixed(1) + '%');
                 
                 return {
                     success: preRenderedHeight >= targetHeight * 0.9,
@@ -648,50 +485,30 @@ struct BFCacheSnapshot: Codable {
                     preRenderedHeight: preRenderedHeight,
                     scrollAttempts: scrollAttempts,
                     loadedItems: loadedItems,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message || 'Unknown error',
-                    logs: ['[Step 0] 오류: ' + (e.message || 'Unknown error')]
+                    logs: step0Logs
                 };
             }
-        })()
-        """
-    }
-    
-    // **Step 1: 복원 위치 중심 콘텐츠 로드 스크립트**
-    private func generateStep1_RestoreFromPositionScript() -> String {
-        let targetHeight = restorationConfig.savedContentHeight
-        let targetScrollY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)') || 0;
-                const targetScrollY = parseFloat('\(targetScrollY)') || 0;
-                const currentHeight = Math.max(
-                    document.documentElement ? document.documentElement.scrollHeight : 0,
-                    document.body ? document.body.scrollHeight : 0
-                ) || 0;
+            
+            // ========== Step 1: 복원 위치 중심 콘텐츠 로드 ==========
+            async function performStep1() {
+                const step1Logs = [];
+                const targetHeight = savedContentHeight;
+                const currentHeight = persistedHeight;  // Step0에서 유지된 높이 사용
                 
-                logs.push('[Step 1] 복원 위치 중심 콘텐츠 로드 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
+                step1Logs.push('[Step 1] 복원 위치 중심 콘텐츠 로드 시작');
+                step1Logs.push('Step0에서 유지된 높이: ' + currentHeight.toFixed(0) + 'px');
+                step1Logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                step1Logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
                 
                 if (!targetHeight || targetHeight === 0) {
-                    logs.push('목표 높이가 유효하지 않음 - 스킵');
+                    step1Logs.push('목표 높이가 유효하지 않음 - 스킵');
                     return {
                         success: false,
                         currentHeight: currentHeight,
                         targetHeight: 0,
                         restoredHeight: currentHeight,
                         percentage: 100,
-                        logs: logs
+                        logs: step1Logs
                     };
                 }
                 
@@ -699,7 +516,7 @@ struct BFCacheSnapshot: Codable {
                 const isStaticSite = percentage >= 90;
                 
                 if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+                    step1Logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                     return {
                         success: true,
                         isStaticSite: true,
@@ -707,11 +524,11 @@ struct BFCacheSnapshot: Codable {
                         targetHeight: targetHeight,
                         restoredHeight: currentHeight,
                         percentage: percentage,
-                        logs: logs
+                        logs: step1Logs
                     };
                 }
                 
-                logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
+                step1Logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
                 
                 const createVirtualSpacer = function(height) {
                     try {
@@ -731,10 +548,10 @@ struct BFCacheSnapshot: Codable {
                         spacer.style.pointerEvents = 'none';
                         document.body.appendChild(spacer);
                         
-                        logs.push('가상 스페이서 생성: ' + height.toFixed(0) + 'px');
+                        step1Logs.push('가상 스페이서 생성: ' + height.toFixed(0) + 'px');
                         return spacer;
                     } catch(e) {
-                        logs.push('가상 스페이서 생성 실패: ' + e.message);
+                        step1Logs.push('가상 스페이서 생성 실패: ' + e.message);
                         return null;
                     }
                 };
@@ -745,12 +562,12 @@ struct BFCacheSnapshot: Codable {
                 if (spacerHeight > 100) {
                     virtualSpacer = createVirtualSpacer(spacerHeight);
                     void(document.body.offsetHeight);
-                    logs.push('가상 공간 확보 완료: ' + spacerHeight.toFixed(0) + 'px');
+                    step1Logs.push('가상 공간 확보 완료: ' + spacerHeight.toFixed(0) + 'px');
                 }
                 
                 // 높이 복원용 임시 스크롤만 수행
                 window.scrollTo(0, targetScrollY);
-                logs.push('임시 스크롤 (높이 복원용): ' + targetScrollY.toFixed(0) + 'px');
+                step1Logs.push('임시 스크롤 (높이 복원용): ' + targetScrollY.toFixed(0) + 'px');
                 
                 const triggerIntersectionObserver = function() {
                     try {
@@ -776,9 +593,9 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
                         
-                        logs.push('IntersectionObserver 트리거: ' + triggeredCount + '개 요소');
+                        step1Logs.push('IntersectionObserver 트리거: ' + triggeredCount + '개 요소');
                     } catch(e) {
-                        logs.push('IntersectionObserver 트리거 실패: ' + e.message);
+                        step1Logs.push('IntersectionObserver 트리거 실패: ' + e.message);
                     }
                 };
                 
@@ -815,7 +632,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                logs.push('뷰포트 근처 더보기 버튼: ' + loadMoreButtons.length + '개 발견');
+                step1Logs.push('뷰포트 근처 더보기 버튼: ' + loadMoreButtons.length + '개 발견');
                 
                 let clicked = 0;
                 const maxClicks = Math.min(5, loadMoreButtons.length);
@@ -846,10 +663,10 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
+                    step1Logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                 }
                 
-                logs.push('양방향 스크롤 트리거 시작');
+                step1Logs.push('양방향 스크롤 트리거 시작');
                 const biDirectionalScrollLoad = function() {
                     const startY = targetScrollY;
                     const viewportHeight = window.innerHeight;
@@ -861,7 +678,7 @@ struct BFCacheSnapshot: Codable {
                         window.scrollTo(0, scrollUpTo);
                         window.dispatchEvent(new Event('scroll', { bubbles: true }));
                         loadAttempts++;
-                        logs.push('위쪽 스크롤 ' + i + ': ' + scrollUpTo.toFixed(0) + 'px');
+                        step1Logs.push('위쪽 스크롤 ' + i + ': ' + scrollUpTo.toFixed(0) + 'px');
                     }
                     
                     const maxScrollY = Math.max(
@@ -874,19 +691,19 @@ struct BFCacheSnapshot: Codable {
                         window.scrollTo(0, scrollDownTo);
                         window.dispatchEvent(new Event('scroll', { bubbles: true }));
                         loadAttempts++;
-                        logs.push('아래쪽 스크롤 ' + i + ': ' + scrollDownTo.toFixed(0) + 'px');
+                        step1Logs.push('아래쪽 스크롤 ' + i + ': ' + scrollDownTo.toFixed(0) + 'px');
                     }
                     
                     return loadAttempts;
                 };
                 
                 const scrollAttempts = biDirectionalScrollLoad();
-                logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
+                step1Logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
                 
                 setTimeout(function() {
                     if (virtualSpacer) {
                         virtualSpacer.remove();
-                        logs.push('가상 스페이서 제거됨');
+                        step1Logs.push('가상 스페이서 제거됨');
                     }
                 }, 100);
                 
@@ -895,12 +712,14 @@ struct BFCacheSnapshot: Codable {
                     document.body ? document.body.scrollHeight : 0
                 ) || currentHeight;
                 
+                persistedHeight = restoredHeight;  // 복원된 높이 저장
+                
                 const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
                 const success = finalPercentage >= 50;
                 
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
+                step1Logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+                step1Logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                step1Logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 
                 return {
                     success: success,
@@ -913,106 +732,65 @@ struct BFCacheSnapshot: Codable {
                     loadedFromPosition: targetScrollY,
                     scrollAttempts: scrollAttempts,
                     buttonsClicked: clicked,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message || 'Unknown error',
-                    logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
+                    logs: step1Logs
                 };
             }
-        })()
-        """
-    }
-    
-    // **Step 2: 절대좌표 기반 스크롤 스크립트**
-    private func generateStep2_AbsoluteScrollScript() -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
+            
+            // ========== Step 2: 절대좌표 기반 스크롤 ==========
+            async function performStep2() {
+                const step2Logs = [];
                 
-                logs.push('[Step 2] 절대좌표 기반 스크롤 복원');
-                logs.push('목표 절대좌표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                step2Logs.push('[Step 2] 절대좌표 기반 스크롤 복원');
+                step2Logs.push('목표 절대좌표: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
                 
-                const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                // Step0/1에서 유지된 높이 사용
+                const currentHeight = persistedHeight;
                 
-                logs.push('현재 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
+                step2Logs.push('Step0/1에서 유지된 페이지 높이: ' + currentHeight.toFixed(0) + 'px');
                 
                 // 절대좌표로 임시 스크롤 (Step 4에서 최종 확정)
-                const tempY = Math.min(targetY, currentHeight - window.innerHeight);
-                const tempX = targetX;
+                const tempY = Math.min(targetScrollY, currentHeight - window.innerHeight);
+                const tempX = targetScrollX;
                 
                 window.scrollTo(tempX, tempY);
-                logs.push('임시 스크롤 설정: X=' + tempX.toFixed(1) + 'px, Y=' + tempY.toFixed(1) + 'px');
+                step2Logs.push('임시 스크롤 설정: X=' + tempX.toFixed(1) + 'px, Y=' + tempY.toFixed(1) + 'px');
                 
                 const actualX = window.scrollX || window.pageXOffset || 0;
                 const actualY = window.scrollY || window.pageYOffset || 0;
                 
-                logs.push('실제 스크롤 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                step2Logs.push('실제 스크롤 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                 
                 return {
                     success: true,
-                    targetPosition: { x: targetX, y: targetY },
+                    targetPosition: { x: targetScrollX, y: targetScrollY },
                     currentHeight: currentHeight,
                     tempPosition: { x: tempX, y: tempY },
                     actualPosition: { x: actualX, y: actualY },
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 2] 오류: ' + e.message]
+                    logs: step2Logs
                 };
             }
-        })()
-        """
-    }
-    
-    private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const infiniteScrollAnchorData = \(anchorDataJSON);
+            
+            // ========== Step 3: 무한스크롤 앵커 복원 ==========
+            async function performStep3() {
+                const step3Logs = [];
                 
-                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                step3Logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                step3Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
                 
-                const currentHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                const currentHeight = persistedHeight;  // 유지된 높이 사용
                 
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
-                    logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
+                    step3Logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
                     return {
                         success: false,
                         anchorCount: 0,
                         currentHeight: currentHeight,
-                        logs: logs
+                        logs: step3Logs
                     };
                 }
                 
                 const anchors = infiniteScrollAnchorData.anchors;
-                logs.push('사용 가능한 앵커: ' + anchors.length + '개');
+                step3Logs.push('사용 가능한 앵커: ' + anchors.length + '개');
                 
                 const vueComponentAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
@@ -1024,9 +802,9 @@ struct BFCacheSnapshot: Codable {
                     return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
                 });
                 
-                logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
-                logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
-                logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
+                step3Logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
+                step3Logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
+                step3Logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
                 
                 let foundElement = null;
                 let matchedAnchor = null;
@@ -1050,7 +828,7 @@ struct BFCacheSnapshot: Codable {
                                             matchedAnchor = anchor;
                                             matchMethod = 'vue_component_with_index';
                                             confidence = 95;
-                                            logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
+                                            step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
                                             break;
                                         }
                                     } else {
@@ -1058,7 +836,7 @@ struct BFCacheSnapshot: Codable {
                                         matchedAnchor = anchor;
                                         matchMethod = 'vue_component';
                                         confidence = 85;
-                                        logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
+                                        step3Logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
                                         break;
                                     }
                                 }
@@ -1084,7 +862,7 @@ struct BFCacheSnapshot: Codable {
                                     matchedAnchor = anchor;
                                     matchMethod = 'content_hash';
                                     confidence = 80;
-                                    logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
+                                    step3Logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
                                     break;
                                 }
                             }
@@ -1098,7 +876,7 @@ struct BFCacheSnapshot: Codable {
                                 matchedAnchor = anchor;
                                 matchMethod = 'short_hash';
                                 confidence = 75;
-                                logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
+                                step3Logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
                                 break;
                             }
                         }
@@ -1118,7 +896,7 @@ struct BFCacheSnapshot: Codable {
                                 matchedAnchor = anchor;
                                 matchMethod = 'virtual_index';
                                 confidence = 60;
-                                logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
+                                step3Logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
                                 break;
                             }
                         }
@@ -1146,7 +924,7 @@ struct BFCacheSnapshot: Codable {
                                 matchedAnchor = anchor;
                                 matchMethod = 'page_offset';
                                 confidence = 50;
-                                logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
+                                step3Logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
                                 break;
                             }
                         }
@@ -1163,12 +941,12 @@ struct BFCacheSnapshot: Codable {
                     
                     const actualX = window.scrollX || window.pageXOffset || 0;
                     const actualY = window.scrollY || window.pageYOffset || 0;
-                    const diffX = Math.abs(actualX - targetX);
-                    const diffY = Math.abs(actualY - targetY);
+                    const diffX = Math.abs(actualX - targetScrollX);
+                    const diffY = Math.abs(actualY - targetScrollY);
                     
-                    logs.push('임시 앵커 복원 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                    logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                    logs.push('매칭 신뢰도: ' + confidence + '%');
+                    step3Logs.push('임시 앵커 복원 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                    step3Logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                    step3Logs.push('매칭 신뢰도: ' + confidence + '%');
                     
                     return {
                         success: diffY <= 100,
@@ -1181,98 +959,76 @@ struct BFCacheSnapshot: Codable {
                         restoredPosition: { x: actualX, y: actualY },
                         currentHeight: currentHeight,
                         targetDifference: { x: diffX, y: diffY },
-                        logs: logs
+                        logs: step3Logs
                     };
                 }
                 
-                logs.push('무한스크롤 앵커 매칭 실패');
+                step3Logs.push('무한스크롤 앵커 매칭 실패');
                 return {
                     success: false,
                     anchorCount: anchors.length,
                     currentHeight: currentHeight,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    currentHeight: 0,
-                    logs: ['[Step 3] 오류: ' + e.message]
+                    logs: step3Logs
                 };
             }
-        })()
-        """
-    }
-    
-    // **Step 4: 최종 검증 및 스크롤 확정 스크립트**
-    private func generateStep4_FinalVerificationScript() -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
+            
+            // ========== Step 4: 최종 검증 ==========
+            async function performStep4() {
+                const step4Logs = [];
                 const tolerance = 30;
                 
-                logs.push('[Step 4] 최종 검증 및 스크롤 확정');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                step4Logs.push('[Step 4] 최종 검증 및 스크롤 확정');
+                step4Logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
                 
-                // Step 0-3에서 복원한 최종 높이 확인
-                const finalHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
-                );
+                // Step 0-3에서 복원한 최종 높이 확인 (persistedHeight 사용)
+                const finalHeight = persistedHeight;
                 
-                logs.push('Step 0-3에서 복원한 최종 높이: ' + finalHeight.toFixed(0) + 'px');
+                step4Logs.push('Step 0-3에서 유지된 최종 높이: ' + finalHeight.toFixed(0) + 'px');
                 
                 // 이제 최종 스크롤 위치 확정
                 const viewportHeight = window.innerHeight;
                 const maxScrollY = Math.max(0, finalHeight - viewportHeight);
-                const finalTargetY = Math.min(targetY, maxScrollY);
+                const finalTargetY = Math.min(targetScrollY, maxScrollY);
                 
-                logs.push('최대 스크롤 가능: ' + maxScrollY.toFixed(0) + 'px');
-                logs.push('최종 목표 Y: ' + finalTargetY.toFixed(0) + 'px');
+                step4Logs.push('최대 스크롤 가능: ' + maxScrollY.toFixed(0) + 'px');
+                step4Logs.push('최종 목표 Y: ' + finalTargetY.toFixed(0) + 'px');
                 
                 // 최종 스크롤 확정
-                window.scrollTo(targetX, finalTargetY);
+                window.scrollTo(targetScrollX, finalTargetY);
                 document.documentElement.scrollTop = finalTargetY;
-                document.documentElement.scrollLeft = targetX;
+                document.documentElement.scrollLeft = targetScrollX;
                 document.body.scrollTop = finalTargetY;
-                document.body.scrollLeft = targetX;
+                document.body.scrollLeft = targetScrollX;
                 
                 if (document.scrollingElement) {
                     document.scrollingElement.scrollTop = finalTargetY;
-                    document.scrollingElement.scrollLeft = targetX;
+                    document.scrollingElement.scrollLeft = targetScrollX;
                 }
                 
                 const actualX = window.scrollX || window.pageXOffset || 0;
                 const actualY = window.scrollY || window.pageYOffset || 0;
                 
-                const diffX = Math.abs(actualX - targetX);
+                const diffX = Math.abs(actualX - targetScrollX);
                 const diffY = Math.abs(actualY - finalTargetY);
                 
-                logs.push('최종 확정 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                step4Logs.push('최종 확정 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                step4Logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
                 const withinTolerance = diffX <= tolerance && diffY <= tolerance;
                 let correctionApplied = false;
                 
                 if (!withinTolerance && diffY > tolerance) {
-                    logs.push('허용 오차 초과 - 미세 보정 적용');
+                    step4Logs.push('허용 오차 초과 - 미세 보정 적용');
                     
-                    window.scrollTo(targetX, finalTargetY);
+                    window.scrollTo(targetScrollX, finalTargetY);
                     document.documentElement.scrollTop = finalTargetY;
-                    document.documentElement.scrollLeft = targetX;
+                    document.documentElement.scrollLeft = targetScrollX;
                     document.body.scrollTop = finalTargetY;
-                    document.body.scrollLeft = targetX;
+                    document.body.scrollLeft = targetScrollX;
                     
                     if (document.scrollingElement) {
                         document.scrollingElement.scrollTop = finalTargetY;
-                        document.scrollingElement.scrollLeft = targetX;
+                        document.scrollingElement.scrollLeft = targetScrollX;
                     }
                     
                     correctionApplied = true;
@@ -1280,7 +1036,7 @@ struct BFCacheSnapshot: Codable {
                     const correctedX = window.scrollX || window.pageXOffset || 0;
                     const correctedY = window.scrollY || window.pageYOffset || 0;
                     
-                    logs.push('보정 후 위치: X=' + correctedX.toFixed(1) + 'px, Y=' + correctedY.toFixed(1) + 'px');
+                    step4Logs.push('보정 후 위치: X=' + correctedX.toFixed(1) + 'px, Y=' + correctedY.toFixed(1) + 'px');
                 }
                 
                 const success = diffY <= 50;
@@ -1289,21 +1045,69 @@ struct BFCacheSnapshot: Codable {
                     success: success,
                     finalHeight: finalHeight,
                     restoredHeightFromContext: finalHeight,
-                    targetPosition: { x: targetX, y: finalTargetY },
+                    targetPosition: { x: targetScrollX, y: finalTargetY },
                     finalPosition: { x: actualX, y: actualY },
                     finalDifference: { x: diffX, y: diffY },
                     withinTolerance: withinTolerance,
                     correctionApplied: correctionApplied,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 4] 오류: ' + e.message]
+                    logs: step4Logs
                 };
             }
+            
+            // 지연 함수
+            function delay(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+            
+            // ========== 순차 실행 ==========
+            try {
+                logs.push('=== Step 0 실행 ===');
+                results.step0 = await performStep0();
+                logs.push('Step 0 완료, ' + \(step0Delay) + 'ms 대기');
+                await delay(\(step0Delay));
+                
+                logs.push('=== Step 1 실행 ===');
+                results.step1 = await performStep1();
+                logs.push('Step 1 완료, ' + \(step1Delay) + 'ms 대기');
+                await delay(\(step1Delay));
+                
+                logs.push('=== Step 2 실행 ===');
+                results.step2 = await performStep2();
+                logs.push('Step 2 완료, ' + \(step2Delay) + 'ms 대기');
+                await delay(\(step2Delay));
+                
+                logs.push('=== Step 3 실행 ===');
+                results.step3 = await performStep3();
+                logs.push('Step 3 완료, ' + \(step3Delay) + 'ms 대기');
+                await delay(\(step3Delay));
+                
+                logs.push('=== Step 4 실행 ===');
+                results.step4 = await performStep4();
+                logs.push('Step 4 완료, ' + \(step4Delay) + 'ms 대기');
+                await delay(\(step4Delay));
+                
+                // 최종 결과 수집
+                const finalX = window.scrollX || window.pageXOffset || 0;
+                const finalY = window.scrollY || window.pageYOffset || 0;
+                
+                results.finalPosition = { x: finalX, y: finalY };
+                results.success = results.step4.success || results.step2.success;
+                results.executionTime = (Date.now() - startTime) / 1000;
+                
+                logs.push('=== 통합 실행 완료 ===');
+                logs.push('최종 위치: X=' + finalX.toFixed(1) + 'px, Y=' + finalY.toFixed(1) + 'px');
+                logs.push('실행 시간: ' + results.executionTime.toFixed(2) + '초');
+                logs.push('최종 높이: ' + persistedHeight.toFixed(0) + 'px (유지됨)');
+                
+                results.logs = logs;
+                
+            } catch(e) {
+                logs.push('오류 발생: ' + e.message);
+                results.error = e.message;
+                results.logs = logs;
+            }
+            
+            return results;
         })()
         """
     }
