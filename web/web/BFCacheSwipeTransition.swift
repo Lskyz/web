@@ -237,80 +237,84 @@ struct BFCacheSnapshot: Codable {
         
         let js = """
         (function() {
-            const metrics = {
-                domChanges: 0,
-                networkRequests: 0,
-                stabilizationTime: 0,
-                logs: []
-            };
-            
-            const startTime = performance.now();
-            
-            // ⏰ **DOM 안정화 감지**
-            return new Promise((resolve) => {
-                let lastChangeTime = startTime;
-                let changeCount = 0;
-                const stabilizationMs = \(stabilizationThreshold * 1000);
-                const maxWaitMs = \(maxWait * 1000);
-                
-                // MutationObserver로 DOM 변경 감지
-                const observer = new MutationObserver((mutations) => {
-                    if (mutations.length > 0) {
-                        changeCount += mutations.length;
-                        lastChangeTime = performance.now();
-                        metrics.logs.push('DOM 변경 감지: ' + mutations.length + '개');
-                    }
-                });
-                
-                // body 전체 관찰
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true,
-                    attributes: true,
-                    characterData: true
-                });
-                
-                // 📡 **네트워크 요청 추적**
-                const initialResourceCount = performance.getEntriesByType('resource').length;
-                
-                // 안정화 체크 루프
-                const checkStabilization = () => {
-                    const now = performance.now();
-                    const timeSinceLastChange = now - lastChangeTime;
-                    const totalElapsed = now - startTime;
-                    
-                    // 네트워크 요청 체크
-                    const currentResourceCount = performance.getEntriesByType('resource').length;
-                    const pendingRequests = currentResourceCount - initialResourceCount;
-                    
-                    metrics.logs.push('안정화 체크: 마지막 변경 후 ' + timeSinceLastChange.toFixed(0) + 'ms, 대기 중인 요청: ' + pendingRequests);
-                    
-                    // 종료 조건들
-                    if (totalElapsed >= maxWaitMs) {
-                        // 최대 대기 시간 초과
-                        observer.disconnect();
-                        metrics.domChanges = changeCount;
-                        metrics.networkRequests = pendingRequests;
-                        metrics.stabilizationTime = totalElapsed;
-                        metrics.logs.push('⏰ 최대 대기 시간 도달: ' + totalElapsed.toFixed(0) + 'ms');
-                        resolve(JSON.stringify(metrics));
-                    } else if (timeSinceLastChange >= stabilizationMs && pendingRequests === 0) {
-                        // DOM 안정화 + 네트워크 요청 완료
-                        observer.disconnect();
-                        metrics.domChanges = changeCount;
-                        metrics.networkRequests = 0;
-                        metrics.stabilizationTime = totalElapsed;
-                        metrics.logs.push('✅ DOM 안정화 완료: ' + totalElapsed.toFixed(0) + 'ms');
-                        resolve(JSON.stringify(metrics));
-                    } else {
-                        // 계속 체크
-                        setTimeout(checkStabilization, 50);
-                    }
+            try {
+                const metrics = {
+                    domChanges: 0,
+                    networkRequests: 0,
+                    stabilizationTime: 0,
+                    logs: []
                 };
                 
-                // 초기 체크 시작
-                setTimeout(checkStabilization, 50);
-            });
+                const startTime = performance.now();
+                
+                // ⏰ **DOM 안정화 감지**
+                return new Promise((resolve) => {
+                    let lastChangeTime = startTime;
+                    let changeCount = 0;
+                    const stabilizationMs = \(stabilizationThreshold * 1000);
+                    const maxWaitMs = \(maxWait * 1000);
+                    
+                    // MutationObserver로 DOM 변경 감지
+                    const observer = new MutationObserver((mutations) => {
+                        if (mutations.length > 0) {
+                            changeCount += mutations.length;
+                            lastChangeTime = performance.now();
+                            metrics.logs.push('DOM 변경 감지: ' + mutations.length + '개');
+                        }
+                    });
+                    
+                    // body 전체 관찰
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                        attributes: true,
+                        characterData: true
+                    });
+                    
+                    // 📡 **네트워크 요청 추적**
+                    const initialResourceCount = performance.getEntriesByType('resource').length;
+                    
+                    // 안정화 체크 루프
+                    const checkStabilization = () => {
+                        const now = performance.now();
+                        const timeSinceLastChange = now - lastChangeTime;
+                        const totalElapsed = now - startTime;
+                        
+                        // 네트워크 요청 체크
+                        const currentResourceCount = performance.getEntriesByType('resource').length;
+                        const pendingRequests = currentResourceCount - initialResourceCount;
+                        
+                        metrics.logs.push('안정화 체크: 마지막 변경 후 ' + timeSinceLastChange.toFixed(0) + 'ms, 대기 중인 요청: ' + pendingRequests);
+                        
+                        // 종료 조건들
+                        if (totalElapsed >= maxWaitMs) {
+                            // 최대 대기 시간 초과
+                            observer.disconnect();
+                            metrics.domChanges = changeCount;
+                            metrics.networkRequests = pendingRequests;
+                            metrics.stabilizationTime = totalElapsed;
+                            metrics.logs.push('⏰ 최대 대기 시간 도달: ' + totalElapsed.toFixed(0) + 'ms');
+                            resolve(JSON.stringify(metrics));
+                        } else if (timeSinceLastChange >= stabilizationMs && pendingRequests === 0) {
+                            // DOM 안정화 + 네트워크 요청 완료
+                            observer.disconnect();
+                            metrics.domChanges = changeCount;
+                            metrics.networkRequests = 0;
+                            metrics.stabilizationTime = totalElapsed;
+                            metrics.logs.push('✅ DOM 안정화 완료: ' + totalElapsed.toFixed(0) + 'ms');
+                            resolve(JSON.stringify(metrics));
+                        } else {
+                            // 계속 체크
+                            setTimeout(checkStabilization, 50);
+                        }
+                    };
+                    
+                    // 초기 체크 시작
+                    setTimeout(checkStabilization, 50);
+                });
+            } catch(e) {
+                return JSON.stringify({ error: e.message || 'Unknown error', domChanges: 0, logs: [] });
+            }
         })()
         """
         
@@ -320,20 +324,31 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 측정 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let metrics = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                domChanges = (metrics["domChanges"] as? Int) ?? 0
-                let stabilizationTime = (metrics["stabilizationTime"] as? Double) ?? 0
-                let networkRequests = (metrics["networkRequests"] as? Int) ?? 0
+            } else if let result = result {
+                // 타입 체크를 더 안전하게 처리
+                let jsonString: String?
+                if let str = result as? String {
+                    jsonString = str
+                } else {
+                    // 다른 타입이 반환된 경우 String으로 변환 시도
+                    jsonString = String(describing: result)
+                }
                 
-                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 실제 대기: \(String(format: "%.3f", actualWait))초")
-                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] DOM 변경: \(domChanges)회, 네트워크: \(networkRequests)개")
-                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 안정화 시간: \(String(format: "%.0f", stabilizationTime))ms")
-                
-                if let logs = metrics["logs"] as? [String] {
-                    for log in logs.prefix(3) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                if let jsonStr = jsonString,
+                   let jsonData = jsonStr.data(using: .utf8),
+                   let metrics = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    domChanges = (metrics["domChanges"] as? Int) ?? 0
+                    let stabilizationTime = (metrics["stabilizationTime"] as? Double) ?? 0
+                    let networkRequests = (metrics["networkRequests"] as? Int) ?? 0
+                    
+                    TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 실제 대기: \(String(format: "%.3f", actualWait))초")
+                    TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] DOM 변경: \(domChanges)회, 네트워크: \(networkRequests)개")
+                    TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 안정화 시간: \(String(format: "%.0f", stabilizationTime))ms")
+                    
+                    if let logs = metrics["logs"] as? [String] {
+                        for log in logs.prefix(3) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
             }
@@ -359,23 +374,34 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                step1Success = (resultDict["success"] as? Bool) ?? false
+            } else if let result = result {
+                // 타입 체크를 더 안전하게 처리
+                let jsonString: String?
+                if let str = result as? String {
+                    jsonString = str
+                } else {
+                    // 다른 타입이 반환된 경우 String으로 변환 시도
+                    jsonString = String(describing: result)
+                }
                 
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
-                }
-                if let targetHeight = resultDict["targetHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
-                }
-                if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                if let jsonStr = jsonString,
+                   let jsonData = jsonStr.data(using: .utf8),
+                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    step1Success = (resultDict["success"] as? Bool) ?? false
+                    
+                    if let currentHeight = resultDict["currentHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+                    }
+                    if let targetHeight = resultDict["targetHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                    }
+                    if let restoredHeight = resultDict["restoredHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
             }
@@ -416,23 +442,34 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                step2Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+            } else if let result = result {
+                // 타입 체크를 더 안전하게 처리
+                let jsonString: String?
+                if let str = result as? String {
+                    jsonString = str
+                } else {
+                    // 다른 타입이 반환된 경우 String으로 변환 시도
+                    jsonString = String(describing: result)
                 }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                
+                if let jsonStr = jsonString,
+                   let jsonData = jsonStr.data(using: .utf8),
+                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    step2Success = (resultDict["success"] as? Bool) ?? false
+                    
+                    if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
                     }
-                }
-                
-                if step2Success {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
+                    
+                    if step2Success {
+                        updatedContext.overallSuccess = true
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+                    }
                 }
             }
             
@@ -477,17 +514,28 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                step3Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let anchorCount = resultDict["anchorCount"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+            } else if let result = result {
+                // 타입 체크를 더 안전하게 처리
+                let jsonString: String?
+                if let str = result as? String {
+                    jsonString = str
+                } else {
+                    // 다른 타입이 반환된 경우 String으로 변환 시도
+                    jsonString = String(describing: result)
                 }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                
+                if let jsonStr = jsonString,
+                   let jsonData = jsonStr.data(using: .utf8),
+                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    step3Success = (resultDict["success"] as? Bool) ?? false
+                    
+                    if let anchorCount = resultDict["anchorCount"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(10) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
             }
@@ -528,14 +576,25 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                step4Success = (resultDict["success"] as? Bool) ?? false
+            } else if let result = result {
+                // 타입 체크를 더 안전하게 처리
+                let jsonString: String?
+                if let str = result as? String {
+                    jsonString = str
+                } else {
+                    // 다른 타입이 반환된 경우 String으로 변환 시도
+                    jsonString = String(describing: result)
+                }
                 
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                if let jsonStr = jsonString,
+                   let jsonData = jsonStr.data(using: .utf8),
+                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    step4Success = (resultDict["success"] as? Bool) ?? false
+                    
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
             }
@@ -590,6 +649,7 @@ struct BFCacheSnapshot: Codable {
         
         return """
         (function() {
+            var resultJSON = '';
             try {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)') || 0;
@@ -606,7 +666,7 @@ struct BFCacheSnapshot: Codable {
                 
                 if (!targetHeight || targetHeight === 0) {
                     logs.push('목표 높이가 유효하지 않음 - 스킵');
-                    return JSON.stringify({
+                    resultJSON = JSON.stringify({
                         success: false,
                         currentHeight: currentHeight,
                         targetHeight: 0,
@@ -614,6 +674,7 @@ struct BFCacheSnapshot: Codable {
                         percentage: 100,
                         logs: logs
                     });
+                    return resultJSON;
                 }
                 
                 const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 100;
@@ -621,7 +682,7 @@ struct BFCacheSnapshot: Codable {
                 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return JSON.stringify({
+                    resultJSON = JSON.stringify({
                         success: true,
                         isStaticSite: true,
                         currentHeight: currentHeight,
@@ -630,6 +691,7 @@ struct BFCacheSnapshot: Codable {
                         percentage: percentage,
                         logs: logs
                     });
+                    return resultJSON;
                 }
                 
                 logs.push('동적 사이트 - 복원 위치 중심 로드 시도');
@@ -830,7 +892,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
@@ -844,12 +906,15 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
                 
+                return resultJSON;
+                
             } catch(e) {
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: false,
                     error: e.message || 'Unknown error',
                     logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
                 });
+                return resultJSON;
             }
         })()
         """
@@ -861,6 +926,7 @@ struct BFCacheSnapshot: Codable {
         
         return """
         (function() {
+            var resultJSON = '';
             try {
                 const logs = [];
                 const targetPercentX = parseFloat('\(targetPercentX)');
@@ -912,7 +978,7 @@ struct BFCacheSnapshot: Codable {
                 
                 const success = diffY <= 50;
                 
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: success,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
                     calculatedPosition: { x: targetX, y: targetY },
@@ -921,12 +987,15 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
                 
+                return resultJSON;
+                
             } catch(e) {
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: false,
                     error: e.message,
                     logs: ['[Step 2] 오류: ' + e.message]
                 });
+                return resultJSON;
             }
         })()
         """
@@ -938,6 +1007,7 @@ struct BFCacheSnapshot: Codable {
         
         return """
         (function() {
+            var resultJSON = '';
             try {
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
@@ -949,11 +1019,12 @@ struct BFCacheSnapshot: Codable {
                 
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
                     logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
-                    return JSON.stringify({
+                    resultJSON = JSON.stringify({
                         success: false,
                         anchorCount: 0,
                         logs: logs
                     });
+                    return resultJSON;
                 }
                 
                 const anchors = infiniteScrollAnchorData.anchors;
@@ -1114,7 +1185,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     logs.push('매칭 신뢰도: ' + confidence + '%');
                     
-                    return JSON.stringify({
+                    resultJSON = JSON.stringify({
                         success: diffY <= 100,
                         anchorCount: anchors.length,
                         matchedAnchor: {
@@ -1126,21 +1197,24 @@ struct BFCacheSnapshot: Codable {
                         targetDifference: { x: diffX, y: diffY },
                         logs: logs
                     });
+                    return resultJSON;
                 }
                 
                 logs.push('무한스크롤 앵커 매칭 실패');
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: false,
                     anchorCount: anchors.length,
                     logs: logs
                 });
+                return resultJSON;
                 
             } catch(e) {
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: false,
                     error: e.message,
                     logs: ['[Step 3] 오류: ' + e.message]
                 });
+                return resultJSON;
             }
         })()
         """
@@ -1152,6 +1226,7 @@ struct BFCacheSnapshot: Codable {
         
         return """
         (function() {
+            var resultJSON = '';
             try {
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
@@ -1200,7 +1275,7 @@ struct BFCacheSnapshot: Codable {
                 
                 const success = diffY <= 50;
                 
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: success,
                     targetPosition: { x: targetX, y: targetY },
                     finalPosition: { x: currentX, y: currentY },
@@ -1210,12 +1285,15 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
                 
+                return resultJSON;
+                
             } catch(e) {
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     success: false,
                     error: e.message,
                     logs: ['[Step 4] 오류: ' + e.message]
                 });
+                return resultJSON;
             }
         })()
         """
@@ -1489,25 +1567,38 @@ extension BFCacheTransitionSystem {
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
-                } else if let jsonString = result as? String,
-                          let jsonData = jsonString.data(using: .utf8),
-                          let data = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                    jsState = data
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                } else if let result = result {
+                    // 타입 체크를 더 안전하게 처리
+                    let jsonString: String?
+                    if let str = result as? String {
+                        jsonString = str
+                    } else {
+                        // 다른 타입이 반환된 경우 String으로 변환 시도
+                        jsonString = String(describing: result)
+                    }
                     
-                    if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
-                        if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                            let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
-                            let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
-                            let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
+                    if let jsonStr = jsonString,
+                       let jsonData = jsonStr.data(using: .utf8),
+                       let data = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                        jsState = data
+                        TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                        
+                        if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
+                            if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
+                                let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
+                                let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
+                                let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
+                                TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
+                            }
+                            if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
+                                TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
+                            }
                         }
-                        if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
-                            TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
-                        }
+                    } else {
+                        TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 파싱 실패")
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과가 nil")
                 }
                 jsSemaphore.signal()
             }
@@ -1584,6 +1675,7 @@ extension BFCacheTransitionSystem {
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
+            var resultJSON = '';
             try {
                 console.log('🚀 무한스크롤 전용 앵커 캡처 시작');
                 
@@ -2133,7 +2225,7 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     infiniteScrollAnchors: infiniteScrollAnchorsData,
                     scroll: { 
                         x: scrollX, 
@@ -2161,9 +2253,11 @@ extension BFCacheTransitionSystem {
                     pageAnalysis: pageAnalysis,
                     captureTime: captureTime
                 });
+                
+                return resultJSON;
             } catch(e) { 
                 console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
-                return JSON.stringify({
+                resultJSON = JSON.stringify({
                     infiniteScrollAnchors: { anchors: [], stats: {} },
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                     href: window.location.href,
@@ -2174,6 +2268,7 @@ extension BFCacheTransitionSystem {
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 });
+                return resultJSON;
             }
         })()
         """
