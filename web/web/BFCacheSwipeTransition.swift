@@ -646,23 +646,323 @@ struct BFCacheSnapshot: Codable {
         (function() {
             try {
                 const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)') || 0;
-                const targetScrollY = parseFloat('\(targetScrollY)') || 0;
+                const targetHeight = parseFloat('\\(targetHeight)') || 0;
+                const targetScrollY = parseFloat('\\(targetScrollY)') || 0;
                 const ledgerData = \(ledgerDataJSON);
                 
                 logs.push('[Step 1] 원장+PVL 방식 콘텐츠 복원 시작');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 logs.push('목표 스크롤 위치: ' + targetScrollY.toFixed(0) + 'px');
                 
+                const docEl = document.documentElement || null;
+                const bodyEl = document.body || null;
+                
+                const session = window.__bfcacheRestoreSession = window.__bfcacheRestoreSession || {};
+                session.startedAt = session.startedAt || Date.now();
+                session.targetHeight = targetHeight;
+                session.targetScrollY = targetScrollY;
+                session.ledgerChunkCount = (ledgerData && ledgerData.chunks && Array.isArray(ledgerData.chunks)) ? ledgerData.chunks.length : 0;
+                
+                function restoreScrollPosition(reason) {
+                    if (!session.restoreReasons) {
+                        session.restoreReasons = [];
+                    }
+                    session.restoreReasons.push(reason);
+                    window.scrollTo(0, targetScrollY);
+                    if (docEl) {
+                        docEl.scrollTop = targetScrollY;
+                    }
+                    if (bodyEl) {
+                        bodyEl.scrollTop = targetScrollY;
+                    }
+                    if (document.scrollingElement) {
+                        document.scrollingElement.scrollTop = targetScrollY;
+                    }
+                }
+                
+                function cleanupVisuals(reason) {
+                    session.cleanupReason = reason;
+                    if (session.failSafeTimer) {
+                        clearTimeout(session.failSafeTimer);
+                        session.failSafeTimer = null;
+                    }
+                    const skeletonEl = document.getElementById('bfcache-skeleton-placeholder');
+                    if (skeletonEl) {
+                        skeletonEl.style.opacity = '0';
+                        skeletonEl.style.transition = 'opacity 0.25s ease';
+                        setTimeout(function() {
+                            if (skeletonEl.parentNode) {
+                                skeletonEl.parentNode.removeChild(skeletonEl);
+                            }
+                        }, 300);
+                    }
+                    if (session.heightWatcherInterval) {
+                        clearInterval(session.heightWatcherInterval);
+                        session.heightWatcherInterval = null;
+                    }
+                    const heightPreserver = document.getElementById('bfcache-height-preserver');
+                    if (heightPreserver && session.heightReached) {
+                        setTimeout(function() {
+                            if (heightPreserver.parentNode) {
+                                heightPreserver.parentNode.removeChild(heightPreserver);
+                            }
+                        }, 1200);
+                    }
+                    if (window.__bfcacheResizeObserver && typeof window.__bfcacheResizeObserver.disconnect === 'function') {
+                        try {
+                            window.__bfcacheResizeObserver.disconnect();
+                        } catch (error) {}
+                        window.__bfcacheResizeObserver = null;
+                    }
+                }
+                
+                function disableScrollAnchoring() {
+                    if (docEl) {
+                        docEl.style.setProperty('overflow-anchor', 'none', 'important');
+                    }
+                    if (bodyEl) {
+                        bodyEl.style.setProperty('overflow-anchor', 'none', 'important');
+                    }
+                    logs.push('Scroll Anchoring 비활성화');
+                }
+                
+                function applyIntrinsicSizing() {
+                    if (!docEl && !bodyEl) {
+                        return;
+                    }
+                    const intrinsicHeight = Math.max(targetHeight, window.innerHeight || 0);
+                    if (docEl) {
+                        docEl.style.minHeight = intrinsicHeight + 'px';
+                        docEl.style.setProperty('contain-intrinsic-size', intrinsicHeight + 'px');
+                    }
+                    if (bodyEl) {
+                        bodyEl.style.minHeight = intrinsicHeight + 'px';
+                        bodyEl.style.setProperty('contain-intrinsic-size', intrinsicHeight + 'px');
+                    }
+                    logs.push('min-height 및 contain-intrinsic-size 적용: ' + intrinsicHeight.toFixed(0) + 'px');
+                }
+                
+                function ensureSkeleton() {
+                    if (!bodyEl) {
+                        return null;
+                    }
+                    let skeleton = document.getElementById('bfcache-skeleton-placeholder');
+                    if (!skeleton) {
+                        skeleton = document.createElement('div');
+                        skeleton.id = 'bfcache-skeleton-placeholder';
+                        skeleton.style.position = 'fixed';
+                        skeleton.style.inset = '0';
+                        skeleton.style.zIndex = '2147483647';
+                        skeleton.style.pointerEvents = 'none';
+                        skeleton.style.background = 'linear-gradient(90deg, rgba(240,240,240,0.9), rgba(250,250,250,0.95), rgba(240,240,240,0.9))';
+                        skeleton.style.backgroundSize = '600px 100%';
+                        skeleton.style.animation = 'bfcache-skeleton-shimmer 1.6s infinite';
+                        skeleton.style.display = 'flex';
+                        skeleton.style.alignItems = 'center';
+                        skeleton.style.justifyContent = 'center';
+                        skeleton.style.fontFamily = 'system-ui, sans-serif';
+                        skeleton.style.fontSize = '14px';
+                        skeleton.style.letterSpacing = '0.3px';
+                        skeleton.style.color = '#666666';
+                        skeleton.textContent = '이전 상태 복원 중...';
+                        bodyEl.appendChild(skeleton);
+                        
+                        const styleTag = document.getElementById('bfcache-skeleton-style') || document.createElement('style');
+                        styleTag.id = 'bfcache-skeleton-style';
+                        styleTag.textContent = '@keyframes bfcache-skeleton-shimmer { 0% { background-position: -200px 0; } 100% { background-position: 400px 0; } }';
+                        if (!styleTag.parentNode) {
+                            if (document.head) {
+                                document.head.appendChild(styleTag);
+                            } else {
+                                bodyEl.appendChild(styleTag);
+                            }
+                        }
+                    }
+                    logs.push('Skeleton 플레이스홀더 활성화');
+                    return skeleton;
+                }
+                
+                function ensureHeightPreserver() {
+                    if (!bodyEl) {
+                        return null;
+                    }
+                    let preserver = document.getElementById('bfcache-height-preserver');
+                    if (!preserver) {
+                        preserver = document.createElement('div');
+                        preserver.id = 'bfcache-height-preserver';
+                        preserver.style.position = 'relative';
+                        preserver.style.width = '1px';
+                        preserver.style.margin = '0';
+                        preserver.style.padding = '0';
+                        preserver.style.opacity = '0';
+                        preserver.style.pointerEvents = 'none';
+                        preserver.style.userSelect = 'none';
+                        bodyEl.appendChild(preserver);
+                    } else {
+                        while (preserver.firstChild) {
+                            preserver.removeChild(preserver.firstChild);
+                        }
+                    }
+                    
+                    if (ledgerData && ledgerData.chunks && Array.isArray(ledgerData.chunks) && ledgerData.chunks.length > 0) {
+                        for (let i = 0; i < ledgerData.chunks.length; i++) {
+                            const chunk = ledgerData.chunks[i];
+                            const block = document.createElement('div');
+                            block.className = 'bfcache-height-block';
+                            block.style.width = '1px';
+                            block.style.height = (chunk.finalHeight || 0) + 'px';
+                            preserver.appendChild(block);
+                        }
+                        logs.push('높이 보존 블록 생성: ' + ledgerData.chunks.length + '개');
+                    } else if (targetHeight > 0) {
+                        preserver.style.height = targetHeight + 'px';
+                        logs.push('높이 보존 블록 생성: 단일 ' + targetHeight.toFixed(0) + 'px');
+                    }
+                    
+                    session.heightPreserverId = preserver.id;
+                    return preserver;
+                }
+                
+                function startMutationObserver() {
+                    if (!window.MutationObserver || window.__bfcacheMutationObserver) {
+                        return;
+                    }
+                    const stats = session.mutationStats = session.mutationStats || { count: 0, lastMutation: Date.now() };
+                    const observer = new MutationObserver(function(mutations) {
+                        stats.count += mutations.length;
+                        stats.lastMutation = Date.now();
+                    });
+                    observer.observe(docEl || bodyEl || document.documentElement, { childList: true, subtree: true });
+                    window.__bfcacheMutationObserver = observer;
+                    logs.push('MutationObserver 활성화');
+                }
+                
+                function startResizeObserver() {
+                    if (window.__bfcacheResizeObserver) {
+                        return;
+                    }
+                    if (typeof ResizeObserver === 'function') {
+                        const observer = new ResizeObserver(function() {
+                            const observedHeight = Math.max(
+                                docEl ? docEl.scrollHeight : 0,
+                                bodyEl ? bodyEl.scrollHeight : 0
+                            );
+                            session.lastMeasuredHeight = observedHeight;
+                            if (!session.heightReached && targetHeight > 0 && observedHeight >= targetHeight * 0.9) {
+                                session.heightReached = true;
+                                logs.push('ResizeObserver: 높이 90% 도달 (' + observedHeight.toFixed(0) + 'px)');
+                                restoreScrollPosition('resize-observer');
+                                cleanupVisuals('resize-observer');
+                            }
+                        });
+                        const target = document.scrollingElement || docEl || bodyEl;
+                        if (target) {
+                            observer.observe(target);
+                            window.__bfcacheResizeObserver = observer;
+                            logs.push('ResizeObserver 등록 (90% 임계치)');
+                        }
+                    } else {
+                        session.heightWatcherInterval = session.heightWatcherInterval || setInterval(function() {
+                            const observedHeight = Math.max(
+                                docEl ? docEl.scrollHeight : 0,
+                                bodyEl ? bodyEl.scrollHeight : 0
+                            );
+                            session.lastMeasuredHeight = observedHeight;
+                            if (!session.heightReached && targetHeight > 0 && observedHeight >= targetHeight * 0.9) {
+                                session.heightReached = true;
+                                logs.push('setInterval: 높이 90% 도달 (' + observedHeight.toFixed(0) + 'px)');
+                                restoreScrollPosition('interval-height-watch');
+                                cleanupVisuals('interval-height-watch');
+                            }
+                        }, 120);
+                        logs.push('ResizeObserver 미지원 - interval 감시 사용');
+                    }
+                }
+                
+                function startTimeoutGuard() {
+                    if (session.failSafeTimer) {
+                        return;
+                    }
+                    session.failSafeTimer = setTimeout(function() {
+                        logs.push('타임아웃 안전장치 발동 (3초)');
+                        if (!session.heightReached) {
+                            restoreScrollPosition('timeout-guard');
+                        }
+                        cleanupVisuals('timeout-guard');
+                    }, 3000);
+                    logs.push('타임아웃 안전장치 등록 (3초)');
+                }
+                
+                function triggerLazyLoadScrolls() {
+                    const attempts = [];
+                    const viewportHeight = window.innerHeight || (docEl ? docEl.clientHeight : 0) || 0;
+                    const startY = targetScrollY;
+                    
+                    for (let i = 1; i <= 3; i++) {
+                        const upY = Math.max(0, startY - (viewportHeight * i * 0.5));
+                        window.scrollTo(0, upY);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        attempts.push(upY);
+                    }
+                    
+                    const maxScrollY = Math.max(
+                        docEl ? docEl.scrollHeight : 0,
+                        bodyEl ? bodyEl.scrollHeight : 0
+                    ) - viewportHeight;
+                    
+                    for (let i = 1; i <= 3; i++) {
+                        const downY = Math.min(maxScrollY, startY + (viewportHeight * i * 0.5));
+                        window.scrollTo(0, downY);
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        attempts.push(downY);
+                    }
+                    
+                    window.scrollTo(0, startY);
+                    logs.push('콘텐츠 로드 트리거: 다중 스크롤 ' + attempts.length + '회');
+                    return attempts.length;
+                }
+                
+                function triggerContentLoad() {
+                    let triggeredCount = 0;
+                    try {
+                        const viewportHeight = window.innerHeight || (docEl ? docEl.clientHeight : 0) || 0;
+                        const elements = document.querySelectorAll('*');
+                        for (let i = 0; i < elements.length; i++) {
+                            const node = elements[i];
+                            const rect = node.getBoundingClientRect();
+                            if (rect.bottom > -viewportHeight && rect.top < viewportHeight * 2) {
+                                node.dispatchEvent(new Event('scrollintoview', { bubbles: true }));
+                                triggeredCount++;
+                                if (triggeredCount > 50) {
+                                    break;
+                                }
+                            }
+                        }
+                        logs.push('Lazy Load 후보 자극: ' + triggeredCount + '개');
+                    } catch (error) {
+                        logs.push('Lazy Load 후보 자극 실패: ' + (error && error.message ? error.message : error));
+                    }
+                    return triggeredCount;
+                }
+                
+                disableScrollAnchoring();
+                applyIntrinsicSizing();
+                ensureSkeleton();
+                const heightPreserver = ensureHeightPreserver();
+                startMutationObserver();
+                startResizeObserver();
+                startTimeoutGuard();
+                
                 const currentHeight = Math.max(
-                    document.documentElement ? document.documentElement.scrollHeight : 0,
-                    document.body ? document.body.scrollHeight : 0
+                    docEl ? docEl.scrollHeight : 0,
+                    bodyEl ? bodyEl.scrollHeight : 0
                 ) || 0;
                 
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 
                 if (!targetHeight || targetHeight === 0) {
-                    logs.push('목표 높이가 유효하지 않음 - 스킵');
+                    logs.push('목표 높이가 없어 스킵');
+                    restoreScrollPosition('no-target-height');
                     return JSON.stringify({
                         success: false,
                         currentHeight: currentHeight,
@@ -676,14 +976,10 @@ struct BFCacheSnapshot: Codable {
                 const isStaticSite = percentage >= 90;
                 
                 if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    
-                    window.scrollTo(0, targetScrollY);
-                    document.documentElement.scrollTop = targetScrollY;
-                    document.body.scrollTop = targetScrollY;
-                    if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetScrollY;
-                    }
+                    logs.push('기존 DOM으로 충분한 높이 확보 (>=90%)');
+                    restoreScrollPosition('static-site');
+                    session.heightReached = true;
+                    cleanupVisuals('static-site');
                     
                     return JSON.stringify({
                         success: true,
@@ -697,202 +993,72 @@ struct BFCacheSnapshot: Codable {
                     });
                 }
                 
-                logs.push('동적 사이트 - 원장+PVL 방식 복원 시도');
+                logs.push('원장+PVL 복원 로직 진행');
                 
-                // 📚 **원장 데이터 활용**
+                if (heightPreserver) {
+                    session.hasHeightPreserver = true;
+                }
+                
                 let totalLedgerHeight = 0;
                 let chunkCount = 0;
                 
                 if (ledgerData && ledgerData.chunks && Array.isArray(ledgerData.chunks)) {
                     chunkCount = ledgerData.chunks.length;
-                    
                     for (let i = 0; i < ledgerData.chunks.length; i++) {
                         const chunk = ledgerData.chunks[i];
                         if (chunk.finalHeight) {
                             totalLedgerHeight += chunk.finalHeight;
                         }
                     }
-                    
-                    logs.push('원장 데이터: ' + chunkCount + '개 청크, 총 높이: ' + totalLedgerHeight.toFixed(0) + 'px');
+                    logs.push('원장 높이 합계: ' + totalLedgerHeight.toFixed(0) + 'px');
                 }
                 
-                // 🎯 **레이아웃 복제 블록 생성**
-                const createLayoutReplica = function() {
-                    try {
-                        const existingReplica = document.querySelector('#bfcache-layout-replica');
-                        if (existingReplica) {
-                            existingReplica.remove();
-                        }
-                        
-                        const replica = document.createElement('div');
-                        replica.id = 'bfcache-layout-replica';
-                        replica.style.position = 'absolute';
-                        replica.style.bottom = '0';
-                        replica.style.left = '-9999px';
-                        replica.style.visibility = 'hidden';
-                        replica.style.pointerEvents = 'none';
-                        replica.style.width = '1px';
-                        
-                        // 원장 데이터를 기반으로 청크별 블록 생성
-                        if (ledgerData && ledgerData.chunks && Array.isArray(ledgerData.chunks)) {
-                            for (let i = 0; i < ledgerData.chunks.length; i++) {
-                                const chunk = ledgerData.chunks[i];
-                                const chunkBlock = document.createElement('div');
-                                chunkBlock.className = 'bfcache-chunk-replica';
-                                chunkBlock.setAttribute('data-chunk-id', chunk.id || i.toString());
-                                chunkBlock.style.height = (chunk.finalHeight || 0) + 'px';
-                                chunkBlock.style.width = '1px';
-                                replica.appendChild(chunkBlock);
-                            }
-                            logs.push('레이아웃 복제: ' + ledgerData.chunks.length + '개 청크 블록 생성');
-                        } else {
-                            // 원장 데이터 없으면 전체 높이로 단일 블록
-                            const singleBlock = document.createElement('div');
-                            singleBlock.style.height = targetHeight + 'px';
-                            singleBlock.style.width = '1px';
-                            replica.appendChild(singleBlock);
-                            logs.push('레이아웃 복제: 단일 블록 생성 (원장 데이터 없음)');
-                        }
-                        
-                        document.body.appendChild(replica);
-                        void(document.body.offsetHeight); // 강제 리플로우
-                        
-                        return replica;
-                    } catch(e) {
-                        logs.push('레이아웃 복제 생성 실패: ' + e.message);
-                        return null;
-                    }
-                };
-                
-                const layoutReplica = createLayoutReplica();
-                
-                // 🔧 **초기 스크롤 위치 설정**
-                window.scrollTo(0, targetScrollY);
-                document.documentElement.scrollTop = targetScrollY;
-                document.body.scrollTop = targetScrollY;
-                if (document.scrollingElement) {
-                    document.scrollingElement.scrollTop = targetScrollY;
-                }
-                
-                logs.push('초기 스크롤 위치 설정: ' + targetScrollY.toFixed(0) + 'px');
-                
-                // 📡 **콘텐츠 로드 트리거**
-                const triggerContentLoad = function() {
-                    try {
-                        const viewportHeight = window.innerHeight;
-                        const allElements = document.querySelectorAll('*');
-                        let triggeredCount = 0;
-                        
-                        for (let i = 0; i < allElements.length; i++) {
-                            const el = allElements[i];
-                            const rect = el.getBoundingClientRect();
-                            
-                            if (rect.bottom > -viewportHeight && rect.top < viewportHeight * 2) {
-                                const event = new Event('scrollintoview', { bubbles: true });
-                                el.dispatchEvent(event);
-                                
-                                el.classList.add('bfcache-trigger');
-                                void(el.offsetHeight);
-                                el.classList.remove('bfcache-trigger');
-                                
-                                triggeredCount++;
-                                if (triggeredCount > 50) break;
-                            }
-                        }
-                        
-                        logs.push('콘텐츠 로드 트리거: ' + triggeredCount + '개 요소');
-                    } catch(e) {
-                        logs.push('콘텐츠 로드 트리거 실패: ' + e.message);
-                    }
-                };
-                
-                triggerContentLoad();
-                
-                // 📏 **PVL (Position-Preserving Layout) 보정 준비**
+                restoreScrollPosition('pre-stimulus');
+                const lazyCandidates = triggerContentLoad();
                 const beforeLoadHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
+                    docEl ? docEl.scrollHeight : 0,
+                    bodyEl ? bodyEl.scrollHeight : 0
                 );
-                
-                logs.push('콘텐츠 로드 전 높이: ' + beforeLoadHeight.toFixed(0) + 'px');
-                
-                // 🔄 **양방향 스크롤로 추가 콘텐츠 로드**
-                const biDirectionalScrollLoad = function() {
-                    const startY = targetScrollY;
-                    const viewportHeight = window.innerHeight;
-                    let loadAttempts = 0;
-                    
-                    for (let i = 1; i <= 3; i++) {
-                        const scrollUpTo = Math.max(0, startY - (viewportHeight * i * 0.5));
-                        window.scrollTo(0, scrollUpTo);
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        loadAttempts++;
-                    }
-                    
-                    window.scrollTo(0, startY);
-                    
-                    const maxScrollY = Math.max(
-                        document.documentElement.scrollHeight,
-                        document.body.scrollHeight
-                    ) - viewportHeight;
-                    
-                    for (let i = 1; i <= 3; i++) {
-                        const scrollDownTo = Math.min(maxScrollY, startY + (viewportHeight * i * 0.5));
-                        window.scrollTo(0, scrollDownTo);
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        loadAttempts++;
-                    }
-                    
-                    window.scrollTo(0, startY);
-                    return loadAttempts;
-                };
-                
-                const scrollAttempts = biDirectionalScrollLoad();
-                logs.push('양방향 스크롤 완료: ' + scrollAttempts + '회 시도');
-                
-                // 🔧 **PVL 보정 적용**
+                const scrollAttempts = triggerLazyLoadScrolls();
                 const afterLoadHeight = Math.max(
-                    document.documentElement.scrollHeight,
-                    document.body.scrollHeight
+                    docEl ? docEl.scrollHeight : 0,
+                    bodyEl ? bodyEl.scrollHeight : 0
                 );
                 
-                logs.push('콘텐츠 로드 후 높이: ' + afterLoadHeight.toFixed(0) + 'px');
+                logs.push('콘텐츠 자극 전 높이: ' + beforeLoadHeight.toFixed(0) + 'px');
+                logs.push('콘텐츠 자극 후 높이: ' + afterLoadHeight.toFixed(0) + 'px');
                 
-                const heightDelta = afterLoadHeight - beforeLoadHeight;
+                const heightDelta = afterLoadHeight - currentHeight;
                 let pvlCorrection = 0;
                 
-                if (Math.abs(heightDelta) > 10) {
-                    // 높이 변화가 있으면 PVL 보정 적용
-                    pvlCorrection = heightDelta * (targetScrollY / beforeLoadHeight);
-                    
+                if (Math.abs(heightDelta) > 10 && beforeLoadHeight > 0) {
+                    pvlCorrection = heightDelta * (targetScrollY / Math.max(beforeLoadHeight, 1));
                     const correctedScrollY = targetScrollY + pvlCorrection;
-                    
                     window.scrollTo(0, correctedScrollY);
-                    document.documentElement.scrollTop = correctedScrollY;
-                    document.body.scrollTop = correctedScrollY;
+                    if (docEl) {
+                        docEl.scrollTop = correctedScrollY;
+                    }
+                    if (bodyEl) {
+                        bodyEl.scrollTop = correctedScrollY;
+                    }
                     if (document.scrollingElement) {
                         document.scrollingElement.scrollTop = correctedScrollY;
                     }
-                    
-                    logs.push('PVL 보정 적용: 높이 변화 ' + heightDelta.toFixed(0) + 'px, 스크롤 보정 ' + pvlCorrection.toFixed(1) + 'px');
-                    logs.push('보정된 스크롤 위치: ' + correctedScrollY.toFixed(0) + 'px');
+                    logs.push('PVL 보정 적용: ' + pvlCorrection.toFixed(1) + 'px');
+                    session.lastPVLCorrection = pvlCorrection;
+                } else {
+                    restoreScrollPosition('post-stimulus');
                 }
-                
-                // 🧹 **레이아웃 복제 제거**
-                setTimeout(function() {
-                    if (layoutReplica) {
-                        layoutReplica.remove();
-                        logs.push('레이아웃 복제 제거됨');
-                    }
-                }, 100);
                 
                 const restoredHeight = afterLoadHeight;
                 const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 100;
                 const success = finalPercentage >= 50;
                 
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
+                session.lastKnownHeight = restoredHeight;
+                if (success && finalPercentage >= 90) {
+                    session.heightReached = true;
+                    cleanupVisuals('step1-complete');
+                }
                 
                 return JSON.stringify({
                     success: success,
@@ -906,6 +1072,7 @@ struct BFCacheSnapshot: Codable {
                     heightDelta: heightDelta,
                     pvlCorrection: pvlCorrection,
                     scrollAttempts: scrollAttempts,
+                    lazyTriggers: lazyCandidates,
                     chunkCount: chunkCount,
                     totalLedgerHeight: totalLedgerHeight,
                     logs: logs
@@ -914,13 +1081,14 @@ struct BFCacheSnapshot: Codable {
             } catch(e) {
                 return JSON.stringify({
                     success: false,
-                    error: e.message || 'Unknown error',
-                    logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
+                    error: e && e.message ? e.message : String(e),
+                    logs: ['[Step 1] 오류: ' + (e && e.message ? e.message : String(e))]
                 });
             }
         })()
         """
     }
+
     
     private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
@@ -2375,19 +2543,66 @@ extension BFCacheTransitionSystem {
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
-        window.addEventListener('pageshow', function(event) {
-            if (event.persisted) {
-                console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
+        (function() {
+            window.__bfcacheRestoreSession = window.__bfcacheRestoreSession || {};
+            const session = window.__bfcacheRestoreSession;
+            
+            function disableScrollAnchoring() {
+                const docEl = document.documentElement;
+                const bodyEl = document.body;
+                if (docEl) {
+                    docEl.style.setProperty('overflow-anchor', 'none', 'important');
+                }
+                if (bodyEl) {
+                    bodyEl.style.setProperty('overflow-anchor', 'none', 'important');
+                }
             }
-        });
-        
-        window.addEventListener('pagehide', function(event) {
-            if (event.persisted) {
-                console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
+            
+            function cleanup(reason) {
+                session.cleanupReason = reason;
+                const skeleton = document.getElementById('bfcache-skeleton-placeholder');
+                if (skeleton && skeleton.parentNode) {
+                    skeleton.parentNode.removeChild(skeleton);
+                }
+                const preserver = document.getElementById('bfcache-height-preserver');
+                if (preserver && preserver.parentNode && session.heightReached) {
+                    preserver.parentNode.removeChild(preserver);
+                }
+                if (window.__bfcacheResizeObserver && typeof window.__bfcacheResizeObserver.disconnect === 'function') {
+                    try {
+                        window.__bfcacheResizeObserver.disconnect();
+                    } catch (error) {}
+                    window.__bfcacheResizeObserver = null;
+                }
+                if (window.__bfcacheMutationObserver && typeof window.__bfcacheMutationObserver.disconnect === 'function') {
+                    try {
+                        window.__bfcacheMutationObserver.disconnect();
+                    } catch (error) {}
+                    window.__bfcacheMutationObserver = null;
+                }
             }
-        });
-        
+            
+            window.addEventListener('pageshow', function(event) {
+                session.lastPageShow = Date.now();
+                session.wasRestoredFromBFCache = !!event.persisted;
+                if (event.persisted) {
+                    session.isRestoring = true;
+                    disableScrollAnchoring();
+                } else {
+                    session.isRestoring = false;
+                }
+            });
+            
+            window.addEventListener('pagehide', function(event) {
+                session.lastPageHide = Date.now();
+                if (event.persisted) {
+                    session.isRestoring = false;
+                    cleanup('pagehide');
+                }
+            });
+        })();
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
+
 }
