@@ -55,12 +55,12 @@ struct BFCacheSnapshot: Codable {
             enableFinalVerification: true,
             savedContentHeight: 0,
             clampedHeight: 0,
-            preRenderRadius: 3000,   // ±3000px 영역 프리렌더링
+            preRenderRadius: 6000,   // ±3000px 영역 프리렌더링
             step0RenderDelay: 0.5,
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.2,
             step3RenderDelay: 0.2,
-            step4RenderDelay: 0.2
+            step4RenderDelay: 0.5
         )
     }
     
@@ -163,7 +163,7 @@ struct BFCacheSnapshot: Codable {
         
         // 🆕 클램핑 높이 계산 (5000px 클램핑 감지)
         let maxHeight = max(actualScrollableSize.height, contentSize.height)
-        let clampedHeight = min(maxHeight, 5000)
+        let clampedHeight = min(maxHeight, 6000)
         
         self.restorationConfig = RestorationConfig(
             enablePreRendering: restorationConfig.enablePreRendering,
