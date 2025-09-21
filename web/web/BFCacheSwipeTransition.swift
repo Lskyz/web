@@ -218,7 +218,7 @@ struct BFCacheSnapshot: Codable {
         executeStep1_LedgerBasedRestore(context: context)
     }
     
-    // MARK: - ⏰ **실시간 렌더링 대기 함수**
+    // MARK: - ⏰ **실시간 렌더링 대기 함수 (재귀적 체크)**
     
     private func waitForOptimalRendering(webView: WKWebView, stepName: String, context: RestorationContext, completion: @escaping (Double, Int) -> Void) {
         guard restorationConfig.enableAdaptiveWait else {
@@ -233,97 +233,129 @@ struct BFCacheSnapshot: Codable {
         let startTime = Date()
         let stabilizationThreshold = restorationConfig.stabilizationThreshold
         let maxWait = restorationConfig.maxWaitPerStep
-        let networkTimeout = restorationConfig.networkWaitTimeout
         
+        // 🔧 **재귀적 체크로 즉시 상태 반환**
         let js = """
         (function() {
             const metrics = {
                 domChanges: 0,
                 networkRequests: 0,
                 stabilizationTime: 0,
-                logs: []
+                logs: [],
+                isComplete: false
             };
             
             const startTime = performance.now();
+            let lastChangeTime = startTime;
+            let changeCount = 0;
+            const stabilizationMs = \(stabilizationThreshold * 1000);
+            const maxWaitMs = \(maxWait * 1000);
             
-            // ⏰ **DOM 안정화 감지**
-            return new Promise((resolve) => {
-                let lastChangeTime = startTime;
-                let changeCount = 0;
-                const stabilizationMs = \(stabilizationThreshold * 1000);
-                const maxWaitMs = \(maxWait * 1000);
-                
-                // MutationObserver로 DOM 변경 감지
-                const observer = new MutationObserver((mutations) => {
-                    if (mutations.length > 0) {
-                        changeCount += mutations.length;
-                        lastChangeTime = performance.now();
-                        metrics.logs.push('DOM 변경 감지: ' + mutations.length + '개');
-                    }
-                });
-                
-                // body 전체 관찰
-                observer.observe(document.body, {
-                    childList: true,
-                    subtree: true,
-                    attributes: true,
-                    characterData: true
-                });
-                
-                // 📡 **네트워크 요청 추적**
-                const initialResourceCount = performance.getEntriesByType('resource').length;
-                
-                // 안정화 체크 루프
-                const checkStabilization = () => {
-                    const now = performance.now();
-                    const timeSinceLastChange = now - lastChangeTime;
-                    const totalElapsed = now - startTime;
-                    
-                    // 네트워크 요청 체크
-                    const currentResourceCount = performance.getEntriesByType('resource').length;
-                    const pendingRequests = currentResourceCount - initialResourceCount;
-                    
-                    metrics.logs.push('안정화 체크: 마지막 변경 후 ' + timeSinceLastChange.toFixed(0) + 'ms, 대기 중인 요청: ' + pendingRequests);
-                    
-                    // 종료 조건들
-                    if (totalElapsed >= maxWaitMs) {
-                        // 최대 대기 시간 초과
-                        observer.disconnect();
-                        metrics.domChanges = changeCount;
-                        metrics.networkRequests = pendingRequests;
-                        metrics.stabilizationTime = totalElapsed;
-                        metrics.logs.push('⏰ 최대 대기 시간 도달: ' + totalElapsed.toFixed(0) + 'ms');
-                        resolve(JSON.stringify(metrics));
-                    } else if (timeSinceLastChange >= stabilizationMs && pendingRequests === 0) {
-                        // DOM 안정화 + 네트워크 요청 완료
-                        observer.disconnect();
-                        metrics.domChanges = changeCount;
-                        metrics.networkRequests = 0;
-                        metrics.stabilizationTime = totalElapsed;
-                        metrics.logs.push('✅ DOM 안정화 완료: ' + totalElapsed.toFixed(0) + 'ms');
-                        resolve(JSON.stringify(metrics));
-                    } else {
-                        // 계속 체크
-                        setTimeout(checkStabilization, 50);
-                    }
-                };
-                
-                // 초기 체크 시작
-                setTimeout(checkStabilization, 50);
+            // MutationObserver로 DOM 변경 감지
+            const observer = new MutationObserver((mutations) => {
+                if (mutations.length > 0) {
+                    changeCount += mutations.length;
+                    lastChangeTime = performance.now();
+                    metrics.logs.push('DOM 변경 감지: ' + mutations.length + '개');
+                }
             });
+            
+            // body 전체 관찰
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                characterData: true
+            });
+            
+            // 📡 **네트워크 요청 추적**
+            const initialResourceCount = performance.getEntriesByType('resource').length;
+            
+            // 🔄 **재귀적 안정화 체크**
+            const checkStabilization = () => {
+                const now = performance.now();
+                const timeSinceLastChange = now - lastChangeTime;
+                const totalElapsed = now - startTime;
+                
+                // 네트워크 요청 체크
+                const currentResourceCount = performance.getEntriesByType('resource').length;
+                const pendingRequests = currentResourceCount - initialResourceCount;
+                
+                metrics.logs.push('안정화 체크: 마지막 변경 후 ' + timeSinceLastChange.toFixed(0) + 'ms, 대기 중인 요청: ' + pendingRequests);
+                
+                // 종료 조건들
+                if (totalElapsed >= maxWaitMs) {
+                    // 최대 대기 시간 초과
+                    observer.disconnect();
+                    metrics.domChanges = changeCount;
+                    metrics.networkRequests = pendingRequests;
+                    metrics.stabilizationTime = totalElapsed;
+                    metrics.isComplete = true;
+                    metrics.logs.push('⏰ 최대 대기 시간 도달: ' + totalElapsed.toFixed(0) + 'ms');
+                    window.__bfcacheStabilizationResult = JSON.stringify(metrics);
+                } else if (timeSinceLastChange >= stabilizationMs && pendingRequests === 0) {
+                    // DOM 안정화 + 네트워크 요청 완료
+                    observer.disconnect();
+                    metrics.domChanges = changeCount;
+                    metrics.networkRequests = 0;
+                    metrics.stabilizationTime = totalElapsed;
+                    metrics.isComplete = true;
+                    metrics.logs.push('✅ DOM 안정화 완료: ' + totalElapsed.toFixed(0) + 'ms');
+                    window.__bfcacheStabilizationResult = JSON.stringify(metrics);
+                } else {
+                    // 계속 체크
+                    setTimeout(checkStabilization, 50);
+                }
+            };
+            
+            // 초기 상태 즉시 반환
+            metrics.logs.push('[\(stepName)] 안정화 모니터링 시작');
+            
+            // 재귀 체크 시작 (비동기)
+            setTimeout(checkStabilization, 50);
+            
+            // 초기 상태 JSON 문자열로 즉시 반환
+            return JSON.stringify(metrics);
         })()
         """
         
+        // 첫 실행으로 모니터링 시작
         webView.evaluateJavaScript(js) { result, error in
-            let actualWait = Date().timeIntervalSince(startTime)
-            var domChanges = 0
-            
             if let error = error {
-                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 측정 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String,
-                      let jsonData = jsonString.data(using: .utf8),
-                      let metrics = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                domChanges = (metrics["domChanges"] as? Int) ?? 0
+                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 모니터링 시작 실패: \(error.localizedDescription)")
+                completion(0.2, 0)
+                return
+            }
+            
+            // 재귀 체크가 완료될 때까지 주기적으로 결과 확인
+            self.pollStabilizationResult(webView: webView, stepName: stepName, startTime: startTime, maxWait: maxWait, completion: completion)
+        }
+    }
+    
+    // 🔄 **재귀 완료 폴링**
+    private func pollStabilizationResult(webView: WKWebView, stepName: String, startTime: Date, maxWait: Double, completion: @escaping (Double, Int) -> Void) {
+        let checkScript = """
+        (function() {
+            if (window.__bfcacheStabilizationResult) {
+                const result = window.__bfcacheStabilizationResult;
+                delete window.__bfcacheStabilizationResult;
+                return result;
+            }
+            return null;
+        })()
+        """
+        
+        webView.evaluateJavaScript(checkScript) { result, error in
+            let actualWait = Date().timeIntervalSince(startTime)
+            
+            if let jsonString = result as? String,
+               let jsonData = jsonString.data(using: .utf8),
+               let metrics = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+               let isComplete = metrics["isComplete"] as? Bool,
+               isComplete {
+                
+                // 완료됨
+                let domChanges = (metrics["domChanges"] as? Int) ?? 0
                 let stabilizationTime = (metrics["stabilizationTime"] as? Double) ?? 0
                 let networkRequests = (metrics["networkRequests"] as? Int) ?? 0
                 
@@ -336,9 +368,20 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
+                
+                completion(actualWait, domChanges)
+                
+            } else if actualWait >= maxWait {
+                // 타임아웃
+                TabPersistenceManager.debugMessages.append("⏰ [\(stepName)] 폴링 타임아웃: \(String(format: "%.3f", actualWait))초")
+                completion(actualWait, 0)
+                
+            } else {
+                // 계속 대기
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self.pollStabilizationResult(webView: webView, stepName: stepName, startTime: startTime, maxWait: maxWait, completion: completion)
+                }
             }
-            
-            completion(actualWait, domChanges)
         }
     }
     
@@ -2344,11 +2387,6 @@ extension BFCacheTransitionSystem {
             }
         });
         
-        window.addEventListener('message', function(event) {
-            if (event.data && event.data.type === 'restoreScroll') {
-                console.log('🖼️ Cross-origin iframe 스크롤 복원 요청 수신 (현재 사용 안 함)');
-            }
-        });
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
