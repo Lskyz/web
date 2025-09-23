@@ -1,7 +1,7 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) + 🆕 Lazy Loading 우선 트리거 + 부모 스크롤 복원
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) + 🆕 Lazy Loading 우선 트리거 + 부모 스크롤 복원 + ⚡ 점진적 스크롤
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원 + 🆕 IntersectionObserver 검증
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
@@ -9,6 +9,7 @@
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 //  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
+//  ⚡ **점진적 스크롤**: 클램핑 제한 우회하며 즉시 정렬
 
 import UIKit
 import WebKit
@@ -209,6 +210,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🆕 Lazy Loading 트리거: \(restorationConfig.enableLazyLoadingTrigger ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 복원: \(restorationConfig.enableParentScrollRestore ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 IO 검증: \(restorationConfig.enableIOVerification ? "활성화" : "비활성화")")
+        TabPersistenceManager.debugMessages.append("⚡ 점진적 스크롤: 활성화 (클램핑 우회)")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -221,9 +223,10 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원
+    // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원 + ⚡ 점진적 스크롤
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] Lazy Loading 트리거 + 부모 스크롤 + 콘텐츠 복원 시작")
+        TabPersistenceManager.debugMessages.append("⚡ [Step 1] 점진적 스크롤 모드 활성화")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -248,7 +251,7 @@ struct BFCacheSnapshot: Codable {
             parentScrollDataJSON = "[]"
         }
         
-        let js = generateStep1_LazyLoadAndContentRestoreScript(
+        let js = generateStep1_LazyLoadAndContentRestoreScriptWithProgressiveScroll(
             parentScrollDataJSON: parentScrollDataJSON,
             enableLazyLoading: restorationConfig.enableLazyLoadingTrigger
         )
@@ -281,6 +284,19 @@ struct BFCacheSnapshot: Codable {
                            let success = result["success"] as? Bool {
                             TabPersistenceManager.debugMessages.append("   \(selector): \(success ? "성공" : "실패")")
                         }
+                    }
+                }
+                
+                // ⚡ 점진적 스크롤 결과
+                if let progressiveScroll = resultDict["progressiveScroll"] as? [String: Any] {
+                    if let steps = progressiveScroll["steps"] as? Int {
+                        TabPersistenceManager.debugMessages.append("⚡ [Step 1] 점진적 스크롤: \(steps)단계 실행")
+                    }
+                    if let totalTime = progressiveScroll["totalTime"] as? Double {
+                        TabPersistenceManager.debugMessages.append("⚡ [Step 1] 점진적 스크롤 소요시간: \(String(format: "%.1f", totalTime))ms")
+                    }
+                    if let finalPosition = progressiveScroll["finalPosition"] as? Double {
+                        TabPersistenceManager.debugMessages.append("⚡ [Step 1] 최종 도달 위치: Y=\(String(format: "%.1f", finalPosition))px")
                     }
                 }
                 
@@ -513,8 +529,8 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원
-    private func generateStep1_LazyLoadAndContentRestoreScript(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
+    // ⚡ Step 1 개선: 점진적 스크롤로 클램핑 우회
+    private func generateStep1_LazyLoadAndContentRestoreScriptWithProgressiveScroll(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
         let targetHeight = restorationConfig.savedContentHeight
         let targetY = scrollPosition.y
         
@@ -543,61 +559,128 @@ struct BFCacheSnapshot: Codable {
                     method: 'none'
                 };
                 
+                // ⚡ 점진적 스크롤 정보
+                const progressiveScrollInfo = {
+                    steps: 0,
+                    totalTime: 0,
+                    finalPosition: 0
+                };
+                
                 if (enableLazyLoading) {
-                    logs.push('🆕 Phase 1: Lazy Loading 트리거 시작');
+                    logs.push('🆕 Phase 1: Lazy Loading 트리거 시작 (점진적 스크롤)');
                     
-                    // 1. 목표 위치로 임시 스크롤 (lazy loading 트리거용)
+                    // ⚡ **핵심 개선: 점진적 스크롤로 클램핑 제한 우회**
+                    const startTime = Date.now();
+                    const currentScrollY = window.scrollY || window.pageYOffset || 0;
+                    const scrollDistance = targetY - currentScrollY;
+                    
+                    // 스크롤 단계 계산 (클램핑 제한을 우회하기 위해 작은 단계로 나눔)
+                    const maxStepSize = 5000; // 한 번에 최대 5000px씩 스크롤
+                    const steps = Math.ceil(Math.abs(scrollDistance) / maxStepSize);
+                    const stepSize = scrollDistance / steps;
+                    
+                    logs.push('⚡ 점진적 스크롤: ' + steps + '단계로 분할 (단계당 ' + Math.abs(stepSize).toFixed(0) + 'px)');
+                    
+                    // requestAnimationFrame을 사용한 즉각적인 점진적 스크롤
+                    let currentStep = 0;
+                    let animationFrameId;
+                    
+                    function performProgressiveScroll() {
+                        if (currentStep >= steps) {
+                            // 최종 위치로 정확하게 보정
+                            window.scrollTo(0, targetY);
+                            document.documentElement.scrollTop = targetY;
+                            document.body.scrollTop = targetY;
+                            
+                            const endTime = Date.now();
+                            progressiveScrollInfo.steps = steps;
+                            progressiveScrollInfo.totalTime = endTime - startTime;
+                            progressiveScrollInfo.finalPosition = window.scrollY || window.pageYOffset || 0;
+                            
+                            logs.push('⚡ 점진적 스크롤 완료: ' + steps + '단계, ' + progressiveScrollInfo.totalTime + 'ms 소요');
+                            
+                            // 스크롤 완료 후 Lazy Loading 트리거
+                            triggerLazyLoading();
+                            return;
+                        }
+                        
+                        // 현재 단계의 목표 위치 계산
+                        const intermediateY = currentScrollY + (stepSize * (currentStep + 1));
+                        
+                        // 다양한 스크롤 방법으로 시도 (브라우저 호환성)
+                        window.scrollTo(0, intermediateY);
+                        document.documentElement.scrollTop = intermediateY;
+                        document.body.scrollTop = intermediateY;
+                        
+                        if (document.scrollingElement) {
+                            document.scrollingElement.scrollTop = intermediateY;
+                        }
+                        
+                        currentStep++;
+                        
+                        // 다음 프레임에서 계속 (사용자 눈에는 즉시 보임)
+                        animationFrameId = requestAnimationFrame(performProgressiveScroll);
+                    }
+                    
+                    // 점진적 스크롤 시작
+                    performProgressiveScroll();
+                    
+                    // Lazy Loading 트리거 함수
+                    function triggerLazyLoading() {
+                        // 2. Lozad 스타일 triggerLoad 함수 찾기 및 실행
+                        if (typeof window.lozad !== 'undefined' && window.lozad.triggerLoad) {
+                            try {
+                                // 모든 lazy 요소에 대해 triggerLoad 실행
+                                const lazyElements = document.querySelectorAll('.lozad, [data-src], [data-background-image]');
+                                lazyElements.forEach(function(element) {
+                                    if (typeof window.lozad.triggerLoad === 'function') {
+                                        window.lozad.triggerLoad(element);
+                                        lazyLoadingResults.triggered++;
+                                    }
+                                });
+                                lazyLoadingResults.method = 'lozad';
+                                logs.push('Lozad triggerLoad 실행: ' + lazyLoadingResults.triggered + '개');
+                            } catch(e) {
+                                logs.push('Lozad triggerLoad 실행 오류: ' + e.message);
+                            }
+                        }
+                        
+                        // 3. IntersectionObserver 기반 lazy loading 트리거
+                        const lazyImages = document.querySelectorAll('img[loading="lazy"], img[data-src], iframe[loading="lazy"]');
+                        lazyImages.forEach(function(element) {
+                            // data-src가 있으면 src로 복사
+                            if (element.dataset.src && !element.src) {
+                                element.src = element.dataset.src;
+                                lazyLoadingResults.triggered++;
+                            }
+                            
+                            // loading 속성 제거하여 즉시 로드
+                            if (element.loading === 'lazy') {
+                                element.loading = 'eager';
+                                lazyLoadingResults.triggered++;
+                            }
+                        });
+                        
+                        if (lazyLoadingResults.method === 'none' && lazyLoadingResults.triggered > 0) {
+                            lazyLoadingResults.method = 'intersection_observer';
+                        }
+                        
+                        logs.push('Lazy 이미지 트리거: ' + lazyLoadingResults.triggered + '개');
+                        
+                        // 4. 스크롤 이벤트 디스패치 (lazy loading 활성화)
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        window.dispatchEvent(new Event('resize', { bubbles: true }));
+                        document.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        
+                        // 5. 강제 리플로우 (IntersectionObserver 트리거)
+                        void(document.body.offsetHeight);
+                    }
+                    
+                } else {
+                    // Lazy Loading 비활성화 시 바로 목표 위치로 이동
                     window.scrollTo(0, targetY);
                     document.documentElement.scrollTop = targetY;
                     document.body.scrollTop = targetY;
-                    
-                    // 2. Lozad 스타일 triggerLoad 함수 찾기 및 실행
-                    if (typeof window.lozad !== 'undefined' && window.lozad.triggerLoad) {
-                        try {
-                            // 모든 lazy 요소에 대해 triggerLoad 실행
-                            const lazyElements = document.querySelectorAll('.lozad, [data-src], [data-background-image]');
-                            lazyElements.forEach(function(element) {
-                                if (typeof window.lozad.triggerLoad === 'function') {
-                                    window.lozad.triggerLoad(element);
-                                    lazyLoadingResults.triggered++;
-                                }
-                            });
-                            lazyLoadingResults.method = 'lozad';
-                            logs.push('Lozad triggerLoad 실행: ' + lazyLoadingResults.triggered + '개');
-                        } catch(e) {
-                            logs.push('Lozad triggerLoad 실행 오류: ' + e.message);
-                        }
-                    }
-                    
-                    // 3. IntersectionObserver 기반 lazy loading 트리거
-                    const lazyImages = document.querySelectorAll('img[loading="lazy"], img[data-src], iframe[loading="lazy"]');
-                    lazyImages.forEach(function(element) {
-                        // data-src가 있으면 src로 복사
-                        if (element.dataset.src && !element.src) {
-                            element.src = element.dataset.src;
-                            lazyLoadingResults.triggered++;
-                        }
-                        
-                        // loading 속성 제거하여 즉시 로드
-                        if (element.loading === 'lazy') {
-                            element.loading = 'eager';
-                            lazyLoadingResults.triggered++;
-                        }
-                    });
-                    
-                    if (lazyLoadingResults.method === 'none' && lazyLoadingResults.triggered > 0) {
-                        lazyLoadingResults.method = 'intersection_observer';
-                    }
-                    
-                    logs.push('Lazy 이미지 트리거: ' + lazyLoadingResults.triggered + '개');
-                    
-                    // 4. 스크롤 이벤트 디스패치 (lazy loading 활성화)
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    window.dispatchEvent(new Event('resize', { bubbles: true }));
-                    document.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    
-                    // 5. 강제 리플로우 (IntersectionObserver 트리거)
-                    void(document.body.offsetHeight);
                 }
                 
                 // 🆕 Phase 2: 부모 컨테이너 스크롤 복원 (네이버 카페 스타일)
@@ -649,6 +732,7 @@ struct BFCacheSnapshot: Codable {
                         lazyLoadingResults: lazyLoadingResults,
                         parentScrollCount: parentScrollCount,
                         parentScrollResults: parentScrollResults,
+                        progressiveScroll: progressiveScrollInfo,
                         logs: logs
                     };
                 }
@@ -669,6 +753,7 @@ struct BFCacheSnapshot: Codable {
                         lazyLoadingResults: lazyLoadingResults,
                         parentScrollCount: parentScrollCount,
                         parentScrollResults: parentScrollResults,
+                        progressiveScroll: progressiveScrollInfo,
                         logs: logs
                     };
                 }
@@ -837,6 +922,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 logs.push('Lazy Loading 트리거: ' + lazyLoadingResults.triggered + '개 (' + lazyLoadingResults.method + ')');
                 logs.push('부모 스크롤 복원: ' + parentScrollCount + '개 성공');
+                logs.push('점진적 스크롤: ' + progressiveScrollInfo.steps + '단계, ' + progressiveScrollInfo.totalTime + 'ms');
                 
                 return {
                     success: success,
@@ -850,6 +936,7 @@ struct BFCacheSnapshot: Codable {
                     lazyLoadingResults: lazyLoadingResults,
                     parentScrollCount: parentScrollCount,
                     parentScrollResults: parentScrollResults,
+                    progressiveScroll: progressiveScrollInfo,
                     logs: logs
                 };
                 
