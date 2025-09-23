@@ -6,7 +6,7 @@
 //  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 **BFCache 통합 - 제스처 로직 제거**
-//  🔥 **BFCache 우선 복원 - 스냅샷 있으면 스크롤만, 없을 때만 리로드**
+//  📸 **BFCache 우선 복원 - 네트워크 요청 최소화**
 //
 
 import Foundation
@@ -361,43 +361,36 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 🔥 **핵심 수정: BFCache 우선 복원 - 스냅샷 있으면 스크롤만, 없을 때만 리로드**
+    // 📸 **핵심 개선: BFCache 우선 복원 - 실제 존재하는 메서드 사용**
     func performQueuedRestore(to url: URL) {
         guard let webView = webView else {
             dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
             return
         }
         
-        // 1. 먼저 BFCache에서 스냅샷 확인
-        if let currentRecord = dataModel.currentPageRecord {
-            let snapshot = BFCacheTransitionSystem.shared.getSnapshot(for: currentRecord.id)
-            
-            if let snapshot = snapshot {
-                // 🔥 BFCache 스냅샷이 있으면 스크롤 복원만!
-                dbg("🔥 BFCache 스냅샷 발견! 리로드 없이 스크롤 복원: \(currentRecord.title)")
-                
-                // 복원 성공/실패 콜백 처리
-                snapshot.restore(to: webView) { success in
-                    if success {
-                        self.dbg("✅ BFCache 복원 성공 - 리로드 없이 완료!")
-                        // DataModel에 복원 완료 알림
-                        self.dataModel.finishCurrentRestore()
-                    } else {
-                        self.dbg("⚠️ BFCache 복원 실패 - fallback으로 리로드")
-                        // 복원 실패 시에만 리로드
-                        webView.load(URLRequest(url: url))
-                        self.dbg("🔄 Fallback 리로드: \(url.absoluteString)")
-                    }
+        // 🎯 **핵심 개선: BFCache 스냅샷 우선 확인**
+        if let currentPageRecord = dataModel.currentPageRecord {
+            // BFCacheTransitionSystem의 실제 메서드 사용
+            BFCacheTransitionSystem.shared.restoreSnapshotIfAvailable(
+                for: currentPageRecord,
+                to: webView
+            ) { [weak self] success in
+                if success {
+                    self?.dbg("📸 BFCache 복원 성공! 네트워크 요청 없이 즉시 복원됨")
+                    // BFCache 복원 성공시 DataModel에 알림
+                    self?.dataModel.finishCurrentRestore()
+                } else {
+                    // BFCache 복원 실패시 네트워크 로드 폴백
+                    self?.dbg("📸 BFCache 스냅샷 없음 또는 복원 실패 - 네트워크 로드 진행")
+                    webView.load(URLRequest(url: url))
+                    self?.dbg("🔄 네트워크 복원 로드: \(url.absoluteString)")
                 }
-                
-                return // 🔥 BFCache 복원 시 여기서 종료!
             }
+        } else {
+            // currentPageRecord가 없는 경우 네트워크 로드
+            webView.load(URLRequest(url: url))
+            dbg("🔄 복원 로드 (currentPageRecord 없음): \(url.absoluteString)")
         }
-        
-        // 2. BFCache 스냅샷이 없을 때만 리로드
-        dbg("📭 BFCache 스냅샷 없음 - 일반 리로드 수행")
-        webView.load(URLRequest(url: url))
-        dbg("🔄 복원 로드: \(url.absoluteString)")
     }
     
     // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
