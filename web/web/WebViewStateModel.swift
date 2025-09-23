@@ -6,7 +6,6 @@
 //  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 **BFCache 통합 - 제스처 로직 제거**
-//  📸 **BFCache 우선 복원 - 네트워크 요청 최소화**
 //
 
 import Foundation
@@ -58,6 +57,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
+    var shouldSkipNextBFCacheRestore: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -361,39 +361,59 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 📸 **핵심 개선: BFCache 우선 복원 - 실제 존재하는 메서드 사용**
+    // 🎯 **DataModel로 완전 이관**: 큐 기반 복원을 위한 메서드
     func performQueuedRestore(to url: URL) {
         guard let webView = webView else {
             dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
             return
         }
-        
-        // 🎯 **핵심 개선: BFCache 스냅샷 우선 확인**
-        if let currentPageRecord = dataModel.currentPageRecord {
-            // BFCacheTransitionSystem의 실제 메서드 사용
-            BFCacheTransitionSystem.shared.restoreSnapshotIfAvailable(
-                for: currentPageRecord,
-                to: webView
+
+        if let targetRecord = dataModel.currentPageRecord {
+            let started = BFCacheTransitionSystem.shared.restoreSnapshotIfPossible(
+                for: targetRecord,
+                on: webView
             ) { [weak self] success in
+                guard let self = self else { return }
+
                 if success {
-                    self?.dbg("📸 BFCache 복원 성공! 네트워크 요청 없이 즉시 복원됨")
-                    // BFCache 복원 성공시 DataModel에 알림
-                    self?.dataModel.finishCurrentRestore()
+                    self.dbg("✅ BFCache 즉시 복원 성공: \(targetRecord.title)")
+                    self.shouldSkipNextBFCacheRestore = false
+
+                    DispatchQueue.main.async {
+                        self.dataModel.finishCurrentRestore()
+                        self.handleLoadingFinish()
+                        self.triggerNavigationFinished()
+
+                        if let restoredWebView = self.webView {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(
+                                    webView: restoredWebView,
+                                    stateModel: self
+                                )
+                            }
+                        }
+                    }
                 } else {
-                    // BFCache 복원 실패시 네트워크 로드 폴백
-                    self?.dbg("📸 BFCache 스냅샷 없음 또는 복원 실패 - 네트워크 로드 진행")
-                    webView.load(URLRequest(url: url))
-                    self?.dbg("🔄 네트워크 복원 로드: \(url.absoluteString)")
+                    self.dbg("⚠️ BFCache 즉시 복원 실패 - 네트워크 로드 진행")
+                    self.shouldSkipNextBFCacheRestore = false
+
+                    DispatchQueue.main.async {
+                        webView.load(URLRequest(url: url))
+                        self.dbg("🔄 복원 실패로 네트워크 로드: \(url.absoluteString)")
+                    }
                 }
             }
-        } else {
-            // currentPageRecord가 없는 경우 네트워크 로드
-            webView.load(URLRequest(url: url))
-            dbg("🔄 복원 로드 (currentPageRecord 없음): \(url.absoluteString)")
+
+            if started {
+                shouldSkipNextBFCacheRestore = true
+                dbg("🚀 BFCache 즉시 복원 시도: \(targetRecord.title)")
+                return
+            }
         }
-    }
-    
-    // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
+
+        webView.load(URLRequest(url: url))
+        dbg("🔄 복원 로드: \(url.absoluteString)")
+    }// 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
     // safariStyleGoBack - 제거됨 (BFCacheTransitionSystem으로 이관)
     // safariStyleGoForward - 제거됨 (BFCacheTransitionSystem으로 이관)
     // handleSwipeGestureDetected - 제거됨 (BFCacheTransitionSystem으로 이관)
@@ -503,3 +523,5 @@ extension WebViewStateModel: WKHTTPCookieStoreObserver {
 
 // MARK: - 전역 쿠키 동기화 추적
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
+
+
