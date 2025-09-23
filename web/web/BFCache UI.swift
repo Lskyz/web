@@ -936,7 +936,8 @@ final class BFCacheTransitionSystem: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
             completion(false)
         }
-    }\n
+    }
+
     
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
