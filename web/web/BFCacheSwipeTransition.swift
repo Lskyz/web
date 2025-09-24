@@ -9,6 +9,7 @@
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 //  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
+//  🔄 **외부 접근 개선**: retrieveSnapshot 메서드 접근 권한 수정
 
 import UIKit
 import WebKit
@@ -2400,6 +2401,65 @@ extension BFCacheTransitionSystem {
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
+    }
+    
+    // 🔄 **외부 접근용 retrieveSnapshot 메서드 추가**
+    func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
+        return BFCacheTransitionSystem.shared.retrieveSnapshot(for: pageID)
+    }
+}
+
+// MARK: - BFCacheTransitionSystem 메인 클래스 (외부 접근 개선)
+extension BFCacheTransitionSystem {
+    
+    // 🔄 **외부 접근용 메서드들 - WebViewStateModel에서 사용**
+    
+    /// 스냅샷 조회 메서드 (외부 접근 허용)
+    internal func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
+        // 🔄 **수정: 메모리 캐시에서도 버전 확인**
+        if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
+            dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
+            
+            // 디스크에 더 최신 버전이 있는지 확인
+            if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
+                let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
+                
+                if let data = try? Data(contentsOf: statePath),
+                   let diskSnapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
+                    
+                    if diskSnapshot.version > snapshot.version {
+                        // 더 최신 버전이 디스크에 있으면 그것을 사용
+                        setMemoryCache(diskSnapshot, for: pageID)
+                        dbg("💾 더 최신 버전 발견: v\(snapshot.version) → v\(diskSnapshot.version)")
+                        return diskSnapshot
+                    }
+                }
+            }
+            
+            return snapshot
+        }
+        
+        // 2. 디스크 캐시 확인 (이미 최신 버전 경로가 인덱싱됨)
+        if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
+            let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
+            
+            if let data = try? Data(contentsOf: statePath),
+               let snapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
+                
+                // 메모리 캐시에도 저장
+                setMemoryCache(snapshot, for: pageID)
+                
+                dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
+                return snapshot
+            }
+        }
+        
+        dbg("❌ 캐시 미스: \(pageID)")
+        return nil
+    }
+    
+    private func dbg(_ msg: String) {
+        TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
     }
     
     // MARK: - 🌐 JavaScript 스크립트
