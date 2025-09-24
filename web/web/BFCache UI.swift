@@ -913,31 +913,30 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     private func tryBrowserBlockingBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
-        if stateModel.shouldSkipNextBFCacheRestore {
-            stateModel.shouldSkipNextBFCacheRestore = false
-            dbg("?? BFCache 즉시 복원 결과 재사용 - 브라우저 차단 복원 생략")
-            completion(true)
-            return
-        }
-
         guard let webView = stateModel.webView,
               let currentRecord = stateModel.dataModel.currentPageRecord else {
             completion(false)
             return
         }
-
-        if restoreSnapshotIfPossible(for: currentRecord, on: webView, completion: completion) {
-            return
-        }
-
-        dbg("? BFCache 미스: \(currentRecord.title)")
-
-        let waitTime: TimeInterval = 0.25
-        DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
-            completion(false)
+        
+        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
+            snapshot.restore(to: webView) { [weak self] success in
+                if success {
+                    self?.dbg("✅ 브라우저 차단 대응 BFCache 복원 성공: \(currentRecord.title)")
+                } else {
+                    self?.dbg("⚠️ 브라우저 차단 대응 BFCache 복원 실패: \(currentRecord.title)")
+                }
+                completion(success)
+            }
+        } else {
+            dbg("❌ BFCache 미스: \(currentRecord.title)")
+            
+            let waitTime: TimeInterval = 0.25
+            DispatchQueue.main.asyncAfter(deadline: .now() + waitTime) {
+                completion(false)
+            }
         }
     }
-
     
     private func cancelGestureTransition(tabID: UUID) {
         guard let context = getActiveTransition(for: tabID),
@@ -1098,28 +1097,4 @@ extension BFCacheTransitionSystem {
             }
         }
     }
-    func restoreSnapshotIfPossible(for record: PageRecord, on webView: WKWebView, completion: @escaping (Bool) -> Void) -> Bool {
-        guard let snapshot = retrieveSnapshot(for: record.id) else {
-            dbg("?? BFCache 즉시 복원 불가 - 캐시 없음: \(record.title)")
-            return false
-        }
-
-        dbg("?? BFCache 즉시 복원 요청: \(record.title)")
-
-        snapshot.restore(to: webView) { [weak self] success in
-            if success {
-                self?.dbg("?? BFCache 즉시 복원 성공: \(record.title)")
-            } else {
-                self?.dbg("?? BFCache 즉시 복원 실패: \(record.title)")
-            }
-
-            DispatchQueue.main.async {
-                completion(success)
-            }
-        }
-
-        return true
-    }
 }
-
-

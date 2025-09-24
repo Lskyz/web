@@ -57,7 +57,6 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // ✅ 웹뷰 내부 네비게이션 플래그
     internal var isNavigatingFromWebView: Bool = false
-    var shouldSkipNextBFCacheRestore: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
     var canGoBack: Bool { 
@@ -363,57 +362,18 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     // 🎯 **DataModel로 완전 이관**: 큐 기반 복원을 위한 메서드
     func performQueuedRestore(to url: URL) {
+        // DataModel이 이미 모든 복원 로직을 처리하므로 단순 로드만 수행
         guard let webView = webView else {
             dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
             return
         }
-
-        if let targetRecord = dataModel.currentPageRecord {
-            let started = BFCacheTransitionSystem.shared.restoreSnapshotIfPossible(
-                for: targetRecord,
-                on: webView
-            ) { [weak self] success in
-                guard let self = self else { return }
-
-                if success {
-                    self.dbg("✅ BFCache 즉시 복원 성공: \(targetRecord.title)")
-                    self.shouldSkipNextBFCacheRestore = false
-
-                    DispatchQueue.main.async {
-                        self.dataModel.finishCurrentRestore()
-                        self.handleLoadingFinish()
-                        self.triggerNavigationFinished()
-
-                        if let restoredWebView = self.webView {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                BFCacheTransitionSystem.shared.storeArrivalSnapshotIfPossible(
-                                    webView: restoredWebView,
-                                    stateModel: self
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    self.dbg("⚠️ BFCache 즉시 복원 실패 - 네트워크 로드 진행")
-                    self.shouldSkipNextBFCacheRestore = false
-
-                    DispatchQueue.main.async {
-                        webView.load(URLRequest(url: url))
-                        self.dbg("🔄 복원 실패로 네트워크 로드: \(url.absoluteString)")
-                    }
-                }
-            }
-
-            if started {
-                shouldSkipNextBFCacheRestore = true
-                dbg("🚀 BFCache 즉시 복원 시도: \(targetRecord.title)")
-                return
-            }
-        }
-
+        
+        // 단순 로드 (복잡한 캐시 로직 제거)
         webView.load(URLRequest(url: url))
         dbg("🔄 복원 로드: \(url.absoluteString)")
-    }// 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
+    }
+    
+    // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
     // safariStyleGoBack - 제거됨 (BFCacheTransitionSystem으로 이관)
     // safariStyleGoForward - 제거됨 (BFCacheTransitionSystem으로 이관)
     // handleSwipeGestureDetected - 제거됨 (BFCacheTransitionSystem으로 이관)
@@ -523,5 +483,3 @@ extension WebViewStateModel: WKHTTPCookieStoreObserver {
 
 // MARK: - 전역 쿠키 동기화 추적
 private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
-
-
