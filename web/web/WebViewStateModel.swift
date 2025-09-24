@@ -6,6 +6,7 @@
 //  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 **BFCache 통합 - 제스처 로직 제거**
+//  🔄 **BFCache 연동 개선 - 캐시 우선 복원**
 //
 
 import Foundation
@@ -360,17 +361,43 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 🎯 **DataModel로 완전 이관**: 큐 기반 복원을 위한 메서드
+    // 🔄 **BFCache 연동 개선**: 캐시 우선 복원, 없으면 새로 로드
     func performQueuedRestore(to url: URL) {
-        // DataModel이 이미 모든 복원 로직을 처리하므로 단순 로드만 수행
-        guard let webView = webView else {
-            dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
+        guard let webView = webView,
+              let tabID = tabID,
+              let currentRecord = dataModel.currentPageRecord else {
+            dbg("⚠️ 웹뷰/tabID/레코드 없음 - 복원 스킵")
             return
         }
         
-        // 단순 로드 (복잡한 캐시 로직 제거)
-        webView.load(URLRequest(url: url))
-        dbg("🔄 복원 로드: \(url.absoluteString)")
+        let pageID = currentRecord.id
+        
+        // 🔄 **핵심 수정**: BFCache에 스냅샷이 있는지 확인
+        if BFCacheTransitionSystem.shared.hasCache(for: pageID) {
+            dbg("🔄 BFCache 스냅샷 발견 - BFCache 복원 시도: \(url.absoluteString)")
+            
+            // BFCache 복원 시도
+            if let snapshot = BFCacheTransitionSystem.shared.retrieveSnapshot(for: pageID) {
+                snapshot.restore(to: webView) { [weak self] success in
+                    if success {
+                        self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title)")
+                    } else {
+                        self?.dbg("⚠️ BFCache 복원 실패 - fallback 새로 로드")
+                        // BFCache 복원 실패 시 새로 로드
+                        DispatchQueue.main.async {
+                            webView.load(URLRequest(url: url))
+                        }
+                    }
+                }
+            } else {
+                dbg("❌ BFCache 스냅샷 조회 실패 - 새로 로드")
+                webView.load(URLRequest(url: url))
+            }
+        } else {
+            dbg("🔄 BFCache 스냅샷 없음 - 새로 로드: \(url.absoluteString)")
+            // 캐시가 없으면 새로 로드
+            webView.load(URLRequest(url: url))
+        }
     }
     
     // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
