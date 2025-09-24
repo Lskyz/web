@@ -6,7 +6,6 @@
 //  🔧 enum 기반 상태 관리로 단순화
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 **BFCache 통합 - 제스처 로직 제거**
-//  🔄 **BFCache 우선 복원 - 캐시 있으면 복원만, 없으면 로드**
 //
 
 import Foundation
@@ -361,43 +360,17 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 🔄 **BFCache 우선 복원 - 캐시 있으면 복원만, 없으면 로드**
+    // 🎯 **DataModel로 완전 이관**: 큐 기반 복원을 위한 메서드
     func performQueuedRestore(to url: URL) {
+        // DataModel이 이미 모든 복원 로직을 처리하므로 단순 로드만 수행
         guard let webView = webView else {
             dbg("⚠️ 웹뷰 없음 - 복원 로드 스킵")
             return
         }
         
-        // 🔄 **핵심 수정: BFCache 확인 및 우선 복원**
-        if let currentRecord = dataModel.currentPageRecord,
-           let tabID = tabID,
-           BFCacheTransitionSystem.shared.hasCache(for: currentRecord.id) {
-            
-            dbg("🔄 BFCache 발견 - 복원만 수행: \(currentRecord.title)")
-            
-            // BFCache 복원 시도
-            if let snapshot = BFCacheTransitionSystem.shared.retrieveSnapshot(for: currentRecord.id) {
-                snapshot.restore(to: webView) { [weak self] success in
-                    if success {
-                        self?.dbg("✅ BFCache 복원 성공: \(url.absoluteString)")
-                        // 복원 성공 시 DataModel의 큐 처리 완료
-                        self?.dataModel.finishCurrentRestore()
-                    } else {
-                        self?.dbg("⚠️ BFCache 복원 실패 - 일반 로드 진행: \(url.absoluteString)")
-                        // 복원 실패 시 일반 로드
-                        webView.load(URLRequest(url: url))
-                    }
-                }
-            } else {
-                dbg("⚠️ BFCache 스냅샷 조회 실패 - 일반 로드 진행: \(url.absoluteString)")
-                // 스냅샷 조회 실패 시 일반 로드
-                webView.load(URLRequest(url: url))
-            }
-        } else {
-            // BFCache가 없으면 일반 로드
-            dbg("🔄 BFCache 없음 - 일반 로드: \(url.absoluteString)")
-            webView.load(URLRequest(url: url))
-        }
+        // 단순 로드 (복잡한 캐시 로직 제거)
+        webView.load(URLRequest(url: url))
+        dbg("🔄 복원 로드: \(url.absoluteString)")
     }
     
     // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
