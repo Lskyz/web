@@ -2,7 +2,6 @@
 //  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 조합
 //  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🔄 **스냅샷 업데이트 보장** - 떠날 때마다 최신 상태 캡처
-//  🔄 **BFCache 우선 복원 연동** - retrieveSnapshot 공개 메서드 추가
 //
 
 import UIKit
@@ -361,8 +360,7 @@ final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 🔍 **개선된 스냅샷 조회 시스템 - 항상 최신 버전 반환**
     
-    // 🔄 **공개 메서드로 변경 - WebViewStateModel에서 사용**
-    func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
+    private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
         // 🔄 **수정: 메모리 캐시에서도 버전 확인**
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
             dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
@@ -1010,7 +1008,7 @@ final class BFCacheTransitionSystem: NSObject {
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
-    internal func dbg(_ msg: String) {
+    private func dbg(_ msg: String) {
         TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
     }
 }
