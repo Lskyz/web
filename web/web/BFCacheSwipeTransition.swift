@@ -5,7 +5,6 @@
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원 + 🆕 IntersectionObserver 검증
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
-//  🆕 **History API + DOM 복원**: JavaScript 상태 기반 즉시 복원
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
@@ -22,7 +21,7 @@ fileprivate func ts() -> String {
     return f.string(from: Date())
 }
 
-// MARK: - 📸 **History API + DOM 복원 모드 추가**
+// MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -53,8 +52,6 @@ struct BFCacheSnapshot: Codable {
         let enableLazyLoadingTrigger: Bool  // 🆕 Lazy Loading 트리거
         let enableParentScrollRestore: Bool // 🆕 부모 컨테이너 스크롤 복원
         let enableIOVerification: Bool      // 🆕 IntersectionObserver 검증
-        let enableHistoryApiDomRestore: Bool // 🆕 History API + DOM 복원
-        let historyApiPriority: Int         // 🆕 History API 우선순위 (1=최우선, 5=최후순위)
         
         static let `default` = RestorationConfig(
             enableContentRestore: true,
@@ -68,9 +65,7 @@ struct BFCacheSnapshot: Codable {
             step4RenderDelay: 0.2,
             enableLazyLoadingTrigger: true,  // 🆕
             enableParentScrollRestore: true, // 🆕
-            enableIOVerification: true,      // 🆕
-            enableHistoryApiDomRestore: true, // 🆕 기본 활성화
-            historyApiPriority: 1            // 🆕 최우선순위
+            enableIOVerification: true       // 🆕
         )
     }
     
@@ -79,7 +74,6 @@ struct BFCacheSnapshot: Codable {
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
-        case historyApiReady // 🆕 History API + DOM 복원 준비 완료
     }
     
     // Codable을 위한 CodingKeys
@@ -183,9 +177,7 @@ struct BFCacheSnapshot: Codable {
             step4RenderDelay: restorationConfig.step4RenderDelay,
             enableLazyLoadingTrigger: restorationConfig.enableLazyLoadingTrigger,
             enableParentScrollRestore: restorationConfig.enableParentScrollRestore,
-            enableIOVerification: restorationConfig.enableIOVerification,
-            enableHistoryApiDomRestore: restorationConfig.enableHistoryApiDomRestore,
-            historyApiPriority: restorationConfig.historyApiPriority
+            enableIOVerification: restorationConfig.enableIOVerification
         )
     }
     
@@ -197,7 +189,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 5단계 복원 시스템 (History API + DOM 추가)**
+    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
     
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
@@ -205,17 +197,14 @@ struct BFCacheSnapshot: Codable {
         weak var webView: WKWebView?
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
-        var historyApiRestoreAttempted: Bool = false
-        var historyApiRestoreSuccess: Bool = false
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 5단계 BFCache 복원 시작 (History API + DOM 포함)")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("🆕 History API + DOM 복원: \(restorationConfig.enableHistoryApiDomRestore ? "활성화" : "비활성화") (우선순위: \(restorationConfig.historyApiPriority))")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         TabPersistenceManager.debugMessages.append("🆕 Lazy Loading 트리거: \(restorationConfig.enableLazyLoadingTrigger ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 복원: \(restorationConfig.enableParentScrollRestore ? "활성화" : "비활성화")")
@@ -228,116 +217,8 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // 🆕 History API 우선순위에 따른 시작점 결정
-        if restorationConfig.enableHistoryApiDomRestore && restorationConfig.historyApiPriority == 1 {
-            executeHistoryApiDomRestore(context: context)
-        } else {
-            executeStep1_RestoreContentHeight(context: context)
-        }
-    }
-    
-    // MARK: - 🆕 **History API + DOM 복원 (우선순위별 실행)**
-    private func executeHistoryApiDomRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🌐 [History API] JavaScript 상태 기반 DOM 복원 시작")
-        
-        guard restorationConfig.enableHistoryApiDomRestore else {
-            TabPersistenceManager.debugMessages.append("🌐 [History API] 비활성화됨 - 다음 단계로")
-            proceedToNextStep(context: context, fromHistoryApi: true)
-            return
-        }
-        
-        // DOM 스냅샷이 있는지 확인
-        guard let domContent = self.domSnapshot, !domContent.isEmpty else {
-            TabPersistenceManager.debugMessages.append("🌐 [History API] DOM 스냅샷 없음 - 다음 단계로")
-            proceedToNextStep(context: context, fromHistoryApi: true)
-            return
-        }
-        
-        // jsState에서 필요한 데이터 추출
-        var historyStateData = "null"
-        var parentScrollDataJSON = "[]"
-        
-        if let jsState = self.jsState {
-            // History.state 데이터
-            if let historyState = jsState["historyState"] as? [String: Any],
-               let stateData = try? JSONSerialization.data(withJSONObject: historyState),
-               let stateString = String(data: stateData, encoding: .utf8) {
-                historyStateData = stateString
-            }
-            
-            // 부모 스크롤 데이터
-            if let parentScrollStates = jsState["parentScrollStates"] as? [[String: Any]] {
-                if let jsonData = try? JSONSerialization.data(withJSONObject: parentScrollStates),
-                   let jsonString = String(data: jsonData, encoding: .utf8) {
-                    parentScrollDataJSON = jsonString
-                }
-            }
-        }
-        
-        let js = generateHistoryApiDomRestoreScript(
-            domContent: domContent,
-            scrollX: scrollPosition.x,
-            scrollY: scrollPosition.y,
-            historyStateData: historyStateData,
-            parentScrollDataJSON: parentScrollDataJSON,
-            url: pageRecord.url.absoluteString,
-            title: pageRecord.title
-        )
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var historyApiSuccess = false
-            var updatedContext = context
-            updatedContext.historyApiRestoreAttempted = true
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🌐 [History API] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                historyApiSuccess = (resultDict["success"] as? Bool) ?? false
-                updatedContext.historyApiRestoreSuccess = historyApiSuccess
-                
-                if let domRestored = resultDict["domRestored"] as? Bool, domRestored {
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] DOM 복원 성공")
-                }
-                if let scrollRestored = resultDict["scrollRestored"] as? Bool, scrollRestored {
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] 스크롤 복원 성공")
-                }
-                if let historyUpdated = resultDict["historyUpdated"] as? Bool, historyUpdated {
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] History 상태 업데이트 성공")
-                }
-                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                }
-                if let parentScrollCount = resultDict["parentScrollRestored"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] 부모 스크롤 복원: \(parentScrollCount)개")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                // History API 복원 성공 시 전체 성공으로 간주
-                if historyApiSuccess {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("🌐 [History API] ✅ History API + DOM 복원 성공 - 전체 복원 성공으로 간주")
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🌐 [History API] 완료: \(historyApiSuccess ? "성공" : "실패")")
-            
-            // 성공/실패 관계없이 다음 단계 진행 (보완적 복원)
-            self.proceedToNextStep(context: updatedContext, fromHistoryApi: true)
-        }
-    }
-    
-    private func proceedToNextStep(context: RestorationContext, fromHistoryApi: Bool) {
-        if fromHistoryApi {
-            // History API 후 Step 1으로
-            executeStep1_RestoreContentHeight(context: context)
-        } else {
-            // 일반적인 흐름
-            executeStep1_RestoreContentHeight(context: context)
-        }
+        // Step 1 시작
+        executeStep1_RestoreContentHeight(context: context)
     }
     
     // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원
@@ -478,8 +359,8 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 상대좌표 복원 성공 시 전체 성공으로 간주 (History API가 실패했을 경우만)
-                if step2Success && !updatedContext.historyApiRestoreSuccess {
+                // 상대좌표 복원 성공 시 전체 성공으로 간주
+                if step2Success {
                     updatedContext.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                 }
@@ -582,15 +463,7 @@ struct BFCacheSnapshot: Codable {
         
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
-            
-            // 🆕 History API 우선순위가 낮은 경우 여기서 실행
-            if restorationConfig.enableHistoryApiDomRestore && 
-               restorationConfig.historyApiPriority > 1 && 
-               !context.historyApiRestoreAttempted {
-                executeHistoryApiDomRestoreAsBackup(context: context)
-            } else {
-                context.completion(context.overallSuccess)
-            }
+            context.completion(context.overallSuccess)
             return
         }
         
@@ -631,234 +504,11 @@ struct BFCacheSnapshot: Codable {
             
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
-                // 🆕 History API 우선순위가 낮은 경우 백업으로 실행
-                if self.restorationConfig.enableHistoryApiDomRestore && 
-                   self.restorationConfig.historyApiPriority > 1 && 
-                   !context.historyApiRestoreAttempted &&
-                   !context.overallSuccess {
-                    self.executeHistoryApiDomRestoreAsBackup(context: context)
-                } else {
-                    let finalSuccess = context.overallSuccess || step4Success
-                    TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
-                    context.completion(finalSuccess)
-                }
+                let finalSuccess = context.overallSuccess || step4Success
+                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+                context.completion(finalSuccess)
             }
         }
-    }
-    
-    // MARK: - 🆕 **History API 백업 실행 (우선순위가 낮을 때)**
-    private func executeHistoryApiDomRestoreAsBackup(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🌐 [History API Backup] 백업 모드로 DOM 복원 시작")
-        
-        var updatedContext = context
-        updatedContext.historyApiRestoreAttempted = true
-        
-        // DOM 스냅샷이 있는지 확인
-        guard let domContent = self.domSnapshot, !domContent.isEmpty else {
-            TabPersistenceManager.debugMessages.append("🌐 [History API Backup] DOM 스냅샷 없음 - 복원 종료")
-            let finalSuccess = context.overallSuccess
-            TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료 (백업 실패): \(finalSuccess ? "성공" : "실패")")
-            context.completion(finalSuccess)
-            return
-        }
-        
-        // DOM 복원 실행
-        let js = generateHistoryApiDomRestoreScript(
-            domContent: domContent,
-            scrollX: scrollPosition.x,
-            scrollY: scrollPosition.y,
-            historyStateData: "null",
-            parentScrollDataJSON: "[]",
-            url: pageRecord.url.absoluteString,
-            title: pageRecord.title
-        )
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var backupSuccess = false
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🌐 [History API Backup] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                backupSuccess = (resultDict["success"] as? Bool) ?? false
-                
-                if backupSuccess {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("🌐 [History API Backup] ✅ 백업 복원 성공")
-                }
-                
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(3) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            let finalSuccess = updatedContext.overallSuccess
-            TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료 (백업 포함): \(finalSuccess ? "성공" : "실패")")
-            context.completion(finalSuccess)
-        }
-    }
-    
-    // MARK: - 🆕 **History API + DOM 복원 JavaScript 생성**
-    private func generateHistoryApiDomRestoreScript(
-        domContent: String,
-        scrollX: CGFloat,
-        scrollY: CGFloat,
-        historyStateData: String,
-        parentScrollDataJSON: String,
-        url: String,
-        title: String
-    ) -> String {
-        // DOM 콘텐츠를 안전하게 이스케이프
-        let escapedDomContent = domContent
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-        
-        return """
-        (function() {
-            try {
-                const logs = [];
-                const targetScrollX = parseFloat('\(scrollX)');
-                const targetScrollY = parseFloat('\(scrollY)');
-                const parentScrollStates = \(parentScrollDataJSON);
-                const historyState = \(historyStateData);
-                const targetUrl = '\(url)';
-                const targetTitle = '\(title)';
-                
-                logs.push('[History API] DOM + 스크롤 + History 상태 복원 시작');
-                logs.push('목표 위치: X=' + targetScrollX.toFixed(1) + 'px, Y=' + targetScrollY.toFixed(1) + 'px');
-                logs.push('DOM 콘텐츠 크기: ' + '\(escapedDomContent.count)'.toString() + ' 문자');
-                
-                let domRestored = false;
-                let scrollRestored = false;
-                let historyUpdated = false;
-                let parentScrollRestored = 0;
-                
-                // 1. DOM 콘텐츠 복원
-                try {
-                    const domContent = "\(escapedDomContent)";
-                    if (domContent && domContent.length > 0) {
-                        document.documentElement.innerHTML = domContent;
-                        domRestored = true;
-                        logs.push('DOM 콘텐츠 복원 성공');
-                        
-                        // DOM 복원 후 약간의 대기시간
-                        const waitTime = 50; // 50ms
-                        const startWait = Date.now();
-                        while (Date.now() - startWait < waitTime) {
-                            // 강제 대기
-                        }
-                    }
-                } catch(domError) {
-                    logs.push('DOM 복원 실패: ' + domError.message);
-                }
-                
-                // 2. 부모 컨테이너 스크롤 복원
-                if (parentScrollStates && parentScrollStates.length > 0) {
-                    logs.push('부모 스크롤 복원 시작: ' + parentScrollStates.length + '개');
-                    
-                    for (let i = 0; i < parentScrollStates.length; i++) {
-                        const state = parentScrollStates[i];
-                        if (state.selector) {
-                            try {
-                                const element = document.querySelector(state.selector);
-                                if (element) {
-                                    element.scrollTop = state.scrollTop || 0;
-                                    element.scrollLeft = state.scrollLeft || 0;
-                                    parentScrollRestored++;
-                                    logs.push('부모 스크롤 복원: ' + state.selector);
-                                }
-                            } catch(scrollError) {
-                                logs.push('부모 스크롤 실패: ' + state.selector + ' - ' + scrollError.message);
-                            }
-                        }
-                    }
-                }
-                
-                // 3. 메인 스크롤 복원
-                try {
-                    window.scrollTo(targetScrollX, targetScrollY);
-                    document.documentElement.scrollTop = targetScrollY;
-                    document.documentElement.scrollLeft = targetScrollX;
-                    document.body.scrollTop = targetScrollY;
-                    document.body.scrollLeft = targetScrollX;
-                    
-                    if (document.scrollingElement) {
-                        document.scrollingElement.scrollTop = targetScrollY;
-                        document.scrollingElement.scrollLeft = targetScrollX;
-                    }
-                    
-                    scrollRestored = true;
-                    logs.push('메인 스크롤 복원 성공');
-                } catch(scrollError) {
-                    logs.push('메인 스크롤 복원 실패: ' + scrollError.message);
-                }
-                
-                // 4. History.pushState 업데이트
-                try {
-                    if (historyState && typeof historyState === 'object') {
-                        history.replaceState(historyState, targetTitle, targetUrl);
-                    } else {
-                        history.replaceState({ restored: true, timestamp: Date.now() }, targetTitle, targetUrl);
-                    }
-                    
-                    // 페이지 타이틀 업데이트
-                    if (targetTitle && targetTitle !== document.title) {
-                        document.title = targetTitle;
-                    }
-                    
-                    historyUpdated = true;
-                    logs.push('History 상태 업데이트 성공');
-                } catch(historyError) {
-                    logs.push('History 업데이트 실패: ' + historyError.message);
-                }
-                
-                // 5. 최종 위치 확인
-                const finalScrollX = window.scrollX || window.pageXOffset || 0;
-                const finalScrollY = window.scrollY || window.pageYOffset || 0;
-                
-                const scrollDiffX = Math.abs(finalScrollX - targetScrollX);
-                const scrollDiffY = Math.abs(finalScrollY - targetScrollY);
-                
-                logs.push('최종 스크롤 위치: X=' + finalScrollX.toFixed(1) + 'px, Y=' + finalScrollY.toFixed(1) + 'px');
-                logs.push('스크롤 오차: X=' + scrollDiffX.toFixed(1) + 'px, Y=' + scrollDiffY.toFixed(1) + 'px');
-                
-                // 성공 판정: DOM 복원 성공 또는 스크롤 오차 30px 이내
-                const success = domRestored || scrollDiffY <= 30;
-                
-                // 6. 추가 이벤트 트리거 (DOM 변경 알림)
-                try {
-                    window.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));
-                    window.dispatchEvent(new Event('load', { bubbles: true }));
-                    document.dispatchEvent(new Event('readystatechange', { bubbles: true }));
-                } catch(eventError) {
-                    logs.push('이벤트 트리거 오류: ' + eventError.message);
-                }
-                
-                logs.push('History API + DOM 복원 ' + (success ? '성공' : '실패'));
-                
-                return {
-                    success: success,
-                    domRestored: domRestored,
-                    scrollRestored: scrollRestored,
-                    historyUpdated: historyUpdated,
-                    parentScrollRestored: parentScrollRestored,
-                    finalPosition: { x: finalScrollX, y: finalScrollY },
-                    scrollDifference: { x: scrollDiffX, y: scrollDiffY },
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[History API] 전체 오류: ' + e.message]
-                };
-            }
-        })()
-        """
     }
     
     // MARK: - JavaScript 생성 메서드들
@@ -1660,7 +1310,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처) + 🆕 History API 상태 캡처**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1679,7 +1329,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 + History API 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1695,7 +1345,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 + History API 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1731,14 +1381,9 @@ extension BFCacheTransitionSystem {
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
-        // 🔥 **캡처된 jsState 상세 로깅 (History API 상태 포함)**
+        // 🔥 **캡처된 jsState 상세 로깅**
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
-            
-            // 🆕 History API 상태 로깅
-            if let historyState = jsState["historyState"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🌐 History API 상태 캡처: \(Array(historyState.keys))")
-            }
             
             // 🆕 부모 스크롤 상태 로깅
             if let parentScrollStates = jsState["parentScrollStates"] as? [[String: Any]] {
@@ -1821,7 +1466,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 + History API 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1934,12 +1579,12 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: 무한스크롤 전용 앵커 + History API JS 상태 캡처** 
+        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처 + 부모 스크롤 상태 추가** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 + History API JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateInfiniteScrollAnchorCaptureScriptWithHistoryApi() // 🆕 History API 추가
+            let jsScript = generateInfiniteScrollAnchorCaptureScriptWithParentScroll() // 🆕 부모 스크롤 추가
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -1949,10 +1594,6 @@ extension BFCacheTransitionSystem {
                     TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                     
                     // 📊 **상세 캡처 결과 로깅**
-                    if let historyState = data["historyState"] as? [String: Any] {
-                        TabPersistenceManager.debugMessages.append("🌐 History API 상태: \(Array(historyState.keys))")
-                    }
-                    
                     if let parentScrollStates = data["parentScrollStates"] as? [[String: Any]] {
                         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 상태: \(parentScrollStates.count)개 캡처")
                     }
@@ -1976,17 +1617,11 @@ extension BFCacheTransitionSystem {
         }
         _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
         
-        // 캡처 상태 결정 (🆕 History API 준비 상태 추가)
+        // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
         if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
-            // History API 상태가 있으면 historyApiReady, 없으면 complete
-            if let jsStateDict = jsState, jsStateDict["historyState"] != nil {
-                captureStatus = .historyApiReady
-                TabPersistenceManager.debugMessages.append("✅ History API + DOM 캡처 준비 완료")
-            } else {
-                captureStatus = .complete
-                TabPersistenceManager.debugMessages.append("✅ 완전 캡처 성공")
-            }
+            captureStatus = .complete
+            TabPersistenceManager.debugMessages.append("✅ 완전 캡처 성공")
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
             TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
@@ -2021,7 +1656,7 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
         
-        // 🔄 **순차 실행 설정 생성 (History API 포함)**
+        // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
@@ -2034,9 +1669,7 @@ extension BFCacheTransitionSystem {
             step4RenderDelay: 0.4,
             enableLazyLoadingTrigger: true,  // 🆕
             enableParentScrollRestore: true, // 🆕
-            enableIOVerification: true,      // 🆕
-            enableHistoryApiDomRestore: (captureStatus == .historyApiReady), // 🆕 History API 준비 상태에 따라
-            historyApiPriority: (captureStatus == .historyApiReady) ? 1 : 5  // 🆕 준비되면 최우선, 아니면 백업
+            enableIOVerification: true       // 🆕
         )
         
         let snapshot = BFCacheSnapshot(
@@ -2058,12 +1691,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🆕 JavaScript 앵커 캡처 스크립트 개선 - History API 상태 + 부모 스크롤 상태 추가
-    private func generateInfiniteScrollAnchorCaptureScriptWithHistoryApi() -> String {
+    // 🆕 JavaScript 앵커 캡처 스크립트 개선 - 부모 스크롤 상태 추가
+    private func generateInfiniteScrollAnchorCaptureScriptWithParentScroll() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 + History API 및 부모 스크롤 캡처 시작');
+                console.log('🚀 무한스크롤 전용 앵커 및 부모 스크롤 캡처 시작');
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
@@ -2077,7 +1710,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                 const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                 
-                detailedLogs.push('🚀 무한스크롤 전용 앵커 + History API 캡처 시작');
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -2091,41 +1724,6 @@ extension BFCacheTransitionSystem {
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight]
                 });
-                
-                // 🆕 History API 상태 수집
-                function collectHistoryState() {
-                    const historyState = {
-                        state: null,
-                        url: window.location.href,
-                        title: document.title,
-                        pathname: window.location.pathname,
-                        search: window.location.search,
-                        hash: window.location.hash,
-                        timestamp: Date.now(),
-                        scrollRestoration: null
-                    };
-                    
-                    try {
-                        // 현재 history.state 수집
-                        if (history.state && typeof history.state === 'object') {
-                            historyState.state = JSON.parse(JSON.stringify(history.state));
-                            detailedLogs.push('History.state 수집: ' + Object.keys(historyState.state).length + '개 키');
-                        } else {
-                            detailedLogs.push('History.state 없음');
-                        }
-                        
-                        // scroll restoration 설정 확인
-                        if (history.scrollRestoration) {
-                            historyState.scrollRestoration = history.scrollRestoration;
-                            detailedLogs.push('ScrollRestoration: ' + history.scrollRestoration);
-                        }
-                        
-                    } catch(historyError) {
-                        detailedLogs.push('History API 상태 수집 오류: ' + historyError.message);
-                    }
-                    
-                    return historyState;
-                }
                 
                 // 🆕 부모 컨테이너 스크롤 상태 수집 (네이버 카페 스타일)
                 function collectParentScrollStates() {
@@ -2720,9 +2318,8 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🆕 **메인 실행 - History API 상태 + 부모 스크롤 상태 + 무한스크롤 앵커 수집**
+                // 🆕 **메인 실행 - 부모 스크롤 상태 및 무한스크롤 앵커 수집**
                 const startTime = Date.now();
-                const historyState = collectHistoryState(); // 🆕 History API 상태 수집
                 const parentScrollStates = collectParentScrollStates(); // 🆕 부모 스크롤 수집
                 const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
@@ -2733,15 +2330,13 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push('=== 무한스크롤 전용 앵커 + History API 및 부모 스크롤 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('=== 무한스크롤 전용 앵커 및 부모 스크롤 캡처 완료 (' + captureTime + 'ms) ===');
                 detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
-                detailedLogs.push('History API 상태: ' + (historyState.state ? '수집됨' : '없음'));
                 detailedLogs.push('부모 스크롤 컨테이너: ' + parentScrollStates.length + '개');
                 detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
-                console.log('🚀 무한스크롤 전용 앵커 + History API 캡처 완료:', {
+                console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
                     infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
-                    historyStateExists: !!historyState.state,
                     parentScrollStatesCount: parentScrollStates.length,
                     stats: infiniteScrollAnchorsData.stats,
                     scroll: [scrollX, scrollY],
@@ -2751,10 +2346,9 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                // ✅ **수정: 정리된 반환 구조 (History API + 부모 스크롤 추가)**
+                // ✅ **수정: 정리된 반환 구조 (부모 스크롤 추가)**
                 return {
                     infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
-                    historyState: historyState,                       // 🆕 **History API 상태**
                     parentScrollStates: parentScrollStates,           // 🆕 **부모 스크롤 상태**
                     scroll: { 
                         x: scrollX, 
@@ -2783,17 +2377,16 @@ extension BFCacheTransitionSystem {
                     captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
-                console.error('🚀 무한스크롤 전용 앵커 + History API 캡처 실패:', e);
+                console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
                     infiniteScrollAnchors: { anchors: [], stats: {} },
-                    historyState: null,      // 🆕
                     parentScrollStates: [],  // 🆕
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                     href: window.location.href,
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: ['무한스크롤 전용 앵커 + History API 캡처 실패: ' + e.message],
+                    detailedLogs: ['무한스크롤 전용 앵커 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
@@ -2825,11 +2418,13 @@ extension BFCacheTransitionSystem {
             }
         });
         
-        // 🆕 **History API + DOM 복원 감지**
-        window.addEventListener('popstate', function(event) {
-            console.log('🌐 History API popstate 이벤트:', event.state);
+        // ✅ **Cross-origin iframe 리스너는 유지하되 복원에서는 사용하지 않음**
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'restoreScroll') {
+                console.log('🖼️ Cross-origin iframe 스크롤 복원 요청 수신 (현재 사용 안 함)');
+                // 현재는 iframe 복원을 사용하지 않으므로 로그만 남김
+            }
         });
-        
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
