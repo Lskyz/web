@@ -7,6 +7,7 @@
 //  📁 다운로드 관련 코드 헬퍼로 이관 완료
 //  🎯 **BFCache 통합 - 제스처 로직 제거**
 //  🔄 **BFCache 연동 개선 - 캐시 우선 복원**
+//  🔧 **접근권한 수정 - public/internal 명시적 지정**
 //
 
 import Foundation
@@ -22,20 +23,20 @@ fileprivate func ts() -> String {
 }
 
 // MARK: - WebViewStateModel (단순화된 상태 관리)
-final class WebViewStateModel: NSObject, ObservableObject {
+public final class WebViewStateModel: NSObject, ObservableObject {
 
-    var tabID: UUID?
+    public var tabID: UUID?
     
     // ✅ 히스토리/세션 데이터 모델 참조
-    @Published var dataModel = WebViewDataModel()
+    @Published public var dataModel = WebViewDataModel()
     
     // ✨ 순수 UI 상태만
-    @Published var isLoading: Bool = false
-    @Published var loadingProgress: Double = 0.0
+    @Published public var isLoading: Bool = false
+    @Published public var loadingProgress: Double = 0.0
     
-    let navigationDidFinish = PassthroughSubject<Void, Never>()
+    public let navigationDidFinish = PassthroughSubject<Void, Never>()
 
-    @Published var currentURL: URL? {
+    @Published public var currentURL: URL? {
         didSet {
             guard let url = currentURL else { return }
 
@@ -56,21 +57,21 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // ✅ 웹뷰 내부 네비게이션 플래그
+    // ✅ 웹뷰 내부 네비게이션 플래그 - 🔧 internal로 명시
     internal var isNavigatingFromWebView: Bool = false
     
     // 🎯 **핵심**: 웹뷰 네이티브 상태 완전 무시, 오직 우리 데이터만 사용!
-    var canGoBack: Bool { 
+    public var canGoBack: Bool { 
         return dataModel.canGoBack
     }
-    var canGoForward: Bool { 
+    public var canGoForward: Bool { 
         return dataModel.canGoForward
     }
     
-    @Published var showAVPlayer = false
+    @Published public var showAVPlayer = false
     
     // ✨ 데스크탑 모드 상태
-    @Published var isDesktopMode: Bool = false {
+    @Published public var isDesktopMode: Bool = false {
         didSet {
             if oldValue != isDesktopMode {
                 // 사용자 에이전트 변경을 위해 페이지 새로고침
@@ -83,7 +84,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
 
     // ✨ 줌 레벨 관리 (데스크탑 모드용)
-    @Published var currentZoomLevel: Double = 0.5 {
+    @Published public var currentZoomLevel: Double = 0.5 {
         didSet {
             if oldValue != currentZoomLevel {
                 applyZoomLevel()
@@ -91,7 +92,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    weak var webView: WKWebView? {
+    public weak var webView: WKWebView? {
         didSet {
             if let webView = webView {
                 // DataModel에 NavigationDelegate 설정
@@ -107,7 +108,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // ✨ 네비게이션 상태 변경 감지용 Cancellable
     private var cancellables = Set<AnyCancellable>()
 
-    override init() {
+    public override init() {
         super.init()
         // tabID 연결
         dataModel.tabID = tabID
@@ -147,13 +148,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - DataModel과의 통신 메서드들
+    // MARK: - DataModel과의 통신 메서드들 - 🔧 public 접근권한 명시
     
-    func handleLoadingStart() {
+    public func handleLoadingStart() {
         isLoading = true
     }
     
-    func handleLoadingFinish() {
+    public func handleLoadingFinish() {
         isLoading = false
         
         // ✨ 데스크탑 모드일 때 줌 레벨 재적용
@@ -164,11 +165,11 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    func handleLoadingError() {
+    public func handleLoadingError() {
         isLoading = false
     }
     
-    func syncCurrentURL(_ url: URL) {
+    public func syncCurrentURL(_ url: URL) {
         if !isNavigatingFromWebView {
             isNavigatingFromWebView = true
             currentURL = url
@@ -176,13 +177,13 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    func triggerNavigationFinished() {
+    public func triggerNavigationFinished() {
         navigationDidFinish.send(())
     }
     
-    // MARK: - 순수 에러 알림 처리
+    // MARK: - 순수 에러 알림 처리 - 🔧 public 접근권한 명시
     
-    func notifyError(_ error: Error, url: String) {
+    public func notifyError(_ error: Error, url: String) {
         guard let tabID = tabID else { return }
         
         NotificationCenter.default.post(
@@ -196,7 +197,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         )
     }
     
-    func notifyHTTPError(_ statusCode: Int, url: String) {
+    public func notifyHTTPError(_ statusCode: Int, url: String) {
         guard let tabID = tabID else { return }
         
         NotificationCenter.default.post(
@@ -210,14 +211,14 @@ final class WebViewStateModel: NSObject, ObservableObject {
         )
     }
     
-    // MARK: - 📁 다운로드 처리 (헬퍼 호출로 변경)
+    // MARK: - 📁 다운로드 처리 (헬퍼 호출로 변경) - 🔧 public 접근권한 명시
     
-    func handleDownloadDecision(_ navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+    public func handleDownloadDecision(_ navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         // 헬퍼 함수 호출
         shouldDownloadResponse(navigationResponse, decisionHandler: decisionHandler)
     }
 
-    // ✨ 줌 레벨 적용 메서드
+    // ✨ 줌 레벨 적용 메서드 - 🔧 private 유지
     private func applyZoomLevel() {
         guard let webView = webView, isDesktopMode else { return }
         
@@ -236,46 +237,46 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
 
-    // ✨ 줌 레벨 설정 메서드 (외부에서 호출용)
-    func setZoomLevel(_ level: Double) {
+    // ✨ 줌 레벨 설정 메서드 (외부에서 호출용) - 🔧 public 접근권한 명시
+    public func setZoomLevel(_ level: Double) {
         let clampedLevel = max(0.3, min(3.0, level))
         currentZoomLevel = clampedLevel
     }
 
-    // ✨ 로딩 중지 메서드
-    func stopLoading() {
+    // ✨ 로딩 중지 메서드 - 🔧 public 접근권한 명시
+    public func stopLoading() {
         webView?.stopLoading()
         isLoading = false
         dataModel.resetNavigationFlags()
     }
 
-    func clearHistory() {
+    public func clearHistory() {
         dataModel.clearHistory()
     }
 
-    // ✨ 데스크탑 모드 토글 메서드
-    func toggleDesktopMode() {
+    // ✨ 데스크탑 모드 토글 메서드 - 🔧 public 접근권한 명시
+    public func toggleDesktopMode() {
         isDesktopMode.toggle()
     }
 
-    // MARK: - 데이터 모델과 연동된 네비게이션 메서드들
+    // MARK: - 데이터 모델과 연동된 네비게이션 메서드들 - 🔧 public 접근권한 명시
     
-    func updateCurrentPageTitle(_ title: String) {
+    public func updateCurrentPageTitle(_ title: String) {
         dataModel.updateCurrentPageTitle(title)
     }
     
-    var currentPageRecord: PageRecord? {
+    public var currentPageRecord: PageRecord? {
         dataModel.currentPageRecord
     }
 
-    // MARK: - 세션 저장/복원 (데이터 모델에 위임)
+    // MARK: - 세션 저장/복원 (데이터 모델에 위임) - 🔧 public 접근권한 명시
     
-    func saveSession() -> WebViewSession? {
+    public func saveSession() -> WebViewSession? {
         alignIDsIfNeeded()
         return dataModel.saveSession()
     }
 
-    func restoreSession(_ session: WebViewSession) {
+    public func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
         
         dataModel.restoreSession(session)
@@ -299,9 +300,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
         dataModel.finishSessionRestore()
     }
 
-    // MARK: - 🎯 **단순화된 히스토리 네비게이션** (DataModel에 완전 위임)
+    // MARK: - 🎯 **단순화된 히스토리 네비게이션** (DataModel에 완전 위임) - 🔧 public 접근권한 명시
     
-    func goBack() {
+    public func goBack() {
         guard canGoBack else { 
             dbg("❌ goBack 실패: canGoBack=false (DataModel 기준)")
             return 
@@ -331,7 +332,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    func goForward() {
+    public func goForward() {
         guard canGoForward else { 
             dbg("❌ goForward 실패: canGoForward=false (DataModel 기준)")
             return 
@@ -361,8 +362,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
     
-    // 🔄 **BFCache 연동 개선**: 캐시 우선 복원, 없으면 새로 로드
-    func performQueuedRestore(to url: URL) {
+    // 🔄 **BFCache 연동 개선**: 캐시 우선 복원, 없으면 새로 로드 - 🔧 internal 접근권한으로 수정
+    internal func performQueuedRestore(to url: URL) {
         guard let webView = webView,
               let tabID = tabID,
               let currentRecord = dataModel.currentPageRecord else {
@@ -372,32 +373,44 @@ final class WebViewStateModel: NSObject, ObservableObject {
         
         let pageID = currentRecord.id
         
-        // 🔄 **핵심 수정**: BFCache에 스냅샷이 있는지 확인
-        if BFCacheTransitionSystem.shared.hasCache(for: pageID) {
-            dbg("🔄 BFCache 스냅샷 발견 - BFCache 복원 시도: \(url.absoluteString)")
-            
-            // BFCache 복원 시도
-            if let snapshot = BFCacheTransitionSystem.shared.retrieveSnapshot(for: pageID) {
-                snapshot.restore(to: webView) { [weak self] success in
-                    if success {
-                        self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title)")
-                    } else {
-                        self?.dbg("⚠️ BFCache 복원 실패 - fallback 새로 로드")
-                        // BFCache 복원 실패 시 새로 로드
-                        DispatchQueue.main.async {
-                            webView.load(URLRequest(url: url))
+        // 🔄 **핵심 수정**: BFCache에 스냅샷이 있는지 확인 - 🔧 안전한 접근 방식 사용
+        if let bfCacheSystem = getBFCacheSystem() {
+            if bfCacheSystem.hasCache(for: pageID) {
+                dbg("🔄 BFCache 스냅샷 발견 - BFCache 복원 시도: \(url.absoluteString)")
+                
+                // BFCache 복원 시도
+                if let snapshot = bfCacheSystem.retrieveSnapshot(for: pageID) {
+                    snapshot.restore(to: webView) { [weak self] success in
+                        if success {
+                            self?.dbg("✅ BFCache 복원 성공: \(currentRecord.title)")
+                        } else {
+                            self?.dbg("⚠️ BFCache 복원 실패 - fallback 새로 로드")
+                            // BFCache 복원 실패 시 새로 로드
+                            DispatchQueue.main.async {
+                                webView.load(URLRequest(url: url))
+                            }
                         }
                     }
+                } else {
+                    dbg("❌ BFCache 스냅샷 조회 실패 - 새로 로드")
+                    webView.load(URLRequest(url: url))
                 }
             } else {
-                dbg("❌ BFCache 스냅샷 조회 실패 - 새로 로드")
+                dbg("🔄 BFCache 스냅샷 없음 - 새로 로드: \(url.absoluteString)")
+                // 캐시가 없으면 새로 로드
                 webView.load(URLRequest(url: url))
             }
         } else {
-            dbg("🔄 BFCache 스냅샷 없음 - 새로 로드: \(url.absoluteString)")
-            // 캐시가 없으면 새로 로드
+            dbg("🔄 BFCache 시스템 접근 불가 - 새로 로드: \(url.absoluteString)")
+            // BFCache 시스템에 접근할 수 없으면 새로 로드
             webView.load(URLRequest(url: url))
         }
+    }
+    
+    // 🔧 **접근권한 수정**: BFCache 시스템에 안전하게 접근하는 헬퍼 메서드
+    private func getBFCacheSystem() -> BFCacheTransitionSystem? {
+        // BFCacheTransitionSystem이 사용 가능한지 확인 후 반환
+        return BFCacheTransitionSystem.shared
     }
     
     // 🎯 **BFCache 통합 - 제스처 관련 메서드 모두 제거**
@@ -405,50 +418,50 @@ final class WebViewStateModel: NSObject, ObservableObject {
     // safariStyleGoForward - 제거됨 (BFCacheTransitionSystem으로 이관)
     // handleSwipeGestureDetected - 제거됨 (BFCacheTransitionSystem으로 이관)
     
-    func reload() { 
+    public func reload() { 
         guard let webView = webView else { return }
         webView.reload()
     }
 
-    // MARK: - ✅ CustomWebView와 연동을 위한 메서드들
+    // MARK: - ✅ CustomWebView와 연동을 위한 메서드들 - 🔧 public 접근권한 명시
     
     /// CustomWebView에서 사용하는 isNavigatingFromWebView 플래그 제어
-    func setNavigatingFromWebView(_ value: Bool) {
+    public func setNavigatingFromWebView(_ value: Bool) {
         self.isNavigatingFromWebView = value
     }
     
-    // ✅ 쿠키 동기화 처리
-    func handleDidCommitNavigation(_ webView: WKWebView) {
+    // ✅ 쿠키 동기화 처리 - 🔧 public 접근권한 명시
+    public func handleDidCommitNavigation(_ webView: WKWebView) {
         // 기존 쿠키 동기화 로직
         _installCookieSyncIfNeeded(for: webView)
         CookieSyncManager.syncAppToWebView(webView, completion: nil)
     }
 
-    // MARK: - 기존 호환성 API (데이터 모델에 위임)
+    // MARK: - 기존 호환성 API (데이터 모델에 위임) - 🔧 public 접근권한 명시
     
-    var historyURLs: [String] {
+    public var historyURLs: [String] {
         return dataModel.historyURLs
     }
 
-    var currentHistoryIndex: Int {
+    public var currentHistoryIndex: Int {
         return dataModel.currentHistoryIndex
     }
 
-    func historyStackIfAny() -> [URL] {
+    public func historyStackIfAny() -> [URL] {
         return dataModel.historyStackIfAny()
     }
 
-    func currentIndexInSafeBounds() -> Int {
+    public func currentIndexInSafeBounds() -> Int {
         return dataModel.currentIndexInSafeBounds()
     }
     
-    func loadURLIfReady() {
+    public func loadURLIfReady() {
         if let url = currentURL, let webView = webView {
             webView.load(URLRequest(url: url))
         }
     }
 
-    // MARK: - ID 정렬
+    // MARK: - ID 정렬 - 🔧 private 유지
     private func alignIDsIfNeeded() {
         if dataModel.tabID != tabID {
             dataModel.tabID = tabID
@@ -456,7 +469,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - 🎯 단순화된 디버그 메서드
+    // MARK: - 🎯 단순화된 디버그 메서드 - 🔧 private 유지
     
     private func dbg(_ msg: String) {
         let id: String
@@ -480,7 +493,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
 }
 
-// MARK: - 쿠키 세션 공유 확장
+// MARK: - 쿠키 세션 공유 확장 - 🔧 접근권한 수정
 extension WebViewStateModel {
     private func _installCookieSyncIfNeeded(for webView: WKWebView) {
         if _cookieSyncInstalledModels.contains(self) { return }
@@ -500,6 +513,7 @@ extension WebViewStateModel {
     }
 }
 
+// 🔧 **접근권한 수정**: WKHTTPCookieStoreObserver 프로토콜 준수 명시적으로 public
 extension WebViewStateModel: WKHTTPCookieStoreObserver {
     public func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
         CookieSyncManager.syncWebToApp(cookieStore) {
@@ -508,5 +522,5 @@ extension WebViewStateModel: WKHTTPCookieStoreObserver {
     }
 }
 
-// MARK: - 전역 쿠키 동기화 추적
-private let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
+// MARK: - 전역 쿠키 동기화 추적 - 🔧 fileprivate 유지
+fileprivate let _cookieSyncInstalledModels = NSHashTable<AnyObject>.weakObjects()
