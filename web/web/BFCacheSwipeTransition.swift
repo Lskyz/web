@@ -5,6 +5,7 @@
 //  🚀 **단순화**: 복원 시 데이터 로드 → scrollTo 한 번에 처리
 //  ⚡ **성능**: 렌더링 대기 없이 즉시 복원
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
+//  🎯 **브라우저 자동 스크롤 차단**: history.scrollRestoration = 'manual' 적용
 
 import UIKit
 import WebKit
@@ -63,10 +64,10 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: localStorage 기반 복원**
+    // MARK: - 🎯 **핵심: localStorage 기반 복원 (브라우저 자동 스크롤 차단)**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("💾 localStorage 기반 복원 시작")
+        TabPersistenceManager.debugMessages.append("💾 localStorage 기반 복원 시작 (브라우저 자동 스크롤 차단)")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📍 목표 스크롤: Y=\(String(format: "%.1f", scrollState.scrollTop))px")
         
@@ -151,6 +152,12 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('💾 localStorage 복원 시작: ' + storageKey);
                 
+                // 🎯 **브라우저 자동 스크롤 비활성화**
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'manual';
+                    logs.push('🎯 브라우저 자동 스크롤 비활성화됨');
+                }
+                
                 // 1. localStorage에서 데이터 읽기
                 const storedDataStr = localStorage.getItem(storageKey);
                 let storedData = null;
@@ -180,7 +187,49 @@ struct BFCacheSnapshot: Codable {
                     logs.push('💾 새 데이터 저장 완료');
                 }
                 
-                // 3. 데이터 상태 복원 (있는 경우)
+                // 3. 🎯 **즉시 스크롤 복원 (렌더링 대기 없음)**
+                if (storedData.scrollState) {
+                    const scrollState = storedData.scrollState;
+                    
+                    // 모든 스크롤 가능 요소에 즉시 적용
+                    window.scrollTo({
+                        top: scrollState.scrollTop,
+                        left: scrollState.scrollLeft,
+                        behavior: 'instant'  // 애니메이션 없이 즉시 이동
+                    });
+                    
+                    // 여러 경로로 확실하게 스크롤 적용
+                    document.documentElement.scrollTop = scrollState.scrollTop;
+                    document.documentElement.scrollLeft = scrollState.scrollLeft;
+                    document.body.scrollTop = scrollState.scrollTop;
+                    document.body.scrollLeft = scrollState.scrollLeft;
+                    
+                    // scrollTo 다시 한번 호출 (브라우저 호환성)
+                    window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
+                    
+                    logs.push('📍 즉시 스크롤 복원 적용: X=' + scrollState.scrollLeft + ', Y=' + scrollState.scrollTop);
+                    
+                    // 스크롤 이벤트 강제 발생
+                    window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: false }));
+                    
+                    // 🎯 **requestAnimationFrame으로 한 번 더 적용 (브라우저 렌더링 직후)**
+                    window.requestAnimationFrame(function() {
+                        window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
+                        document.documentElement.scrollTop = scrollState.scrollTop;
+                        document.body.scrollTop = scrollState.scrollTop;
+                        logs.push('🎯 렌더링 프레임 후 재적용');
+                        
+                        // 더블 체크를 위한 두 번째 프레임
+                        window.requestAnimationFrame(function() {
+                            if (window.scrollY !== scrollState.scrollTop) {
+                                window.scrollTo(0, scrollState.scrollTop);
+                                logs.push('🔧 추가 보정 적용');
+                            }
+                        });
+                    });
+                }
+                
+                // 4. 데이터 상태 복원 (있는 경우) - 스크롤 복원 후 실행
                 if (storedData.dataState) {
                     const dataState = storedData.dataState;
                     logs.push('📊 데이터 상태 복원: 페이지=' + dataState.pageIndex + ', 범위=' + dataState.loadedDataRange.start + '-' + dataState.loadedDataRange.end);
@@ -210,48 +259,46 @@ struct BFCacheSnapshot: Codable {
                     window.dispatchEvent(new CustomEvent('bfcache-restore-data', {
                         detail: dataState
                     }));
-                }
-                
-                // 4. 스크롤 위치 복원
-                if (storedData.scrollState) {
-                    const scrollState = storedData.scrollState;
                     
-                    // 즉시 스크롤 복원 (데이터 로드와 동시에)
-                    window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
-                    document.documentElement.scrollTop = scrollState.scrollTop;
-                    document.documentElement.scrollLeft = scrollState.scrollLeft;
-                    document.body.scrollTop = scrollState.scrollTop;
-                    document.body.scrollLeft = scrollState.scrollLeft;
-                    
-                    logs.push('📍 스크롤 복원: X=' + scrollState.scrollLeft + ', Y=' + scrollState.scrollTop);
-                    
-                    // 스크롤 이벤트 발생
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                    
-                    // 앵커 아이템으로 추가 보정 (있는 경우)
-                    if (storedData.dataState && storedData.dataState.anchorItemId) {
-                        const anchorElement = document.getElementById(storedData.dataState.anchorItemId) ||
-                                            document.querySelector('[data-item-id="' + storedData.dataState.anchorItemId + '"]');
-                        
-                        if (anchorElement) {
-                            anchorElement.scrollIntoView({ behavior: 'auto', block: 'center' });
-                            logs.push('⚓ 앵커 아이템으로 보정: ' + storedData.dataState.anchorItemId);
-                        }
+                    // 앵커 아이템으로 추가 보정 (데이터 로드 후)
+                    if (dataState.anchorItemId) {
+                        // 약간의 지연 후 앵커 스크롤 (DOM 업데이트 대기)
+                        setTimeout(function() {
+                            const anchorElement = document.getElementById(dataState.anchorItemId) ||
+                                                document.querySelector('[data-item-id="' + dataState.anchorItemId + '"]');
+                            
+                            if (anchorElement) {
+                                anchorElement.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                logs.push('⚓ 앵커 아이템으로 보정: ' + dataState.anchorItemId);
+                            }
+                        }, 100);
                     }
                 }
                 
-                // 5. 최종 스크롤 위치 확인
-                const finalScrollTop = window.scrollY || window.pageYOffset || 0;
-                const finalScrollLeft = window.scrollX || window.pageXOffset || 0;
+                // 5. 🎯 **마지막 확인 (100ms 후)**
+                setTimeout(function() {
+                    const finalScrollTop = window.scrollY || window.pageYOffset || 0;
+                    const finalScrollLeft = window.scrollX || window.pageXOffset || 0;
+                    
+                    // 목표 위치와 다르면 강제 재적용
+                    if (storedData.scrollState && Math.abs(finalScrollTop - storedData.scrollState.scrollTop) > 1) {
+                        window.scrollTo(storedData.scrollState.scrollLeft, storedData.scrollState.scrollTop);
+                        logs.push('🔧 최종 보정: ' + storedData.scrollState.scrollTop);
+                    }
+                    
+                    logs.push('✅ 복원 완료 - 최종 위치: X=' + finalScrollLeft + ', Y=' + finalScrollTop);
+                }, 100);
                 
-                logs.push('✅ 복원 완료 - 최종 위치: X=' + finalScrollLeft + ', Y=' + finalScrollTop);
+                // 6. 최종 스크롤 위치 확인 (즉시)
+                const immediateScrollTop = window.scrollY || window.pageYOffset || 0;
+                const immediateScrollLeft = window.scrollX || window.pageXOffset || 0;
                 
                 return {
                     success: true,
                     restoredData: storedData,
                     finalScroll: {
-                        scrollTop: finalScrollTop,
-                        scrollLeft: finalScrollLeft
+                        scrollTop: immediateScrollTop,
+                        scrollLeft: immediateScrollLeft
                     },
                     logs: logs
                 };
@@ -483,6 +530,12 @@ extension BFCacheTransitionSystem {
             try {
                 const storageKey = '\(storageKey)';
                 
+                // 🎯 **브라우저 자동 스크롤 비활성화**
+                if ('scrollRestoration' in history) {
+                    history.scrollRestoration = 'manual';
+                    console.log('🎯 캡처 시 브라우저 자동 스크롤 비활성화');
+                }
+                
                 // 스크롤 상태 수집
                 const scrollState = {
                     scrollTop: window.scrollY || window.pageYOffset || 0,
@@ -580,8 +633,21 @@ extension BFCacheTransitionSystem {
     
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
+        // 🎯 **페이지 로드 시 즉시 브라우저 자동 스크롤 비활성화**
+        (function() {
+            if ('scrollRestoration' in history) {
+                history.scrollRestoration = 'manual';
+                console.log('🎯 페이지 로드 - 브라우저 자동 스크롤 비활성화');
+            }
+        })();
+        
         // localStorage 기반 BFCache 이벤트 리스너
         window.addEventListener('pageshow', function(event) {
+            // 🎯 **pageshow에서도 자동 스크롤 비활성화 재확인**
+            if ('scrollRestoration' in history) {
+                history.scrollRestoration = 'manual';
+            }
+            
             if (event.persisted) {
                 console.log('💾 localStorage BFCache 페이지 복원');
                 
@@ -594,8 +660,24 @@ extension BFCacheTransitionSystem {
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.scrollState) {
-                                window.scrollTo(parsed.scrollState.scrollLeft, parsed.scrollState.scrollTop);
+                                // 즉시 스크롤 복원 (애니메이션 없이)
+                                window.scrollTo(0, 0); // 먼저 리셋
+                                window.scrollTo({
+                                    top: parsed.scrollState.scrollTop,
+                                    left: parsed.scrollState.scrollLeft,
+                                    behavior: 'instant'
+                                });
+                                
+                                // 여러 경로로 확실하게 적용
+                                document.documentElement.scrollTop = parsed.scrollState.scrollTop;
+                                document.body.scrollTop = parsed.scrollState.scrollTop;
+                                
                                 console.log('💾 자동 복원 성공:', parsed.scrollState);
+                                
+                                // requestAnimationFrame으로 한 번 더 적용
+                                window.requestAnimationFrame(function() {
+                                    window.scrollTo(parsed.scrollState.scrollLeft, parsed.scrollState.scrollTop);
+                                });
                             }
                         } catch(e) {
                             console.error('자동 복원 실패:', e);
@@ -608,6 +690,21 @@ extension BFCacheTransitionSystem {
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
                 console.log('💾 localStorage BFCache 페이지 저장');
+            }
+        });
+        
+        // 🎯 **popstate 이벤트에서도 자동 스크롤 차단**
+        window.addEventListener('popstate', function(event) {
+            if ('scrollRestoration' in history) {
+                history.scrollRestoration = 'manual';
+            }
+        });
+        
+        // 🎯 **DOMContentLoaded에서도 확실하게 설정**
+        document.addEventListener('DOMContentLoaded', function() {
+            if ('scrollRestoration' in history) {
+                history.scrollRestoration = 'manual';
+                console.log('🎯 DOM 로드 완료 - 자동 스크롤 비활성화 확인');
             }
         });
         
