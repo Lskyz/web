@@ -222,7 +222,7 @@ struct BFCacheSnapshot: Codable {
     }
     
     // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원
-    private func executeStep1_RestoreContentHeight(context: RestorationContext) {
+    private func executeStep1_RestoreContentHeight(context: RestorationContext, attempt: Int = 0) {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] Lazy Loading 트리거 + 부모 스크롤 + 콘텐츠 복원 시작")
         
         guard restorationConfig.enableContentRestore else {
@@ -255,6 +255,11 @@ struct BFCacheSnapshot: Codable {
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step1Success = false
+            let maxStep1Retries = 2
+            var shouldRetry = false
+            var percentageValue: Double = 0
+            var targetHeightValue: Double = 0
+            var isStaticSiteFlag = false
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
@@ -289,16 +294,20 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                 }
                 if let targetHeight = resultDict["targetHeight"] as? Double {
+                    targetHeightValue = targetHeight
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
                 }
                 if let restoredHeight = resultDict["restoredHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
                 }
                 if let percentage = resultDict["percentage"] as? Double {
+                    percentageValue = percentage
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                 }
                 
-                if let isStaticSite = resultDict["isStaticSite"] as? Bool, isStaticSite {
+                let isStaticSite = (resultDict["isStaticSite"] as? Bool) ?? false
+                isStaticSiteFlag = isStaticSite
+                if isStaticSite {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                 }
                 if let logs = resultDict["logs"] as? [String] {
@@ -306,14 +315,25 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
+
+                if !step1Success && !isStaticSiteFlag && targetHeightValue > 0 && percentageValue < 70 && attempt < maxStep1Retries {
+                    shouldRetry = true
+                    TabPersistenceManager.debugMessages.append("?? [Step 1] 복원률 부족 - 재시도 예정 (\(attempt + 1)/\(maxStep1Retries + 1))")
+                } else if !step1Success && attempt >= maxStep1Retries && !shouldRetry {
+                    TabPersistenceManager.debugMessages.append("?? [Step 1] 복원 재시도 한계 도달")
+                }
             }
             
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - \(shouldRetry ? "재시도 진행" : "다음 단계 이동")")
             TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
+                if shouldRetry {
+                    self.executeStep1_RestoreContentHeight(context: context, attempt: attempt + 1)
+                } else {
+                    self.executeStep2_PercentScroll(context: context)
+                }
             }
         }
     }
@@ -867,6 +887,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
+        let savedContentHeight = restorationConfig.savedContentHeight
         
         return """
         (function() {
@@ -879,19 +900,25 @@ struct BFCacheSnapshot: Codable {
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
-                const contentHeight = Math.max(
+                const savedContentHeight = parseFloat('\(savedContentHeight)');
+
+                const measuredContentHeight = Math.max(
                     document.documentElement.scrollHeight,
                     document.body.scrollHeight
                 );
-                const contentWidth = Math.max(
+                const measuredContentWidth = Math.max(
                     document.documentElement.scrollWidth,
                     document.body.scrollWidth
                 );
+                const fallbackSavedHeight = Number.isFinite(savedContentHeight) ? savedContentHeight : 0;
+                const effectiveContentHeight = Math.max(fallbackSavedHeight, measuredContentHeight);
+                const contentWidth = measuredContentWidth;
                 const viewportHeight = window.innerHeight;
                 const viewportWidth = window.innerWidth;
-                
-                // 최대 스크롤 가능 거리
-                const maxScrollY = Math.max(0, contentHeight - viewportHeight);
+
+                logs.push('Content height (measured / used): ' + measuredContentHeight.toFixed(0) + 'px / ' + effectiveContentHeight.toFixed(0) + 'px');
+
+                const maxScrollY = Math.max(0, effectiveContentHeight - viewportHeight);
                 const maxScrollX = Math.max(0, contentWidth - viewportWidth);
                 
                 logs.push('최대 스크롤: X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
@@ -1459,6 +1486,16 @@ extension BFCacheTransitionSystem {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
         
+        let snapshotForPersistence = captureResult.snapshot
+        let hasDomSnapshot = snapshotForPersistence.domSnapshot != nil
+        let hasJsState = snapshotForPersistence.jsState != nil
+        let captureFailed = snapshotForPersistence.captureStatus == .failed
+
+        if captureFailed || !hasDomSnapshot || !hasJsState {
+            TabPersistenceManager.debugMessages.append("⚠️ 캡처 데이터 불완전 - 기존 스냅쇼 유지 (dom=\(hasDomSnapshot), js=\(hasJsState), status=\(snapshotForPersistence.captureStatus.rawValue))")
+            return
+        }
+
         // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
@@ -1543,7 +1580,10 @@ extension BFCacheTransitionSystem {
             let domScript = """
             (function() {
                 try {
-                    if (document.readyState !== 'complete') return null;
+                    var readiness = document.readyState;
+                    if (readiness !== 'complete') {
+                        console.warn('[DOM Capture] readyState=' + readiness + ' - capturing early');
+                    }
                     
                     // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
@@ -1561,8 +1601,12 @@ extension BFCacheTransitionSystem {
                         el.blur();
                     });
                     
-                    var html = document.documentElement.outerHTML;
-                    return html.length > 100000 ? html.substring(0, 100000) : html;
+                    var html = document.documentElement.outerHTML || '';
+                    if (!html) {
+                        return null;
+                    }
+                    var maxDomLength = 200000;
+                    return html.length > maxDomLength ? html.substring(0, maxDomLength) : html;
                 } catch(e) { return null; }
             })()
             """
