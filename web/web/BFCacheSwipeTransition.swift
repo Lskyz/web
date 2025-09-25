@@ -6,6 +6,7 @@
 //  ⚡ **성능**: 렌더링 대기 없이 즉시 복원
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🎯 **브라우저 자동 스크롤 차단**: history.scrollRestoration = 'manual' 적용
+//  ⏱️ **렌더링 대기 강화**: 동적 콘텐츠 로딩을 위한 충분한 대기 시간 확보
 
 import UIKit
 import WebKit
@@ -187,95 +188,127 @@ struct BFCacheSnapshot: Codable {
                     logs.push('💾 새 데이터 저장 완료');
                 }
                 
-                // 3. 🎯 **즉시 스크롤 복원 (렌더링 대기 없음)**
-                if (storedData.scrollState) {
-                    const scrollState = storedData.scrollState;
-                    
-                    // 모든 스크롤 가능 요소에 즉시 적용
-                    window.scrollTo({
-                        top: scrollState.scrollTop,
-                        left: scrollState.scrollLeft,
-                        behavior: 'instant'  // 애니메이션 없이 즉시 이동
-                    });
-                    
-                    // 여러 경로로 확실하게 스크롤 적용
-                    document.documentElement.scrollTop = scrollState.scrollTop;
-                    document.documentElement.scrollLeft = scrollState.scrollLeft;
-                    document.body.scrollTop = scrollState.scrollTop;
-                    document.body.scrollLeft = scrollState.scrollLeft;
-                    
-                    // scrollTo 다시 한번 호출 (브라우저 호환성)
-                    window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
-                    
-                    logs.push('📍 즉시 스크롤 복원 적용: X=' + scrollState.scrollLeft + ', Y=' + scrollState.scrollTop);
-                    
-                    // 스크롤 이벤트 강제 발생
-                    window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: false }));
-                    
-                    // 🎯 **requestAnimationFrame으로 한 번 더 적용 (브라우저 렌더링 직후)**
-                    window.requestAnimationFrame(function() {
-                        window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
-                        document.documentElement.scrollTop = scrollState.scrollTop;
-                        document.body.scrollTop = scrollState.scrollTop;
-                        logs.push('🎯 렌더링 프레임 후 재적용');
-                        
-                        // 더블 체크를 위한 두 번째 프레임
-                        window.requestAnimationFrame(function() {
-                            if (window.scrollY !== scrollState.scrollTop) {
-                                window.scrollTo(0, scrollState.scrollTop);
-                                logs.push('🔧 추가 보정 적용');
-                            }
-                        });
-                    });
-                }
+                // 3. ⏱️ **초기 렌더링 대기 (200ms) - 동적 콘텐츠 로딩 대기**
+                logs.push('⏱️ 초기 렌더링 대기 시작 (200ms)');
                 
-                // 4. 데이터 상태 복원 (있는 경우) - 스크롤 복원 후 실행
-                if (storedData.dataState) {
-                    const dataState = storedData.dataState;
-                    logs.push('📊 데이터 상태 복원: 페이지=' + dataState.pageIndex + ', 범위=' + dataState.loadedDataRange.start + '-' + dataState.loadedDataRange.end);
+                setTimeout(function() {
+                    logs.push('⏱️ 초기 대기 완료 - 스크롤 복원 시작');
                     
-                    // 애플리케이션별 데이터 로드 트리거
-                    // React/Vue 앱의 경우 상태 복원
-                    if (window.__REACT_APP_STATE__) {
-                        window.__REACT_APP_STATE__.loadDataRange(dataState.loadedDataRange);
-                        logs.push('React 앱 데이터 로드 트리거');
-                    } else if (window.__VUE_APP__) {
-                        window.__VUE_APP__.$store.dispatch('loadDataRange', dataState.loadedDataRange);
-                        logs.push('Vue 앱 데이터 로드 트리거');
-                    } else {
-                        // 일반적인 무한 스크롤 복원
-                        const loadMoreButtons = document.querySelectorAll('[data-load-more], .load-more, button[class*="more"]');
-                        const targetClicks = Math.min(dataState.pageIndex, loadMoreButtons.length);
+                    if (storedData.scrollState) {
+                        const scrollState = storedData.scrollState;
                         
-                        for (let i = 0; i < targetClicks; i++) {
-                            if (loadMoreButtons[i]) {
-                                loadMoreButtons[i].click();
-                                logs.push('더보기 버튼 클릭: ' + (i + 1));
+                        // 모든 스크롤 가능 요소에 즉시 적용
+                        window.scrollTo({
+                            top: scrollState.scrollTop,
+                            left: scrollState.scrollLeft,
+                            behavior: 'instant'  // 애니메이션 없이 즉시 이동
+                        });
+                        
+                        // 여러 경로로 확실하게 스크롤 적용
+                        document.documentElement.scrollTop = scrollState.scrollTop;
+                        document.documentElement.scrollLeft = scrollState.scrollLeft;
+                        document.body.scrollTop = scrollState.scrollTop;
+                        document.body.scrollLeft = scrollState.scrollLeft;
+                        
+                        // scrollTo 다시 한번 호출 (브라우저 호환성)
+                        window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
+                        
+                        logs.push('📍 스크롤 복원 적용: X=' + scrollState.scrollLeft + ', Y=' + scrollState.scrollTop);
+                        
+                        // 스크롤 이벤트 강제 발생
+                        window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: false }));
+                        
+                        // 🎯 **다단계 requestAnimationFrame 체인 (렌더링 사이클 5번 대기)**
+                        let frameCount = 0;
+                        const maxFrames = 5;
+                        
+                        function applyScrollInFrame() {
+                            frameCount++;
+                            
+                            window.scrollTo(scrollState.scrollLeft, scrollState.scrollTop);
+                            document.documentElement.scrollTop = scrollState.scrollTop;
+                            document.body.scrollTop = scrollState.scrollTop;
+                            
+                            logs.push('🎯 렌더링 프레임 ' + frameCount + '/' + maxFrames + ' 적용');
+                            
+                            if (frameCount < maxFrames) {
+                                window.requestAnimationFrame(applyScrollInFrame);
+                            } else {
+                                logs.push('✅ 모든 렌더링 프레임 적용 완료');
+                                
+                                // ⏱️ **추가 안정화 대기 (300ms)**
+                                setTimeout(function() {
+                                    // 최종 검증 및 보정
+                                    if (window.scrollY !== scrollState.scrollTop) {
+                                        window.scrollTo(0, scrollState.scrollTop);
+                                        document.documentElement.scrollTop = scrollState.scrollTop;
+                                        document.body.scrollTop = scrollState.scrollTop;
+                                        logs.push('🔧 최종 보정 적용');
+                                    }
+                                    logs.push('✅ 안정화 완료');
+                                }, 300);
                             }
                         }
+                        
+                        // 첫 번째 프레임 시작
+                        window.requestAnimationFrame(applyScrollInFrame);
                     }
                     
-                    // 커스텀 이벤트 발생
-                    window.dispatchEvent(new CustomEvent('bfcache-restore-data', {
-                        detail: dataState
-                    }));
-                    
-                    // 앵커 아이템으로 추가 보정 (데이터 로드 후)
-                    if (dataState.anchorItemId) {
-                        // 약간의 지연 후 앵커 스크롤 (DOM 업데이트 대기)
+                    // 4. 데이터 상태 복원 (있는 경우) - 스크롤 복원 후 실행
+                    if (storedData.dataState) {
+                        const dataState = storedData.dataState;
+                        logs.push('📊 데이터 상태 복원: 페이지=' + dataState.pageIndex + ', 범위=' + dataState.loadedDataRange.start + '-' + dataState.loadedDataRange.end);
+                        
+                        // ⏱️ **데이터 로드 대기 (500ms 후 시작)**
                         setTimeout(function() {
-                            const anchorElement = document.getElementById(dataState.anchorItemId) ||
-                                                document.querySelector('[data-item-id="' + dataState.anchorItemId + '"]');
-                            
-                            if (anchorElement) {
-                                anchorElement.scrollIntoView({ behavior: 'instant', block: 'center' });
-                                logs.push('⚓ 앵커 아이템으로 보정: ' + dataState.anchorItemId);
+                            // 애플리케이션별 데이터 로드 트리거
+                            // React/Vue 앱의 경우 상태 복원
+                            if (window.__REACT_APP_STATE__) {
+                                window.__REACT_APP_STATE__.loadDataRange(dataState.loadedDataRange);
+                                logs.push('React 앱 데이터 로드 트리거');
+                            } else if (window.__VUE_APP__) {
+                                window.__VUE_APP__.$store.dispatch('loadDataRange', dataState.loadedDataRange);
+                                logs.push('Vue 앱 데이터 로드 트리거');
+                            } else {
+                                // 일반적인 무한 스크롤 복원
+                                const loadMoreButtons = document.querySelectorAll('[data-load-more], .load-more, button[class*="more"]');
+                                const targetClicks = Math.min(dataState.pageIndex, loadMoreButtons.length);
+                                
+                                for (let i = 0; i < targetClicks; i++) {
+                                    if (loadMoreButtons[i]) {
+                                        // 각 버튼 클릭을 100ms 간격으로 지연
+                                        setTimeout(function(index) {
+                                            if (loadMoreButtons[index]) {
+                                                loadMoreButtons[index].click();
+                                                logs.push('더보기 버튼 클릭: ' + (index + 1));
+                                            }
+                                        }.bind(null, i), i * 100);
+                                    }
+                                }
                             }
-                        }, 100);
+                            
+                            // 커스텀 이벤트 발생
+                            window.dispatchEvent(new CustomEvent('bfcache-restore-data', {
+                                detail: dataState
+                            }));
+                            
+                            // 앵커 아이템으로 추가 보정 (데이터 로드 후 1초 대기)
+                            if (dataState.anchorItemId) {
+                                setTimeout(function() {
+                                    const anchorElement = document.getElementById(dataState.anchorItemId) ||
+                                                        document.querySelector('[data-item-id="' + dataState.anchorItemId + '"]');
+                                    
+                                    if (anchorElement) {
+                                        anchorElement.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                        logs.push('⚓ 앵커 아이템으로 보정: ' + dataState.anchorItemId);
+                                    }
+                                }, 1000);
+                            }
+                        }, 500);
                     }
-                }
+                }, 200);  // 초기 200ms 대기
                 
-                // 5. 🎯 **마지막 확인 (100ms 후)**
+                // 5. 🎯 **최종 확인 (2초 후) - 모든 동적 콘텐츠 로딩 완료 대기**
                 setTimeout(function() {
                     const finalScrollTop = window.scrollY || window.pageYOffset || 0;
                     const finalScrollLeft = window.scrollX || window.pageXOffset || 0;
@@ -283,13 +316,15 @@ struct BFCacheSnapshot: Codable {
                     // 목표 위치와 다르면 강제 재적용
                     if (storedData.scrollState && Math.abs(finalScrollTop - storedData.scrollState.scrollTop) > 1) {
                         window.scrollTo(storedData.scrollState.scrollLeft, storedData.scrollState.scrollTop);
-                        logs.push('🔧 최종 보정: ' + storedData.scrollState.scrollTop);
+                        document.documentElement.scrollTop = storedData.scrollState.scrollTop;
+                        document.body.scrollTop = storedData.scrollState.scrollTop;
+                        logs.push('🔧 2초 후 최종 보정: ' + storedData.scrollState.scrollTop);
                     }
                     
-                    logs.push('✅ 복원 완료 - 최종 위치: X=' + finalScrollLeft + ', Y=' + finalScrollTop);
-                }, 100);
+                    logs.push('✅ 모든 복원 완료 - 최종 위치: X=' + finalScrollLeft + ', Y=' + finalScrollTop);
+                }, 2000);  // 2초 후 최종 확인
                 
-                // 6. 최종 스크롤 위치 확인 (즉시)
+                // 6. 즉시 반환용 스크롤 위치 (초기 대기 전)
                 const immediateScrollTop = window.scrollY || window.pageYOffset || 0;
                 const immediateScrollLeft = window.scrollX || window.pageXOffset || 0;
                 
@@ -651,7 +686,7 @@ extension BFCacheTransitionSystem {
             if (event.persisted) {
                 console.log('💾 localStorage BFCache 페이지 복원');
                 
-                // 자동 복원 시도
+                // 자동 복원 시도 (렌더링 대기 강화)
                 const keys = Object.keys(localStorage).filter(key => key.startsWith('bfcache_'));
                 if (keys.length > 0) {
                     const latestKey = keys.sort().pop();
@@ -660,24 +695,45 @@ extension BFCacheTransitionSystem {
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.scrollState) {
-                                // 즉시 스크롤 복원 (애니메이션 없이)
-                                window.scrollTo(0, 0); // 먼저 리셋
-                                window.scrollTo({
-                                    top: parsed.scrollState.scrollTop,
-                                    left: parsed.scrollState.scrollLeft,
-                                    behavior: 'instant'
-                                });
-                                
-                                // 여러 경로로 확실하게 적용
-                                document.documentElement.scrollTop = parsed.scrollState.scrollTop;
-                                document.body.scrollTop = parsed.scrollState.scrollTop;
-                                
-                                console.log('💾 자동 복원 성공:', parsed.scrollState);
-                                
-                                // requestAnimationFrame으로 한 번 더 적용
-                                window.requestAnimationFrame(function() {
-                                    window.scrollTo(parsed.scrollState.scrollLeft, parsed.scrollState.scrollTop);
-                                });
+                                // ⏱️ 200ms 초기 대기 후 복원 시작
+                                setTimeout(function() {
+                                    // 먼저 리셋
+                                    window.scrollTo(0, 0);
+                                    
+                                    // 스크롤 복원 (애니메이션 없이)
+                                    window.scrollTo({
+                                        top: parsed.scrollState.scrollTop,
+                                        left: parsed.scrollState.scrollLeft,
+                                        behavior: 'instant'
+                                    });
+                                    
+                                    // 여러 경로로 확실하게 적용
+                                    document.documentElement.scrollTop = parsed.scrollState.scrollTop;
+                                    document.body.scrollTop = parsed.scrollState.scrollTop;
+                                    
+                                    console.log('💾 자동 복원 성공:', parsed.scrollState);
+                                    
+                                    // ⏱️ 다단계 requestAnimationFrame 적용
+                                    let frameCount = 0;
+                                    function applyFrame() {
+                                        frameCount++;
+                                        window.scrollTo(parsed.scrollState.scrollLeft, parsed.scrollState.scrollTop);
+                                        document.documentElement.scrollTop = parsed.scrollState.scrollTop;
+                                        document.body.scrollTop = parsed.scrollState.scrollTop;
+                                        
+                                        if (frameCount < 5) {
+                                            window.requestAnimationFrame(applyFrame);
+                                        } else {
+                                            // ⏱️ 추가 300ms 대기 후 최종 보정
+                                            setTimeout(function() {
+                                                window.scrollTo(parsed.scrollState.scrollLeft, parsed.scrollState.scrollTop);
+                                                console.log('✅ pageshow 자동 복원 완료');
+                                            }, 300);
+                                        }
+                                    }
+                                    window.requestAnimationFrame(applyFrame);
+                                    
+                                }, 200);  // 초기 200ms 대기
                             }
                         } catch(e) {
                             console.error('자동 복원 실패:', e);
