@@ -1,6 +1,6 @@
-//📈 **프레임워크별 가상화 리스트 복원** - Vue, React, Next.js 등 자동 감지
-//  🔧 **가상 스크롤 복원 최적화** - 측정 캐시 및 오프셋 정확 복원
-//  🐛 **최대 스크롤 축소 문제 해결** - 동적 콘텐츠 로딩 트리거
+//📈 **DOM 기준 정밀 복원** - 절대 좌표 대신 요소 기준 복원
+//  🔧 **다중 뷰포트 앵커 시스템** - 주앵커 + 보조앵커 조합
+//  🐛 **디버깅 강화** - 실패 원인 정확한 추적과 로깅
 //  🔄 **스냅샷 업데이트 보장** - 떠날 때마다 최신 상태 캡처
 //
 
@@ -53,29 +53,34 @@ private class GestureContext {
     }
 }
 
-// MARK: - 📸 **네비게이션 이벤트 감지 시스템**
+// MARK: - 📸 **네비게이션 이벤트 감지 시스템 - 모든 네비게이션에서 떠나기 전 캡처**
 extension BFCacheTransitionSystem {
     
+    /// CustomWebView에서 네비게이션 이벤트 구독
     static func registerNavigationObserver(for webView: WKWebView, stateModel: WebViewStateModel) {
         guard let tabID = stateModel.tabID else { return }
         
+        // KVO로 URL 변경 감지
         let urlObserver = webView.observe(\.url, options: [.old, .new]) { [weak webView] observedWebView, change in
             guard let webView = webView,
                   let oldURL = change.oldValue as? URL,
                   let newURL = change.newValue as? URL,
                   oldURL != newURL else { return }
             
+            // 📸 **URL이 바뀌는 순간 이전 페이지 캡처**
             if stateModel.dataModel.currentPageRecord != nil {
                 shared.storeLeavingSnapshotIfPossible(webView: webView, stateModel: stateModel)
                 shared.dbg("📸 URL 변경 감지 - 떠나기 전 캐시: \(oldURL.absoluteString) → \(newURL.absoluteString)")
             }
         }
         
+        // 옵저버를 webView에 연결하여 생명주기 관리
         objc_setAssociatedObject(webView, "bfcache_url_observer", urlObserver, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         
         shared.dbg("📸 포괄적 네비게이션 감지 등록: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
+    /// CustomWebView 해제 시 옵저버 정리
     static func unregisterNavigationObserver(for webView: WKWebView) {
         if let observer = objc_getAssociatedObject(webView, "bfcache_url_observer") as? NSKeyValueObservation {
             observer.invalidate()
@@ -85,27 +90,29 @@ extension BFCacheTransitionSystem {
     }
 }
 
-// MARK: - 🎯 **프레임워크 인식 BFCache 전환 시스템**
+// MARK: - 🎯 **강화된 BFCache 전환 시스템**
 final class BFCacheTransitionSystem: NSObject {
     
     // MARK: - 싱글톤
     static let shared = BFCacheTransitionSystem()
     private override init() {
         super.init()
+        // 앱 시작시 디스크 캐시 로드
         loadDiskCacheIndex()
         setupMemoryWarningObserver()
     }
     
-    // MARK: - 📸 **단일 직렬화 큐 시스템**
+    // MARK: - 📸 **핵심 개선: 단일 직렬화 큐 시스템**
     internal let serialQueue = DispatchQueue(label: "bfcache.serial", qos: .userInitiated)
     private let diskIOQueue = DispatchQueue(label: "bfcache.disk", qos: .background)
     
     // MARK: - 💾 스레드 안전 캐시 시스템
     internal let cacheAccessQueue = DispatchQueue(label: "bfcache.access", attributes: .concurrent)
     internal var _memoryCache: [UUID: BFCacheSnapshot] = [:]
-    private var _diskCacheIndex: [UUID: String] = [:]
+    private var _diskCacheIndex: [UUID: String] = [:]  // pageID -> 최신 버전 디렉토리 경로
     internal var _cacheVersion: [UUID: Int] = [:]
     
+    // 스레드 안전 액세서
     private var memoryCache: [UUID: BFCacheSnapshot] {
         get { cacheAccessQueue.sync { _memoryCache } }
     }
@@ -146,11 +153,12 @@ final class BFCacheTransitionSystem: NSObject {
         return tabDirectory(for: tabID).appendingPathComponent("Page_\(pageID.uuidString)_v\(version)", isDirectory: true)
     }
     
-    // MARK: - 🧵 **제스처 전환 상태**
+    // MARK: - 🧵 **제스처 전환 상태 (리팩토링된 스레드 안전 관리)**
     private let gestureQueue = DispatchQueue(label: "gesture.management", attributes: .concurrent)
     private var _activeTransitions: [UUID: TransitionContext] = [:]
-    private var _gestureContexts: [UUID: GestureContext] = [:]
+    private var _gestureContexts: [UUID: GestureContext] = [:]  // 🧵 제스처 컨텍스트 관리
     
+    // 🧵 **스레드 안전 activeTransitions 접근**
     private var activeTransitions: [UUID: TransitionContext] {
         get { gestureQueue.sync { _activeTransitions } }
     }
@@ -171,6 +179,7 @@ final class BFCacheTransitionSystem: NSObject {
         return gestureQueue.sync { _activeTransitions[tabID] }
     }
     
+    // 🧵 **제스처 컨텍스트 관리**
     private func setGestureContext(_ context: GestureContext, for key: UUID) {
         gestureQueue.async(flags: .barrier) {
             self._gestureContexts[key] = context
@@ -189,6 +198,7 @@ final class BFCacheTransitionSystem: NSObject {
         return gestureQueue.sync { _gestureContexts[key] }
     }
     
+    // 전환 컨텍스트
     private struct TransitionContext {
         let tabID: UUID
         weak var webView: WKWebView?
@@ -205,12 +215,12 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     enum CaptureType {
-        case immediate
-        case background
-        case forceUpdate
+        case immediate  // 현재 페이지 (높은 우선순위)
+        case background // 과거 페이지 (일반 우선순위)
+        case forceUpdate // 🔄 강제 업데이트 (떠날 때)
     }
     
-    // MARK: - 💾 **디스크 저장 시스템**
+    // MARK: - 💾 **개선된 디스크 저장 시스템 - 버전 업데이트 보장**
     
     internal func saveToDisk(snapshot: (snapshot: BFCacheSnapshot, image: UIImage?), tabID: UUID) {
         diskIOQueue.async { [weak self] in
@@ -220,40 +230,43 @@ final class BFCacheTransitionSystem: NSObject {
             let version = snapshot.snapshot.version
             let pageDir = self.pageDirectory(for: pageID, tabID: tabID, version: version)
             
+            // 디렉토리 생성
             self.createDirectoryIfNeeded(at: pageDir)
             
             var finalSnapshot = snapshot.snapshot
             
-            // 이미지 저장
+            // 1. 이미지 저장 (JPEG 압축)
             if let image = snapshot.image {
                 let imagePath = pageDir.appendingPathComponent("snapshot.jpg")
                 if let jpegData = image.jpegData(compressionQuality: 0.7) {
                     do {
                         try jpegData.write(to: imagePath)
                         finalSnapshot.webViewSnapshotPath = imagePath.path
-                        self.dbg("💾 이미지 저장 성공")
+                        self.dbg("💾 이미지 저장 성공: \(imagePath.lastPathComponent)")
                     } catch {
                         self.dbg("❌ 이미지 저장 실패: \(error.localizedDescription)")
                     }
                 }
             }
             
-            // 상태 데이터 저장
+            // 2. 상태 데이터 저장 (JSON)
             let statePath = pageDir.appendingPathComponent("state.json")
             if let stateData = try? JSONEncoder().encode(finalSnapshot) {
                 do {
                     try stateData.write(to: statePath)
-                    self.dbg("💾 상태 저장 성공")
+                    self.dbg("💾 상태 저장 성공: \(statePath.lastPathComponent)")
                 } catch {
                     self.dbg("❌상태 저장 실패: \(error.localizedDescription)")
                 }
             }
             
+            // 🔄 **핵심 수정: 최신 버전으로 인덱스와 메모리 캐시 강제 업데이트**
             self.setDiskIndex(pageDir.path, for: pageID)
             self.setMemoryCache(finalSnapshot, for: pageID)
             
-            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)]")
+            self.dbg("💾 디스크 저장 완료: \(snapshot.snapshot.pageRecord.title) [v\(version)] - 캐시 업데이트됨")
             
+            // 4. 이전 버전 정리 (최신 3개만 유지)
             self.cleanupOldVersions(pageID: pageID, tabID: tabID, currentVersion: version)
         }
     }
@@ -274,9 +287,10 @@ final class BFCacheTransitionSystem: NSObject {
                 .sorted { url1, url2 in
                     let v1 = Int(url1.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
                     let v2 = Int(url2.lastPathComponent.replacingOccurrences(of: pagePrefix, with: "")) ?? 0
-                    return v1 > v2
+                    return v1 > v2  // 최신 버전부터
                 }
             
+            // 최신 3개 제외하고 삭제
             if pageDirs.count > 3 {
                 for i in 3..<pageDirs.count {
                     try FileManager.default.removeItem(at: pageDirs[i])
@@ -288,7 +302,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 💾 **디스크 캐시 로딩**
+    // MARK: - 💾 **개선된 디스크 캐시 로딩 - 최신 버전만 인덱싱**
     
     private func loadDiskCacheIndex() {
         diskIOQueue.async { [weak self] in
@@ -305,6 +319,7 @@ final class BFCacheTransitionSystem: NSObject {
                     if tabDir.lastPathComponent.hasPrefix("Tab_") {
                         let pageDirs = try FileManager.default.contentsOfDirectory(at: tabDir, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
                         
+                        // 페이지별로 그룹핑
                         var pageVersions: [UUID: [(path: URL, version: Int)]] = [:]
                         
                         for pageDir in pageDirs {
@@ -322,6 +337,7 @@ final class BFCacheTransitionSystem: NSObject {
                             }
                         }
                         
+                        // 🔄 **각 페이지의 최신 버전만 인덱스에 등록**
                         for (pageID, versions) in pageVersions {
                             if let latestVersion = versions.max(by: { $0.version < $1.version }) {
                                 self.setDiskIndex(latestVersion.path.path, for: pageID)
@@ -342,12 +358,14 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🔍 **스냅샷 조회**
+    // MARK: - 🔍 **개선된 스냅샷 조회 시스템 - 항상 최신 버전 반환**
     
     private func retrieveSnapshot(for pageID: UUID) -> BFCacheSnapshot? {
+        // 🔄 **수정: 메모리 캐시에서도 버전 확인**
         if let snapshot = cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) {
             dbg("💭 메모리 캐시 히트: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
             
+            // 디스크에 더 최신 버전이 있는지 확인
             if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
                 let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
                 
@@ -355,6 +373,7 @@ final class BFCacheTransitionSystem: NSObject {
                    let diskSnapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
                     
                     if diskSnapshot.version > snapshot.version {
+                        // 더 최신 버전이 디스크에 있으면 그것을 사용
                         setMemoryCache(diskSnapshot, for: pageID)
                         dbg("💾 더 최신 버전 발견: v\(snapshot.version) → v\(diskSnapshot.version)")
                         return diskSnapshot
@@ -365,12 +384,14 @@ final class BFCacheTransitionSystem: NSObject {
             return snapshot
         }
         
+        // 2. 디스크 캐시 확인 (이미 최신 버전 경로가 인덱싱됨)
         if let diskPath = cacheAccessQueue.sync(execute: { _diskCacheIndex[pageID] }) {
             let statePath = URL(fileURLWithPath: diskPath).appendingPathComponent("state.json")
             
             if let data = try? Data(contentsOf: statePath),
                let snapshot = try? JSONDecoder().decode(BFCacheSnapshot.self, from: data) {
                 
+                // 메모리 캐시에도 저장
                 setMemoryCache(snapshot, for: pageID)
                 
                 dbg("💾 디스크 캐시 히트: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
@@ -382,6 +403,7 @@ final class BFCacheTransitionSystem: NSObject {
         return nil
     }
     
+    // MARK: - 🔧 **수정: hasCache 메서드 추가**
     func hasCache(for pageID: UUID) -> Bool {
         if cacheAccessQueue.sync(execute: { _memoryCache[pageID] }) != nil {
             return true
@@ -394,12 +416,14 @@ final class BFCacheTransitionSystem: NSObject {
         return false
     }
     
+    // MARK: - 메모리 캐시 관리
+    
     internal func storeInMemory(_ snapshot: BFCacheSnapshot, for pageID: UUID) {
         setMemoryCache(snapshot, for: pageID)
         dbg("💭 메모리 캐시 저장: \(snapshot.pageRecord.title) [v\(snapshot.version)]")
     }
     
-    // MARK: - 🧹 **캐시 정리**
+    // MARK: - 🧹 **개선된 캐시 정리**
     
     func clearCacheForTab(_ tabID: UUID, pageIDs: [UUID]) {
         removeGestureContext(for: tabID)
@@ -452,7 +476,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
     }
     
-    // MARK: - 🧵 **제스처 시스템**
+    // MARK: - 🧵 **리팩토링된 제스처 시스템 (먹통 방지)**
     
     func setupGestures(for webView: WKWebView, stateModel: WebViewStateModel) {
         webView.allowsBackForwardNavigationGestures = false
@@ -473,7 +497,7 @@ final class BFCacheTransitionSystem: NSObject {
         
         Self.registerNavigationObserver(for: webView, stateModel: stateModel)
         
-        dbg("🎯 프레임워크 인식 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
+        dbg("🎯 강화된 DOM 요소 기반 BFCache 제스처 설정 완료: 탭 \(String(tabID.uuidString.prefix(8)))")
     }
     
     private func cleanupExistingGestures(for webView: WKWebView, tabID: UUID) {
@@ -522,7 +546,7 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         guard let context = getGestureContext(for: tabID) else {
-            dbg("🧵 제스처 컨텍스트 없음 - 제스처 취소")
+            dbg("🧵 제스처 컨텍스트 없음 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
             gesture.state = .cancelled
             return
         }
@@ -531,7 +555,7 @@ final class BFCacheTransitionSystem: NSObject {
             guard let self = self,
                   let webView = context.webView,
                   let stateModel = context.stateModel else {
-                TabPersistenceManager.debugMessages.append("🧵 컨텍스트 무효 - 제스처 취소")
+                TabPersistenceManager.debugMessages.append("🧵 컨텍스트 무효 - 제스처 취소: \(String(tabID.uuidString.prefix(8)))")
                 gesture.state = .cancelled
                 return
             }
@@ -557,10 +581,10 @@ final class BFCacheTransitionSystem: NSObject {
         
         switch gesture.state {
         case .began:
-            guard getActiveTransition(for: tabID) == nil else {
+            guard getActiveTransition(for: tabID) == nil else { 
                 dbg("🛡️ 전환 중 - 새 제스처 무시")
                 gesture.state = .cancelled
-                return
+                return 
             }
             
             let direction: NavigationDirection = isLeftEdge ? .back : .forward
@@ -573,6 +597,7 @@ final class BFCacheTransitionSystem: NSObject {
                     dbg("🛡️ 기존 전환 강제 정리")
                 }
                 
+                // 🔄 **수정: 제스처 시작 시 forceUpdate로 캡처**
                 if let currentRecord = stateModel.dataModel.currentPageRecord {
                     captureSnapshot(pageRecord: currentRecord, webView: webView, type: .forceUpdate, tabID: tabID)
                 }
@@ -880,7 +905,7 @@ final class BFCacheTransitionSystem: NSObject {
             DispatchQueue.main.async {
                 previewContainer.removeFromSuperview()
                 self?.removeActiveTransition(for: context.tabID)
-                self?.dbg("🎬 미리보기 정리 완료 - 프레임워크 인식 BFCache \(success ? "성공" : "실패")")
+                self?.dbg("🎬 미리보기 정리 완료 - 브라우저 차단 대응 BFCache \(success ? "성공" : "실패")")
             }
         }
         
@@ -895,15 +920,11 @@ final class BFCacheTransitionSystem: NSObject {
         }
         
         if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            // 프레임워크 정보 로깅
-            dbg("🎨 복원 대상 프레임워크: \(snapshot.frameworkInfo.type.rawValue)")
-            dbg("🎨 가상화 라이브러리: \(snapshot.frameworkInfo.virtualizationLib.rawValue)")
-            
             snapshot.restore(to: webView) { [weak self] success in
                 if success {
-                    self?.dbg("✅ 프레임워크 인식 BFCache 복원 성공: \(currentRecord.title)")
+                    self?.dbg("✅ 브라우저 차단 대응 BFCache 복원 성공: \(currentRecord.title)")
                 } else {
-                    self?.dbg("⚠️ 프레임워크 인식 BFCache 복원 실패: \(currentRecord.title)")
+                    self?.dbg("⚠️ 브라우저 차단 대응 BFCache 복원 실패: \(currentRecord.title)")
                 }
                 completion(success)
             }
@@ -946,13 +967,14 @@ final class BFCacheTransitionSystem: NSObject {
         )
     }
     
-    // MARK: - 버튼 네비게이션
+    // MARK: - 버튼 네비게이션 (즉시 전환)
     
     func navigateBack(stateModel: WebViewStateModel) {
         guard stateModel.canGoBack,
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
+        // 🔄 **수정: forceUpdate로 캡처**
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, type: .forceUpdate, tabID: tabID)
         }
@@ -966,6 +988,7 @@ final class BFCacheTransitionSystem: NSObject {
               let tabID = stateModel.tabID,
               let webView = stateModel.webView else { return }
         
+        // 🔄 **수정: forceUpdate로 캡처**
         if let currentRecord = stateModel.dataModel.currentPageRecord {
             captureSnapshot(pageRecord: currentRecord, webView: webView, type: .forceUpdate, tabID: tabID)
         }
@@ -982,11 +1005,11 @@ final class BFCacheTransitionSystem: NSObject {
         
         stateModel.dataModel.addNewPage(url: url, title: "")
         stateModel.syncCurrentURL(url)
-        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가: \(url.absoluteString)")
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지로 추가 (과거 점프 방지): \(url.absoluteString)")
     }
     
     private func dbg(_ msg: String) {
-        TabPersistenceManager.debugMessages.append("[BFCache🎨] \(msg)")
+        TabPersistenceManager.debugMessages.append("[BFCache🚫] \(msg)")
     }
 }
 
@@ -1003,7 +1026,7 @@ extension BFCacheTransitionSystem {
     static func install(on webView: WKWebView, stateModel: WebViewStateModel) {
         webView.configuration.userContentController.addUserScript(makeBFCacheScript())
         shared.setupGestures(for: webView, stateModel: stateModel)
-        TabPersistenceManager.debugMessages.append("✅ 🎨 프레임워크 인식 BFCache 시스템 설치 완료")
+        TabPersistenceManager.debugMessages.append("✅ 🚫 강화된 브라우저 차단 대응 BFCache 시스템 설치 완료 (다중 앵커 + 검증)")
     }
     
     static func uninstall(from webView: WKWebView) {
@@ -1022,7 +1045,7 @@ extension BFCacheTransitionSystem {
             }
         }
         
-        TabPersistenceManager.debugMessages.append("🚫 프레임워크 인식 BFCache 시스템 제거 완료")
+        TabPersistenceManager.debugMessages.append("🚫 강화된 브라우저 차단 대응 BFCache 시스템 제거 완료")
     }
     
     static func goBack(stateModel: WebViewStateModel) {
@@ -1037,18 +1060,22 @@ extension BFCacheTransitionSystem {
 // MARK: - 퍼블릭 래퍼: WebViewDataModel 델리게이트에서 호출
 extension BFCacheTransitionSystem {
 
+    /// 🔄 **핵심 수정: 떠날 때 항상 최신 상태 강제 캡처**
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
+        // 🔄 **forceUpdate로 무조건 새로 캡처 (기존 캐시 무시)**
         captureSnapshot(pageRecord: rec, webView: webView, type: .forceUpdate, tabID: tabID)
         dbg("📸 떠나기 스냅샷 강제 업데이트: \(rec.title)")
     }
 
+    /// 📸 **페이지 로드 완료 후 자동 캐시**
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
         
+        // 도착 시에는 일반 캡처 (이미 캐시가 있으면 스킵)
         if !hasCache(for: rec.id) {
             captureSnapshot(pageRecord: rec, webView: webView, type: .background, tabID: tabID)
             dbg("📸 도착 스냅샷 캡처 시작: \(rec.title)")
@@ -1056,6 +1083,7 @@ extension BFCacheTransitionSystem {
             dbg("📸 도착 스냅샷 스킵 (이미 캐시 있음): \(rec.title)")
         }
         
+        // 이전 페이지들도 순차적으로 캐시 확인
         if stateModel.dataModel.currentPageIndex > 0 {
             let checkCount = min(3, stateModel.dataModel.currentPageIndex)
             let startIndex = max(0, stateModel.dataModel.currentPageIndex - checkCount)
