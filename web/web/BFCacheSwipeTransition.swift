@@ -58,7 +58,7 @@ struct BFCacheSnapshot: Codable {
         )
     }
     
-    // 🆕 **가상화 정보 구조체**
+    // 🆕 **가상화 정보 구조체** - Codable 수정
     struct VirtualizationInfo: Codable {
         let isVirtualized: Bool                 // 가상화 여부 감지
         let virtualizationType: VirtualizationType
@@ -66,8 +66,16 @@ struct BFCacheSnapshot: Codable {
         let averageItemHeight: CGFloat          // 평균 아이템 높이
         let visibleItemsRange: NSRange          // 보이는 아이템 범위
         let measurementsCache: [String: CGFloat] // measurements 캐시
-        let vueComponentStates: [String: Any]?  // Vue 컴포넌트 상태
+        let vueComponentStatesData: Data?       // Vue 컴포넌트 상태 (JSON Data로 저장)
         let scrollSegmentation: ScrollSegmentation
+        
+        // Vue 상태를 위한 계산 프로퍼티
+        var vueComponentStates: [String: Any]? {
+            get {
+                guard let data = vueComponentStatesData else { return nil }
+                return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
+        }
         
         enum VirtualizationType: String, Codable {
             case none = "none"
@@ -78,6 +86,31 @@ struct BFCacheSnapshot: Codable {
             case vuetifyVirtualScroll = "vuetify-virtual-scroll"
             case customVirtual = "custom-virtual"
             case infiniteScroll = "infinite-scroll"
+        }
+        
+        // Custom initializer for Vue states
+        init(isVirtualized: Bool, 
+             virtualizationType: VirtualizationType, 
+             estimatedTotalItems: Int, 
+             averageItemHeight: CGFloat, 
+             visibleItemsRange: NSRange, 
+             measurementsCache: [String: CGFloat], 
+             vueComponentStates: [String: Any]?, 
+             scrollSegmentation: ScrollSegmentation) {
+            self.isVirtualized = isVirtualized
+            self.virtualizationType = virtualizationType
+            self.estimatedTotalItems = estimatedTotalItems
+            self.averageItemHeight = averageItemHeight
+            self.visibleItemsRange = visibleItemsRange
+            self.measurementsCache = measurementsCache
+            self.scrollSegmentation = scrollSegmentation
+            
+            // Vue 상태를 JSON Data로 변환
+            if let vueStates = vueComponentStates {
+                self.vueComponentStatesData = try? JSONSerialization.data(withJSONObject: vueStates)
+            } else {
+                self.vueComponentStatesData = nil
+            }
         }
         
         static let `default` = VirtualizationInfo(
@@ -424,7 +457,9 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep1_LazyLoadAndContentRestoreScript(
             parentScrollDataJSON: parentScrollDataJSON,
-            enableLazyLoading: restorationConfig.enableLazyLoadingTrigger
+            enableLazyLoading: restorationConfig.enableLazyLoadingTrigger,
+            targetHeight: restorationConfig.savedContentHeight,
+            targetY: scrollPosition.y
         )
         
         context.webView?.evaluateJavaScript(js) { result, error in
@@ -866,25 +901,106 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // Step 1: Lazy Loading 트리거 (기존과 동일)
+    // Step 1: Lazy Loading 트리거 (복구된 로직)
     private func generateStep1_LazyLoadAndContentRestoreScript(
         parentScrollDataJSON: String,
-        enableLazyLoading: Bool
+        enableLazyLoading: Bool,
+        targetHeight: CGFloat,
+        targetY: CGFloat
     ) -> String {
-        let targetHeight = restorationConfig.savedContentHeight
-        let targetY = scrollPosition.y
-        
-        // 기존 Step 1 스크립트와 동일하므로 생략 (너무 길어져서)
         return """
         (function() {
-            // 기존 Step 1 로직과 동일
             try {
-                const logs = ['[Step 1] Lazy Loading + 부모 스크롤 + 콘텐츠 복원 (가상화 대응)'];
-                // ... 기존 Step 1 로직
+                const logs = [];
+                const parentScrollData = \(parentScrollDataJSON);
+                const enableLazyLoading = \(enableLazyLoading ? "true" : "false");
+                const targetHeight = parseFloat('\(targetHeight)');
+                const targetY = parseFloat('\(targetY)');
+                
+                logs.push('[Step 1] Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
+                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px, 목표 Y: ' + targetY.toFixed(1) + 'px');
+                logs.push('Lazy Loading 활성화: ' + enableLazyLoading);
+                logs.push('부모 스크롤 데이터: ' + parentScrollData.length + '개');
+                
+                let lazyLoadingResults = { triggered: 0 };
+                let parentScrollCount = 0;
+                
+                // 🆕 **1. Lazy Loading 트리거**
+                if (enableLazyLoading) {
+                    const lazyElements = [
+                        ...document.querySelectorAll('img[data-src], img[loading="lazy"]'),
+                        ...document.querySelectorAll('[data-lazy], [data-src]'),
+                        ...document.querySelectorAll('.lazy, .lazyload')
+                    ];
+                    
+                    lazyElements.forEach(function(element) {
+                        if (element.dataset && element.dataset.src) {
+                            element.src = element.dataset.src;
+                            lazyLoadingResults.triggered++;
+                        }
+                        
+                        // IntersectionObserver 트리거 시뮬레이션
+                        if (element.getBoundingClientRect) {
+                            const event = new Event('scroll', { bubbles: true });
+                            window.dispatchEvent(event);
+                        }
+                    });
+                    
+                    logs.push('Lazy loading 요소 트리거: ' + lazyLoadingResults.triggered + '개');
+                }
+                
+                // 🆕 **2. 부모 스크롤 복원**
+                if (parentScrollData && parentScrollData.length > 0) {
+                    parentScrollData.forEach(function(scrollData) {
+                        try {
+                            const element = document.querySelector(scrollData.selector);
+                            if (element && scrollData.scrollTop !== undefined) {
+                                element.scrollTop = scrollData.scrollTop;
+                                element.scrollLeft = scrollData.scrollLeft || 0;
+                                parentScrollCount++;
+                                logs.push('부모 스크롤 복원: ' + scrollData.selector);
+                            }
+                        } catch(e) {
+                            logs.push('부모 스크롤 복원 실패: ' + scrollData.selector + ' - ' + e.message);
+                        }
+                    });
+                }
+                
+                // 🆕 **3. 콘텐츠 높이 확장 시도**
+                const currentHeight = Math.max(
+                    document.documentElement.scrollHeight,
+                    document.body.scrollHeight
+                );
+                
+                if (currentHeight < targetHeight) {
+                    const heightDiff = targetHeight - currentHeight;
+                    logs.push('콘텐츠 높이 부족: 현재=' + currentHeight.toFixed(0) + 'px, 목표=' + targetHeight.toFixed(0) + 'px');
+                    
+                    // DOM 확장 시도
+                    let expandedHeight = currentHeight;
+                    const mainContent = document.querySelector('main, article, .content, #content, body > div:first-child');
+                    if (mainContent) {
+                        const paddingBottom = parseFloat(window.getComputedStyle(mainContent).paddingBottom || '0');
+                        mainContent.style.paddingBottom = (paddingBottom + heightDiff) + 'px';
+                        expandedHeight = Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight
+                        );
+                        logs.push('DOM 확장 시도: ' + expandedHeight.toFixed(0) + 'px');
+                    }
+                }
+                
+                const success = lazyLoadingResults.triggered > 0 || parentScrollCount > 0;
+                
                 return {
-                    success: true,
+                    success: success,
+                    lazyLoadingResults: lazyLoadingResults,
+                    parentScrollCount: parentScrollCount,
+                    targetHeight: targetHeight,
+                    currentHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
                     logs: logs
                 };
+                
             } catch(e) {
                 return {
                     success: false,
@@ -1655,7 +1771,7 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 가상화 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("🆕 가상화 감지: \(virtualizationInfo.isVirtualized ? "예(\(virtualizationInfo.virtualizationType.rawValue))" : "아니오")")
         
-        // 🆕 **가상화 대응 복원 설정 생성**
+        // 🔄 **중요: 복구된 순차 실행 설정 생성** 
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
@@ -1663,12 +1779,12 @@ extension BFCacheTransitionSystem {
             enableFinalVerification: true,
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
             step1RenderDelay: 0.4,
-            step2RenderDelay: 0.3,
-            step3RenderDelay: 0.2,
+            step2RenderDelay: 0.2,
+            step3RenderDelay: 0.1,
             step4RenderDelay: 0.4,
-            enableLazyLoadingTrigger: true,
-            enableParentScrollRestore: true,
-            enableIOVerification: true,
+            enableLazyLoadingTrigger: true,  // 🆕
+            enableParentScrollRestore: true, // 🆕
+            enableIOVerification: true,       // 🆕
             enableVirtualizationRestore: virtualizationInfo.isVirtualized,
             enableMeasurementsCacheRestore: !virtualizationInfo.measurementsCache.isEmpty,
             enableVueStateRestore: virtualizationInfo.vueComponentStates != nil,
