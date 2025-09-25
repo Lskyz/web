@@ -93,6 +93,31 @@ struct BFCacheSnapshot: Codable {
             case scrollDirection, measurementCache, visibleRange
         }
         
+        // Direct initializer
+        init(containerSelector: String?,
+             itemSelector: String?,
+             scrollOffset: Int,
+             startIndex: Int,
+             endIndex: Int,
+             itemCount: Int,
+             estimatedItemSize: Double,
+             overscan: Int,
+             scrollDirection: String,
+             measurementCache: [String: Any]?,
+             visibleRange: [Int]) {
+            self.containerSelector = containerSelector
+            self.itemSelector = itemSelector
+            self.scrollOffset = scrollOffset
+            self.startIndex = startIndex
+            self.endIndex = endIndex
+            self.itemCount = itemCount
+            self.estimatedItemSize = estimatedItemSize
+            self.overscan = overscan
+            self.scrollDirection = scrollDirection
+            self.measurementCache = measurementCache
+            self.visibleRange = visibleRange
+        }
+        
         // Custom encoding/decoding for measurementCache
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
