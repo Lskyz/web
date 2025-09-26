@@ -9,6 +9,7 @@
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 //  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
+//  🐛 **디버그 강화**: 이벤트/히스토리 추적 로깅 추가
 
 import UIKit
 import WebKit
@@ -289,6 +290,19 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
+                // 🐛 **디버그: 이벤트 추적 결과**
+                if let eventDebug = resultDict["eventDebugResults"] as? [String: Any] {
+                    if let domEventTargets = eventDebug["domEventTargets"] as? [String] {
+                        TabPersistenceManager.debugMessages.append("🐛 [Step 1] 이벤트가 닿은 DOM: \(domEventTargets.prefix(5).joined(separator: ", "))")
+                    }
+                    if let historyPushStates = eventDebug["historyPushStates"] as? [String] {
+                        TabPersistenceManager.debugMessages.append("🐛 [Step 1] pushState 호출: \(historyPushStates.prefix(3).joined(separator: ", "))")
+                    }
+                    if let navigationAttempts = eventDebug["navigationAttempts"] as? [String] {
+                        TabPersistenceManager.debugMessages.append("🐛 [Step 1] 네비게이션 시도: \(navigationAttempts.prefix(3).joined(separator: ", "))")
+                    }
+                }
+                
                 // 기존 콘텐츠 복원 결과
                 if let currentHeight = resultDict["currentHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
@@ -318,9 +332,9 @@ struct BFCacheSnapshot: Codable {
 
                 if !step1Success && !isStaticSiteFlag && targetHeightValue > 0 && percentageValue < 70 && attempt < maxStep1Retries {
                     shouldRetry = true
-                    TabPersistenceManager.debugMessages.append("?? [Step 1] 복원률 부족 - 재시도 예정 (\(attempt + 1)/\(maxStep1Retries + 1))")
+                    TabPersistenceManager.debugMessages.append("🔄 [Step 1] 복원률 부족 - 재시도 예정 (\(attempt + 1)/\(maxStep1Retries + 1))")
                 } else if !step1Success && attempt >= maxStep1Retries && !shouldRetry {
-                    TabPersistenceManager.debugMessages.append("?? [Step 1] 복원 재시도 한계 도달")
+                    TabPersistenceManager.debugMessages.append("⚠️ [Step 1] 복원 재시도 한계 도달")
                 }
             }
             
@@ -533,7 +547,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원
+    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화
     private func generateStep1_LazyLoadAndContentRestoreScript(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
         let targetHeight = restorationConfig.savedContentHeight
         let targetY = scrollPosition.y
@@ -547,12 +561,56 @@ struct BFCacheSnapshot: Codable {
                 const parentScrollStates = \(parentScrollDataJSON);
                 const enableLazyLoading = \(enableLazyLoading ? "true" : "false");
                 
+                // 🐛 **디버그 강화: 이벤트 및 히스토리 추적**
+                const eventDebugResults = {
+                    domEventTargets: [],
+                    historyPushStates: [],
+                    navigationAttempts: [],
+                    clickedElements: [],
+                    scrollEventTargets: []
+                };
+                
+                // 🐛 **history.pushState 모니터링**
+                const originalPushState = window.history.pushState;
+                window.history.pushState = function(state, title, url) {
+                    eventDebugResults.historyPushStates.push('[pushState] url=' + (url || 'null') + ', title=' + (title || 'null') + ', state=' + JSON.stringify(state));
+                    logs.push('🐛 pushState 감지: ' + (url || 'null'));
+                    return originalPushState.apply(this, arguments);
+                };
+                
+                // 🐛 **네비게이션 이벤트 모니터링**
+                const originalLocation = window.location.href;
+                function checkNavigation() {
+                    const newLocation = window.location.href;
+                    if (newLocation !== originalLocation) {
+                        eventDebugResults.navigationAttempts.push('[Navigation] ' + originalLocation + ' -> ' + newLocation);
+                        logs.push('🐛 네비게이션 감지: ' + newLocation);
+                    }
+                }
+                
+                // 🐛 **DOM 이벤트 추적 함수**
+                function trackEventTarget(eventType, target) {
+                    try {
+                        let targetInfo = target.tagName || 'unknown';
+                        if (target.id) targetInfo += '#' + target.id;
+                        if (target.className) targetInfo += '.' + target.className.split(' ')[0];
+                        if (target.textContent) {
+                            const text = target.textContent.trim().substring(0, 30);
+                            if (text) targetInfo += ' "' + text + '"';
+                        }
+                        eventDebugResults.domEventTargets.push('[' + eventType + '] ' + targetInfo);
+                        logs.push('🐛 ' + eventType + ' 이벤트 대상: ' + targetInfo);
+                    } catch(e) {
+                        eventDebugResults.domEventTargets.push('[' + eventType + '] 추적 실패: ' + e.message);
+                    }
+                }
+                
                 const currentHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
                     document.body ? document.body.scrollHeight : 0
                 ) || 0;
                 
-                logs.push('[Step 1] Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
+                logs.push('[Step 1] 🐛 디버그 강화 - Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 logs.push('목표 Y 위치: ' + targetY.toFixed(0) + 'px');
@@ -570,6 +628,10 @@ struct BFCacheSnapshot: Codable {
                     window.scrollTo(0, targetY);
                     document.documentElement.scrollTop = targetY;
                     document.body.scrollTop = targetY;
+                    
+                    // 🐛 스크롤 이벤트 대상 추적
+                    trackEventTarget('scroll', document.body);
+                    eventDebugResults.scrollEventTargets.push('window, documentElement, body');
                     
                     // 2. Lozad 스타일 triggerLoad 함수 찾기 및 실행
                     if (typeof window.lozad !== 'undefined' && window.lozad.triggerLoad) {
@@ -612,7 +674,10 @@ struct BFCacheSnapshot: Codable {
                     logs.push('Lazy 이미지 트리거: ' + lazyLoadingResults.triggered + '개');
                     
                     // 4. 스크롤 이벤트 디스패치 (lazy loading 활성화)
-                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    const scrollEvent = new Event('scroll', { bubbles: true });
+                    window.dispatchEvent(scrollEvent);
+                    trackEventTarget('scroll_dispatch', window);
+                    
                     window.dispatchEvent(new Event('resize', { bubbles: true }));
                     document.dispatchEvent(new Event('scroll', { bubbles: true }));
                     
@@ -642,6 +707,9 @@ struct BFCacheSnapshot: Codable {
                                     scrollLeft: state.scrollLeft
                                 });
                                 logs.push('부모 스크롤 복원 성공: ' + state.selector);
+                                
+                                // 🐛 부모 스크롤 이벤트 추적
+                                trackEventTarget('parent_scroll', element);
                             } else {
                                 parentScrollResults.push({
                                     selector: state.selector,
@@ -660,6 +728,10 @@ struct BFCacheSnapshot: Codable {
                 // 타입 안전성 체크
                 if (!targetHeight || targetHeight === 0) {
                     logs.push('목표 높이가 유효하지 않음 - 스킵');
+                    
+                    // 🐛 디버그 결과 복원
+                    window.history.pushState = originalPushState;
+                    
                     return {
                         success: false,
                         currentHeight: currentHeight,
@@ -669,6 +741,7 @@ struct BFCacheSnapshot: Codable {
                         lazyLoadingResults: lazyLoadingResults,
                         parentScrollCount: parentScrollCount,
                         parentScrollResults: parentScrollResults,
+                        eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
                         logs: logs
                     };
                 }
@@ -679,6 +752,10 @@ struct BFCacheSnapshot: Codable {
                 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+                    
+                    // 🐛 디버그 결과 복원
+                    window.history.pushState = originalPushState;
+                    
                     return {
                         success: true,
                         isStaticSite: true,
@@ -689,6 +766,7 @@ struct BFCacheSnapshot: Codable {
                         lazyLoadingResults: lazyLoadingResults,
                         parentScrollCount: parentScrollCount,
                         parentScrollResults: parentScrollResults,
+                        eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
                         logs: logs
                     };
                 }
@@ -752,7 +830,7 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견');
                 
-                // 더보기 버튼 클릭 (최대 15개)
+                // 더보기 버튼 클릭 (최대 15개) + 🐛 디버그 추적
                 let clicked = 0;
                 const maxClicks = Math.min(15, loadMoreButtons.length);
                 
@@ -767,8 +845,15 @@ struct BFCacheSnapshot: Codable {
                                              computedStyle.visibility !== 'hidden';
                             
                             if (isVisible) {
+                                // 🐛 클릭 전 디버깅
+                                trackEventTarget('click_before', btn);
+                                eventDebugResults.clickedElements.push(btn.tagName + (btn.className ? '.' + btn.className.split(' ')[0] : '') + (btn.textContent ? ' "' + btn.textContent.trim().substring(0, 20) + '"' : ''));
+                                
                                 btn.click();
                                 clicked++;
+                                
+                                // 🐛 클릭 후 네비게이션 체크
+                                setTimeout(checkNavigation, 100);
                                 
                                 // 추가 이벤트 디스패치
                                 const clickEvent = new MouseEvent('click', {
@@ -777,10 +862,14 @@ struct BFCacheSnapshot: Codable {
                                     cancelable: true
                                 });
                                 btn.dispatchEvent(clickEvent);
+                                
+                                // 🐛 클릭 후 디버깅
+                                trackEventTarget('click_after', btn);
                             }
                         }
                     } catch(clickError) {
-                        // 클릭 에러 무시
+                        eventDebugResults.clickedElements.push('클릭 오류: ' + clickError.message);
+                        logs.push('🐛 버튼 클릭 오류: ' + clickError.message);
                     }
                 }
                 
@@ -788,7 +877,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                 }
                 
-                // 🚀 무한스크롤 트리거 - 최대 8번 시도
+                // 🚀 무한스크롤 트리거 - 최대 8번 시도 + 🐛 디버그 추적
                 logs.push('무한스크롤 트리거 시작 (최대 8번 시도)');
                 const maxScrollAttempts = 8;
                 let previousHeight = currentHeight;
@@ -807,6 +896,10 @@ struct BFCacheSnapshot: Codable {
                             document.scrollingElement.scrollTop = maxScrollY;
                         }
                         
+                        // 🐛 스크롤 이벤트 대상 추적
+                        trackEventTarget('infinite_scroll', window);
+                        eventDebugResults.scrollEventTargets.push('attempt_' + attempt + '_scrollY_' + maxScrollY);
+                        
                         // 스크롤 이벤트 디스패치
                         window.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
                         document.dispatchEvent(new Event('scroll', { bubbles: true, cancelable: true }));
@@ -817,6 +910,9 @@ struct BFCacheSnapshot: Codable {
                         
                         // IntersectionObserver 트리거를 위한 강제 리플로우
                         void(document.body.offsetHeight);
+                        
+                        // 🐛 네비게이션 체크
+                        checkNavigation();
                         
                         // 새로운 높이 측정
                         const newHeight = Math.max(
@@ -840,6 +936,7 @@ struct BFCacheSnapshot: Codable {
                         
                     } catch(scrollError) {
                         logs.push('시도 ' + attempt + ' 실패: ' + (scrollError.message || 'unknown'));
+                        eventDebugResults.scrollEventTargets.push('attempt_' + attempt + '_error: ' + scrollError.message);
                     }
                 }
                 
@@ -857,6 +954,13 @@ struct BFCacheSnapshot: Codable {
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 logs.push('Lazy Loading 트리거: ' + lazyLoadingResults.triggered + '개 (' + lazyLoadingResults.method + ')');
                 logs.push('부모 스크롤 복원: ' + parentScrollCount + '개 성공');
+                logs.push('🐛 클릭된 요소: ' + eventDebugResults.clickedElements.length + '개');
+                logs.push('🐛 이벤트 대상: ' + eventDebugResults.domEventTargets.length + '개');
+                logs.push('🐛 pushState 호출: ' + eventDebugResults.historyPushStates.length + '회');
+                logs.push('🐛 네비게이션 시도: ' + eventDebugResults.navigationAttempts.length + '회');
+                
+                // 🐛 디버그 결과 복원
+                window.history.pushState = originalPushState;
                 
                 return {
                     success: success,
@@ -870,6 +974,7 @@ struct BFCacheSnapshot: Codable {
                     lazyLoadingResults: lazyLoadingResults,
                     parentScrollCount: parentScrollCount,
                     parentScrollResults: parentScrollResults,
+                    eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
                     logs: logs
                 };
                 
@@ -877,6 +982,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message || 'Unknown error',
+                    eventDebugResults: eventDebugResults || {},
                     logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
                 };
             }
