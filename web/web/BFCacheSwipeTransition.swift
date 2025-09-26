@@ -10,6 +10,7 @@
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 //  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
 //  🐛 **디버그 강화**: 이벤트/히스토리 추적 로깅 추가
+//  🎯 **하단 더보기 선택자 개선**: 상단 탭/카테고리 제외, 하단 영역만 선택
 
 import UIKit
 import WebKit
@@ -547,7 +548,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화
+    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화 + 🎯 하단 더보기 선택자 개선
     private func generateStep1_LazyLoadAndContentRestoreScript(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
         let targetHeight = restorationConfig.savedContentHeight
         let targetY = scrollPosition.y
@@ -774,52 +775,120 @@ struct BFCacheSnapshot: Codable {
                 // 동적 사이트 - 콘텐츠 로드 시도
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                // 🚀 확장된 더보기 버튼 선택자
-                const loadMoreSelectors = [
-                    // 기본 선택자
-                    '[data-testid*="load"]', '[data-testid*="more"]',
-                    '[class*="load"]', '[class*="more"]', '[class*="show"]',
+                // 🎯 **개선된 하단 더보기 버튼 선택자 (상단 탭/카테고리 제외)**
+                function isElementInBottomArea(element) {
+                    try {
+                        const rect = element.getBoundingClientRect();
+                        const elementTop = window.scrollY + rect.top;
+                        const documentHeight = Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight
+                        );
+                        const viewportHeight = window.innerHeight;
+                        
+                        // 하단 50% 영역에 있는지 확인
+                        const bottomThreshold = documentHeight * 0.5;
+                        const isInBottomArea = elementTop > bottomThreshold;
+                        
+                        // 현재 뷰포트 기준으로도 확인 (현재 스크롤 위치 하단 영역)
+                        const currentViewportBottom = window.scrollY + viewportHeight;
+                        const isNearCurrentView = Math.abs(elementTop - currentViewportBottom) < viewportHeight * 2;
+                        
+                        return isInBottomArea || isNearCurrentView;
+                    } catch(e) {
+                        return false;
+                    }
+                }
+                
+                function hasLoadMoreLikeText(element) {
+                    try {
+                        const text = (element.textContent || '').trim().toLowerCase();
+                        const loadMoreTexts = [
+                            '더보기', '더 보기', '더 불러오기', '계속', '다음', '추가', 
+                            'load more', 'show more', 'view more', 'see more', 'more', 'next', 
+                            'continue', 'load', 'expand', '펼치기'
+                        ];
+                        
+                        return loadMoreTexts.some(function(keyword) {
+                            return text.includes(keyword);
+                        });
+                    } catch(e) {
+                        return false;
+                    }
+                }
+                
+                function isInContentListArea(element) {
+                    try {
+                        // 리스트나 콘텐츠 컨테이너 내부에 있는지 확인
+                        let parent = element.parentElement;
+                        let depth = 0;
+                        while (parent && depth < 5) {
+                            const classList = Array.from(parent.classList);
+                            const hasListClass = classList.some(function(className) {
+                                return className.toLowerCase().includes('list') ||
+                                       className.toLowerCase().includes('content') ||
+                                       className.toLowerCase().includes('feed') ||
+                                       className.toLowerCase().includes('items') ||
+                                       className.toLowerCase().includes('container');
+                            });
+                            
+                            if (hasListClass) return true;
+                            
+                            parent = parent.parentElement;
+                            depth++;
+                        }
+                        return false;
+                    } catch(e) {
+                        return false;
+                    }
+                }
+                
+                // 🎯 **하단 더보기 전용 선택자 (상단 탭 제외)**
+                const bottomLoadMoreSelectors = [
+                    // 명확한 하단 더보기 선택자 (클래스명 기반)
+                    '.load-more', '.show-more', '.view-more', '.see-more', '.more-btn',
+                    '.btn-more', '.btn-load', '.btn-show', '.more-button', '.load-button',
+                    
+                    // data 속성 기반 (더 안전함)
+                    '[data-action="load-more"]', '[data-action="show-more"]', 
+                    '[data-testid*="load-more"]', '[data-testid*="show-more"]',
+                    '[data-role="load-more"]', '[data-role="show-more"]',
+                    
+                    // ID 기반 (명확한 더보기)
+                    '#load-more', '#show-more', '#view-more', '#loadmore', '#showmore',
+                    '[id*="load-more"]', '[id*="loadmore"]', '[id*="show-more"]', '[id*="showmore"]',
+                    
+                    // 페이지네이션 (하단 영역)
+                    '.pagination .next', '.pagination .more', '.pager .next', '.pager .more',
+                    '.next-page', '.next-btn', '.load-next'
+                ];
+                
+                // 🎯 **추가 검증이 필요한 선택자 (위치/텍스트 확인 필요)**
+                const conditionalSelectors = [
                     'button[class*="more"]', 'button[class*="load"]', 'button[class*="show"]',
-                    '.load-more', '.show-more', '.view-more', '.see-more',
-                    
-                    // 추가 선택자
+                    'a[class*="more"]', 'a[class*="load"]', 'a[class*="show"]',
                     'button[aria-label*="more"]', 'button[aria-label*="load"]',
-                    'a[class*="more"]', 'a[class*="load"]',
-                    'div[class*="more"]', 'div[class*="load"]',
-                    'span[class*="more"]', 'span[class*="load"]',
-                    '[role="button"][class*="more"]', '[role="button"][class*="load"]',
-                    
-                    // 한글 선택자
                     'button:contains("더보기")', 'button:contains("더 보기")',
-                    'button:contains("더 불러오기")', 'button:contains("계속")',
-                    
-                    // 영문 선택자
                     'button:contains("Load More")', 'button:contains("Show More")',
-                    'button:contains("View More")', 'button:contains("See More")',
-                    'button:contains("More")', 'button:contains("Next")',
-                    
-                    // ID 기반
-                    '[id*="loadmore"]', '[id*="load-more"]', '[id*="showmore"]',
-                    
-                    // data 속성
-                    '[data-action*="load"]', '[data-action*="more"]',
-                    '[data-click*="load"]', '[data-click*="more"]',
-                    
-                    // 페이지네이션
-                    '.pagination button', '.pagination a',
-                    '[class*="pagination"] button', '[class*="pagination"] a',
-                    '.next-page', '.next-btn', 'button.next'
+                    'button:contains("More")', 'button:contains("Next")'
                 ];
                 
                 const loadMoreButtons = [];
-                for (let i = 0; i < loadMoreSelectors.length; i++) {
+                
+                // 1. 명확한 하단 더보기 선택자로 찾기
+                for (let i = 0; i < bottomLoadMoreSelectors.length; i++) {
                     try {
-                        const selector = loadMoreSelectors[i];
+                        const selector = bottomLoadMoreSelectors[i];
                         const elements = document.querySelectorAll(selector);
                         if (elements && elements.length > 0) {
                             for (let j = 0; j < elements.length; j++) {
-                                if (elements[j] && !loadMoreButtons.includes(elements[j])) {
-                                    loadMoreButtons.push(elements[j]);
+                                const element = elements[j];
+                                if (element && !loadMoreButtons.includes(element)) {
+                                    // 하단 영역에 있는지 확인
+                                    if (isElementInBottomArea(element)) {
+                                        loadMoreButtons.push(element);
+                                        logs.push('명확한 하단 더보기 버튼 발견: ' + selector);
+                                    }
                                 }
                             }
                         }
@@ -828,11 +897,40 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                logs.push('더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견');
+                // 2. 조건부 선택자로 추가 찾기 (위치, 텍스트, 컨텍스트 확인)
+                for (let i = 0; i < conditionalSelectors.length; i++) {
+                    try {
+                        const selector = conditionalSelectors[i];
+                        const elements = document.querySelectorAll(selector);
+                        if (elements && elements.length > 0) {
+                            for (let j = 0; j < elements.length; j++) {
+                                const element = elements[j];
+                                if (element && !loadMoreButtons.includes(element)) {
+                                    // 여러 조건 검사
+                                    const inBottomArea = isElementInBottomArea(element);
+                                    const hasLoadText = hasLoadMoreLikeText(element);
+                                    const inContentArea = isInContentListArea(element);
+                                    
+                                    // 3개 조건 중 2개 이상 만족해야 함
+                                    const conditionCount = [inBottomArea, hasLoadText, inContentArea].filter(Boolean).length;
+                                    
+                                    if (conditionCount >= 2) {
+                                        loadMoreButtons.push(element);
+                                        logs.push('조건부 하단 더보기 버튼 발견: ' + selector + ' (조건: ' + conditionCount + '/3)');
+                                    }
+                                }
+                            }
+                        }
+                    } catch(selectorError) {
+                        // 선택자 에러 무시
+                    }
+                }
                 
-                // 더보기 버튼 클릭 (최대 15개) + 🐛 디버그 추적
+                logs.push('하단 더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견 (상단 탭/카테고리 제외)');
+                
+                // 더보기 버튼 클릭 (최대 10개로 제한) + 🐛 디버그 추적
                 let clicked = 0;
-                const maxClicks = Math.min(15, loadMoreButtons.length);
+                const maxClicks = Math.min(10, loadMoreButtons.length);
                 
                 for (let i = 0; i < maxClicks; i++) {
                     try {
@@ -874,7 +972,7 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
+                    logs.push('하단 더보기 버튼 ' + clicked + '개 클릭 완료 (상단 탭 제외)');
                 }
                 
                 // 🚀 무한스크롤 트리거 - 최대 8번 시도 + 🐛 디버그 추적
@@ -954,6 +1052,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 logs.push('Lazy Loading 트리거: ' + lazyLoadingResults.triggered + '개 (' + lazyLoadingResults.method + ')');
                 logs.push('부모 스크롤 복원: ' + parentScrollCount + '개 성공');
+                logs.push('🎯 하단 더보기 클릭: ' + clicked + '개 (상단 탭 제외)');
                 logs.push('🐛 클릭된 요소: ' + eventDebugResults.clickedElements.length + '개');
                 logs.push('🐛 이벤트 대상: ' + eventDebugResults.domEventTargets.length + '개');
                 logs.push('🐛 pushState 호출: ' + eventDebugResults.historyPushStates.length + '회');
@@ -1602,7 +1701,7 @@ extension BFCacheTransitionSystem {
             return
         }
 
-        // 캡처 완료 후 저장
+        // 캐처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
@@ -1743,7 +1842,7 @@ extension BFCacheTransitionSystem {
                     jsState = data
                     TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                     
-                    // 📊 **상세 캡처 결과 로깅**
+                    // 📊 **상세 캐처 결과 로깅**
                     if let parentScrollStates = data["parentScrollStates"] as? [[String: Any]] {
                         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 상태: \(parentScrollStates.count)개 캡처")
                     }
@@ -1774,7 +1873,7 @@ extension BFCacheTransitionSystem {
             TabPersistenceManager.debugMessages.append("✅ 완전 캡처 성공")
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캐처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
         } else {
             captureStatus = .failed
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패")
@@ -1841,7 +1940,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🆕 JavaScript 앵커 캡처 스크립트 개선 - 부모 스크롤 상태 추가
+    // 🆕 JavaScript 앵커 캐처 스크립트 개선 - 부모 스크롤 상태 추가
     private func generateInfiniteScrollAnchorCaptureScriptWithParentScroll() -> String {
         return """
         (function() {
