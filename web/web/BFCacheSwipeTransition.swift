@@ -1197,7 +1197,7 @@ extension BFCacheTransitionSystem {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
+        _ = domSemaphore.wait(timeout: .now() + 3.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
         // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
@@ -1231,7 +1231,7 @@ extension BFCacheTransitionSystem {
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
+        _ = jsSemaphore.wait(timeout: .now() + 3.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
