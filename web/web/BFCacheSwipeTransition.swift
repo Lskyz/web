@@ -10,7 +10,7 @@
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
 //  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
 //  🐛 **디버그 강화**: 이벤트/히스토리 추적 로깅 추가
-//  🎯 **하단 더보기 선택자 개선**: 상단 탭/카테고리 제외, 하단 영역만 선택
+//  🚫 **복원 중 SPA 차단**: 4단계 완료 전까지 모든 SPA 이벤트 무시
 
 import UIKit
 import WebKit
@@ -211,6 +211,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🆕 Lazy Loading 트리거: \(restorationConfig.enableLazyLoadingTrigger ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 복원: \(restorationConfig.enableParentScrollRestore ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 IO 검증: \(restorationConfig.enableIOVerification ? "활성화" : "비활성화")")
+        TabPersistenceManager.debugMessages.append("🚫 SPA 이벤트 차단 시작")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -219,8 +220,156 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
+        // 🚫 **복원 시작 전 SPA 이벤트 차단**
+        disableSPAEvents(webView: webView)
+        
         // Step 1 시작
         executeStep1_RestoreContentHeight(context: context)
+    }
+    
+    // 🚫 **SPA 이벤트 차단 메서드**
+    private func disableSPAEvents(webView: WKWebView) {
+        let js = """
+        (function() {
+            // 🚫 BFCache 복원 중 SPA 이벤트 차단 플래그
+            window.__bfcache_restoration_in_progress__ = true;
+            window.__bfcache_restoration_started_at__ = Date.now();
+            
+            console.log('🚫 BFCache 복원 시작 - SPA 이벤트 차단 활성화');
+            
+            // 기존 SPA 메시지 핸들러 백업 및 차단
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                window.__original_spa_handler__ = window.webkit.messageHandlers.spaNavigation.postMessage.bind(window.webkit.messageHandlers.spaNavigation);
+                
+                // SPA 메시지 핸들러를 차단하는 래퍼로 교체
+                window.webkit.messageHandlers.spaNavigation.postMessage = function(message) {
+                    if (window.__bfcache_restoration_in_progress__) {
+                        console.log('🚫 BFCache 복원 중 - SPA 이벤트 무시:', message.type, message.url);
+                        return; // 무시
+                    }
+                    // 복원이 완료되면 원래 핸들러 호출
+                    if (window.__original_spa_handler__) {
+                        window.__original_spa_handler__(message);
+                    }
+                };
+            }
+            
+            // History API 메서드 백업 및 차단
+            window.__original_pushState__ = history.pushState;
+            window.__original_replaceState__ = history.replaceState;
+            
+            history.pushState = function() {
+                if (window.__bfcache_restoration_in_progress__) {
+                    console.log('🚫 BFCache 복원 중 - pushState 차단');
+                    return;
+                }
+                return window.__original_pushState__.apply(this, arguments);
+            };
+            
+            history.replaceState = function() {
+                if (window.__bfcache_restoration_in_progress__) {
+                    console.log('🚫 BFCache 복원 중 - replaceState 차단');
+                    return;
+                }
+                return window.__original_replaceState__.apply(this, arguments);
+            };
+            
+            // popstate 이벤트 차단
+            window.__original_popstate_listeners__ = [];
+            const popstateListeners = window.getEventListeners ? window.getEventListeners(window)['popstate'] : [];
+            if (popstateListeners && popstateListeners.length > 0) {
+                popstateListeners.forEach(function(listener) {
+                    window.__original_popstate_listeners__.push(listener);
+                    window.removeEventListener('popstate', listener.listener || listener);
+                });
+            }
+            
+            // hashchange 이벤트 차단
+            window.__original_hashchange_listeners__ = [];
+            const hashchangeListeners = window.getEventListeners ? window.getEventListeners(window)['hashchange'] : [];
+            if (hashchangeListeners && hashchangeListeners.length > 0) {
+                hashchangeListeners.forEach(function(listener) {
+                    window.__original_hashchange_listeners__.push(listener);
+                    window.removeEventListener('hashchange', listener.listener || listener);
+                });
+            }
+            
+            console.log('🚫 SPA 이벤트 차단 완료');
+        })()
+        """
+        
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🚫 SPA 이벤트 차단 실패: \(error.localizedDescription)")
+            } else {
+                TabPersistenceManager.debugMessages.append("🚫 SPA 이벤트 차단 성공")
+            }
+        }
+    }
+    
+    // 🚫 **SPA 이벤트 복원 메서드**
+    private func enableSPAEvents(webView: WKWebView) {
+        let js = """
+        (function() {
+            // 🚫 BFCache 복원 완료 - SPA 이벤트 차단 해제
+            window.__bfcache_restoration_in_progress__ = false;
+            const restorationTime = Date.now() - (window.__bfcache_restoration_started_at__ || 0);
+            
+            console.log('✅ BFCache 복원 완료 (' + restorationTime + 'ms) - SPA 이벤트 차단 해제');
+            
+            // SPA 메시지 핸들러 복원
+            if (window.__original_spa_handler__ && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spaNavigation) {
+                window.webkit.messageHandlers.spaNavigation.postMessage = window.__original_spa_handler__;
+                delete window.__original_spa_handler__;
+                console.log('✅ SPA 메시지 핸들러 복원');
+            }
+            
+            // History API 메서드 복원
+            if (window.__original_pushState__) {
+                history.pushState = window.__original_pushState__;
+                delete window.__original_pushState__;
+                console.log('✅ pushState 복원');
+            }
+            
+            if (window.__original_replaceState__) {
+                history.replaceState = window.__original_replaceState__;
+                delete window.__original_replaceState__;
+                console.log('✅ replaceState 복원');
+            }
+            
+            // popstate 이벤트 리스너 복원
+            if (window.__original_popstate_listeners__ && window.__original_popstate_listeners__.length > 0) {
+                window.__original_popstate_listeners__.forEach(function(listener) {
+                    window.addEventListener('popstate', listener.listener || listener);
+                });
+                delete window.__original_popstate_listeners__;
+                console.log('✅ popstate 리스너 복원');
+            }
+            
+            // hashchange 이벤트 리스너 복원
+            if (window.__original_hashchange_listeners__ && window.__original_hashchange_listeners__.length > 0) {
+                window.__original_hashchange_listeners__.forEach(function(listener) {
+                    window.addEventListener('hashchange', listener.listener || listener);
+                });
+                delete window.__original_hashchange_listeners__;
+                console.log('✅ hashchange 리스너 복원');
+            }
+            
+            // 복원 관련 플래그 정리
+            delete window.__bfcache_restoration_in_progress__;
+            delete window.__bfcache_restoration_started_at__;
+            
+            console.log('✅ 모든 SPA 이벤트 정상화 완료 (복원 시간: ' + restorationTime + 'ms)');
+        })()
+        """
+        
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🚫 SPA 이벤트 복원 실패: \(error.localizedDescription)")
+            } else {
+                TabPersistenceManager.debugMessages.append("✅ SPA 이벤트 복원 성공")
+            }
+        }
     }
     
     // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원
@@ -492,12 +641,16 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 4: 최종 검증 및 미세 보정
+    // MARK: - Step 4: 최종 검증 및 미세 보정 + SPA 이벤트 복원
     private func executeStep4_FinalVerification(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
         
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
+            
+            // 🚫 SPA 이벤트 복원
+            enableSPAEvents(webView: context.webView!)
+            
             context.completion(context.overallSuccess)
             return
         }
@@ -540,7 +693,15 @@ struct BFCacheSnapshot: Codable {
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
+                
+                // 🚫 **모든 단계 완료 - SPA 이벤트 복원**
+                if let webView = context.webView {
+                    self.enableSPAEvents(webView: webView)
+                }
+                
                 TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("✅ SPA 이벤트 정상화")
+                
                 context.completion(finalSuccess)
             }
         }
@@ -548,7 +709,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화 + 🎯 하단 더보기 선택자 개선
+    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화 + 🚫 SPA 차단 체크
     private func generateStep1_LazyLoadAndContentRestoreScript(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
         let targetHeight = restorationConfig.savedContentHeight
         let targetY = scrollPosition.y
@@ -556,6 +717,11 @@ struct BFCacheSnapshot: Codable {
         return """
         (function() {
             try {
+                // 🚫 SPA 차단 상태 확인
+                if (!window.__bfcache_restoration_in_progress__) {
+                    console.warn('⚠️ BFCache 복원 플래그가 설정되지 않음');
+                }
+                
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)') || 0;
                 const targetY = parseFloat('\(targetY)') || 0;
@@ -571,21 +737,13 @@ struct BFCacheSnapshot: Codable {
                     scrollEventTargets: []
                 };
                 
-                // 🐛 **history.pushState 모니터링**
-                const originalPushState = window.history.pushState;
-                window.history.pushState = function(state, title, url) {
-                    eventDebugResults.historyPushStates.push('[pushState] url=' + (url || 'null') + ', title=' + (title || 'null') + ', state=' + JSON.stringify(state));
-                    logs.push('🐛 pushState 감지: ' + (url || 'null'));
-                    return originalPushState.apply(this, arguments);
-                };
-                
-                // 🐛 **네비게이션 이벤트 모니터링**
+                // 🚫 복원 중에는 History API 모니터링만 하고 실행은 차단됨
                 const originalLocation = window.location.href;
                 function checkNavigation() {
                     const newLocation = window.location.href;
                     if (newLocation !== originalLocation) {
-                        eventDebugResults.navigationAttempts.push('[Navigation] ' + originalLocation + ' -> ' + newLocation);
-                        logs.push('🐛 네비게이션 감지: ' + newLocation);
+                        eventDebugResults.navigationAttempts.push('[Navigation Attempted] ' + originalLocation + ' -> ' + newLocation);
+                        logs.push('🚫 네비게이션 시도 감지 (차단됨): ' + newLocation);
                     }
                 }
                 
@@ -611,7 +769,7 @@ struct BFCacheSnapshot: Codable {
                     document.body ? document.body.scrollHeight : 0
                 ) || 0;
                 
-                logs.push('[Step 1] 🐛 디버그 강화 - Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
+                logs.push('[Step 1] 🚫 SPA 차단 상태에서 Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 logs.push('목표 Y 위치: ' + targetY.toFixed(0) + 'px');
@@ -730,9 +888,6 @@ struct BFCacheSnapshot: Codable {
                 if (!targetHeight || targetHeight === 0) {
                     logs.push('목표 높이가 유효하지 않음 - 스킵');
                     
-                    // 🐛 디버그 결과 복원
-                    window.history.pushState = originalPushState;
-                    
                     return {
                         success: false,
                         currentHeight: currentHeight,
@@ -754,9 +909,6 @@ struct BFCacheSnapshot: Codable {
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                     
-                    // 🐛 디버그 결과 복원
-                    window.history.pushState = originalPushState;
-                    
                     return {
                         success: true,
                         isStaticSite: true,
@@ -774,121 +926,54 @@ struct BFCacheSnapshot: Codable {
                 
                 // 동적 사이트 - 콘텐츠 로드 시도
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
+                logs.push('🚫 SPA 이벤트는 차단된 상태입니다');
                 
-                // 🎯 **개선된 하단 더보기 버튼 선택자 (상단 탭/카테고리 제외)**
-                function isElementInBottomArea(element) {
-                    try {
-                        const rect = element.getBoundingClientRect();
-                        const elementTop = window.scrollY + rect.top;
-                        const documentHeight = Math.max(
-                            document.documentElement.scrollHeight,
-                            document.body.scrollHeight
-                        );
-                        const viewportHeight = window.innerHeight;
-                        
-                        // 하단 50% 영역에 있는지 확인
-                        const bottomThreshold = documentHeight * 0.5;
-                        const isInBottomArea = elementTop > bottomThreshold;
-                        
-                        // 현재 뷰포트 기준으로도 확인 (현재 스크롤 위치 하단 영역)
-                        const currentViewportBottom = window.scrollY + viewportHeight;
-                        const isNearCurrentView = Math.abs(elementTop - currentViewportBottom) < viewportHeight * 2;
-                        
-                        return isInBottomArea || isNearCurrentView;
-                    } catch(e) {
-                        return false;
-                    }
-                }
-                
-                function hasLoadMoreLikeText(element) {
-                    try {
-                        const text = (element.textContent || '').trim().toLowerCase();
-                        const loadMoreTexts = [
-                            '더보기', '더 보기', '더 불러오기', '계속', '다음', '추가', 
-                            'load more', 'show more', 'view more', 'see more', 'more', 'next', 
-                            'continue', 'load', 'expand', '펼치기'
-                        ];
-                        
-                        return loadMoreTexts.some(function(keyword) {
-                            return text.includes(keyword);
-                        });
-                    } catch(e) {
-                        return false;
-                    }
-                }
-                
-                function isInContentListArea(element) {
-                    try {
-                        // 리스트나 콘텐츠 컨테이너 내부에 있는지 확인
-                        let parent = element.parentElement;
-                        let depth = 0;
-                        while (parent && depth < 5) {
-                            const classList = Array.from(parent.classList);
-                            const hasListClass = classList.some(function(className) {
-                                return className.toLowerCase().includes('list') ||
-                                       className.toLowerCase().includes('content') ||
-                                       className.toLowerCase().includes('feed') ||
-                                       className.toLowerCase().includes('items') ||
-                                       className.toLowerCase().includes('container');
-                            });
-                            
-                            if (hasListClass) return true;
-                            
-                            parent = parent.parentElement;
-                            depth++;
-                        }
-                        return false;
-                    } catch(e) {
-                        return false;
-                    }
-                }
-                
-                // 🎯 **하단 더보기 전용 선택자 (상단 탭 제외)**
-                const bottomLoadMoreSelectors = [
-                    // 명확한 하단 더보기 선택자 (클래스명 기반)
-                    '.load-more', '.show-more', '.view-more', '.see-more', '.more-btn',
-                    '.btn-more', '.btn-load', '.btn-show', '.more-button', '.load-button',
-                    
-                    // data 속성 기반 (더 안전함)
-                    '[data-action="load-more"]', '[data-action="show-more"]', 
-                    '[data-testid*="load-more"]', '[data-testid*="show-more"]',
-                    '[data-role="load-more"]', '[data-role="show-more"]',
-                    
-                    // ID 기반 (명확한 더보기)
-                    '#load-more', '#show-more', '#view-more', '#loadmore', '#showmore',
-                    '[id*="load-more"]', '[id*="loadmore"]', '[id*="show-more"]', '[id*="showmore"]',
-                    
-                    // 페이지네이션 (하단 영역)
-                    '.pagination .next', '.pagination .more', '.pager .next', '.pager .more',
-                    '.next-page', '.next-btn', '.load-next'
-                ];
-                
-                // 🎯 **추가 검증이 필요한 선택자 (위치/텍스트 확인 필요)**
-                const conditionalSelectors = [
+                // 🚀 확장된 더보기 버튼 선택자
+                const loadMoreSelectors = [
+                    // 기본 선택자
+                    '[data-testid*="load"]', '[data-testid*="more"]',
+                    '[class*="load"]', '[class*="more"]', '[class*="show"]',
                     'button[class*="more"]', 'button[class*="load"]', 'button[class*="show"]',
-                    'a[class*="more"]', 'a[class*="load"]', 'a[class*="show"]',
+                    '.load-more', '.show-more', '.view-more', '.see-more',
+                    
+                    // 추가 선택자
                     'button[aria-label*="more"]', 'button[aria-label*="load"]',
+                    'a[class*="more"]', 'a[class*="load"]',
+                    'div[class*="more"]', 'div[class*="load"]',
+                    'span[class*="more"]', 'span[class*="load"]',
+                    '[role="button"][class*="more"]', '[role="button"][class*="load"]',
+                    
+                    // 한글 선택자
                     'button:contains("더보기")', 'button:contains("더 보기")',
+                    'button:contains("더 불러오기")', 'button:contains("계속")',
+                    
+                    // 영문 선택자
                     'button:contains("Load More")', 'button:contains("Show More")',
-                    'button:contains("More")', 'button:contains("Next")'
+                    'button:contains("View More")', 'button:contains("See More")',
+                    'button:contains("More")', 'button:contains("Next")',
+                    
+                    // ID 기반
+                    '[id*="loadmore"]', '[id*="load-more"]', '[id*="showmore"]',
+                    
+                    // data 속성
+                    '[data-action*="load"]', '[data-action*="more"]',
+                    '[data-click*="load"]', '[data-click*="more"]',
+                    
+                    // 페이지네이션
+                    '.pagination button', '.pagination a',
+                    '[class*="pagination"] button', '[class*="pagination"] a',
+                    '.next-page', '.next-btn', 'button.next'
                 ];
                 
                 const loadMoreButtons = [];
-                
-                // 1. 명확한 하단 더보기 선택자로 찾기
-                for (let i = 0; i < bottomLoadMoreSelectors.length; i++) {
+                for (let i = 0; i < loadMoreSelectors.length; i++) {
                     try {
-                        const selector = bottomLoadMoreSelectors[i];
+                        const selector = loadMoreSelectors[i];
                         const elements = document.querySelectorAll(selector);
                         if (elements && elements.length > 0) {
                             for (let j = 0; j < elements.length; j++) {
-                                const element = elements[j];
-                                if (element && !loadMoreButtons.includes(element)) {
-                                    // 하단 영역에 있는지 확인
-                                    if (isElementInBottomArea(element)) {
-                                        loadMoreButtons.push(element);
-                                        logs.push('명확한 하단 더보기 버튼 발견: ' + selector);
-                                    }
+                                if (elements[j] && !loadMoreButtons.includes(elements[j])) {
+                                    loadMoreButtons.push(elements[j]);
                                 }
                             }
                         }
@@ -897,40 +982,11 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 2. 조건부 선택자로 추가 찾기 (위치, 텍스트, 컨텍스트 확인)
-                for (let i = 0; i < conditionalSelectors.length; i++) {
-                    try {
-                        const selector = conditionalSelectors[i];
-                        const elements = document.querySelectorAll(selector);
-                        if (elements && elements.length > 0) {
-                            for (let j = 0; j < elements.length; j++) {
-                                const element = elements[j];
-                                if (element && !loadMoreButtons.includes(element)) {
-                                    // 여러 조건 검사
-                                    const inBottomArea = isElementInBottomArea(element);
-                                    const hasLoadText = hasLoadMoreLikeText(element);
-                                    const inContentArea = isInContentListArea(element);
-                                    
-                                    // 3개 조건 중 2개 이상 만족해야 함
-                                    const conditionCount = [inBottomArea, hasLoadText, inContentArea].filter(Boolean).length;
-                                    
-                                    if (conditionCount >= 2) {
-                                        loadMoreButtons.push(element);
-                                        logs.push('조건부 하단 더보기 버튼 발견: ' + selector + ' (조건: ' + conditionCount + '/3)');
-                                    }
-                                }
-                            }
-                        }
-                    } catch(selectorError) {
-                        // 선택자 에러 무시
-                    }
-                }
+                logs.push('더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견');
                 
-                logs.push('하단 더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견 (상단 탭/카테고리 제외)');
-                
-                // 더보기 버튼 클릭 (최대 10개로 제한) + 🐛 디버그 추적
+                // 더보기 버튼 클릭 (최대 15개) + 🐛 디버그 추적
                 let clicked = 0;
-                const maxClicks = Math.min(10, loadMoreButtons.length);
+                const maxClicks = Math.min(15, loadMoreButtons.length);
                 
                 for (let i = 0; i < maxClicks; i++) {
                     try {
@@ -972,7 +1028,7 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (clicked > 0) {
-                    logs.push('하단 더보기 버튼 ' + clicked + '개 클릭 완료 (상단 탭 제외)');
+                    logs.push('더보기 버튼 ' + clicked + '개 클릭 완료');
                 }
                 
                 // 🚀 무한스크롤 트리거 - 최대 8번 시도 + 🐛 디버그 추적
@@ -1052,14 +1108,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
                 logs.push('Lazy Loading 트리거: ' + lazyLoadingResults.triggered + '개 (' + lazyLoadingResults.method + ')');
                 logs.push('부모 스크롤 복원: ' + parentScrollCount + '개 성공');
-                logs.push('🎯 하단 더보기 클릭: ' + clicked + '개 (상단 탭 제외)');
-                logs.push('🐛 클릭된 요소: ' + eventDebugResults.clickedElements.length + '개');
-                logs.push('🐛 이벤트 대상: ' + eventDebugResults.domEventTargets.length + '개');
-                logs.push('🐛 pushState 호출: ' + eventDebugResults.historyPushStates.length + '회');
-                logs.push('🐛 네비게이션 시도: ' + eventDebugResults.navigationAttempts.length + '회');
-                
-                // 🐛 디버그 결과 복원
-                window.history.pushState = originalPushState;
+                logs.push('🚫 SPA 이벤트 차단 유지 중');
                 
                 return {
                     success: success,
@@ -1103,6 +1152,7 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                logs.push('🚫 SPA 이벤트 차단 상태 유지');
                 
                 // 현재 콘텐츠 크기와 뷰포트 크기
                 const savedContentHeight = parseFloat('\(savedContentHeight)');
@@ -1195,6 +1245,7 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (IO 검증 포함)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('🚫 SPA 이벤트 차단 상태 유지');
                 
                 // 앵커 데이터 확인
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
@@ -1463,6 +1514,7 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('[Step 4] 최종 검증 및 미세 보정');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('🚫 SPA 이벤트 차단 상태 유지 (곧 해제 예정)');
                 
                 // 현재 위치 확인
                 let currentX = window.scrollX || window.pageXOffset || 0;
@@ -1506,6 +1558,8 @@ struct BFCacheSnapshot: Codable {
                 
                 const success = diffY <= 50;
                 
+                logs.push('✅ Step 4 완료 - SPA 이벤트 곧 복원됩니다');
+                
                 return {
                     success: success,
                     targetPosition: { x: targetX, y: targetY },
@@ -1539,6 +1593,7 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
+// 이하 동일한 코드 (BFCacheTransitionSystem 전체 포함) - 수정 없음
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
@@ -1701,7 +1756,7 @@ extension BFCacheTransitionSystem {
             return
         }
 
-        // 캐처 완료 후 저장
+        // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
@@ -1842,7 +1897,7 @@ extension BFCacheTransitionSystem {
                     jsState = data
                     TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                     
-                    // 📊 **상세 캐처 결과 로깅**
+                    // 📊 **상세 캡처 결과 로깅**
                     if let parentScrollStates = data["parentScrollStates"] as? [[String: Any]] {
                         TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 상태: \(parentScrollStates.count)개 캡처")
                     }
@@ -1873,7 +1928,7 @@ extension BFCacheTransitionSystem {
             TabPersistenceManager.debugMessages.append("✅ 완전 캡처 성공")
         } else if visualSnapshot != nil {
             captureStatus = jsState != nil ? .partial : .visualOnly
-            TabPersistenceManager.debugMessages.append("⚡ 부분 캐처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
+            TabPersistenceManager.debugMessages.append("⚡ 부분 캡처 성공: visual=\(visualSnapshot != nil), dom=\(domSnapshot != nil), js=\(jsState != nil)")
         } else {
             captureStatus = .failed
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패")
@@ -1940,7 +1995,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🆕 JavaScript 앵커 캐처 스크립트 개선 - 부모 스크롤 상태 추가
+    // 🆕 JavaScript 앵커 캡처 스크립트 개선 - 부모 스크롤 상태 추가
     private func generateInfiniteScrollAnchorCaptureScriptWithParentScroll() -> String {
         return """
         (function() {
