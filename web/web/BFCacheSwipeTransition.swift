@@ -1182,7 +1182,7 @@ extension BFCacheTransitionSystem {
                     });
                     
                     var html = document.documentElement.outerHTML;
-                    return html.length > 100000 ? html.substring(0, 100000) : html;
+                    return html.length > 500000 ? html.substring(0, 500000) : html;
                 } catch(e) { return null; }
             })()
             """
