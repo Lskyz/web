@@ -473,17 +473,10 @@ struct BFCacheSnapshot: Codable {
                 // 동적 사이트 - 콘텐츠 로드 시도
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                // 더보기 버튼 찾기 (구글 검색결과 포함)
+                // 더보기 버튼 찾기
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more, ' +
-                    // 구글 검색결과 더보기 선택자 추가
-                    '[aria-label*="더보기"], [aria-label*="More"], ' +
-                    '[jsaction*="search"], [data-async-trigger], ' +
-                    '.ksb._Gs, .ksb._SBf, [id*="smb"], [id*="more"], ' +
-                    '[data-ved*="search"], button[aria-label*="결과"], ' +
-                    '.GpQGbf, .RNNXgb, .gLFyf, [data-ved] button, ' +
-                    '[role="button"][tabindex="0"]'
+                    'button[class*="more"], .load-more, .show-more'
                 );
                 
                 let clicked = 0;
@@ -1289,7 +1282,7 @@ extension BFCacheTransitionSystem {
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.3,
             step3RenderDelay: 0.3,
-            step4RenderDelay: 0.5
+            step4RenderDelay: 0.3
         )
         
         let snapshot = BFCacheSnapshot(
@@ -1345,20 +1338,19 @@ extension BFCacheTransitionSystem {
                     content: [contentWidth, contentHeight]
                 });
                 
-                // 🚀 **뷰포트 200% 확장된 영역 계산**
-                const expandedViewportRect = {
-                    top: scrollY - viewportHeight,      // 위쪽으로 100% 확장
-                    left: scrollX - viewportWidth,      // 왼쪽으로 100% 확장
-                    bottom: scrollY + (viewportHeight * 2),  // 아래쪽으로 100% 확장
-                    right: scrollX + (viewportWidth * 2),    // 오른쪽으로 100% 확장
-                    width: viewportWidth * 3,            // 전체 너비 300%
-                    height: viewportHeight * 3           // 전체 높이 300%
+                // 🚀 **실제 보이는 영역 계산**
+                const actualViewportRect = {
+                    top: scrollY,
+                    left: scrollX,
+                    bottom: scrollY + viewportHeight,
+                    right: scrollX + viewportWidth,
+                    width: viewportWidth,
+                    height: viewportHeight
                 };
                 
-                detailedLogs.push('뷰포트 200% 확장 영역: top=' + expandedViewportRect.top.toFixed(1) + ', bottom=' + expandedViewportRect.bottom.toFixed(1));
-                detailedLogs.push('확장 크기: ' + expandedViewportRect.width.toFixed(0) + ' x ' + expandedViewportRect.height.toFixed(0));
+                detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
                 
-                // 🚀 **요소 가시성 정확 판단 함수 (200% 확장된 뷰포트 기준)**
+                // 🚀 **요소 가시성 정확 판단 함수**
                 function isElementActuallyVisible(element, strictMode) {
                     if (strictMode === undefined) strictMode = true;
                     
@@ -1374,12 +1366,11 @@ extension BFCacheTransitionSystem {
                         const elementLeft = scrollX + rect.left;
                         const elementRight = scrollX + rect.right;
                         
-                        // 🚀 **200% 확장된 뷰포트 기준으로 가시성 확인**
-                        const isInExpandedViewportVertically = elementBottom > expandedViewportRect.top && elementTop < expandedViewportRect.bottom;
-                        const isInExpandedViewportHorizontally = elementRight > expandedViewportRect.left && elementLeft < expandedViewportRect.right;
+                        const isInViewportVertically = elementBottom > actualViewportRect.top && elementTop < actualViewportRect.bottom;
+                        const isInViewportHorizontally = elementRight > actualViewportRect.left && elementLeft < actualViewportRect.right;
                         
-                        if (strictMode && (!isInExpandedViewportVertically || !isInExpandedViewportHorizontally)) {
-                            return { visible: false, reason: 'outside_expanded_viewport', rect: rect };
+                        if (strictMode && (!isInViewportVertically || !isInViewportHorizontally)) {
+                            return { visible: false, reason: 'outside_viewport', rect: rect };
                         }
                         
                         const computedStyle = window.getComputedStyle(element);
@@ -1389,9 +1380,9 @@ extension BFCacheTransitionSystem {
                         
                         return { 
                             visible: true, 
-                            reason: 'fully_visible_in_expanded_viewport',
+                            reason: 'fully_visible',
                             rect: rect,
-                            inExpandedViewport: { vertical: isInExpandedViewportVertically, horizontal: isInExpandedViewportHorizontally }
+                            inViewport: { vertical: isInViewportVertically, horizontal: isInViewportHorizontally }
                         };
                         
                     } catch(e) {
@@ -1453,7 +1444,7 @@ extension BFCacheTransitionSystem {
                     return null;
                 }
                 
-                // 🚀 **수정된: Vue 컴포넌트 요소 수집 (200% 확장 영역 기준)**
+                // 🚀 **수정된: Vue 컴포넌트 요소 수집**
                 function collectVueComponentElements() {
                     const vueElements = [];
                     
@@ -1465,7 +1456,7 @@ extension BFCacheTransitionSystem {
                         const dataVAttr = findDataVAttribute(element);
                         
                         if (dataVAttr) {
-                            const visibilityResult = isElementActuallyVisible(element, false); // 🚀 확장 뷰포트 기준으로 덜 엄격하게
+                            const visibilityResult = isElementActuallyVisible(element, true);
                             
                             if (visibilityResult.visible) {
                                 const elementText = (element.textContent || '').trim();
@@ -1482,11 +1473,11 @@ extension BFCacheTransitionSystem {
                         }
                     }
                     
-                    detailedLogs.push('Vue.js 컴포넌트 수집 (200% 확장 뷰포트): ' + vueElements.length + '개');
+                    detailedLogs.push('Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
                     return vueElements;
                 }
                 
-                // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (200% 확장 영역)**
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
                     const anchorStats = {
@@ -1501,31 +1492,23 @@ extension BFCacheTransitionSystem {
                         finalAnchors: 0
                     };
                     
-                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (200% 확장 뷰포트)');
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
                     
                     // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
                     const vueComponentElements = collectVueComponentElements();
                     anchorStats.totalCandidates += vueComponentElements.length;
                     anchorStats.actuallyVisible += vueComponentElements.length;
                     
-                    // 🚀 **2. 일반 콘텐츠 요소 수집 (구글 검색결과 더보기 선택자 추가)**
+                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
                     const contentSelectors = [
                         'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
                         '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
                         '.news', '.media', '.content-item', '[class*="item"]', 
                         '[class*="post"]', '[class*="card"]', '[data-testid]', 
                         '[data-id]', '[data-key]', '[data-item-id]',
-                        // 네이버 카페 특화 선택자
+                        // 네이버 카페 특화 선택자 추가
                         '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
-                        '[class*="List"]', '[class*="Item"]', '[data-v-]',
-                        // 🚀 **구글 검색결과 더보기 선택자 추가**
-                        '.g', '.tF2Cxc', '.MjjYud', '.hlcw0c', '.VwiC3b', '.kvH3mc',
-                        '[data-ved]', '.GyAeWb', '.dURPMd', '.IsZvec', '.VuuXrf',
-                        '.LC20lb', '.lEBKkf', '.TbwUpd', '.H9lube', '.Gx5Zad',
-                        '.fP1Qef', '.xpd', '.kCrYT', '[jscontroller]', '[jsaction*="search"]',
-                        '.RNNXgb', '.gLFyf', '.GpQGbf', '[aria-label*="더보기"]',
-                        '[aria-label*="More"]', '.ksb._Gs', '.ksb._SBf', '[id*="smb"]',
-                        '[id*="more"]', 'button[aria-label*="결과"]'
+                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
                     ];
                     
                     let contentElements = [];
@@ -1542,7 +1525,7 @@ extension BFCacheTransitionSystem {
                     
                     anchorStats.totalCandidates += contentElements.length;
                     
-                    // 중복 제거 및 200% 확장 뷰포트 기준 가시성 필터링
+                    // 중복 제거 및 가시성 필터링
                     const uniqueContentElements = [];
                     const processedElements = new Set();
                     
@@ -1551,7 +1534,7 @@ extension BFCacheTransitionSystem {
                         if (!processedElements.has(element)) {
                             processedElements.add(element);
                             
-                            const visibilityResult = isElementActuallyVisible(element, false); // 🚀 200% 확장 뷰포트 기준 덜 엄격한 가시성 검사
+                            const visibilityResult = isElementActuallyVisible(element, false); // 🔧 덜 엄격한 가시성 검사
                             anchorStats.visibilityChecked++;
                             
                             if (visibilityResult.visible) {
@@ -1571,16 +1554,16 @@ extension BFCacheTransitionSystem {
                     
                     detailedLogs.push('일반 콘텐츠 후보: ' + contentElements.length + '개, 유효: ' + uniqueContentElements.length + '개');
                     
-                    // 🚀 **3. 200% 확장 뷰포트 중심 기준으로 상위 30개씩 선택 (증가)**
-                    const expandedViewportCenterY = scrollY + (viewportHeight / 2);
-                    const expandedViewportCenterX = scrollX + (viewportWidth / 2);
+                    // 🚀 **3. 뷰포트 중심 기준으로 상위 20개씩 선택 (증가)**
+                    const viewportCenterY = scrollY + (viewportHeight / 2);
+                    const viewportCenterX = scrollX + (viewportWidth / 2);
                     
                     // Vue 컴포넌트 정렬 및 선택
                     vueComponentElements.sort(function(a, b) {
                         const aTop = scrollY + a.rect.top;
                         const bTop = scrollY + b.rect.top;
-                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - expandedViewportCenterY);
-                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - expandedViewportCenterY);
+                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
+                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
                         return aDistance - bDistance;
                     });
                     
@@ -1588,15 +1571,15 @@ extension BFCacheTransitionSystem {
                     uniqueContentElements.sort(function(a, b) {
                         const aTop = scrollY + a.rect.top;
                         const bTop = scrollY + b.rect.top;
-                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - expandedViewportCenterY);
-                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - expandedViewportCenterY);
+                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
+                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
                         return aDistance - bDistance;
                     });
                     
-                    const selectedVueElements = vueComponentElements.slice(0, 30); // 🔧 30개로 증가
-                    const selectedContentElements = uniqueContentElements.slice(0, 30); // 🔧 30개로 증가
+                    const selectedVueElements = vueComponentElements.slice(0, 20); // 🔧 20개로 증가
+                    const selectedContentElements = uniqueContentElements.slice(0, 20); // 🔧 20개로 증가
                     
-                    detailedLogs.push('200% 확장 뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
+                    detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
                     
                     // 🚀 **4. Vue Component 앵커 생성**
                     for (let i = 0; i < selectedVueElements.length; i++) {
@@ -1628,8 +1611,8 @@ extension BFCacheTransitionSystem {
                                 anchorStats.virtualIndexAnchors++;
                             }
                             
-                            // Structural Path 앵커 (보조) - 상위 15개로 증가
-                            if (i < 15) {
+                            // Structural Path 앵커 (보조) - 상위 10개만
+                            if (i < 10) {
                                 const pathAnchor = createStructuralPathAnchor(selectedContentElements[i], i);
                                 if (pathAnchor) {
                                     anchors.push(pathAnchor);
@@ -1711,7 +1694,7 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'vue_component_visible_in_expanded_viewport'
+                            visibilityReason: 'vue_component_visible'
                         };
                         
                     } catch(e) {
@@ -1758,7 +1741,7 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'content_hash_visible_in_expanded_viewport'
+                            visibilityReason: 'content_hash_visible'
                         };
                         
                     } catch(e) {
@@ -1783,7 +1766,7 @@ extension BFCacheTransitionSystem {
                             listIndex: index,
                             pageIndex: Math.floor(index / 10), // 10개씩 페이지 단위
                             offsetInPage: absoluteTop,
-                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem, .g, .tF2Cxc').length
+                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length
                         };
                         
                         const qualityScore = 70; // Virtual Index는 70점
@@ -1802,7 +1785,7 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'virtual_index_visible_in_expanded_viewport'
+                            visibilityReason: 'virtual_index_visible'
                         };
                         
                     } catch(e) {
@@ -1878,7 +1861,7 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'structural_path_visible_in_expanded_viewport'
+                            visibilityReason: 'structural_path_visible'
                         };
                         
                     } catch(e) {
@@ -1909,7 +1892,7 @@ extension BFCacheTransitionSystem {
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight],
                     captureTime: captureTime,
-                    expandedViewportRect: expandedViewportRect
+                    actualViewportRect: actualViewportRect
                 });
                 
                 // ✅ **수정: 정리된 반환 구조**
@@ -1935,11 +1918,11 @@ extension BFCacheTransitionSystem {
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
                     },
-                    expandedViewportRect: expandedViewportRect,     // 🚀 **200% 확장된 뷰포트 정보**
-                    detailedLogs: detailedLogs,                    // 📊 **상세 로그 배열**
-                    captureStats: infiniteScrollAnchorsData.stats, // 🔧 **수정: stats 직접 할당**
-                    pageAnalysis: pageAnalysis,                    // 📊 **페이지 분석 결과**
-                    captureTime: captureTime                       // 📊 **캡처 소요 시간**
+                    actualViewportRect: actualViewportRect,     // 🚀 **실제 보이는 영역 정보**
+                    detailedLogs: detailedLogs,                 // 📊 **상세 로그 배열**
+                    captureStats: infiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
+                    pageAnalysis: pageAnalysis,                 // 📊 **페이지 분석 결과**
+                    captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
                 console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
