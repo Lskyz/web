@@ -97,7 +97,7 @@ struct BFCacheSnapshot: Codable {
             jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
         }
         
-        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        timestamp = try container.decode(Date.self, forKey: .ti zoqcimestamp)
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
@@ -1429,7 +1429,10 @@ extension BFCacheTransitionSystem {
                 } else if let data = result as? [String: Any] {
                     // 🔒 **타입 안전성 보장: Swift 호환 타입만 필터링**
                     jsState = self.sanitizeJavaScriptResult(data)
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(jsState?.keys ?? Set<String>()))")
+                    TabPersistenceManager.debugMessages.append(
+    "✅ JS 상태 캡처 성공: \(jsState?.keys.sorted() ?? [])"
+)
+
                     
                     // 📊 **상세 캡처 결과 로깅**
                     if let infiniteScrollAnchors = jsState?["infiniteScrollAnchors"] as? [String: Any] {
