@@ -7,13 +7,14 @@
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
-//  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
+//  🎯 **실제 스크롤러 탐지**: 가상 스크롤 정규화 문제 해결
+//  🚀 **비동기 rAF 기반**: busy-wait 제거로 프레임워크 충돌 방지
 
 import UIKit
 import WebKit
 import SwiftUI
 
-// MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
+// MARK: - 📸 **가상스크롤 대응 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -183,7 +184,7 @@ struct BFCacheSnapshot: Codable {
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작 (가상스크롤 대응)")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
@@ -258,7 +259,7 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (가상스크롤 대응)")
         
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
@@ -290,6 +291,9 @@ struct BFCacheSnapshot: Codable {
                 }
                 if let difference = resultDict["difference"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                }
+                if let virtualizationDetected = resultDict["virtualizationDetected"] as? Bool, virtualizationDetected {
+                    TabPersistenceManager.debugMessages.append("🔄 [Step 2] 가상스크롤 정규화 감지 - 앵커 모드로 전환")
                 }
                 if let logs = resultDict["logs"] as? [String] {
                     for log in logs.prefix(5) {
@@ -435,33 +439,55 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 단일 스크롤러 JavaScript 생성 메서드들
+    // MARK: - 🎯 가상스크롤 대응 JavaScript 생성 메서드들
     
-    // 🎯 **공통 유틸리티 스크립트 생성**
+    // 🎯 **핵심: 실제 스크롤러 탐지 + 비동기 rAF 기반 유틸리티**
     private func generateCommonUtilityScript() -> String {
         return """
-        // 🎯 **단일 스크롤러 공통 유틸리티 (동기 버전)**
+        // 🎯 **실제 스크롤러 탐지 + 비동기 rAF 기반 유틸리티 (가상스크롤 대응)**
+        
+        // 실제 스크롤러 탐지 (가상 스크롤 정규화 문제 해결)
+        function findPrimaryScroller() {
+            const cands = Array.from(document.querySelectorAll('*')).filter(el => {
+                const cs = getComputedStyle(el);
+                if (!(cs.overflowY === 'auto' || cs.overflowY === 'scroll')) return false;
+                const h = el.clientHeight;
+                const sh = el.scrollHeight;
+                if (h === 0) return false;
+                const vh = window.innerHeight;
+                // 뷰포트 크기와 유사 + 충분한 스크롤 여유
+                return Math.abs(h - vh) < 120 && (sh - h) > 1000;
+            });
+            // 가장 스크롤 여유 큰 후보 1개
+            return cands.sort((a,b)=> (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0]
+                   || (document.scrollingElement || document.documentElement);
+        }
+        
         function getROOT() { 
-            return document.scrollingElement || document.documentElement; 
+            return findPrimaryScroller();
         }
         
         function getMaxScroll() { 
             const r = getROOT(); 
             return { 
-                x: Math.max(0, r.scrollWidth - window.innerWidth),
-                y: Math.max(0, r.scrollHeight - window.innerHeight) 
+                x: Math.max(0, r.scrollWidth - r.clientWidth),
+                y: Math.max(0, r.scrollHeight - r.clientHeight) 
             }; 
         }
         
-        function waitForStableLayoutSync(options = {}) {
+        // 🚀 **비동기 rAF 기반 안정화 대기**
+        async function waitForStableLayoutAsync(options = {}) {
             const { frames = 6, timeout = 1500, threshold = 2 } = options;
             const ROOT = getROOT();
             let last = ROOT.scrollHeight;
             let stable = 0;
             const startTime = Date.now();
-            const maxIterations = Math.floor(timeout / 20); // 20ms씩 체크
+            const maxIterations = Math.floor(timeout / 50); // 50ms씩 체크
             
             for (let i = 0; i < maxIterations; i++) {
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                await new Promise(resolve => setTimeout(resolve, 30));
+                
                 const h = ROOT.scrollHeight;
                 if (Math.abs(h - last) <= threshold) {
                     stable++;
@@ -474,32 +500,47 @@ struct BFCacheSnapshot: Codable {
                     break;
                 }
                 
-                // 20ms 동기 대기
-                const waitStart = Date.now();
-                while (Date.now() - waitStart < 20) { /* 대기 */ }
+                if (Date.now() - startTime > timeout) break;
             }
         }
         
-        function preciseScrollToSync(x, y) {
+        // 🚀 **가상스크롤 정규화 감지 + 비동기 정밀 스크롤**
+        async function preciseScrollToAsync(x, y) {
             const ROOT = getROOT();
             
             // 첫 번째 설정
             ROOT.scrollLeft = x;
             ROOT.scrollTop = y;
             
-            // 브라우저가 적용할 시간 대기 (동기)
-            const waitStart = Date.now();
-            while (Date.now() - waitStart < 16) { /* ~1프레임 대기 */ }
+            // rAF로 브라우저 적용 대기
+            await new Promise(resolve => requestAnimationFrame(resolve));
             
-            // 두 번째 설정 (보정)
+            const afterFirstSet = { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
+            
+            // 🔄 **가상스크롤 정규화 감지 (5000px 근처로 보정되는지 확인)**
+            const isVirtualizationDetected = Math.abs(afterFirstSet.y - 4000) < 300 || 
+                                           (y > 6000 && afterFirstSet.y < y * 0.6);
+            
+            if (isVirtualizationDetected) {
+                console.log('🔄 가상스크롤 정규화 감지: 목표=' + y + 'px, 실제=' + afterFirstSet.y + 'px');
+                return { 
+                    x: afterFirstSet.x, 
+                    y: afterFirstSet.y, 
+                    virtualizationDetected: true 
+                };
+            }
+            
+            // 정규화되지 않았으면 두 번째 보정 설정
             ROOT.scrollLeft = x;
             ROOT.scrollTop = y;
             
-            // 최종 적용 대기
-            const waitStart2 = Date.now();
-            while (Date.now() - waitStart2 < 16) { /* ~1프레임 대기 */ }
+            await new Promise(resolve => requestAnimationFrame(resolve));
             
-            return { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
+            return { 
+                x: ROOT.scrollLeft || 0, 
+                y: ROOT.scrollTop || 0, 
+                virtualizationDetected: false 
+            };
         }
         
         function fixedHeaderHeight() {
@@ -514,23 +555,41 @@ struct BFCacheSnapshot: Codable {
             return h;
         }
         
-        function prerollInfiniteSync(maxSteps = 6) {
+        // 🚀 **비동기 무한스크롤 preroll (가상스크롤용 인덱스 API 시도)**
+        async function prerollInfiniteAsync(maxSteps = 6) {
             const ROOT = getROOT();
+            
+            // 1) 가상 리스트 컴포넌트 API 탐색
+            const virtualHook = document.querySelector('[data-virtualizer],[data-v-]');
+            if (virtualHook) {
+                try {
+                    const vueInstance = virtualHook.__vueParentComponent?.exposed;
+                    if (vueInstance?.scrollToIndex && typeof vueInstance.scrollToIndex === 'function') {
+                        console.log('🎯 Vue 가상리스트 API 발견 - 인덱스 스크롤 시도');
+                        const estimatedIndex = Math.floor(ROOT.scrollTop / 100); // 대략 추정
+                        vueInstance.scrollToIndex(estimatedIndex);
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        return;
+                    }
+                } catch(e) {
+                    console.log('Vue API 시도 실패:', e.message);
+                }
+            }
+            
+            // 2) 일반 무한스크롤 preroll
             for (let i = 0; i < maxSteps; i++) {
                 const before = ROOT.scrollHeight;
                 ROOT.scrollTop = before; // 바닥
                 window.dispatchEvent(new Event('scroll', { bubbles: true }));
                 
-                // 120ms 동기 대기
-                const waitStart = Date.now();
-                while (Date.now() - waitStart < 120) { /* 대기 */ }
+                await new Promise(resolve => setTimeout(resolve, 120));
                 
                 const after = ROOT.scrollHeight;
                 if (after - before < 64) break; // 더 이상 늘지 않으면 종료
             }
             
             // 안정화 대기
-            waitForStableLayoutSync();
+            await waitForStableLayoutAsync();
         }
         
         // 🎯 **환경 안정화 (한 번만 실행)**
@@ -559,7 +618,7 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
-        (function() {
+        (async function() {
             try {
                 \(generateCommonUtilityScript())
                 
@@ -568,7 +627,7 @@ struct BFCacheSnapshot: Codable {
                 const ROOT = getROOT();
                 const currentHeight = ROOT.scrollHeight;
                 
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+                logs.push('[Step 1] 콘텐츠 높이 복원 시작 (실제 스크롤러: ' + ROOT.tagName + ')');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 
@@ -589,7 +648,7 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
                 
-                // 동적 사이트 - 콘텐츠 로드 시도 (동기적으로 처리)
+                // 동적 사이트 - 콘텐츠 로드 시도 (비동기 처리)
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
                 // 더보기 버튼 찾기
@@ -611,8 +670,8 @@ struct BFCacheSnapshot: Codable {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭');
                 }
                 
-                // 🎯 **수정: 간단한 무한스크롤 트리거 (동기 처리)**
-                prerollInfiniteSync(3);
+                // 🚀 **비동기 무한스크롤 트리거**
+                await prerollInfiniteAsync(3);
                 
                 const restoredHeight = ROOT.scrollHeight;
                 const finalPercentage = (restoredHeight / targetHeight) * 100;
@@ -647,7 +706,7 @@ struct BFCacheSnapshot: Codable {
         let targetPercentY = scrollPositionPercent.y
         
         return """
-        (function() {
+        (async function() {
             try {
                 \(generateCommonUtilityScript())
                 
@@ -655,15 +714,16 @@ struct BFCacheSnapshot: Codable {
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원 (가상스크롤 대응)');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
-                // 🎯 **수정: 동기적 안정화 대기**
-                waitForStableLayoutSync({ frames: 3, timeout: 1000 });
+                // 🚀 **비동기 안정화 대기**
+                await waitForStableLayoutAsync({ frames: 3, timeout: 1000 });
                 
                 const ROOT = getROOT();
                 const max = getMaxScroll();
                 
+                logs.push('실제 스크롤러: ' + ROOT.tagName + ' (className: ' + ROOT.className + ')');
                 logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
                 
                 // 백분율 기반 목표 위치 계산
@@ -672,8 +732,8 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
-                // 🎯 **수정: 동기적 정밀 스크롤**
-                const result = preciseScrollToSync(targetX, targetY);
+                // 🚀 **가상스크롤 정규화 감지 + 비동기 정밀 스크롤**
+                const result = await preciseScrollToAsync(targetX, targetY);
                 
                 const diffX = Math.abs(result.x - targetX);
                 const diffY = Math.abs(result.y - targetY);
@@ -681,8 +741,13 @@ struct BFCacheSnapshot: Codable {
                 logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
                 logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
-                // 허용 오차 50px 이내면 성공
-                const success = diffY <= 50;
+                if (result.virtualizationDetected) {
+                    logs.push('🔄 가상스크롤 정규화 감지됨 - 앵커 모드 권장');
+                }
+                
+                // 허용 오차 50px 이내면 성공 (가상스크롤이면 100px)
+                const tolerance = result.virtualizationDetected ? 100 : 50;
+                const success = diffY <= tolerance;
                 
                 return {
                     success: success,
@@ -690,6 +755,7 @@ struct BFCacheSnapshot: Codable {
                     calculatedPosition: { x: targetX, y: targetY },
                     actualPosition: { x: result.x, y: result.y },
                     difference: { x: diffX, y: diffY },
+                    virtualizationDetected: result.virtualizationDetected || false,
                     logs: logs
                 };
                 
@@ -709,7 +775,7 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
-        (function() {
+        (async function() {
             try {
                 \(generateCommonUtilityScript())
                 
@@ -718,7 +784,7 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (가상스크롤 대응)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -753,6 +819,52 @@ struct BFCacheSnapshot: Codable {
                 let matchedAnchor = null;
                 let matchMethod = '';
                 let confidence = 0;
+                
+                // 🚀 **가상 리스트 인덱스 API 우선 시도**
+                if (!foundElement && virtualIndexAnchors.length > 0) {
+                    const virtualAnchor = virtualIndexAnchors[0];
+                    const virtualIndex = virtualAnchor.virtualIndex;
+                    
+                    if (virtualIndex.listIndex !== undefined) {
+                        logs.push('🎯 가상 리스트 인덱스 API 시도: [' + virtualIndex.listIndex + ']');
+                        
+                        // Vue 컴포넌트 API 탐색
+                        const virtualHook = document.querySelector('[data-virtualizer],[data-v-]');
+                        if (virtualHook) {
+                            try {
+                                const vueInstance = virtualHook.__vueParentComponent?.exposed;
+                                if (vueInstance?.scrollToIndex && typeof vueInstance.scrollToIndex === 'function') {
+                                    vueInstance.scrollToIndex(virtualIndex.listIndex);
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    
+                                    const ROOT = getROOT();
+                                    const currentX = ROOT.scrollLeft || 0;
+                                    const currentY = ROOT.scrollTop || 0;
+                                    
+                                    logs.push('🎯 Vue API 인덱스 스크롤 성공: Y=' + currentY.toFixed(1) + 'px');
+                                    
+                                    const diffX = Math.abs(currentX - targetX);
+                                    const diffY = Math.abs(currentY - targetY);
+                                    
+                                    return {
+                                        success: diffY <= 150, // 가상리스트 API는 150px 허용
+                                        anchorCount: anchors.length,
+                                        matchedAnchor: {
+                                            anchorType: 'virtualIndex',
+                                            matchMethod: 'vue_api_index',
+                                            confidence: 90
+                                        },
+                                        restoredPosition: { x: currentX, y: currentY },
+                                        targetDifference: { x: diffX, y: diffY },
+                                        logs: logs
+                                    };
+                                }
+                            } catch(e) {
+                                logs.push('Vue API 호출 실패: ' + e.message);
+                            }
+                        }
+                    }
+                }
                 
                 // 우선순위 1: Vue Component 앵커 매칭
                 if (!foundElement && vueComponentAnchors.length > 0) {
@@ -860,10 +972,10 @@ struct BFCacheSnapshot: Codable {
                             let closestElement = null;
                             let minDistance = Infinity;
                             
+                            const ROOT = getROOT();
                             for (let j = 0; j < allElements.length; j++) {
                                 const element = allElements[j];
                                 const rect = element.getBoundingClientRect();
-                                const ROOT = getROOT();
                                 const elementY = ROOT.scrollTop + rect.top;
                                 const distance = Math.abs(elementY - estimatedY);
                                 
@@ -886,7 +998,7 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (foundElement && matchedAnchor) {
-                    // 🎯 **수정: scrollIntoView 대신 직접 계산 + 헤더 보정**
+                    // 🎯 **실제 스크롤러에 직접 계산 + 헤더 보정**
                     const ROOT = getROOT();
                     const rect = foundElement.getBoundingClientRect();
                     const absY = ROOT.scrollTop + rect.top;
@@ -899,8 +1011,11 @@ struct BFCacheSnapshot: Codable {
                         adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
                     }
                     
-                    // 🎯 **단일 스크롤러로 정밀 이동**
+                    // 🎯 **실제 스크롤러로 정밀 이동**
                     ROOT.scrollTop = adjustedY;
+                    
+                    // 안정화 대기
+                    await new Promise(resolve => requestAnimationFrame(resolve));
                     
                     const actualX = ROOT.scrollLeft || 0;
                     const actualY = ROOT.scrollTop || 0;
@@ -949,7 +1064,7 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
-        (function() {
+        (async function() {
             try {
                 \(generateCommonUtilityScript())
                 
@@ -958,10 +1073,11 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const tolerance = 30;
                 
-                logs.push('[Step 4] 최종 검증 및 미세 보정');
+                logs.push('[Step 4] 최종 검증 및 미세 보정 (가상스크롤 대응)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 const ROOT = getROOT();
+                logs.push('최종 검증 대상 스크롤러: ' + ROOT.tagName);
                 
                 // 현재 위치 확인
                 let currentX = ROOT.scrollLeft || 0;
@@ -976,19 +1092,21 @@ struct BFCacheSnapshot: Codable {
                 const withinTolerance = diffX <= tolerance && diffY <= tolerance;
                 let correctionApplied = false;
                 
-                // 허용 오차 초과 시 미세 보정
+                // 허용 오차 초과 시 비동기 미세 보정
                 if (!withinTolerance) {
-                    logs.push('허용 오차 초과 - 미세 보정 적용');
+                    logs.push('허용 오차 초과 - 비동기 미세 보정 적용');
                     
-                    // 🎯 **수정: 단일 스크롤러로 정밀 보정**
-                    ROOT.scrollLeft = targetX;
-                    ROOT.scrollTop = targetY;
-                    
+                    // 🚀 **비동기 정밀 보정**
+                    const result = await preciseScrollToAsync(targetX, targetY);
                     correctionApplied = true;
                     
+                    if (result.virtualizationDetected) {
+                        logs.push('🔄 최종 보정에서도 가상스크롤 정규화 감지됨');
+                    }
+                    
                     // 보정 후 위치 재측정
-                    currentX = ROOT.scrollLeft || 0;
-                    currentY = ROOT.scrollTop || 0;
+                    currentX = result.x;
+                    currentY = result.y;
                     diffX = Math.abs(currentX - targetX);
                     diffY = Math.abs(currentY - targetY);
                     
@@ -1309,11 +1427,12 @@ extension BFCacheTransitionSystem {
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
                 } else if let data = result as? [String: Any] {
-                    jsState = data
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                    // 🔒 **타입 안전성 보장: Swift 호환 타입만 필터링**
+                    jsState = self.sanitizeJavaScriptResult(data)
+                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(jsState?.keys ?? []))")
                     
                     // 📊 **상세 캡처 결과 로깅**
-                    if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
+                    if let infiniteScrollAnchors = jsState?["infiniteScrollAnchors"] as? [String: Any] {
                         if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
                             let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
                             let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
@@ -1403,23 +1522,75 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (단일 스크롤러 적용)**
+    // 🔒 **타입 안전성 보장: JavaScript 결과 sanitize**
+    private func sanitizeJavaScriptResult(_ data: [String: Any]) -> [String: Any] {
+        var sanitized: [String: Any] = [:]
+        
+        for (key, value) in data {
+            sanitized[key] = sanitizeValue(value)
+        }
+        
+        return sanitized
+    }
+    
+    private func sanitizeValue(_ value: Any) -> Any? {
+        switch value {
+        case is NSNull:
+            return nil
+        case let stringValue as String:
+            return stringValue
+        case let numberValue as NSNumber:
+            return numberValue
+        case let boolValue as Bool:
+            return boolValue
+        case let arrayValue as [Any]:
+            return arrayValue.compactMap { sanitizeValue($0) }
+        case let dictValue as [String: Any]:
+            var sanitizedDict: [String: Any] = [:]
+            for (k, v) in dictValue {
+                if let sanitizedV = sanitizeValue(v) {
+                    sanitizedDict[k] = sanitizedV
+                }
+            }
+            return sanitizedDict
+        default:
+            // 지원하지 않는 타입 (함수, undefined 등) 제거
+            TabPersistenceManager.debugMessages.append("⚠️ 지원하지 않는 JS 타입 제거: \(type(of: value))")
+            return nil
+        }
+    }
+    
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (실제 스크롤러 적용 + 타입 안전성)**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 캡처 시작');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (가상스크롤 대응)');
                 
-                // 🎯 **단일 스크롤러 유틸리티 함수들**
+                // 🎯 **실제 스크롤러 탐지 함수**
+                function findPrimaryScroller() {
+                    const cands = Array.from(document.querySelectorAll('*')).filter(el => {
+                        const cs = getComputedStyle(el);
+                        if (!(cs.overflowY === 'auto' || cs.overflowY === 'scroll')) return false;
+                        const h = el.clientHeight;
+                        const sh = el.scrollHeight;
+                        if (h === 0) return false;
+                        const vh = window.innerHeight;
+                        return Math.abs(h - vh) < 120 && (sh - h) > 1000;
+                    });
+                    return cands.sort((a,b)=> (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0]
+                           || (document.scrollingElement || document.documentElement);
+                }
+                
                 function getROOT() { 
-                    return document.scrollingElement || document.documentElement; 
+                    return findPrimaryScroller();
                 }
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
                 const pageAnalysis = {};
                 
-                // 🎯 **수정: 단일 스크롤러 기준으로 정보 수집**
+                // 🎯 **실제 스크롤러 기준으로 정보 수집**
                 const ROOT = getROOT();
                 const scrollY = parseFloat(ROOT.scrollTop) || 0;
                 const scrollX = parseFloat(ROOT.scrollLeft) || 0;
@@ -1428,7 +1599,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(ROOT.scrollHeight) || 0;
                 const contentWidth = parseFloat(ROOT.scrollWidth) || 0;
                 
-                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (단일 스크롤러)');
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (실제 스크롤러: ' + ROOT.tagName + ')');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -1437,7 +1608,8 @@ extension BFCacheTransitionSystem {
                 pageAnalysis.viewport = { width: viewportWidth, height: viewportHeight };
                 pageAnalysis.content = { width: contentWidth, height: contentHeight };
                 
-                console.log('🚀 기본 정보 (단일 스크롤러):', {
+                console.log('🚀 기본 정보 (실제 스크롤러):', {
+                    scroller: ROOT.tagName,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight]
@@ -1750,7 +1922,7 @@ extension BFCacheTransitionSystem {
                         const textContent = elementData.textContent;
                         const dataVAttr = elementData.dataVAttr;
                         
-                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        // 🎯 **실제 스크롤러 기준으로 계산**
                         const absoluteTop = scrollY + rect.top;
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
@@ -1816,7 +1988,7 @@ extension BFCacheTransitionSystem {
                         const rect = elementData.rect;
                         const textContent = elementData.textContent;
                         
-                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        // 🎯 **실제 스크롤러 기준으로 계산**
                         const absoluteTop = scrollY + rect.top;
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
@@ -1864,7 +2036,7 @@ extension BFCacheTransitionSystem {
                         const rect = elementData.rect;
                         const textContent = elementData.textContent;
                         
-                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        // 🎯 **실제 스크롤러 기준으로 계산**
                         const absoluteTop = scrollY + rect.top;
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
@@ -1909,7 +2081,7 @@ extension BFCacheTransitionSystem {
                         const rect = elementData.rect;
                         const textContent = elementData.textContent;
                         
-                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        // 🎯 **실제 스크롤러 기준으로 계산**
                         const absoluteTop = scrollY + rect.top;
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
@@ -1987,7 +2159,7 @@ extension BFCacheTransitionSystem {
                 
                 pageAnalysis.capturePerformance = {
                     totalTime: captureTime,
-                    anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
+                    anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? parseFloat((infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2)) : 0
                 };
                 
                 detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
@@ -2004,7 +2176,7 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                // ✅ **수정: 정리된 반환 구조 (단일 스크롤러 기준)**
+                // ✅ **수정: 정리된 반환 구조 (실제 스크롤러 기준)**
                 return {
                     infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
                     scroll: { 
