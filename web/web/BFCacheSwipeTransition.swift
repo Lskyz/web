@@ -1,16 +1,19 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) + 🆕 Lazy Loading 우선 트리거
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만) + 🆕 Lazy Loading 우선 트리거 + 부모 스크롤 복원
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
 //  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원 + 🆕 IntersectionObserver 검증
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🚀 **무한스크롤 강화**: 최대 8번 트리거 시도
-//  🆕 **iframe 앵커 수집**: iframe 내부 재귀적 탐색
+//  🆕 **네이버 카페 스크롤 로직 통합**: Lazy Loading 우선 + 부모 컨테이너 복원 + IO 검증
 //  🐛 **디버그 강화**: 이벤트/히스토리 추적 로깅 추가
-//  🎯 **하단 더보기 선택자 개선**: A.btn_more, A.item_more 제외
+//  🎯 **하단 더보기 선택자 개선**: 상단 탭/카테고리 제외, 하단 영역만 선택
+//  🚫 **개선**: A.btn_more, A.item_more 선택자 제외
+//  🔄 **개선**: iframe 내부 앵커 재귀적 수집
+//  ⚡ **개선**: Step 1 강도 조절 (증가 없으면 중단)
 
 import UIKit
 import WebKit
@@ -52,7 +55,7 @@ struct BFCacheSnapshot: Codable {
         let step3RenderDelay: Double        // Step 3 후 렌더링 대기 (0.5초)
         let step4RenderDelay: Double        // Step 4 후 렌더링 대기 (0.3초)
         let enableLazyLoadingTrigger: Bool  // 🆕 Lazy Loading 트리거
-        let enableParentScrollRestore: Bool // 부모 컨테이너 스크롤 복원 (제거됨)
+        let enableParentScrollRestore: Bool // 🆕 부모 컨테이너 스크롤 복원
         let enableIOVerification: Bool      // 🆕 IntersectionObserver 검증
         
         static let `default` = RestorationConfig(
@@ -66,7 +69,7 @@ struct BFCacheSnapshot: Codable {
             step3RenderDelay: 0.2,
             step4RenderDelay: 0.2,
             enableLazyLoadingTrigger: true,  // 🆕
-            enableParentScrollRestore: false, // 제거됨
+            enableParentScrollRestore: true, // 🆕
             enableIOVerification: true       // 🆕
         )
     }
@@ -178,7 +181,7 @@ struct BFCacheSnapshot: Codable {
             step3RenderDelay: restorationConfig.step3RenderDelay,
             step4RenderDelay: restorationConfig.step4RenderDelay,
             enableLazyLoadingTrigger: restorationConfig.enableLazyLoadingTrigger,
-            enableParentScrollRestore: false, // 제거됨
+            enableParentScrollRestore: restorationConfig.enableParentScrollRestore,
             enableIOVerification: restorationConfig.enableIOVerification
         )
     }
@@ -209,6 +212,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         TabPersistenceManager.debugMessages.append("🆕 Lazy Loading 트리거: \(restorationConfig.enableLazyLoadingTrigger ? "활성화" : "비활성화")")
+        TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 복원: \(restorationConfig.enableParentScrollRestore ? "활성화" : "비활성화")")
         TabPersistenceManager.debugMessages.append("🆕 IO 검증: \(restorationConfig.enableIOVerification ? "활성화" : "비활성화")")
         
         // 복원 컨텍스트 생성
@@ -222,9 +226,9 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 콘텐츠 높이 복원 (개선: 높이 증가 체크)
+    // MARK: - Step 1: 🆕 Lazy Loading 트리거 → 부모 스크롤 복원 → 콘텐츠 높이 복원 + ⚡ 강도 조절
     private func executeStep1_RestoreContentHeight(context: RestorationContext, attempt: Int = 0) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] Lazy Loading 트리거 + 콘텐츠 복원 시작")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] Lazy Loading 트리거 + 부모 스크롤 + 콘텐츠 복원 시작")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -235,7 +239,22 @@ struct BFCacheSnapshot: Codable {
             return
         }
         
+        // 🆕 부모 스크롤 복원 데이터 추출
+        let parentScrollDataJSON: String
+        if let jsState = self.jsState,
+           let parentScrollStates = jsState["parentScrollStates"] as? [[String: Any]] {
+            if let jsonData = try? JSONSerialization.data(withJSONObject: parentScrollStates),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                parentScrollDataJSON = jsonString
+            } else {
+                parentScrollDataJSON = "[]"
+            }
+        } else {
+            parentScrollDataJSON = "[]"
+        }
+        
         let js = generateStep1_LazyLoadAndContentRestoreScript(
+            parentScrollDataJSON: parentScrollDataJSON,
             enableLazyLoading: restorationConfig.enableLazyLoadingTrigger
         )
         
@@ -246,7 +265,6 @@ struct BFCacheSnapshot: Codable {
             var percentageValue: Double = 0
             var targetHeightValue: Double = 0
             var isStaticSiteFlag = false
-            var heightIncreased = false
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
@@ -260,6 +278,19 @@ struct BFCacheSnapshot: Codable {
                     }
                     if let method = lazyLoadingResults["method"] as? String {
                         TabPersistenceManager.debugMessages.append("🆕 [Step 1] Lazy Loading 방식: \(method)")
+                    }
+                }
+                
+                // 🆕 부모 스크롤 복원 결과
+                if let parentScrollCount = resultDict["parentScrollCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🆕 [Step 1] 부모 스크롤 복원: \(parentScrollCount)개")
+                }
+                if let parentScrollResults = resultDict["parentScrollResults"] as? [[String: Any]] {
+                    for result in parentScrollResults.prefix(3) {
+                        if let selector = result["selector"] as? String,
+                           let success = result["success"] as? Bool {
+                            TabPersistenceManager.debugMessages.append("   \(selector): \(success ? "성공" : "실패")")
+                        }
                     }
                 }
                 
@@ -286,21 +317,10 @@ struct BFCacheSnapshot: Codable {
                 }
                 if let restoredHeight = resultDict["restoredHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                    
-                    // 높이 증가 여부 체크
-                    if let currentHeight = resultDict["currentHeight"] as? Double {
-                        heightIncreased = restoredHeight > currentHeight
-                    }
                 }
                 if let percentage = resultDict["percentage"] as? Double {
                     percentageValue = percentage
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
-                }
-                
-                // 높이 증가 체크 정보
-                if let heightIncreaseFlag = resultDict["heightIncreased"] as? Bool {
-                    heightIncreased = heightIncreaseFlag
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 높이 증가: \(heightIncreased ? "예" : "아니오")")
                 }
                 
                 let isStaticSite = (resultDict["isStaticSite"] as? Bool) ?? false
@@ -314,12 +334,9 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                // 개선: 높이가 증가하지 않았으면 재시도 하지 않음
-                if !step1Success && !isStaticSiteFlag && targetHeightValue > 0 && percentageValue < 70 && attempt < maxStep1Retries && heightIncreased {
+                if !step1Success && !isStaticSiteFlag && targetHeightValue > 0 && percentageValue < 70 && attempt < maxStep1Retries {
                     shouldRetry = true
                     TabPersistenceManager.debugMessages.append("🔄 [Step 1] 복원률 부족 - 재시도 예정 (\(attempt + 1)/\(maxStep1Retries + 1))")
-                } else if !heightIncreased {
-                    TabPersistenceManager.debugMessages.append("⚠️ [Step 1] 높이 증가 없음 - 재시도 중단하고 다음 단계로")
                 } else if !step1Success && attempt >= maxStep1Retries && !shouldRetry {
                     TabPersistenceManager.debugMessages.append("⚠️ [Step 1] 복원 재시도 한계 도달")
                 }
@@ -534,8 +551,8 @@ struct BFCacheSnapshot: Codable {
     
     // MARK: - JavaScript 생성 메서드들
     
-    // 🆕 Step 1 개선: Lazy Loading 트리거 + 콘텐츠 복원 (부모스크롤 제거, A.btn_more/A.item_more 제외, 높이 증가 체크)
-    private func generateStep1_LazyLoadAndContentRestoreScript(enableLazyLoading: Bool) -> String {
+    // 🆕 Step 1 개선: Lazy Loading 우선 트리거 + 부모 스크롤 복원 + 콘텐츠 복원 + 🐛 디버그 강화 + 🎯 하단 더보기 선택자 개선 + 🚫 A.btn_more, A.item_more 제외 + ⚡ 강도 조절
+    private func generateStep1_LazyLoadAndContentRestoreScript(parentScrollDataJSON: String, enableLazyLoading: Bool) -> String {
         let targetHeight = restorationConfig.savedContentHeight
         let targetY = scrollPosition.y
         
@@ -545,6 +562,7 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const targetHeight = parseFloat('\(targetHeight)') || 0;
                 const targetY = parseFloat('\(targetY)') || 0;
+                const parentScrollStates = \(parentScrollDataJSON);
                 const enableLazyLoading = \(enableLazyLoading ? "true" : "false");
                 
                 // 🐛 **디버그 강화: 이벤트 및 히스토리 추적**
@@ -591,14 +609,12 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                const initialHeight = Math.max(
+                const currentHeight = Math.max(
                     document.documentElement ? document.documentElement.scrollHeight : 0,
                     document.body ? document.body.scrollHeight : 0
                 ) || 0;
                 
-                const currentHeight = initialHeight;
-                
-                logs.push('[Step 1] 🐛 디버그 강화 - Lazy Loading + 콘텐츠 복원 시작');
+                logs.push('[Step 1] 🐛 디버그 강화 - Lazy Loading + 부모 스크롤 + 콘텐츠 복원 시작');
                 logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
                 logs.push('목표 Y 위치: ' + targetY.toFixed(0) + 'px');
@@ -673,8 +689,45 @@ struct BFCacheSnapshot: Codable {
                     void(document.body.offsetHeight);
                 }
                 
-                // Phase 2: 콘텐츠 높이 복원
-                logs.push('Phase 2: 콘텐츠 높이 복원');
+                // 🆕 Phase 2: 부모 컨테이너 스크롤 복원 (네이버 카페 스타일)
+                let parentScrollCount = 0;
+                const parentScrollResults = [];
+                
+                if (parentScrollStates && parentScrollStates.length > 0) {
+                    logs.push('🆕 Phase 2: 부모 스크롤 복원 시작: ' + parentScrollStates.length + '개');
+                    
+                    for (let i = 0; i < parentScrollStates.length; i++) {
+                        const state = parentScrollStates[i];
+                        if (state.selector) {
+                            const element = document.querySelector(state.selector);
+                            if (element) {
+                                element.scrollTop = state.scrollTop || 0;
+                                element.scrollLeft = state.scrollLeft || 0;
+                                parentScrollCount++;
+                                parentScrollResults.push({
+                                    selector: state.selector,
+                                    success: true,
+                                    scrollTop: state.scrollTop,
+                                    scrollLeft: state.scrollLeft
+                                });
+                                logs.push('부모 스크롤 복원 성공: ' + state.selector);
+                                
+                                // 🐛 부모 스크롤 이벤트 추적
+                                trackEventTarget('parent_scroll', element);
+                            } else {
+                                parentScrollResults.push({
+                                    selector: state.selector,
+                                    success: false,
+                                    reason: 'element_not_found'
+                                });
+                                logs.push('부모 스크롤 복원 실패: ' + state.selector + ' (요소 없음)');
+                            }
+                        }
+                    }
+                }
+                
+                // Phase 3: 콘텐츠 높이 복원 (기존 로직)
+                logs.push('Phase 3: 콘텐츠 높이 복원');
                 
                 // 타입 안전성 체크
                 if (!targetHeight || targetHeight === 0) {
@@ -689,9 +742,10 @@ struct BFCacheSnapshot: Codable {
                         targetHeight: 0,
                         restoredHeight: currentHeight,
                         percentage: 100,
-                        heightIncreased: false,
                         lazyLoadingResults: lazyLoadingResults,
-                        eventDebugResults: eventDebugResults,
+                        parentScrollCount: parentScrollCount,
+                        parentScrollResults: parentScrollResults,
+                        eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
                         logs: logs
                     };
                 }
@@ -713,9 +767,10 @@ struct BFCacheSnapshot: Codable {
                         targetHeight: targetHeight,
                         restoredHeight: currentHeight,
                         percentage: percentage,
-                        heightIncreased: false,
                         lazyLoadingResults: lazyLoadingResults,
-                        eventDebugResults: eventDebugResults,
+                        parentScrollCount: parentScrollCount,
+                        parentScrollResults: parentScrollResults,
+                        eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
                         logs: logs
                     };
                 }
@@ -723,7 +778,7 @@ struct BFCacheSnapshot: Codable {
                 // 동적 사이트 - 콘텐츠 로드 시도
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                // 🎯 **개선된 하단 더보기 버튼 선택자 (A.btn_more, A.item_more 제외)**
+                // 🎯 **개선된 하단 더보기 버튼 선택자 (상단 탭/카테고리 제외) + 🚫 A.btn_more, A.item_more 제외**
                 function isElementInBottomArea(element) {
                     try {
                         const rect = element.getBoundingClientRect();
@@ -791,63 +846,58 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **하단 더보기 전용 선택자 (A.btn_more, A.item_more 제외)**
+                // 🚫 **추가: A.btn_more, A.item_more 제외 함수**
+                function isExcludedSelector(element) {
+                    try {
+                        if (element.tagName === 'A') {
+                            const classList = Array.from(element.classList);
+                            // A.btn_more, A.item_more 선택자 제외
+                            if (classList.includes('btn_more') || classList.includes('item_more')) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    } catch(e) {
+                        return false;
+                    }
+                }
+                
+                // 🎯 **하단 더보기 전용 선택자 (상단 탭 제외) + 🚫 A.btn_more, A.item_more 제외**
                 const bottomLoadMoreSelectors = [
-                    // 명확한 하단 더보기 선택자 (클래스명 기반) - A.btn_more, A.item_more 제외
-                    '.load-more:not(A.btn_more):not(A.item_more)', 
-                    '.show-more:not(A.btn_more):not(A.item_more)', 
-                    '.view-more:not(A.btn_more):not(A.item_more)', 
-                    '.see-more:not(A.btn_more):not(A.item_more)', 
-                    '.more-btn:not(A.btn_more):not(A.item_more)',
-                    '.btn-load:not(A.btn_more):not(A.item_more)', 
-                    '.btn-show:not(A.btn_more):not(A.item_more)', 
-                    '.more-button:not(A.btn_more):not(A.item_more)', 
-                    '.load-button:not(A.btn_more):not(A.item_more)',
+                    // 명확한 하단 더보기 선택자 (클래스명 기반) - A.btn_more, A.item_more 제외됨
+                    '.load-more', '.show-more', '.view-more', '.see-more', '.more-btn',
+                    '.btn-load', '.btn-show', '.more-button', '.load-button',
                     
-                    // data 속성 기반
-                    '[data-action="load-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[data-action="show-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[data-testid*="load-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[data-testid*="show-more"]:not(A.btn_more):not(A.item_more)',
-                    '[data-role="load-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[data-role="show-more"]:not(A.btn_more):not(A.item_more)',
+                    // data 속성 기반 (더 안전함)
+                    '[data-action="load-more"]', '[data-action="show-more"]', 
+                    '[data-testid*="load-more"]', '[data-testid*="show-more"]',
+                    '[data-role="load-more"]', '[data-role="show-more"]',
                     
-                    // ID 기반
-                    '#load-more:not(A.btn_more):not(A.item_more)', 
-                    '#show-more:not(A.btn_more):not(A.item_more)', 
-                    '#view-more:not(A.btn_more):not(A.item_more)', 
-                    '#loadmore:not(A.btn_more):not(A.item_more)', 
-                    '#showmore:not(A.btn_more):not(A.item_more)',
-                    '[id*="load-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[id*="loadmore"]:not(A.btn_more):not(A.item_more)', 
-                    '[id*="show-more"]:not(A.btn_more):not(A.item_more)', 
-                    '[id*="showmore"]:not(A.btn_more):not(A.item_more)',
+                    // ID 기반 (명확한 더보기)
+                    '#load-more', '#show-more', '#view-more', '#loadmore', '#showmore',
+                    '[id*="load-more"]', '[id*="loadmore"]', '[id*="show-more"]', '[id*="showmore"]',
                     
                     // 페이지네이션 (하단 영역)
-                    '.pagination .next:not(A.btn_more):not(A.item_more)', 
-                    '.pagination .more:not(A.btn_more):not(A.item_more)', 
-                    '.pager .next:not(A.btn_more):not(A.item_more)', 
-                    '.pager .more:not(A.btn_more):not(A.item_more)',
-                    '.next-page:not(A.btn_more):not(A.item_more)', 
-                    '.next-btn:not(A.btn_more):not(A.item_more)', 
-                    '.load-next:not(A.btn_more):not(A.item_more)'
+                    '.pagination .next', '.pagination .more', '.pager .next', '.pager .more',
+                    '.next-page', '.next-btn', '.load-next'
                 ];
                 
-                // 🎯 **추가 검증이 필요한 선택자 (A.btn_more, A.item_more는 제외)**
+                // 🎯 **추가 검증이 필요한 선택자 (위치/텍스트 확인 필요) + 🚫 A.btn_more, A.item_more 제외됨**
                 const conditionalSelectors = [
-                    'button[class*="more"]:not(A.btn_more):not(A.item_more)', 
-                    'button[class*="load"]:not(A.btn_more):not(A.item_more)', 
-                    'button[class*="show"]:not(A.btn_more):not(A.item_more)',
+                    'button[class*="more"]', 'button[class*="load"]', 'button[class*="show"]',
+                    // A 태그는 필터링에서 제외할 선택자들을 별도로 처리
                     'a[class*="more"]:not(.btn_more):not(.item_more)', 
                     'a[class*="load"]:not(.btn_more):not(.item_more)', 
                     'a[class*="show"]:not(.btn_more):not(.item_more)',
-                    'button[aria-label*="more"]:not(A.btn_more):not(A.item_more)', 
-                    'button[aria-label*="load"]:not(A.btn_more):not(A.item_more)'
+                    'button[aria-label*="more"]', 'button[aria-label*="load"]',
+                    'button:contains("더보기")', 'button:contains("더 보기")',
+                    'button:contains("Load More")', 'button:contains("Show More")',
+                    'button:contains("More")', 'button:contains("Next")'
                 ];
                 
                 const loadMoreButtons = [];
                 
-                // 1. 명확한 하단 더보기 선택자로 찾기 (A.btn_more, A.item_more 제외)
+                // 1. 명확한 하단 더보기 선택자로 찾기
                 for (let i = 0; i < bottomLoadMoreSelectors.length; i++) {
                     try {
                         const selector = bottomLoadMoreSelectors[i];
@@ -855,12 +905,7 @@ struct BFCacheSnapshot: Codable {
                         if (elements && elements.length > 0) {
                             for (let j = 0; j < elements.length; j++) {
                                 const element = elements[j];
-                                // A.btn_more, A.item_more 태그 재확인
-                                if (element.tagName === 'A' && 
-                                    (element.classList.contains('btn_more') || element.classList.contains('item_more'))) {
-                                    continue; // 건너뛰기
-                                }
-                                if (element && !loadMoreButtons.includes(element)) {
+                                if (element && !loadMoreButtons.includes(element) && !isExcludedSelector(element)) {
                                     // 하단 영역에 있는지 확인
                                     if (isElementInBottomArea(element)) {
                                         loadMoreButtons.push(element);
@@ -874,7 +919,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 2. 조건부 선택자로 추가 찾기 (위치, 텍스트, 컨텍스트 확인)
+                // 2. 조건부 선택자로 추가 찾기 (위치, 텍스트, 컨텍스트 확인) + 🚫 제외 선택자 필터링
                 for (let i = 0; i < conditionalSelectors.length; i++) {
                     try {
                         const selector = conditionalSelectors[i];
@@ -882,12 +927,7 @@ struct BFCacheSnapshot: Codable {
                         if (elements && elements.length > 0) {
                             for (let j = 0; j < elements.length; j++) {
                                 const element = elements[j];
-                                // A.btn_more, A.item_more 태그 재확인
-                                if (element.tagName === 'A' && 
-                                    (element.classList.contains('btn_more') || element.classList.contains('item_more'))) {
-                                    continue; // 건너뛰기
-                                }
-                                if (element && !loadMoreButtons.includes(element)) {
+                                if (element && !loadMoreButtons.includes(element) && !isExcludedSelector(element)) {
                                     // 여러 조건 검사
                                     const inBottomArea = isElementInBottomArea(element);
                                     const hasLoadText = hasLoadMoreLikeText(element);
@@ -908,7 +948,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                logs.push('하단 더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견 (A.btn_more, A.item_more 제외)');
+                logs.push('하단 더보기 버튼 후보: ' + loadMoreButtons.length + '개 발견 (상단 탭/카테고리 + A.btn_more/A.item_more 제외)');
                 
                 // 더보기 버튼 클릭 (최대 10개로 제한) + 🐛 디버그 추적
                 let clicked = 0;
@@ -954,14 +994,15 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (clicked > 0) {
-                    logs.push('하단 더보기 버튼 ' + clicked + '개 클릭 완료 (A.btn_more, A.item_more 제외)');
+                    logs.push('하단 더보기 버튼 ' + clicked + '개 클릭 완료 (상단 탭 + A.btn_more/A.item_more 제외)');
                 }
                 
-                // 🚀 무한스크롤 트리거 - 최대 4번 시도 (강도 완화)
-                logs.push('무한스크롤 트리거 시작 (최대 4번 시도)');
-                const maxScrollAttempts = 4; // 8번에서 4번으로 감소
+                // 🚀 무한스크롤 트리거 - 최대 8번 시도 + 🐛 디버그 추적 + ⚡ 강도 조절 (증가 없으면 중단)
+                logs.push('무한스크롤 트리거 시작 (최대 8번 시도, 강도 조절 적용)');
+                const maxScrollAttempts = 8;
                 let previousHeight = currentHeight;
-                let heightIncreasedOnce = false;
+                let noGrowthCount = 0; // ⚡ 연속으로 증가가 없었던 횟수
+                const maxNoGrowthAttempts = 3; // ⚡ 연속 3번 증가 없으면 중단
                 
                 for (let attempt = 1; attempt <= maxScrollAttempts; attempt++) {
                     try {
@@ -1002,17 +1043,19 @@ struct BFCacheSnapshot: Codable {
                         ) || 0;
                         
                         if (newHeight > previousHeight) {
-                            logs.push('시도 ' + attempt + ': 콘텐츠 증가 ' + 
-                                    (newHeight - previousHeight).toFixed(0) + 'px');
+                            const growthAmount = newHeight - previousHeight;
+                            logs.push('시도 ' + attempt + ': 콘텐츠 증가 ' + growthAmount.toFixed(0) + 'px');
                             previousHeight = newHeight;
-                            heightIncreasedOnce = true;
+                            noGrowthCount = 0; // ⚡ 증가가 있었으므로 카운터 리셋
                         } else {
-                            logs.push('시도 ' + attempt + ': 콘텐츠 변화 없음');
-                            // 높이 증가가 한번도 없으면 중단
-                            if (!heightIncreasedOnce) {
-                                logs.push('높이 증가 없음 - 무한스크롤 트리거 조기 중단');
-                                break;
-                            }
+                            noGrowthCount++; // ⚡ 증가가 없었으므로 카운터 증가
+                            logs.push('시도 ' + attempt + ': 콘텐츠 변화 없음 (연속 ' + noGrowthCount + '회)');
+                        }
+                        
+                        // ⚡ **강도 조절: 연속으로 증가가 없으면 중단**
+                        if (noGrowthCount >= maxNoGrowthAttempts) {
+                            logs.push('연속 ' + maxNoGrowthAttempts + '회 증가 없음 - 무한스크롤 트리거 중단 (강도 조절)');
+                            break;
                         }
                         
                         // 목표에 도달했는지 확인
@@ -1039,13 +1082,14 @@ struct BFCacheSnapshot: Codable {
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
                 logs.push('콘텐츠 증가량: ' + (restoredHeight - currentHeight).toFixed(0) + 'px');
-                logs.push('높이 증가 여부: ' + (heightIncreasedOnce ? '예' : '아니오'));
                 logs.push('Lazy Loading 트리거: ' + lazyLoadingResults.triggered + '개 (' + lazyLoadingResults.method + ')');
-                logs.push('🎯 하단 더보기 클릭: ' + clicked + '개 (A.btn_more, A.item_more 제외)');
+                logs.push('부모 스크롤 복원: ' + parentScrollCount + '개 성공');
+                logs.push('🎯 하단 더보기 클릭: ' + clicked + '개 (상단 탭 + A.btn_more/A.item_more 제외)');
                 logs.push('🐛 클릭된 요소: ' + eventDebugResults.clickedElements.length + '개');
                 logs.push('🐛 이벤트 대상: ' + eventDebugResults.domEventTargets.length + '개');
                 logs.push('🐛 pushState 호출: ' + eventDebugResults.historyPushStates.length + '회');
                 logs.push('🐛 네비게이션 시도: ' + eventDebugResults.navigationAttempts.length + '회');
+                logs.push('⚡ 강도 조절: 연속 무증가 ' + noGrowthCount + '회 (최대 ' + maxNoGrowthAttempts + '회)');
                 
                 // 🐛 디버그 결과 복원
                 window.history.pushState = originalPushState;
@@ -1057,11 +1101,13 @@ struct BFCacheSnapshot: Codable {
                     targetHeight: targetHeight,
                     restoredHeight: restoredHeight,
                     percentage: finalPercentage,
-                    heightIncreased: heightIncreasedOnce,
                     scrollAttempts: maxScrollAttempts,
                     buttonsClicked: clicked,
                     lazyLoadingResults: lazyLoadingResults,
-                    eventDebugResults: eventDebugResults,
+                    parentScrollCount: parentScrollCount,
+                    parentScrollResults: parentScrollResults,
+                    eventDebugResults: eventDebugResults, // 🐛 디버그 결과 포함
+                    noGrowthCount: noGrowthCount, // ⚡ 강도 조절 결과 포함
                     logs: logs
                 };
                 
@@ -1069,7 +1115,6 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message || 'Unknown error',
-                    heightIncreased: false,
                     eventDebugResults: eventDebugResults || {},
                     logs: ['[Step 1] 오류: ' + (e.message || 'Unknown error')]
                 };
@@ -1168,7 +1213,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🆕 Step 3: IntersectionObserver 검증 추가
+    // 🆕 Step 3 개선: IntersectionObserver 검증 추가
     private func generateStep3_InfiniteScrollAnchorRestoreScriptWithIO(anchorDataJSON: String, enableIOVerification: Bool) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
@@ -1531,7 +1576,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캐처 작업 (🚀 무한스크롤 전용 앵커 캐처 + 🔄 iframe 재귀적 수집)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1550,7 +1595,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캐처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1605,6 +1650,11 @@ extension BFCacheTransitionSystem {
         // 🔥 **캡처된 jsState 상세 로깅**
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
+            
+            // 🆕 부모 스크롤 상태 로깅
+            if let parentScrollStates = jsState["parentScrollStates"] as? [[String: Any]] {
+                TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 상태 캡처: \(parentScrollStates.count)개")
+            }
             
             if let infiniteScrollAnchors = jsState["infiniteScrollAnchors"] as? [String: Any] {
                 TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
@@ -1667,11 +1717,6 @@ extension BFCacheTransitionSystem {
                 
                 if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
                     TabPersistenceManager.debugMessages.append("📊 무한스크롤 앵커 수집 통계: \(stats)")
-                }
-                
-                // iframe 앵커 확인
-                if let iframeAnchors = infiniteScrollAnchors["iframeAnchors"] as? [[String: Any]] {
-                    TabPersistenceManager.debugMessages.append("🚀 iframe 앵커 캡처: \(iframeAnchors.count)개")
                 }
             } else {
                 TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
@@ -1817,12 +1862,12 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 2.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: iframe 앵커 수집 추가된 JS 상태 캡처**
+        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처 + 부모 스크롤 상태 추가 + 🔄 iframe 재귀적 수집** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작 (iframe 포함)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작 (iframe 재귀적 수집 포함)")
         
         DispatchQueue.main.sync {
-            let jsScript = generateInfiniteScrollAnchorCaptureScriptWithIframe() // 🆕 iframe 버전 사용
+            let jsScript = generateInfiniteScrollAnchorCaptureScriptWithParentScrollAndIframe() // 🔄 iframe 추가
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -1831,15 +1876,30 @@ extension BFCacheTransitionSystem {
                     jsState = data
                     TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                     
+                    // 📊 **상세 캐처 결과 로깅**
+                    if let parentScrollStates = data["parentScrollStates"] as? [[String: Any]] {
+                        TabPersistenceManager.debugMessages.append("🆕 부모 스크롤 상태: \(parentScrollStates.count)개 캡처")
+                    }
+                    
+                    // 🔄 **iframe 캡처 결과 로깅**
+                    if let iframeResults = data["iframeResults"] as? [String: Any] {
+                        if let iframeCount = iframeResults["iframeCount"] as? Int {
+                            TabPersistenceManager.debugMessages.append("🔄 iframe 재귀적 수집: \(iframeCount)개 iframe 처리")
+                        }
+                        if let accessibleCount = iframeResults["accessibleCount"] as? Int {
+                            TabPersistenceManager.debugMessages.append("🔄 접근 가능한 iframe: \(accessibleCount)개")
+                        }
+                        if let totalAnchorsFromIframes = iframeResults["totalAnchorsFromIframes"] as? Int {
+                            TabPersistenceManager.debugMessages.append("🔄 iframe에서 수집된 앵커: \(totalAnchorsFromIframes)개")
+                        }
+                    }
+                    
                     if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
                         if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
                             let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
                             let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
                             let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
                             TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
-                        }
-                        if let iframeAnchors = infiniteScrollAnchors["iframeAnchors"] as? [[String: Any]] {
-                            TabPersistenceManager.debugMessages.append("🚀 iframe 앵커: \(iframeAnchors.count)개")
                         }
                         if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
                             TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
@@ -1904,7 +1964,7 @@ extension BFCacheTransitionSystem {
             step3RenderDelay: 0.1,
             step4RenderDelay: 0.4,
             enableLazyLoadingTrigger: true,  // 🆕
-            enableParentScrollRestore: false, // 제거됨
+            enableParentScrollRestore: true, // 🆕
             enableIOVerification: true       // 🆕
         )
         
@@ -1927,12 +1987,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🆕 JavaScript 앵커 캐처 스크립트 - iframe 내부 앵커 수집 추가
-    private func generateInfiniteScrollAnchorCaptureScriptWithIframe() -> String {
+    // 🔄 **새로운 JavaScript 앵커 캐처 스크립트 - 부모 스크롤 상태 + iframe 재귀적 수집 추가**
+    private func generateInfiniteScrollAnchorCaptureScriptWithParentScrollAndIframe() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (iframe 포함)');
+                console.log('🚀 무한스크롤 전용 앵커 및 부모 스크롤 + iframe 재귀적 캡처 시작');
                 
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
@@ -1946,7 +2006,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(document.documentElement.scrollHeight) || 0;
                 const contentWidth = parseFloat(document.documentElement.scrollWidth) || 0;
                 
-                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작');
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (iframe 재귀적 수집 포함)');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -1961,6 +2021,185 @@ extension BFCacheTransitionSystem {
                     content: [contentWidth, contentHeight]
                 });
                 
+                // 🆕 부모 컨테이너 스크롤 상태 수집 (네이버 카페 스타일)
+                function collectParentScrollStates() {
+                    const parentScrollStates = [];
+                    const scrollableSelectors = [
+                        '.scroll-container', '.scrollable', '.overflow-auto', '.overflow-scroll',
+                        '[style*="overflow: auto"]', '[style*="overflow: scroll"]',
+                        '[style*="overflow-y: auto"]', '[style*="overflow-y: scroll"]',
+                        '.list-container', '.content-wrapper', '.main-content',
+                        'main', 'article', 'section', '[role="main"]'
+                    ];
+                    
+                    scrollableSelectors.forEach(function(selector) {
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            elements.forEach(function(element) {
+                                if (element.scrollTop > 0 || element.scrollLeft > 0) {
+                                    // CSS 경로 생성
+                                    let path = '';
+                                    let current = element;
+                                    let depth = 0;
+                                    
+                                    while (current && current !== document.body && depth < 5) {
+                                        let selector = current.tagName.toLowerCase();
+                                        if (current.id) {
+                                            selector += '#' + current.id;
+                                            path = selector + (path ? ' > ' + path : '');
+                                            break;
+                                        } else if (current.className) {
+                                            const classNames = current.className.trim().split(/\\s+/);
+                                            if (classNames.length > 0 && classNames[0]) {
+                                                selector += '.' + classNames[0];
+                                            }
+                                        }
+                                        path = selector + (path ? ' > ' + path : '');
+                                        current = current.parentElement;
+                                        depth++;
+                                    }
+                                    
+                                    parentScrollStates.push({
+                                        selector: path || selector,
+                                        scrollTop: element.scrollTop,
+                                        scrollLeft: element.scrollLeft,
+                                        scrollHeight: element.scrollHeight,
+                                        scrollWidth: element.scrollWidth
+                                    });
+                                    
+                                    detailedLogs.push('부모 스크롤 발견: ' + path);
+                                }
+                            });
+                        } catch(e) {
+                            // 선택자 오류 무시
+                        }
+                    });
+                    
+                    detailedLogs.push('부모 스크롤 컨테이너: ' + parentScrollStates.length + '개 발견');
+                    return parentScrollStates;
+                }
+                
+                // 🔄 **iframe 재귀적 앵커 수집**
+                function collectIframeAnchorsRecursively() {
+                    const iframeResults = {
+                        iframeCount: 0,
+                        accessibleCount: 0,
+                        totalAnchorsFromIframes: 0,
+                        iframeAnchors: []
+                    };
+                    
+                    try {
+                        const iframes = document.querySelectorAll('iframe');
+                        iframeResults.iframeCount = iframes.length;
+                        
+                        detailedLogs.push('🔄 iframe 재귀적 수집 시작: ' + iframes.length + '개 iframe 발견');
+                        
+                        for (let i = 0; i < iframes.length; i++) {
+                            try {
+                                const iframe = iframes[i];
+                                
+                                // iframe 접근 가능성 확인
+                                if (!iframe.contentWindow || !iframe.contentDocument) {
+                                    detailedLogs.push('🔄 iframe[' + i + '] 접근 불가: contentWindow/contentDocument 없음');
+                                    continue;
+                                }
+                                
+                                // Same-origin 정책 확인
+                                let iframeDoc;
+                                try {
+                                    iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                                    if (!iframeDoc) {
+                                        detailedLogs.push('🔄 iframe[' + i + '] 접근 불가: document 없음');
+                                        continue;
+                                    }
+                                } catch(securityError) {
+                                    detailedLogs.push('🔄 iframe[' + i + '] 접근 불가: CORS 제한 - ' + securityError.message);
+                                    continue;
+                                }
+                                
+                                iframeResults.accessibleCount++;
+                                detailedLogs.push('🔄 iframe[' + i + '] 접근 성공');
+                                
+                                // iframe 내부 앵커 수집
+                                const iframeWindow = iframe.contentWindow;
+                                const iframeScrollY = iframeWindow.scrollY || iframeWindow.pageYOffset || 0;
+                                const iframeScrollX = iframeWindow.scrollX || iframeWindow.pageXOffset || 0;
+                                
+                                // iframe 내부의 콘텐츠 요소들 수집
+                                const iframeContentSelectors = [
+                                    'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
+                                    '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
+                                    '.news', '.media', '.content-item', '[class*="item"]', 
+                                    '[class*="post"]', '[class*="card"]', '[data-testid]', 
+                                    '[data-id]', '[data-key]', '[data-item-id]'
+                                ];
+                                
+                                let iframeAnchors = [];
+                                for (let j = 0; j < iframeContentSelectors.length; j++) {
+                                    try {
+                                        const elements = iframeDoc.querySelectorAll(iframeContentSelectors[j]);
+                                        for (let k = 0; k < Math.min(elements.length, 10); k++) { // iframe당 최대 10개
+                                            const element = elements[k];
+                                            if (element && element.getBoundingClientRect) {
+                                                const rect = element.getBoundingClientRect();
+                                                if (rect.width > 10 && rect.height > 10) {
+                                                    const elementText = (element.textContent || '').trim();
+                                                    if (elementText.length > 5) {
+                                                        // iframe 내부 요소를 메인 페이지 좌표계로 변환
+                                                        const iframeRect = iframe.getBoundingClientRect();
+                                                        const absoluteTop = scrollY + iframeRect.top + rect.top;
+                                                        const absoluteLeft = scrollX + iframeRect.left + rect.left;
+                                                        
+                                                        const iframeAnchor = {
+                                                            anchorType: 'iframeContent',
+                                                            iframeIndex: i,
+                                                            elementIndex: k,
+                                                            selector: iframeContentSelectors[j],
+                                                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                                                            iframePosition: { top: rect.top, left: rect.left },
+                                                            size: { width: rect.width, height: rect.height },
+                                                            textContent: elementText.substring(0, 100),
+                                                            qualityScore: 60, // iframe 앵커는 60점
+                                                            captureTimestamp: Date.now(),
+                                                            isVisible: true,
+                                                            visibilityReason: 'iframe_content_visible'
+                                                        };
+                                                        
+                                                        iframeAnchors.push(iframeAnchor);
+                                                        iframeResults.totalAnchorsFromIframes++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch(selectorError) {
+                                        // iframe 내부 선택자 오류 무시
+                                    }
+                                }
+                                
+                                if (iframeAnchors.length > 0) {
+                                    iframeResults.iframeAnchors.push({
+                                        iframeIndex: i,
+                                        iframeSrc: iframe.src || 'about:blank',
+                                        anchors: iframeAnchors,
+                                        scrollPosition: { x: iframeScrollX, y: iframeScrollY }
+                                    });
+                                    detailedLogs.push('🔄 iframe[' + i + '] 앵커 수집: ' + iframeAnchors.length + '개');
+                                }
+                                
+                            } catch(iframeError) {
+                                detailedLogs.push('🔄 iframe[' + i + '] 처리 오류: ' + iframeError.message);
+                            }
+                        }
+                        
+                        detailedLogs.push('🔄 iframe 재귀적 수집 완료: ' + iframeResults.accessibleCount + '/' + iframeResults.iframeCount + '개 접근, 총 ' + iframeResults.totalAnchorsFromIframes + '개 앵커');
+                        
+                    } catch(iframeCollectionError) {
+                        detailedLogs.push('🔄 iframe 수집 전체 오류: ' + iframeCollectionError.message);
+                    }
+                    
+                    return iframeResults;
+                }
+                
                 // 🚀 **실제 보이는 영역 계산**
                 const actualViewportRect = {
                     top: scrollY,
@@ -1974,13 +2213,12 @@ extension BFCacheTransitionSystem {
                 detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
                 
                 // 🚀 **요소 가시성 정확 판단 함수**
-                function isElementActuallyVisible(element, strictMode, doc) {
+                function isElementActuallyVisible(element, strictMode) {
                     if (strictMode === undefined) strictMode = true;
-                    if (!doc) doc = document;
                     
                     try {
                         if (!element || !element.getBoundingClientRect) return { visible: false, reason: 'invalid_element' };
-                        if (!doc.contains(element)) return { visible: false, reason: 'not_in_dom' };
+                        if (!document.contains(element)) return { visible: false, reason: 'not_in_dom' };
                         
                         const rect = element.getBoundingClientRect();
                         if (rect.width === 0 || rect.height === 0) return { visible: false, reason: 'zero_size' };
@@ -1997,7 +2235,7 @@ extension BFCacheTransitionSystem {
                             return { visible: false, reason: 'outside_viewport', rect: rect };
                         }
                         
-                        const computedStyle = doc.defaultView.getComputedStyle(element);
+                        const computedStyle = window.getComputedStyle(element);
                         if (computedStyle.display === 'none') return { visible: false, reason: 'display_none' };
                         if (computedStyle.visibility === 'hidden') return { visible: false, reason: 'visibility_hidden' };
                         if (computedStyle.opacity === '0') return { visible: false, reason: 'opacity_zero' };
@@ -2068,20 +2306,19 @@ extension BFCacheTransitionSystem {
                     return null;
                 }
                 
-                // 🚀 **수정된: Vue 컴포넌트 요소 수집 (iframe 지원)**
-                function collectVueComponentElements(doc, isIframe) {
-                    if (!doc) doc = document;
+                // 🚀 **수정된: Vue 컴포넌트 요소 수집**
+                function collectVueComponentElements() {
                     const vueElements = [];
                     
                     // 1. 모든 요소를 순회하면서 data-v-* 속성을 가진 요소 찾기
-                    const allElements = doc.querySelectorAll('*');
+                    const allElements = document.querySelectorAll('*');
                     
                     for (let i = 0; i < allElements.length; i++) {
                         const element = allElements[i];
                         const dataVAttr = findDataVAttribute(element);
                         
                         if (dataVAttr) {
-                            const visibilityResult = isElementActuallyVisible(element, true, doc);
+                            const visibilityResult = isElementActuallyVisible(element, true);
                             
                             if (visibilityResult.visible) {
                                 const elementText = (element.textContent || '').trim();
@@ -2091,75 +2328,20 @@ extension BFCacheTransitionSystem {
                                         dataVAttr: dataVAttr,
                                         rect: visibilityResult.rect,
                                         textContent: elementText,
-                                        visibilityResult: visibilityResult,
-                                        isIframe: isIframe || false
+                                        visibilityResult: visibilityResult
                                     });
                                 }
                             }
                         }
                     }
                     
-                    detailedLogs.push((isIframe ? '[iframe] ' : '') + 'Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
+                    detailedLogs.push('Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
                     return vueElements;
                 }
                 
-                // 🆕 **iframe 내부 앵커 수집 함수**
-                function collectAnchorsFromIframe(iframe) {
-                    const iframeAnchors = [];
-                    try {
-                        // same-origin iframe만 접근 가능
-                        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                        if (!iframeDoc) {
-                            detailedLogs.push('iframe 접근 불가 (cross-origin)');
-                            return iframeAnchors;
-                        }
-                        
-                        // iframe 내부에서 Vue 컴포넌트 수집
-                        const iframeVueElements = collectVueComponentElements(iframeDoc, true);
-                        
-                        // iframe 내부에서 일반 콘텐츠 수집
-                        const contentSelectors = [
-                            'li', '.item', '.list-item', '.card', '.post', '.article',
-                            '.ListItem', '.ArticleListItem', '[class*="List"]', '[class*="Item"]'
-                        ];
-                        
-                        for (let i = 0; i < contentSelectors.length; i++) {
-                            try {
-                                const elements = iframeDoc.querySelectorAll(contentSelectors[i]);
-                                for (let j = 0; j < elements.length && iframeAnchors.length < 10; j++) {
-                                    const element = elements[j];
-                                    const visibilityResult = isElementActuallyVisible(element, false, iframeDoc);
-                                    
-                                    if (visibilityResult.visible) {
-                                        const elementText = (element.textContent || '').trim();
-                                        if (elementText.length > 5) {
-                                            iframeAnchors.push({
-                                                element: element,
-                                                rect: visibilityResult.rect,
-                                                textContent: elementText,
-                                                selector: contentSelectors[i],
-                                                isIframe: true
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch(e) {
-                                // 선택자 오류 무시
-                            }
-                        }
-                        
-                        detailedLogs.push('iframe 앵커 수집: ' + iframeAnchors.length + '개');
-                    } catch(e) {
-                        detailedLogs.push('iframe 앵커 수집 오류: ' + e.message);
-                    }
-                    
-                    return iframeAnchors;
-                }
-                
-                // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (iframe 포함)**
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
-                    const iframeAnchors = [];
                     const anchorStats = {
                         totalCandidates: 0,
                         visibilityChecked: 0,
@@ -2169,30 +2351,13 @@ extension BFCacheTransitionSystem {
                         virtualIndexAnchors: 0,
                         structuralPathAnchors: 0,
                         intersectionAnchors: 0,
-                        iframeAnchors: 0,
                         finalAnchors: 0
                     };
                     
                     detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
                     
-                    // 🆕 **iframe 앵커 수집**
-                    const iframes = document.querySelectorAll('iframe');
-                    detailedLogs.push('iframe 개수: ' + iframes.length);
-                    
-                    for (let i = 0; i < iframes.length; i++) {
-                        const iframe = iframes[i];
-                        const iframeRect = iframe.getBoundingClientRect();
-                        
-                        // iframe이 보이는 경우만
-                        if (iframeRect.width > 0 && iframeRect.height > 0) {
-                            const collectedFromIframe = collectAnchorsFromIframe(iframe);
-                            iframeAnchors.push(...collectedFromIframe);
-                            anchorStats.iframeAnchors += collectedFromIframe.length;
-                        }
-                    }
-                    
-                    // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집 (메인 문서)**
-                    const vueComponentElements = collectVueComponentElements(document, false);
+                    // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
+                    const vueComponentElements = collectVueComponentElements();
                     anchorStats.totalCandidates += vueComponentElements.length;
                     anchorStats.actuallyVisible += vueComponentElements.length;
                     
@@ -2200,12 +2365,12 @@ extension BFCacheTransitionSystem {
                     const contentSelectors = [
                         'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
                         '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
-                        '.news', '.media', '.content-item', '[class*="item"]:not(A.item_more)', 
+                        '.news', '.media', '.content-item', '[class*="item"]', 
                         '[class*="post"]', '[class*="card"]', '[data-testid]', 
                         '[data-id]', '[data-key]', '[data-item-id]',
                         // 네이버 카페 특화 선택자 추가
                         '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
-                        '[class*="List"]', '[class*="Item"]:not(A.item_more)', '[data-v-]'
+                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
                     ];
                     
                     let contentElements = [];
@@ -2327,13 +2492,12 @@ extension BFCacheTransitionSystem {
                     
                     anchorStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개 (iframe: ' + iframeAnchors.length + '개)');
+                    detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
                     console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
                     
                     // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
                         anchors: anchors,
-                        iframeAnchors: iframeAnchors,
                         stats: anchorStats
                     };
                 }
@@ -2571,25 +2735,41 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🆕 **메인 실행 - iframe 포함 무한스크롤 앵커 수집**
+                // 🆕 **메인 실행 - 부모 스크롤 상태, 무한스크롤 앵커, iframe 재귀적 수집**
                 const startTime = Date.now();
+                const parentScrollStates = collectParentScrollStates(); // 🆕 부모 스크롤 수집
+                const iframeResults = collectIframeAnchorsRecursively(); // 🔄 iframe 재귀적 수집
                 const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
                 const captureTime = endTime - startTime;
+                
+                // 🔄 **iframe 앵커를 메인 앵커 배열에 통합**
+                if (iframeResults.totalAnchorsFromIframes > 0) {
+                    for (let i = 0; i < iframeResults.iframeAnchors.length; i++) {
+                        const iframeData = iframeResults.iframeAnchors[i];
+                        for (let j = 0; j < iframeData.anchors.length; j++) {
+                            infiniteScrollAnchorsData.anchors.push(iframeData.anchors[j]);
+                        }
+                    }
+                    infiniteScrollAnchorsData.stats.finalAnchors = infiniteScrollAnchorsData.anchors.length;
+                    detailedLogs.push('iframe 앵커 통합 완료: 총 ' + infiniteScrollAnchorsData.anchors.length + '개');
+                }
                 
                 pageAnalysis.capturePerformance = {
                     totalTime: captureTime,
                     anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('=== 무한스크롤 전용 앵커, 부모 스크롤, iframe 재귀적 캡처 완료 (' + captureTime + 'ms) ===');
                 detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
-                detailedLogs.push('iframe 앵커: ' + infiniteScrollAnchorsData.iframeAnchors.length + '개');
+                detailedLogs.push('부모 스크롤 컨테이너: ' + parentScrollStates.length + '개');
+                detailedLogs.push('iframe 재귀적 수집: ' + iframeResults.accessibleCount + '/' + iframeResults.iframeCount + '개 iframe, ' + iframeResults.totalAnchorsFromIframes + '개 앵커');
                 detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
                 console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
                     infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
-                    iframeAnchorsCount: infiniteScrollAnchorsData.iframeAnchors.length,
+                    parentScrollStatesCount: parentScrollStates.length,
+                    iframeResultsCount: iframeResults.totalAnchorsFromIframes,
                     stats: infiniteScrollAnchorsData.stats,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
@@ -2598,9 +2778,11 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                // ✅ **수정: iframe 앵커 포함된 반환 구조**
+                // ✅ **수정: 정리된 반환 구조 (부모 스크롤 + iframe 결과 추가)**
                 return {
-                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터 (iframe 포함)**
+                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
+                    parentScrollStates: parentScrollStates,           // 🆕 **부모 스크롤 상태**
+                    iframeResults: iframeResults,                     // 🔄 **iframe 재귀적 수집 결과**
                     scroll: { 
                         x: scrollX, 
                         y: scrollY
@@ -2630,7 +2812,9 @@ extension BFCacheTransitionSystem {
             } catch(e) { 
                 console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
-                    infiniteScrollAnchors: { anchors: [], iframeAnchors: [], stats: {} },
+                    infiniteScrollAnchors: { anchors: [], stats: {} },
+                    parentScrollStates: [],  // 🆕
+                    iframeResults: { iframeCount: 0, accessibleCount: 0, totalAnchorsFromIframes: 0, iframeAnchors: [] }, // 🔄
                     scroll: { x: parseFloat(window.scrollX) || 0, y: parseFloat(window.scrollY) || 0 },
                     href: window.location.href,
                     title: document.title,
