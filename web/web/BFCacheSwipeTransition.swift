@@ -1289,7 +1289,7 @@ extension BFCacheTransitionSystem {
             step1RenderDelay: 0.2,
             step2RenderDelay: 0.3,
             step3RenderDelay: 0.3,
-            step4RenderDelay: 0.3
+            step4RenderDelay: 0.5
         )
         
         let snapshot = BFCacheSnapshot(
