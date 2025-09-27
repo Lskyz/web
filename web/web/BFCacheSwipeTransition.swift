@@ -538,8 +538,10 @@ struct BFCacheSnapshot: Codable {
         function reidentifyAnchor(anchor) {
             // ID 기반 재식별
             if (anchor.id) {
-                const el = document.getElementById(anchor.id);
-                if (el && el.isConnected) return el;
+                try {
+                    const el = document.getElementById(anchor.id);
+                    if (el && el.isConnected) return el;
+                } catch(e) {}
             }
             
             // CSS 경로 기반 재식별
@@ -552,36 +554,23 @@ struct BFCacheSnapshot: Codable {
             
             // 텍스트 다이제스트 기반 전역 탐색
             if (anchor.text && anchor.text.length >= 10) {
-                const walker = document.createTreeWalker(
-                    document.body, 
-                    NodeFilter.SHOW_TEXT, 
-                    null
-                );
-                let node;
-                while (node = walker.nextNode()) {
-                    const text = (node.nodeValue || '').replace(/\\s+/g, ' ').trim();
-                    if (text.length >= 10 && text.includes(anchor.text)) {
-                        return node.parentElement;
+                try {
+                    const walker = document.createTreeWalker(
+                        document.body, 
+                        NodeFilter.SHOW_TEXT, 
+                        null
+                    );
+                    let node;
+                    while (node = walker.nextNode()) {
+                        const text = (node.nodeValue || '').replace(/\\s+/g, ' ').trim();
+                        if (text.length >= 10 && text.includes(anchor.text)) {
+                            return node.parentElement;
+                        }
                     }
-                }
+                } catch(e) {}
             }
             
             return null;
-        }
-        
-        // 🌐 **뷰포트 밖 앵커 지원: 오프스크린 스크롤**
-        async function scrollToElementOffscreen(element, scroller) {
-            const headerHeight = fixedHeaderHeight();
-            const rect = element.getBoundingClientRect(); // 뷰포트 밖이면 큰 ±값
-            const finalY = Math.max(0, (scroller.scrollTop + rect.top) - headerHeight);
-            
-            scroller.scrollTop = finalY;
-            
-            // 1프레임 보정
-            await new Promise(resolve => requestAnimationFrame(resolve));
-            scroller.scrollTop = finalY;
-            
-            return { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
         }
         
         // 🎯 **환경 안정화 (한 번만 실행)**
@@ -830,31 +819,35 @@ struct BFCacheSnapshot: Codable {
                         
                         // data-v-* 속성으로 찾기 (기존 로직)
                         if (vueComp.dataV) {
-                            const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
-                            for (let j = 0; j < vueElements.length; j++) {
-                                const element = vueElements[j];
-                                // 컴포넌트 이름과 인덱스 매칭
-                                if (vueComp.name && element.className.includes(vueComp.name)) {
-                                    // 가상 인덱스 기반 매칭
-                                    if (vueComp.index !== undefined) {
-                                        const elementIndex = Array.from(element.parentElement.children).indexOf(element);
-                                        if (Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
+                            try {
+                                const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
+                                for (let j = 0; j < vueElements.length; j++) {
+                                    const element = vueElements[j];
+                                    // 컴포넌트 이름과 인덱스 매칭
+                                    if (vueComp.name && element.className && element.className.includes(vueComp.name)) {
+                                        // 가상 인덱스 기반 매칭
+                                        if (vueComp.index !== undefined && element.parentElement) {
+                                            const elementIndex = Array.from(element.parentElement.children).indexOf(element);
+                                            if (Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
+                                                foundElement = element;
+                                                matchedAnchor = anchor;
+                                                matchMethod = 'vue_component_with_index';
+                                                confidence = 95;
+                                                logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
+                                                break;
+                                            }
+                                        } else {
                                             foundElement = element;
                                             matchedAnchor = anchor;
-                                            matchMethod = 'vue_component_with_index';
-                                            confidence = 95;
-                                            logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
+                                            matchMethod = 'vue_component';
+                                            confidence = 85;
+                                            logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
                                             break;
                                         }
-                                    } else {
-                                        foundElement = element;
-                                        matchedAnchor = anchor;
-                                        matchMethod = 'vue_component';
-                                        confidence = 85;
-                                        logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
-                                        break;
                                     }
                                 }
+                            } catch(e) {
+                                logs.push('Vue 선택자 오류: ' + e.message);
                             }
                             if (foundElement) break;
                         }
@@ -901,14 +894,18 @@ struct BFCacheSnapshot: Codable {
                         
                         // 짧은 해시로 매칭
                         if (!foundElement && contentHash.shortHash) {
-                            const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
-                            if (hashElements.length > 0) {
-                                foundElement = hashElements[0];
-                                matchedAnchor = anchor;
-                                matchMethod = 'short_hash';
-                                confidence = 75;
-                                logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
-                                break;
+                            try {
+                                const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
+                                if (hashElements.length > 0) {
+                                    foundElement = hashElements[0];
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'short_hash';
+                                    confidence = 75;
+                                    logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
+                                    break;
+                                }
+                            } catch(e) {
+                                logs.push('해시 선택자 오류: ' + e.message);
                             }
                         }
                     }
@@ -922,15 +919,19 @@ struct BFCacheSnapshot: Codable {
                         
                         // 리스트 인덱스 기반 추정
                         if (virtualIndex.listIndex !== undefined) {
-                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
-                            const targetIndex = virtualIndex.listIndex;
-                            if (targetIndex >= 0 && targetIndex < listElements.length) {
-                                foundElement = listElements[targetIndex];
-                                matchedAnchor = anchor;
-                                matchMethod = 'virtual_index';
-                                confidence = 60;
-                                logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
-                                break;
+                            try {
+                                const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
+                                const targetIndex = virtualIndex.listIndex;
+                                if (targetIndex >= 0 && targetIndex < listElements.length) {
+                                    foundElement = listElements[targetIndex];
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'virtual_index';
+                                    confidence = 60;
+                                    logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
+                                    break;
+                                }
+                            } catch(e) {
+                                logs.push('가상 인덱스 선택자 오류: ' + e.message);
                             }
                         }
                         
@@ -943,14 +944,19 @@ struct BFCacheSnapshot: Codable {
                             
                             for (let j = 0; j < allElements.length; j++) {
                                 const element = allElements[j];
-                                const rect = element.getBoundingClientRect();
-                                const ROOT = getROOT();
-                                const elementY = ROOT.scrollTop + rect.top;
-                                const distance = Math.abs(elementY - estimatedY);
-                                
-                                if (distance < minDistance && rect.height > 20) {
-                                    minDistance = distance;
-                                    closestElement = element;
+                                try {
+                                    const rect = element.getBoundingClientRect();
+                                    const ROOT = getROOT();
+                                    const elementY = ROOT.scrollTop + rect.top;
+                                    const distance = Math.abs(elementY - estimatedY);
+                                    
+                                    if (distance < minDistance && rect.height > 20) {
+                                        minDistance = distance;
+                                        closestElement = element;
+                                    }
+                                } catch(e) {
+                                    // 개별 요소 처리 오류는 무시하고 계속
+                                    continue;
                                 }
                             }
                             
@@ -969,18 +975,33 @@ struct BFCacheSnapshot: Codable {
                 if (foundElement && matchedAnchor) {
                     logs.push('앵커 매칭 성공 - 오프스크린 스크롤 수행');
                     
-                    // 🌐 **뷰포트 밖 앵커 지원: 오프스크린 스크롤**
+                    // 🌐 **뷰포트 밖 앵커 지원: 동기 오프스크린 스크롤 (async/await 제거)**
                     const ROOT = getROOT();
-                    const scrollResult = await scrollToElementOffscreen(foundElement, ROOT);
                     
-                    const actualX = scrollResult.x;
-                    const actualY = scrollResult.y;
+                    // 헤더 높이 계산
+                    const headerHeight = fixedHeaderHeight();
+                    const rect = foundElement.getBoundingClientRect(); // 뷰포트 밖이면 큰 ±값
+                    const finalY = Math.max(0, (ROOT.scrollTop + rect.top) - headerHeight);
+                    
+                    // 동기 스크롤 수행
+                    ROOT.scrollTop = finalY;
+                    
+                    // 1프레임 보정을 위한 동기 대기
+                    const waitStart = Date.now();
+                    while (Date.now() - waitStart < 16) { /* ~1프레임 대기 */ }
+                    
+                    // 보정 재시도
+                    ROOT.scrollTop = finalY;
+                    
+                    const actualX = ROOT.scrollLeft || 0;
+                    const actualY = ROOT.scrollTop || 0;
                     const diffX = Math.abs(actualX - targetX);
                     const diffY = Math.abs(actualY - targetY);
                     
                     logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     logs.push('매칭 신뢰도: ' + confidence + '%');
+                    logs.push('헤더 보정: ' + headerHeight.toFixed(0) + 'px');
                     
                     return {
                         success: diffY <= 100, // 무한스크롤은 100px 허용 오차
