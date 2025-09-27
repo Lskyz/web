@@ -8,6 +8,7 @@
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
+//  🌐 **뷰포트 밖 앵커 지원**: 오프스크린 앵커 매칭 및 전역 복원
 
 import UIKit
 import WebKit
@@ -314,9 +315,9 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
+    // MARK: - Step 3: 무한스크롤 전용 앵커 복원 (🌐 뷰포트 밖 앵커 지원)
     private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작 (뷰포트 밖 지원)")
         
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
@@ -533,6 +534,56 @@ struct BFCacheSnapshot: Codable {
             waitForStableLayoutSync();
         }
         
+        // 🌐 **뷰포트 밖 앵커 지원: 전역 재식별 함수**
+        function reidentifyAnchor(anchor) {
+            // ID 기반 재식별
+            if (anchor.id) {
+                const el = document.getElementById(anchor.id);
+                if (el && el.isConnected) return el;
+            }
+            
+            // CSS 경로 기반 재식별
+            if (anchor.cssPath) {
+                try {
+                    const el = document.querySelector(anchor.cssPath);
+                    if (el && el.isConnected) return el;
+                } catch(e) {}
+            }
+            
+            // 텍스트 다이제스트 기반 전역 탐색
+            if (anchor.text && anchor.text.length >= 10) {
+                const walker = document.createTreeWalker(
+                    document.body, 
+                    NodeFilter.SHOW_TEXT, 
+                    null
+                );
+                let node;
+                while (node = walker.nextNode()) {
+                    const text = (node.nodeValue || '').replace(/\\s+/g, ' ').trim();
+                    if (text.length >= 10 && text.includes(anchor.text)) {
+                        return node.parentElement;
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
+        // 🌐 **뷰포트 밖 앵커 지원: 오프스크린 스크롤**
+        async function scrollToElementOffscreen(element, scroller) {
+            const headerHeight = fixedHeaderHeight();
+            const rect = element.getBoundingClientRect(); // 뷰포트 밖이면 큰 ±값
+            const finalY = Math.max(0, (scroller.scrollTop + rect.top) - headerHeight);
+            
+            scroller.scrollTop = finalY;
+            
+            // 1프레임 보정
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            scroller.scrollTop = finalY;
+            
+            return { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
+        }
+        
         // 🎯 **환경 안정화 (한 번만 실행)**
         (function hardenEnv() {
             if (window._bfcacheEnvHardened) return;
@@ -718,7 +769,7 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (뷰포트 밖 지원)');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -754,13 +805,30 @@ struct BFCacheSnapshot: Codable {
                 let matchMethod = '';
                 let confidence = 0;
                 
-                // 우선순위 1: Vue Component 앵커 매칭
+                // 🌐 **뷰포트 밖 앵커 지원: 전역 매칭 로직**
+                
+                // 우선순위 1: Vue Component 앵커 매칭 (뷰포트 밖 포함)
                 if (!foundElement && vueComponentAnchors.length > 0) {
                     for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
                         const anchor = vueComponentAnchors[i];
                         const vueComp = anchor.vueComponent;
                         
-                        // data-v-* 속성으로 찾기
+                        // 전역 재식별 시도
+                        foundElement = reidentifyAnchor({
+                            id: vueComp.id,
+                            cssPath: vueComp.cssPath,
+                            text: anchor.textContent
+                        });
+                        
+                        if (foundElement) {
+                            matchedAnchor = anchor;
+                            matchMethod = 'vue_component_global';
+                            confidence = 95;
+                            logs.push('Vue 컴포넌트 전역 매칭: ' + (vueComp.name || 'unknown'));
+                            break;
+                        }
+                        
+                        // data-v-* 속성으로 찾기 (기존 로직)
                         if (vueComp.dataV) {
                             const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
                             for (let j = 0; j < vueElements.length; j++) {
@@ -793,13 +861,26 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 우선순위 2: Content Hash 앵커 매칭
+                // 우선순위 2: Content Hash 앵커 매칭 (뷰포트 밖 포함)
                 if (!foundElement && contentHashAnchors.length > 0) {
                     for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
                         const anchor = contentHashAnchors[i];
                         const contentHash = anchor.contentHash;
                         
-                        // 텍스트 내용으로 매칭
+                        // 전역 재식별 시도
+                        foundElement = reidentifyAnchor({
+                            text: contentHash.text
+                        });
+                        
+                        if (foundElement) {
+                            matchedAnchor = anchor;
+                            matchMethod = 'content_hash_global';
+                            confidence = 90;
+                            logs.push('콘텐츠 해시 전역 매칭: "' + (contentHash.text ? contentHash.text.substring(0, 50) : '') + '"');
+                            break;
+                        }
+                        
+                        // 텍스트 내용으로 매칭 (기존 로직)
                         if (contentHash.text && contentHash.text.length > 20) {
                             const searchText = contentHash.text.substring(0, 50);
                             const allElements = document.querySelectorAll('*');
@@ -886,31 +967,20 @@ struct BFCacheSnapshot: Codable {
                 }
                 
                 if (foundElement && matchedAnchor) {
-                    // 🎯 **수정: scrollIntoView 대신 직접 계산 + 헤더 보정**
+                    logs.push('앵커 매칭 성공 - 오프스크린 스크롤 수행');
+                    
+                    // 🌐 **뷰포트 밖 앵커 지원: 오프스크린 스크롤**
                     const ROOT = getROOT();
-                    const rect = foundElement.getBoundingClientRect();
-                    const absY = ROOT.scrollTop + rect.top;
-                    const headerHeight = fixedHeaderHeight();
-                    const finalY = Math.max(0, absY - headerHeight);
+                    const scrollResult = await scrollToElementOffscreen(foundElement, ROOT);
                     
-                    // 오프셋 보정
-                    let adjustedY = finalY;
-                    if (matchedAnchor.offsetFromTop) {
-                        adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
-                    }
-                    
-                    // 🎯 **단일 스크롤러로 정밀 이동**
-                    ROOT.scrollTop = adjustedY;
-                    
-                    const actualX = ROOT.scrollLeft || 0;
-                    const actualY = ROOT.scrollTop || 0;
+                    const actualX = scrollResult.x;
+                    const actualY = scrollResult.y;
                     const diffX = Math.abs(actualX - targetX);
                     const diffY = Math.abs(actualY - targetY);
                     
                     logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     logs.push('매칭 신뢰도: ' + confidence + '%');
-                    logs.push('헤더 보정: ' + headerHeight.toFixed(0) + 'px');
                     
                     return {
                         success: diffY <= 100, // 무한스크롤은 100px 허용 오차
@@ -1053,7 +1123,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상 (뷰포트 밖 지원): \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1069,7 +1139,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작 (뷰포트 밖 지원): \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1120,7 +1190,7 @@ extension BFCacheTransitionSystem {
                     let structuralPathCount = anchors.filter { ($0["anchorType"] as? String) == "structuralPath" }.count
                     let intersectionCount = anchors.filter { ($0["anchorType"] as? String) == "intersectionInfo" }.count
                     
-                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 타입별: Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount), Intersection=\(intersectionCount)")
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 타입별 (뷰포트 밖 포함): Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount), Intersection=\(intersectionCount)")
                     
                     if anchors.count > 0 {
                         let firstAnchor = anchors[0]
@@ -1185,7 +1255,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료 (뷰포트 밖 지원): \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1298,9 +1368,9 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 5.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
+        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처 (뷰포트 밖 지원)** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작 (뷰포트 밖 지원)")
         
         DispatchQueue.main.sync {
             let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
@@ -1318,7 +1388,7 @@ extension BFCacheTransitionSystem {
                             let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
                             let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
                             let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
+                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커 (뷰포트 밖 포함): 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
                         }
                         if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
                             TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
@@ -1403,12 +1473,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (단일 스크롤러 적용)**
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (뷰포트 밖 앵커 지원 + 밴드 샘플링)**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 캡처 시작');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (뷰포트 밖 지원)');
                 
                 // 🎯 **단일 스크롤러 유틸리티 함수들**
                 function getROOT() { 
@@ -1428,7 +1498,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(ROOT.scrollHeight) || 0;
                 const contentWidth = parseFloat(ROOT.scrollWidth) || 0;
                 
-                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (단일 스크롤러)');
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (뷰포트 밖 지원)');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -1443,56 +1513,18 @@ extension BFCacheTransitionSystem {
                     content: [contentWidth, contentHeight]
                 });
                 
-                // 🚀 **실제 보이는 영역 계산**
-                const actualViewportRect = {
-                    top: scrollY,
-                    left: scrollX,
-                    bottom: scrollY + viewportHeight,
-                    right: scrollX + viewportWidth,
-                    width: viewportWidth,
-                    height: viewportHeight
-                };
-                
-                detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
-                
-                // 🚀 **요소 가시성 정확 판단 함수**
-                function isElementActuallyVisible(element, strictMode) {
-                    if (strictMode === undefined) strictMode = true;
+                // 🌐 **뷰포트 밖 앵커 지원: isRenderable 함수 (가시영역 필터 제거)**
+                function isRenderable(element) {
+                    if (!element || !element.getBoundingClientRect) return false;
+                    if (!document.contains(element)) return false;
                     
-                    try {
-                        if (!element || !element.getBoundingClientRect) return { visible: false, reason: 'invalid_element' };
-                        if (!document.contains(element)) return { visible: false, reason: 'not_in_dom' };
-                        
-                        const rect = element.getBoundingClientRect();
-                        if (rect.width === 0 || rect.height === 0) return { visible: false, reason: 'zero_size' };
-                        
-                        const elementTop = scrollY + rect.top;
-                        const elementBottom = scrollY + rect.bottom;
-                        const elementLeft = scrollX + rect.left;
-                        const elementRight = scrollX + rect.right;
-                        
-                        const isInViewportVertically = elementBottom > actualViewportRect.top && elementTop < actualViewportRect.bottom;
-                        const isInViewportHorizontally = elementRight > actualViewportRect.left && elementLeft < actualViewportRect.right;
-                        
-                        if (strictMode && (!isInViewportVertically || !isInViewportHorizontally)) {
-                            return { visible: false, reason: 'outside_viewport', rect: rect };
-                        }
-                        
-                        const computedStyle = window.getComputedStyle(element);
-                        if (computedStyle.display === 'none') return { visible: false, reason: 'display_none' };
-                        if (computedStyle.visibility === 'hidden') return { visible: false, reason: 'visibility_hidden' };
-                        if (computedStyle.opacity === '0') return { visible: false, reason: 'opacity_zero' };
-                        
-                        return { 
-                            visible: true, 
-                            reason: 'fully_visible',
-                            rect: rect,
-                            inViewport: { vertical: isInViewportVertically, horizontal: isInViewportHorizontally }
-                        };
-                        
-                    } catch(e) {
-                        return { visible: false, reason: 'visibility_check_error: ' + e.message };
-                    }
+                    const computedStyle = window.getComputedStyle(element);
+                    if (computedStyle.display === 'none') return false;
+                    if (computedStyle.visibility === 'hidden') return false;
+                    if (computedStyle.opacity === '0') return false;
+                    
+                    const rect = element.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0; // 뷰포트 밖이어도 통과
                 }
                 
                 // 🧹 **의미있는 텍스트 필터링 함수**
@@ -1549,40 +1581,95 @@ extension BFCacheTransitionSystem {
                     return null;
                 }
                 
-                // 🚀 **수정된: Vue 컴포넌트 요소 수집**
-                function collectVueComponentElements() {
-                    const vueElements = [];
+                // 🌐 **밴드 샘플링: 전역 앵커 수집 함수**
+                function collectAnchorsGlobal(stepPx = 1200, maxPerBand = 40) {
+                    const bands = [];
+                    const bandHeight = stepPx;
+                    const totalBands = Math.ceil(contentHeight / bandHeight);
                     
-                    // 1. 모든 요소를 순회하면서 data-v-* 속성을 가진 요소 찾기
-                    const allElements = document.querySelectorAll('*');
+                    detailedLogs.push('🌐 밴드 샘플링: ' + totalBands + '개 밴드, ' + bandHeight + 'px 간격');
                     
-                    for (let i = 0; i < allElements.length; i++) {
-                        const element = allElements[i];
-                        const dataVAttr = findDataVAttribute(element);
+                    for (let bandIndex = 0; bandIndex < totalBands; bandIndex++) {
+                        const bandTop = bandIndex * bandHeight;
+                        const bandBottom = Math.min((bandIndex + 1) * bandHeight, contentHeight);
                         
-                        if (dataVAttr) {
-                            const visibilityResult = isElementActuallyVisible(element, true);
+                        const bandElements = [];
+                        
+                        // 각 밴드에서 요소 수집
+                        const allElements = document.querySelectorAll('*');
+                        for (let i = 0; i < allElements.length; i++) {
+                            const element = allElements[i];
                             
-                            if (visibilityResult.visible) {
+                            if (!isRenderable(element)) continue;
+                            
+                            const rect = element.getBoundingClientRect();
+                            const elementTop = scrollY + rect.top;
+                            const elementBottom = scrollY + rect.bottom;
+                            
+                            // 밴드 범위 내에 있는지 확인
+                            if (elementBottom > bandTop && elementTop < bandBottom) {
                                 const elementText = (element.textContent || '').trim();
-                                if (isQualityText(elementText)) {
-                                    vueElements.push({
+                                if (elementText.length > 5) { // 텍스트 길이 조건 완화
+                                    bandElements.push({
                                         element: element,
-                                        dataVAttr: dataVAttr,
-                                        rect: visibilityResult.rect,
+                                        rect: rect,
                                         textContent: elementText,
-                                        visibilityResult: visibilityResult
+                                        absoluteTop: elementTop,
+                                        bandIndex: bandIndex
                                     });
                                 }
                             }
                         }
+                        
+                        // 밴드 내에서 상위 maxPerBand개만 선택
+                        bandElements.sort(function(a, b) {
+                            return a.absoluteTop - b.absoluteTop; // 위에서부터 정렬
+                        });
+                        
+                        const selectedInBand = bandElements.slice(0, maxPerBand);
+                        bands.push(...selectedInBand);
+                        
+                        if (selectedInBand.length > 0) {
+                            detailedLogs.push('밴드 ' + bandIndex + ': ' + bandElements.length + '개 후보 → ' + selectedInBand.length + '개 선택');
+                        }
                     }
                     
-                    detailedLogs.push('Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
+                    detailedLogs.push('🌐 전역 밴드 샘플링 완료: ' + bands.length + '개 요소');
+                    return bands;
+                }
+                
+                // 🚀 **수정된: Vue 컴포넌트 요소 수집 (뷰포트 밖 포함)**
+                function collectVueComponentElements() {
+                    const vueElements = [];
+                    
+                    // 🌐 **밴드 샘플링으로 전역 수집**
+                    const globalElements = collectAnchorsGlobal(1200, 40);
+                    
+                    for (let i = 0; i < globalElements.length; i++) {
+                        const elementData = globalElements[i];
+                        const element = elementData.element;
+                        const dataVAttr = findDataVAttribute(element);
+                        
+                        if (dataVAttr) {
+                            const elementText = elementData.textContent;
+                            if (isQualityText(elementText)) {
+                                vueElements.push({
+                                    element: element,
+                                    dataVAttr: dataVAttr,
+                                    rect: elementData.rect,
+                                    textContent: elementText,
+                                    absoluteTop: elementData.absoluteTop,
+                                    bandIndex: elementData.bandIndex
+                                });
+                            }
+                        }
+                    }
+                    
+                    detailedLogs.push('Vue.js 컴포넌트 수집 (전역): ' + vueElements.length + '개');
                     return vueElements;
                 }
                 
-                // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (뷰포트 밖 지원)**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
                     const anchorStats = {
@@ -1594,102 +1681,29 @@ extension BFCacheTransitionSystem {
                         virtualIndexAnchors: 0,
                         structuralPathAnchors: 0,
                         intersectionAnchors: 0,
-                        finalAnchors: 0
+                        finalAnchors: 0,
+                        bandsProcessed: 0
                     };
                     
-                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (뷰포트 밖 지원)');
                     
-                    // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
+                    // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집 (전역)**
                     const vueComponentElements = collectVueComponentElements();
                     anchorStats.totalCandidates += vueComponentElements.length;
                     anchorStats.actuallyVisible += vueComponentElements.length;
                     
-                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
-                    const contentSelectors = [
-                        'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
-                        '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
-                        '.news', '.media', '.content-item', '[class*="item"]', 
-                        '[class*="post"]', '[class*="card"]', '[data-testid]', 
-                        '[data-id]', '[data-key]', '[data-item-id]',
-                        // 일반적인 리스트 아이템 선택자 추가
-                        '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
-                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
-                    ];
-                    
-                    let contentElements = [];
-                    for (let i = 0; i < contentSelectors.length; i++) {
-                        try {
-                            const elements = document.querySelectorAll(contentSelectors[i]);
-                            for (let j = 0; j < elements.length; j++) {
-                                contentElements.push(elements[j]);
-                            }
-                        } catch(e) {
-                            // selector 오류 무시
-                        }
-                    }
-                    
+                    // 🌐 **2. 일반 콘텐츠 요소 수집 (밴드 샘플링)**
+                    const contentElements = collectAnchorsGlobal(1200, 40);
                     anchorStats.totalCandidates += contentElements.length;
+                    anchorStats.actuallyVisible += contentElements.length;
+                    anchorStats.bandsProcessed = Math.ceil(contentHeight / 1200);
                     
-                    // 중복 제거 및 가시성 필터링
-                    const uniqueContentElements = [];
-                    const processedElements = new Set();
+                    detailedLogs.push('일반 콘텐츠 후보 (전역): ' + contentElements.length + '개');
                     
-                    for (let i = 0; i < contentElements.length; i++) {
-                        const element = contentElements[i];
-                        if (!processedElements.has(element)) {
-                            processedElements.add(element);
-                            
-                            const visibilityResult = isElementActuallyVisible(element, false); // 🔧 덜 엄격한 가시성 검사
-                            anchorStats.visibilityChecked++;
-                            
-                            if (visibilityResult.visible) {
-                                const elementText = (element.textContent || '').trim();
-                                if (elementText.length > 5) { // 🔧 텍스트 길이 조건 완화
-                                    uniqueContentElements.push({
-                                        element: element,
-                                        rect: visibilityResult.rect,
-                                        textContent: elementText,
-                                        visibilityResult: visibilityResult
-                                    });
-                                    anchorStats.actuallyVisible++;
-                                }
-                            }
-                        }
-                    }
-                    
-                    detailedLogs.push('일반 콘텐츠 후보: ' + contentElements.length + '개, 유효: ' + uniqueContentElements.length + '개');
-                    
-                    // 🚀 **3. 뷰포트 중심 기준으로 상위 20개씩 선택 (증가)**
-                    const viewportCenterY = scrollY + (viewportHeight / 2);
-                    const viewportCenterX = scrollX + (viewportWidth / 2);
-                    
-                    // Vue 컴포넌트 정렬 및 선택
-                    vueComponentElements.sort(function(a, b) {
-                        const aTop = scrollY + a.rect.top;
-                        const bTop = scrollY + b.rect.top;
-                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
-                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
-                        return aDistance - bDistance;
-                    });
-                    
-                    // 일반 콘텐츠 정렬 및 선택
-                    uniqueContentElements.sort(function(a, b) {
-                        const aTop = scrollY + a.rect.top;
-                        const bTop = scrollY + b.rect.top;
-                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
-                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
-                        return aDistance - bDistance;
-                    });
-                    
-                    const selectedVueElements = vueComponentElements.slice(0, 20); // 🔧 20개로 증가
-                    const selectedContentElements = uniqueContentElements.slice(0, 20); // 🔧 20개로 증가
-                    
-                    detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
-                    
-                    // 🚀 **4. Vue Component 앵커 생성**
-                    for (let i = 0; i < selectedVueElements.length; i++) {
+                    // 🚀 **3. Vue Component 앵커 생성 (확장된 후보)**
+                    for (let i = 0; i < vueComponentElements.length; i++) {
                         try {
-                            const anchor = createVueComponentAnchor(selectedVueElements[i], i);
+                            const anchor = createVueComponentAnchor(vueComponentElements[i], i);
                             if (anchor) {
                                 anchors.push(anchor);
                                 anchorStats.vueComponentAnchors++;
@@ -1699,26 +1713,26 @@ extension BFCacheTransitionSystem {
                         }
                     }
                     
-                    // 🚀 **5. Content Hash + Virtual Index + Structural Path 앵커 생성**
-                    for (let i = 0; i < selectedContentElements.length; i++) {
+                    // 🚀 **4. Content Hash + Virtual Index + Structural Path 앵커 생성 (확장된 후보)**
+                    for (let i = 0; i < contentElements.length; i++) {
                         try {
                             // Content Hash 앵커
-                            const hashAnchor = createContentHashAnchor(selectedContentElements[i], i);
+                            const hashAnchor = createContentHashAnchor(contentElements[i], i);
                             if (hashAnchor) {
                                 anchors.push(hashAnchor);
                                 anchorStats.contentHashAnchors++;
                             }
                             
                             // Virtual Index 앵커
-                            const indexAnchor = createVirtualIndexAnchor(selectedContentElements[i], i);
+                            const indexAnchor = createVirtualIndexAnchor(contentElements[i], i);
                             if (indexAnchor) {
                                 anchors.push(indexAnchor);
                                 anchorStats.virtualIndexAnchors++;
                             }
                             
-                            // Structural Path 앵커 (보조) - 상위 10개만
-                            if (i < 10) {
-                                const pathAnchor = createStructuralPathAnchor(selectedContentElements[i], i);
+                            // Structural Path 앵커 (상위 100개만)
+                            if (i < 100) {
+                                const pathAnchor = createStructuralPathAnchor(contentElements[i], i);
                                 if (pathAnchor) {
                                     anchors.push(pathAnchor);
                                     anchorStats.structuralPathAnchors++;
@@ -1732,8 +1746,8 @@ extension BFCacheTransitionSystem {
                     
                     anchorStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
-                    console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
+                    detailedLogs.push('무한스크롤 앵커 생성 완료 (전역): ' + anchors.length + '개');
+                    console.log('🚀 무한스크롤 앵커 수집 완료 (뷰포트 밖 지원):', anchors.length, '개');
                     
                     // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
@@ -1751,7 +1765,7 @@ extension BFCacheTransitionSystem {
                         const dataVAttr = elementData.dataVAttr;
                         
                         // 🎯 **수정: 단일 스크롤러 기준으로 계산**
-                        const absoluteTop = scrollY + rect.top;
+                        const absoluteTop = elementData.absoluteTop || (scrollY + rect.top);
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
                         
@@ -1760,7 +1774,9 @@ extension BFCacheTransitionSystem {
                             name: 'unknown',
                             dataV: dataVAttr,
                             props: {},
-                            index: index
+                            index: index,
+                            id: element.id || null,
+                            cssPath: null
                         };
                         
                         // 클래스명에서 컴포넌트 이름 추출
@@ -1782,6 +1798,16 @@ extension BFCacheTransitionSystem {
                             vueComponent.index = siblingIndex;
                         }
                         
+                        // CSS 경로 생성 (전역 매칭용)
+                        if (element.id) {
+                            vueComponent.cssPath = '#' + element.id;
+                        } else if (element.className) {
+                            const firstClass = element.className.trim().split(/\\s+/)[0];
+                            if (firstClass) {
+                                vueComponent.cssPath = element.tagName.toLowerCase() + '.' + firstClass;
+                            }
+                        }
+                        
                         const qualityScore = 85; // Vue 컴포넌트는 기본 85점
                         
                         return {
@@ -1800,7 +1826,8 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'vue_component_visible'
+                            visibilityReason: 'vue_component_renderable',
+                            bandIndex: elementData.bandIndex || -1
                         };
                         
                     } catch(e) {
@@ -1817,7 +1844,7 @@ extension BFCacheTransitionSystem {
                         const textContent = elementData.textContent;
                         
                         // 🎯 **수정: 단일 스크롤러 기준으로 계산**
-                        const absoluteTop = scrollY + rect.top;
+                        const absoluteTop = elementData.absoluteTop || (scrollY + rect.top);
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
                         
@@ -1848,7 +1875,8 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'content_hash_visible'
+                            visibilityReason: 'content_hash_renderable',
+                            bandIndex: elementData.bandIndex || -1
                         };
                         
                     } catch(e) {
@@ -1865,7 +1893,7 @@ extension BFCacheTransitionSystem {
                         const textContent = elementData.textContent;
                         
                         // 🎯 **수정: 단일 스크롤러 기준으로 계산**
-                        const absoluteTop = scrollY + rect.top;
+                        const absoluteTop = elementData.absoluteTop || (scrollY + rect.top);
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
                         
@@ -1874,7 +1902,8 @@ extension BFCacheTransitionSystem {
                             listIndex: index,
                             pageIndex: Math.floor(index / 10), // 10개씩 페이지 단위
                             offsetInPage: absoluteTop,
-                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length
+                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length,
+                            bandIndex: elementData.bandIndex || -1
                         };
                         
                         const qualityScore = 70; // Virtual Index는 70점
@@ -1893,7 +1922,8 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'virtual_index_visible'
+                            visibilityReason: 'virtual_index_renderable',
+                            bandIndex: elementData.bandIndex || -1
                         };
                         
                     } catch(e) {
@@ -1910,7 +1940,7 @@ extension BFCacheTransitionSystem {
                         const textContent = elementData.textContent;
                         
                         // 🎯 **수정: 단일 스크롤러 기준으로 계산**
-                        const absoluteTop = scrollY + rect.top;
+                        const absoluteTop = elementData.absoluteTop || (scrollY + rect.top);
                         const absoluteLeft = scrollX + rect.left;
                         const offsetFromTop = scrollY - absoluteTop;
                         
@@ -1970,7 +2000,8 @@ extension BFCacheTransitionSystem {
                             anchorIndex: index,
                             captureTimestamp: Date.now(),
                             isVisible: true,
-                            visibilityReason: 'structural_path_visible'
+                            visibilityReason: 'structural_path_renderable',
+                            bandIndex: elementData.bandIndex || -1
                         };
                         
                     } catch(e) {
@@ -1979,7 +2010,7 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🚀 **메인 실행 - 무한스크롤 전용 앵커 데이터 수집**
+                // 🚀 **메인 실행 - 무한스크롤 전용 앵커 데이터 수집 (뷰포트 밖 지원)**
                 const startTime = Date.now();
                 const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
@@ -1990,23 +2021,24 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (뷰포트 밖 지원) (' + captureTime + 'ms) ===');
                 detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
                 detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
+                detailedLogs.push('밴드 처리: ' + infiniteScrollAnchorsData.stats.bandsProcessed + '개 밴드');
                 
-                console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
+                console.log('🚀 무한스크롤 전용 앵커 캡처 완료 (뷰포트 밖 지원):', {
                     infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
                     stats: infiniteScrollAnchorsData.stats,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight],
                     captureTime: captureTime,
-                    actualViewportRect: actualViewportRect
+                    bandsProcessed: infiniteScrollAnchorsData.stats.bandsProcessed
                 });
                 
-                // ✅ **수정: 정리된 반환 구조 (단일 스크롤러 기준)**
+                // ✅ **수정: 정리된 반환 구조 (뷰포트 밖 지원)**
                 return {
-                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
+                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터 (뷰포트 밖 지원)**
                     scroll: { 
                         x: scrollX, 
                         y: scrollY
@@ -2027,7 +2059,6 @@ extension BFCacheTransitionSystem {
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
                     },
-                    actualViewportRect: actualViewportRect,     // 🚀 **실제 보이는 영역 정보**
                     detailedLogs: detailedLogs,                 // 📊 **상세 로그 배열**
                     captureStats: infiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
                     pageAnalysis: pageAnalysis,                 // 📊 **페이지 분석 결과**
