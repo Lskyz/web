@@ -440,7 +440,7 @@ struct BFCacheSnapshot: Codable {
     // 🎯 **공통 유틸리티 스크립트 생성**
     private func generateCommonUtilityScript() -> String {
         return """
-        // 🎯 **단일 스크롤러 공통 유틸리티**
+        // 🎯 **단일 스크롤러 공통 유틸리티 (동기 버전)**
         function getROOT() { 
             return document.scrollingElement || document.documentElement; 
         }
@@ -453,39 +453,52 @@ struct BFCacheSnapshot: Codable {
             }; 
         }
         
-        function waitForStableLayout(options = {}) {
+        function waitForStableLayoutSync(options = {}) {
             const { frames = 6, timeout = 1500, threshold = 2 } = options;
-            return new Promise(resolve => {
-                const ROOT = getROOT();
-                let last = ROOT.scrollHeight;
-                let stable = 0;
-                const startTime = performance.now();
-                
-                function tick() {
-                    const h = ROOT.scrollHeight;
-                    if (Math.abs(h - last) <= threshold) {
-                        stable++;
-                    } else {
-                        stable = 0;
-                    }
-                    last = h;
-                    
-                    if (stable >= frames || (performance.now() - startTime) > timeout) {
-                        resolve();
-                    } else {
-                        requestAnimationFrame(tick);
-                    }
+            const ROOT = getROOT();
+            let last = ROOT.scrollHeight;
+            let stable = 0;
+            const startTime = Date.now();
+            const maxIterations = Math.floor(timeout / 20); // 20ms씩 체크
+            
+            for (let i = 0; i < maxIterations; i++) {
+                const h = ROOT.scrollHeight;
+                if (Math.abs(h - last) <= threshold) {
+                    stable++;
+                } else {
+                    stable = 0;
                 }
-                requestAnimationFrame(tick);
-            });
+                last = h;
+                
+                if (stable >= frames) {
+                    break;
+                }
+                
+                // 20ms 동기 대기
+                const waitStart = Date.now();
+                while (Date.now() - waitStart < 20) { /* 대기 */ }
+            }
         }
         
-        async function preciseScrollTo(x, y) {
+        function preciseScrollToSync(x, y) {
             const ROOT = getROOT();
-            await new Promise(r => requestAnimationFrame(r));
+            
+            // 첫 번째 설정
             ROOT.scrollLeft = x;
             ROOT.scrollTop = y;
-            await new Promise(r => requestAnimationFrame(r));
+            
+            // 브라우저가 적용할 시간 대기 (동기)
+            const waitStart = Date.now();
+            while (Date.now() - waitStart < 16) { /* ~1프레임 대기 */ }
+            
+            // 두 번째 설정 (보정)
+            ROOT.scrollLeft = x;
+            ROOT.scrollTop = y;
+            
+            // 최종 적용 대기
+            const waitStart2 = Date.now();
+            while (Date.now() - waitStart2 < 16) { /* ~1프레임 대기 */ }
+            
             return { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
         }
         
@@ -501,17 +514,23 @@ struct BFCacheSnapshot: Codable {
             return h;
         }
         
-        async function prerollInfinite(maxSteps = 6) {
+        function prerollInfiniteSync(maxSteps = 6) {
             const ROOT = getROOT();
             for (let i = 0; i < maxSteps; i++) {
                 const before = ROOT.scrollHeight;
                 ROOT.scrollTop = before; // 바닥
                 window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                await new Promise(r => setTimeout(r, 120));
+                
+                // 120ms 동기 대기
+                const waitStart = Date.now();
+                while (Date.now() - waitStart < 120) { /* 대기 */ }
+                
                 const after = ROOT.scrollHeight;
                 if (after - before < 64) break; // 더 이상 늘지 않으면 종료
             }
-            await waitForStableLayout();
+            
+            // 안정화 대기
+            waitForStableLayoutSync();
         }
         
         // 🎯 **환경 안정화 (한 번만 실행)**
@@ -570,68 +589,54 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
                 
-                // 동적 사이트 - 콘텐츠 로드 시도
+                // 동적 사이트 - 콘텐츠 로드 시도 (동기적으로 처리)
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
                 
-                async function performContentRestore() {
-                    // 더보기 버튼 찾기
-                    const loadMoreButtons = document.querySelectorAll(
-                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                        'button[class*="more"], .load-more, .show-more'
-                    );
-                    
-                    let clicked = 0;
-                    for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                        const btn = loadMoreButtons[i];
-                        if (btn && typeof btn.click === 'function') {
-                            btn.click();
-                            clicked++;
-                        }
+                // 더보기 버튼 찾기
+                const loadMoreButtons = document.querySelectorAll(
+                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                    'button[class*="more"], .load-more, .show-more'
+                );
+                
+                let clicked = 0;
+                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
+                    const btn = loadMoreButtons[i];
+                    if (btn && typeof btn.click === 'function') {
+                        btn.click();
+                        clicked++;
                     }
-                    
-                    if (clicked > 0) {
-                        logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                    }
-                    
-                    // 🎯 **수정: 무한스크롤 프리롤 + 안정화**
-                    await prerollInfinite(6);
-                    await waitForStableLayout();
-                    
-                    return ROOT.scrollHeight;
                 }
                 
-                // 비동기 실행이므로 Promise 반환
-                return performContentRestore().then(restoredHeight => {
-                    const finalPercentage = (restoredHeight / targetHeight) * 100;
-                    const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
-                    
-                    logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                    logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                    
-                    return {
-                        success: success,
-                        isStaticSite: false,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: restoredHeight,
-                        percentage: finalPercentage,
-                        logs: logs
-                    };
-                }).catch(e => {
-                    logs.push('콘텐츠 복원 중 오류: ' + e.message);
-                    return {
-                        success: false,
-                        error: e.message,
-                        logs: logs
-                    };
-                });
+                if (clicked > 0) {
+                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                }
+                
+                // 🎯 **수정: 간단한 무한스크롤 트리거 (동기 처리)**
+                prerollInfiniteSync(3);
+                
+                const restoredHeight = ROOT.scrollHeight;
+                const finalPercentage = (restoredHeight / targetHeight) * 100;
+                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
+                
+                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                
+                return {
+                    success: success,
+                    isStaticSite: false,
+                    currentHeight: currentHeight,
+                    targetHeight: targetHeight,
+                    restoredHeight: restoredHeight,
+                    percentage: finalPercentage,
+                    logs: logs
+                };
                 
             } catch(e) {
-                return Promise.resolve({
+                return {
                     success: false,
                     error: e.message,
                     logs: ['[Step 1] 오류: ' + e.message]
-                });
+                };
             }
         })()
         """
@@ -653,51 +658,47 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 
-                async function performPercentScroll() {
-                    // 🎯 **안정화 대기**
-                    await waitForStableLayout({ frames: 6, timeout: 1500 });
-                    
-                    const ROOT = getROOT();
-                    const max = getMaxScroll();
-                    
-                    logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
-                    
-                    // 백분율 기반 목표 위치 계산
-                    const targetX = (targetPercentX / 100) * max.x;
-                    const targetY = (targetPercentY / 100) * max.y;
-                    
-                    logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                    
-                    // 🎯 **수정: 단일 스크롤러로 정밀 스크롤**
-                    const result = await preciseScrollTo(targetX, targetY);
-                    
-                    const diffX = Math.abs(result.x - targetX);
-                    const diffY = Math.abs(result.y - targetY);
-                    
-                    logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
-                    logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                    
-                    // 허용 오차 50px 이내면 성공
-                    const success = diffY <= 50;
-                    
-                    return {
-                        success: success,
-                        targetPercent: { x: targetPercentX, y: targetPercentY },
-                        calculatedPosition: { x: targetX, y: targetY },
-                        actualPosition: { x: result.x, y: result.y },
-                        difference: { x: diffX, y: diffY },
-                        logs: logs
-                    };
-                }
+                // 🎯 **수정: 동기적 안정화 대기**
+                waitForStableLayoutSync({ frames: 3, timeout: 1000 });
                 
-                return performPercentScroll();
+                const ROOT = getROOT();
+                const max = getMaxScroll();
+                
+                logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+                
+                // 백분율 기반 목표 위치 계산
+                const targetX = (targetPercentX / 100) * max.x;
+                const targetY = (targetPercentY / 100) * max.y;
+                
+                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                
+                // 🎯 **수정: 동기적 정밀 스크롤**
+                const result = preciseScrollToSync(targetX, targetY);
+                
+                const diffX = Math.abs(result.x - targetX);
+                const diffY = Math.abs(result.y - targetY);
+                
+                logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
+                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                
+                // 허용 오차 50px 이내면 성공
+                const success = diffY <= 50;
+                
+                return {
+                    success: success,
+                    targetPercent: { x: targetPercentX, y: targetPercentY },
+                    calculatedPosition: { x: targetX, y: targetY },
+                    actualPosition: { x: result.x, y: result.y },
+                    difference: { x: diffX, y: diffY },
+                    logs: logs
+                };
                 
             } catch(e) {
-                return Promise.resolve({
+                return {
                     success: false,
                     error: e.message,
                     logs: ['[Step 2] 오류: ' + e.message]
-                });
+                };
             }
         })()
         """
