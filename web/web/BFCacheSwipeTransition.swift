@@ -518,7 +518,7 @@ struct BFCacheSnapshot: Codable {
             const afterFirstSet = { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
             
             // 🔄 **가상스크롤 정규화 감지 (5000px 근처로 보정되는지 확인)**
-            const isVirtualizationDetected = Math.abs(afterFirstSet.y - 4000) < 300 || 
+            const isVirtualizationDetected = Math.abs(afterFirstSet.y - 5000) < 300 || 
                                            (y > 6000 && afterFirstSet.y < y * 0.6);
             
             if (isVirtualizationDetected) {
@@ -1429,7 +1429,7 @@ extension BFCacheTransitionSystem {
                 } else if let data = result as? [String: Any] {
                     // 🔒 **타입 안전성 보장: Swift 호환 타입만 필터링**
                     jsState = self.sanitizeJavaScriptResult(data)
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(jsState?.keys ?? []))")
+                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(jsState?.keys ?? Set<String>()))")
                     
                     // 📊 **상세 캡처 결과 로깅**
                     if let infiniteScrollAnchors = jsState?["infiniteScrollAnchors"] as? [String: Any] {
