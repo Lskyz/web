@@ -518,7 +518,7 @@ struct BFCacheSnapshot: Codable {
             const afterFirstSet = { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
             
             // 🔄 **가상스크롤 정규화 감지 (5000px 근처로 보정되는지 확인)**
-            const isVirtualizationDetected = Math.abs(afterFirstSet.y - 5000) < 300 || 
+            const isVirtualizationDetected = Math.abs(afterFirstSet.y - 4000) < 300 || 
                                            (y > 6000 && afterFirstSet.y < y * 0.6);
             
             if (isVirtualizationDetected) {
