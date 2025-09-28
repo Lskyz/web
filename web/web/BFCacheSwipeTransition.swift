@@ -10,6 +10,7 @@
 //  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
 //  👆 **클릭 앵커 우선 복원**: 클릭된 요소 우선 매칭
 //  📊 **상세 매칭 실패 로깅**: 구체적인 실패 이유 추적
+//  🔄 **DOM 렌더링 완료 대기 강화**: 스피너 제거 및 최소 요소 확보까지 재시도
 
 import UIKit
 import WebKit
@@ -468,6 +469,84 @@ struct BFCacheSnapshot: Codable {
                 x: Math.max(0, r.scrollWidth - window.innerWidth),
                 y: Math.max(0, r.scrollHeight - window.innerHeight) 
             }; 
+        }
+        
+        // 🔄 **개선된 DOM 렌더링 완료 대기 함수**
+        function waitForDOMRenderingSync(options = {}) {
+            const { minElements = 3, maxWait = 3000, checkInterval = 100 } = options;
+            const startTime = Date.now();
+            
+            console.log('🔄 DOM 렌더링 대기 시작: 최소 ' + minElements + '개 요소, 최대 ' + maxWait + 'ms 대기');
+            
+            // 로딩 스피너가 사라질 때까지 대기
+            const spinnerSelectors = [
+                '.IndexArticleLoading', '.loading', '.spinner', '.loader',
+                '[class*="loading"]', '[class*="spinner"]', '[class*="loader"]',
+                '.skeleton', '[class*="skeleton"]'
+            ];
+            
+            let iterations = 0;
+            const maxIterations = Math.floor(maxWait / checkInterval);
+            
+            while (iterations < maxIterations) {
+                // 스피너 체크
+                let hasSpinner = false;
+                for (let i = 0; i < spinnerSelectors.length; i++) {
+                    const spinner = document.querySelector(spinnerSelectors[i]);
+                    if (spinner) {
+                        const style = getComputedStyle(spinner);
+                        if (style.display !== 'none' && style.visibility !== 'hidden') {
+                            hasSpinner = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (hasSpinner) {
+                    console.log('⏳ 로딩 스피너 대기중... (' + (iterations * checkInterval) + 'ms)');
+                } else {
+                    // 스피너가 없으면 리스트 요소 체크
+                    const listSelectors = [
+                        'li', '.item', '.list-item', '.ListItem', '.ArticleListItem',
+                        '[class*="item"]', '[class*="Item"]', '[data-v-]'
+                    ];
+                    
+                    let totalElements = 0;
+                    for (let i = 0; i < listSelectors.length; i++) {
+                        const elements = document.querySelectorAll(listSelectors[i]);
+                        // 실제로 보이는 요소만 카운트
+                        for (let j = 0; j < elements.length; j++) {
+                            const el = elements[j];
+                            const rect = el.getBoundingClientRect();
+                            if (rect.height > 0 && rect.width > 0) {
+                                const style = getComputedStyle(el);
+                                if (style.display !== 'none' && style.visibility !== 'hidden') {
+                                    totalElements++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    console.log('✅ 발견된 리스트 요소: ' + totalElements + '개');
+                    
+                    if (totalElements >= minElements) {
+                        console.log('🎯 최소 요소 확보 완료: ' + totalElements + '개');
+                        break;
+                    }
+                }
+                
+                // checkInterval만큼 동기적 대기
+                const waitStart = Date.now();
+                while (Date.now() - waitStart < checkInterval) { /* 대기 */ }
+                
+                iterations++;
+            }
+            
+            const elapsed = Date.now() - startTime;
+            console.log('🔄 DOM 렌더링 대기 완료: ' + elapsed + 'ms 소요');
+            
+            // 추가 안정화 대기
+            waitForStableLayoutSync({ frames: 3, timeout: 500 });
         }
         
         function waitForStableLayoutSync(options = {}) {
@@ -1726,7 +1805,7 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (단일 스크롤러 적용 + 👆 클릭 추적)**
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 - DOM 렌더링 완료 대기 강화**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
@@ -1736,6 +1815,100 @@ extension BFCacheTransitionSystem {
                 // 🎯 **단일 스크롤러 유틸리티 함수들**
                 function getROOT() { 
                     return document.scrollingElement || document.documentElement; 
+                }
+                
+                // 🔄 **DOM 렌더링 완료 대기 함수**
+                function waitForDOMElements(options = {}) {
+                    const { minElements = 5, maxRetries = 10, retryDelay = 300 } = options;
+                    
+                    const spinnerSelectors = [
+                        '.IndexArticleLoading', '.loading', '.spinner', '.loader',
+                        '[class*="loading"]', '[class*="spinner"]', '[class*="loader"]',
+                        '.skeleton', '[class*="skeleton"]', '.placeholder',
+                        '.shimmer', '[class*="shimmer"]'
+                    ];
+                    
+                    const listSelectors = [
+                        'li', '.item', '.list-item', '.ListItem', '.ArticleListItem',
+                        '[class*="item"]', '[class*="Item"]', '[data-v-]',
+                        '.card', '.post', '.article', '.product'
+                    ];
+                    
+                    let retries = 0;
+                    
+                    // 동기적 재시도 루프
+                    while (retries < maxRetries) {
+                        // 스피너가 숨겨졌는지 확인
+                        let hasVisibleSpinner = false;
+                        for (let i = 0; i < spinnerSelectors.length; i++) {
+                            const spinners = document.querySelectorAll(spinnerSelectors[i]);
+                            for (let j = 0; j < spinners.length; j++) {
+                                const spinner = spinners[j];
+                                const style = getComputedStyle(spinner);
+                                const rect = spinner.getBoundingClientRect();
+                                
+                                if (style.display !== 'none' && 
+                                    style.visibility !== 'hidden' && 
+                                    parseFloat(style.opacity) > 0 &&
+                                    (rect.width > 0 || rect.height > 0)) {
+                                    hasVisibleSpinner = true;
+                                    break;
+                                }
+                            }
+                            if (hasVisibleSpinner) break;
+                        }
+                        
+                        if (hasVisibleSpinner) {
+                            console.log('⏳ 로딩 스피너 감지됨 - 대기중... (시도 ' + (retries + 1) + '/' + maxRetries + ')');
+                            
+                            // 동기적 대기
+                            const waitStart = Date.now();
+                            while (Date.now() - waitStart < retryDelay) { /* 대기 */ }
+                            
+                            retries++;
+                            continue;
+                        }
+                        
+                        // 리스트 요소가 충분히 렌더링되었는지 확인
+                        let visibleElements = 0;
+                        for (let i = 0; i < listSelectors.length; i++) {
+                            const elements = document.querySelectorAll(listSelectors[i]);
+                            for (let j = 0; j < elements.length; j++) {
+                                const element = elements[j];
+                                const rect = element.getBoundingClientRect();
+                                const style = getComputedStyle(element);
+                                
+                                if (rect.height > 10 && rect.width > 10 &&
+                                    style.display !== 'none' && 
+                                    style.visibility !== 'hidden' &&
+                                    parseFloat(style.opacity) > 0) {
+                                    
+                                    // 텍스트 내용이 있는지 확인
+                                    const text = (element.textContent || '').trim();
+                                    if (text.length > 5) {
+                                        visibleElements++;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        console.log('✅ 감지된 유효 요소: ' + visibleElements + '개 (최소 필요: ' + minElements + '개)');
+                        
+                        if (visibleElements >= minElements) {
+                            console.log('🎯 충분한 DOM 요소 확보 완료');
+                            return visibleElements;
+                        }
+                        
+                        // 추가 대기 후 재시도
+                        console.log('⏳ 요소 부족 - 재시도 대기중... (시도 ' + (retries + 1) + '/' + maxRetries + ')');
+                        const waitStart = Date.now();
+                        while (Date.now() - waitStart < retryDelay) { /* 대기 */ }
+                        
+                        retries++;
+                    }
+                    
+                    console.log('⚠️ 최대 재시도 횟수 도달 - 현재 상태로 진행');
+                    return 0;
                 }
                 
                 // 👆 **전역 클릭 추적 변수**
@@ -1762,6 +1935,10 @@ extension BFCacheTransitionSystem {
                 // 📊 **상세 로그 수집**
                 const detailedLogs = [];
                 const pageAnalysis = {};
+                
+                // 🔄 **DOM 렌더링 완료 대기 실행**
+                const elementCount = waitForDOMElements({ minElements: 5, maxRetries: 10, retryDelay: 300 });
+                detailedLogs.push('🔄 DOM 렌더링 대기 완료: ' + elementCount + '개 요소 확보');
                 
                 // 🎯 **수정: 단일 스크롤러 기준으로 정보 수집**
                 const ROOT = getROOT();
@@ -1796,12 +1973,14 @@ extension BFCacheTransitionSystem {
                     clickAge: clickAge,
                     clickedElement: window._lastClickedElement ? window._lastClickedElement.tagName : null
                 };
+                pageAnalysis.domElementsFound = elementCount;
                 
                 console.log('🚀 기본 정보 (단일 스크롤러):', {
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight],
-                    clickTracking: pageAnalysis.clickTracking
+                    clickTracking: pageAnalysis.clickTracking,
+                    domElements: elementCount
                 });
                 
                 // 🚀 **실제 보이는 영역 계산**
