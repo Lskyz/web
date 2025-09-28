@@ -8,6 +8,7 @@
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🎯 **스크롤러 자동 검출**: 실제 스크롤 가능 요소 감지
+//  🔧 **비동기 구조 유지**: Promise 체이닝으로 타입 오류 해결
 
 import UIKit
 import WebKit
@@ -460,9 +461,9 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 JavaScript 생성 메서드들 - 비동기 개선
+    // MARK: - 🎯 JavaScript 생성 메서드들 - Promise 체이닝 방식
     
-    // 🎯 **공통 유틸리티 스크립트 생성 - 비동기화**
+    // 🎯 **공통 유틸리티 스크립트 생성 - 비동기 유지**
     private func generateCommonUtilityScript() -> String {
         return """
         // 🎯 **스크롤러 자동 검출 및 공통 유틸리티**
@@ -604,13 +605,13 @@ struct BFCacheSnapshot: Codable {
             } catch(e) {}
             
             const style = document.createElement('style');
-            style.textContent = `
+            style.textContent = \`
                 html, body { 
                     overflow-anchor: none !important; 
                     scroll-behavior: auto !important; 
                     -webkit-text-size-adjust: 100% !important; 
                 }
-            `;
+            \`;
             document.documentElement.appendChild(style);
         })();
         """
@@ -620,86 +621,82 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
+        // Promise 체이닝 방식으로 수정
         (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)');
-                const ROOT = getROOT();
-                const currentHeight = ROOT.scrollHeight;
-                
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                
-                // 정적 사이트 판단 (90% 이상 이미 로드됨)
-                const percentage = (currentHeight / targetHeight) * 100;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: percentage,
-                        logs: logs
-                    };
-                }
-                
-                // 동적 사이트 - 콘텐츠 로드 시도 (비동기)
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
-                
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
-                    }
-                }
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 비동기 무한스크롤 트리거
-                await prerollInfinite(3);
-                
-                const restoredHeight = ROOT.scrollHeight;
-                const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80;
-                
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                
+            \(generateCommonUtilityScript())
+            
+            const logs = [];
+            const targetHeight = parseFloat('\(targetHeight)');
+            const ROOT = getROOT();
+            const currentHeight = ROOT.scrollHeight;
+            
+            logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+            logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
+            logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+            
+            // 정적 사이트 판단 (90% 이상 이미 로드됨)
+            const percentage = (currentHeight / targetHeight) * 100;
+            const isStaticSite = percentage >= 90;
+            
+            if (isStaticSite) {
+                logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                 return {
-                    success: success,
-                    isStaticSite: false,
+                    success: true,
+                    isStaticSite: true,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
+                    restoredHeight: currentHeight,
+                    percentage: percentage,
                     logs: logs
                 };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 1] 오류: ' + e.message]
-                };
             }
-        })()
+            
+            // 동적 사이트 - 콘텐츠 로드 시도 (비동기)
+            logs.push('동적 사이트 - 콘텐츠 로드 시도');
+            
+            // 더보기 버튼 찾기
+            const loadMoreButtons = document.querySelectorAll(
+                '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                'button[class*="more"], .load-more, .show-more'
+            );
+            
+            let clicked = 0;
+            for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
+                const btn = loadMoreButtons[i];
+                if (btn && typeof btn.click === 'function') {
+                    btn.click();
+                    clicked++;
+                }
+            }
+            
+            if (clicked > 0) {
+                logs.push('더보기 버튼 ' + clicked + '개 클릭');
+            }
+            
+            // 비동기 무한스크롤 트리거
+            await prerollInfinite(3);
+            
+            const restoredHeight = ROOT.scrollHeight;
+            const finalPercentage = (restoredHeight / targetHeight) * 100;
+            const success = finalPercentage >= 80;
+            
+            logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+            logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+            
+            return {
+                success: success,
+                isStaticSite: false,
+                currentHeight: currentHeight,
+                targetHeight: targetHeight,
+                restoredHeight: restoredHeight,
+                percentage: finalPercentage,
+                logs: logs
+            };
+        })().then(result => result).catch(e => ({
+            success: false,
+            error: e.message,
+            logs: ['[Step 1] 오류: ' + e.message]
+        }))
         """
     }
     
@@ -708,60 +705,56 @@ struct BFCacheSnapshot: Codable {
         let targetPercentY = scrollPositionPercent.y
         
         return """
+        // Promise 체이닝 방식으로 수정
         (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                const targetPercentX = parseFloat('\(targetPercentX)');
-                const targetPercentY = parseFloat('\(targetPercentY)');
-                
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
-                logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
-                
-                // 비동기 안정화 대기
-                await waitForStableLayout({ frames: 3, timeout: 1000 });
-                
-                const ROOT = getROOT();
-                const max = getMaxScroll();
-                
-                logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
-                
-                // 백분율 기반 목표 위치 계산
-                const targetX = (targetPercentX / 100) * max.x;
-                const targetY = (targetPercentY / 100) * max.y;
-                
-                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                
-                // 비동기 정밀 스크롤
-                const result = await preciseScrollTo(targetX, targetY);
-                
-                const diffX = Math.abs(result.x - targetX);
-                const diffY = Math.abs(result.y - targetY);
-                
-                logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
-                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                // 무한스크롤은 허용 오차 크게 (100px)
-                const success = diffY <= 100;
-                
-                return {
-                    success: success,
-                    targetPercent: { x: targetPercentX, y: targetPercentY },
-                    calculatedPosition: { x: targetX, y: targetY },
-                    actualPosition: { x: result.x, y: result.y },
-                    difference: { x: diffX, y: diffY },
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 2] 오류: ' + e.message]
-                };
-            }
-        })()
+            \(generateCommonUtilityScript())
+            
+            const logs = [];
+            const targetPercentX = parseFloat('\(targetPercentX)');
+            const targetPercentY = parseFloat('\(targetPercentY)');
+            
+            logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
+            logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+            
+            // 비동기 안정화 대기
+            await waitForStableLayout({ frames: 3, timeout: 1000 });
+            
+            const ROOT = getROOT();
+            const max = getMaxScroll();
+            
+            logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+            
+            // 백분율 기반 목표 위치 계산
+            const targetX = (targetPercentX / 100) * max.x;
+            const targetY = (targetPercentY / 100) * max.y;
+            
+            logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+            
+            // 비동기 정밀 스크롤
+            const result = await preciseScrollTo(targetX, targetY);
+            
+            const diffX = Math.abs(result.x - targetX);
+            const diffY = Math.abs(result.y - targetY);
+            
+            logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
+            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+            
+            // 무한스크롤은 허용 오차 크게 (100px)
+            const success = diffY <= 100;
+            
+            return {
+                success: success,
+                targetPercent: { x: targetPercentX, y: targetPercentY },
+                calculatedPosition: { x: targetX, y: targetY },
+                actualPosition: { x: result.x, y: result.y },
+                difference: { x: diffX, y: diffY },
+                logs: logs
+            };
+        })().then(result => result).catch(e => ({
+            success: false,
+            error: e.message,
+            logs: ['[Step 2] 오류: ' + e.message]
+        }))
         """
     }
     
@@ -770,228 +763,226 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
+        // Promise 체이닝 방식으로 수정
         (async function() {
-            try {
-                \(generateCommonUtilityScript())
+            \(generateCommonUtilityScript())
+            
+            const logs = [];
+            const targetX = parseFloat('\(targetX)');
+            const targetY = parseFloat('\(targetY)');
+            const infiniteScrollAnchorData = \(anchorDataJSON);
+            
+            logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (최우선)');
+            logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+            
+            // overflow-anchor 비활성화
+            document.documentElement.style.overflowAnchor = 'none';
+            
+            // 앵커 데이터 확인
+            if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
+                logs.push('무한스크롤 앵커 데이터 없음 - 프리롤 시도');
                 
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const infiniteScrollAnchorData = \(anchorDataJSON);
-                
-                logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (최우선)');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                
-                // overflow-anchor 비활성화
-                document.documentElement.style.overflowAnchor = 'none';
-                
-                // 앵커 데이터 확인
-                if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
-                    logs.push('무한스크롤 앵커 데이터 없음 - 프리롤 시도');
-                    
-                    // 앵커가 없으면 프리롤 수행
-                    await prerollInfinite(5);
-                    
-                    document.documentElement.style.overflowAnchor = '';
-                    return {
-                        success: false,
-                        anchorCount: 0,
-                        logs: logs
-                    };
-                }
-                
-                const anchors = infiniteScrollAnchorData.anchors;
-                logs.push('사용 가능한 앵커: ' + anchors.length + '개');
-                
-                // 앵커 등장 감시 (비동기 루프)
-                let foundElement = null;
-                let matchedAnchor = null;
-                let matchMethod = '';
-                let confidence = 0;
-                const deadline = performance.now() + 6000; // 6초 제한
-                
-                // 프리롤하면서 앵커 찾기
-                async function findAnchorsWithPreroll() {
-                    const ROOT = getROOT();
-                    let prerollCount = 0;
-                    
-                    while (performance.now() < deadline && !foundElement && prerollCount < 10) {
-                        // 현재 DOM에서 앵커 찾기
-                        foundElement = await findFirstMatchingAnchor();
-                        
-                        if (!foundElement) {
-                            // 바닥으로 스크롤하여 동적 로딩 트리거
-                            const before = ROOT.scrollHeight;
-                            ROOT.scrollTop = ROOT.scrollHeight;
-                            window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                            
-                            await new Promise(r => requestAnimationFrame(r));
-                            await new Promise(r => setTimeout(r, 100)); // 100ms 대기
-                            
-                            const after = ROOT.scrollHeight;
-                            if (after - before < 64) break; // 더 이상 로드되지 않음
-                            
-                            prerollCount++;
-                            logs.push('프리롤 ' + prerollCount + '회: 높이 ' + before + ' → ' + after);
-                        }
-                    }
-                    
-                    return foundElement;
-                }
-                
-                // 앵커 매칭 함수
-                async function findFirstMatchingAnchor() {
-                    // Vue Component 앵커 우선
-                    const vueAnchors = anchors.filter(a => a.anchorType === 'vueComponent');
-                    for (let anchor of vueAnchors) {
-                        const el = findVueElement(anchor);
-                        if (el) {
-                            matchedAnchor = anchor;
-                            matchMethod = 'vue_component';
-                            confidence = 95;
-                            return el;
-                        }
-                    }
-                    
-                    // Content Hash 앵커
-                    const hashAnchors = anchors.filter(a => a.anchorType === 'contentHash');
-                    for (let anchor of hashAnchors) {
-                        const el = findHashElement(anchor);
-                        if (el) {
-                            matchedAnchor = anchor;
-                            matchMethod = 'content_hash';
-                            confidence = 80;
-                            return el;
-                        }
-                    }
-                    
-                    // Virtual Index 앵커
-                    const indexAnchors = anchors.filter(a => a.anchorType === 'virtualIndex');
-                    for (let anchor of indexAnchors) {
-                        const el = findIndexElement(anchor);
-                        if (el) {
-                            matchedAnchor = anchor;
-                            matchMethod = 'virtual_index';
-                            confidence = 60;
-                            return el;
-                        }
-                    }
-                    
-                    return null;
-                }
-                
-                function findVueElement(anchor) {
-                    if (!anchor.vueComponent) return null;
-                    const vueComp = anchor.vueComponent;
-                    
-                    if (vueComp.dataV) {
-                        const elements = document.querySelectorAll('[' + vueComp.dataV + ']');
-                        for (let el of elements) {
-                            if (vueComp.name && el.className.includes(vueComp.name)) {
-                                return el;
-                            }
-                        }
-                    }
-                    return null;
-                }
-                
-                function findHashElement(anchor) {
-                    if (!anchor.contentHash) return null;
-                    const hash = anchor.contentHash;
-                    
-                    if (hash.text && hash.text.length > 20) {
-                        const searchText = hash.text.substring(0, 50);
-                        const allElements = document.querySelectorAll('*');
-                        for (let el of allElements) {
-                            if ((el.textContent || '').includes(searchText)) {
-                                return el;
-                            }
-                        }
-                    }
-                    return null;
-                }
-                
-                function findIndexElement(anchor) {
-                    if (!anchor.virtualIndex) return null;
-                    const vIdx = anchor.virtualIndex;
-                    
-                    if (vIdx.listIndex !== undefined) {
-                        const listElements = document.querySelectorAll('li, .item, .list-item');
-                        if (vIdx.listIndex < listElements.length) {
-                            return listElements[vIdx.listIndex];
-                        }
-                    }
-                    return null;
-                }
-                
-                // 앵커 찾기 실행
-                foundElement = await findAnchorsWithPreroll();
-                
-                if (foundElement && matchedAnchor) {
-                    const ROOT = getROOT();
-                    const rect = foundElement.getBoundingClientRect();
-                    const isRootElement = (ROOT === document.documentElement || ROOT === document.body);
-                    
-                    // 절대 위치 계산 (스크롤러에 따라 다르게)
-                    const scrollTop = isRootElement ? window.pageYOffset : ROOT.scrollTop;
-                    const scrollLeft = isRootElement ? window.pageXOffset : ROOT.scrollLeft;
-                    
-                    const absY = scrollTop + rect.top;
-                    const headerHeight = fixedHeaderHeight();
-                    const finalY = Math.max(0, absY - headerHeight);
-                    
-                    // 오프셋 보정
-                    let adjustedY = finalY;
-                    if (matchedAnchor.offsetFromTop) {
-                        adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
-                    }
-                    
-                    // 스크롤 실행
-                    await preciseScrollTo(scrollLeft, adjustedY);
-                    
-                    const actualX = ROOT.scrollLeft || 0;
-                    const actualY = ROOT.scrollTop || 0;
-                    const diffX = Math.abs(actualX - targetX);
-                    const diffY = Math.abs(actualY - targetY);
-                    
-                    logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                    logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                    logs.push('매칭 신뢰도: ' + confidence + '%');
-                    
-                    document.documentElement.style.overflowAnchor = '';
-                    
-                    return {
-                        success: diffY <= 150, // 무한스크롤은 150px 허용
-                        anchorCount: anchors.length,
-                        matchedAnchor: {
-                            anchorType: matchedAnchor.anchorType,
-                            matchMethod: matchMethod,
-                            confidence: confidence
-                        },
-                        restoredPosition: { x: actualX, y: actualY },
-                        targetDifference: { x: diffX, y: diffY },
-                        logs: logs
-                    };
-                }
+                // 앵커가 없으면 프리롤 수행
+                await prerollInfinite(5);
                 
                 document.documentElement.style.overflowAnchor = '';
-                logs.push('무한스크롤 앵커 매칭 실패');
-                
                 return {
                     success: false,
-                    anchorCount: anchors.length,
+                    anchorCount: 0,
                     logs: logs
                 };
+            }
+            
+            const anchors = infiniteScrollAnchorData.anchors;
+            logs.push('사용 가능한 앵커: ' + anchors.length + '개');
+            
+            // 앵커 등장 감시 (비동기 루프)
+            let foundElement = null;
+            let matchedAnchor = null;
+            let matchMethod = '';
+            let confidence = 0;
+            const deadline = performance.now() + 6000; // 6초 제한
+            
+            // 프리롤하면서 앵커 찾기
+            async function findAnchorsWithPreroll() {
+                const ROOT = getROOT();
+                let prerollCount = 0;
                 
-            } catch(e) {
+                while (performance.now() < deadline && !foundElement && prerollCount < 10) {
+                    // 현재 DOM에서 앵커 찾기
+                    foundElement = await findFirstMatchingAnchor();
+                    
+                    if (!foundElement) {
+                        // 바닥으로 스크롤하여 동적 로딩 트리거
+                        const before = ROOT.scrollHeight;
+                        ROOT.scrollTop = ROOT.scrollHeight;
+                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                        
+                        await new Promise(r => requestAnimationFrame(r));
+                        await new Promise(r => setTimeout(r, 100)); // 100ms 대기
+                        
+                        const after = ROOT.scrollHeight;
+                        if (after - before < 64) break; // 더 이상 로드되지 않음
+                        
+                        prerollCount++;
+                        logs.push('프리롤 ' + prerollCount + '회: 높이 ' + before + ' → ' + after);
+                    }
+                }
+                
+                return foundElement;
+            }
+            
+            // 앵커 매칭 함수
+            async function findFirstMatchingAnchor() {
+                // Vue Component 앵커 우선
+                const vueAnchors = anchors.filter(a => a.anchorType === 'vueComponent');
+                for (let anchor of vueAnchors) {
+                    const el = findVueElement(anchor);
+                    if (el) {
+                        matchedAnchor = anchor;
+                        matchMethod = 'vue_component';
+                        confidence = 95;
+                        return el;
+                    }
+                }
+                
+                // Content Hash 앵커
+                const hashAnchors = anchors.filter(a => a.anchorType === 'contentHash');
+                for (let anchor of hashAnchors) {
+                    const el = findHashElement(anchor);
+                    if (el) {
+                        matchedAnchor = anchor;
+                        matchMethod = 'content_hash';
+                        confidence = 80;
+                        return el;
+                    }
+                }
+                
+                // Virtual Index 앵커
+                const indexAnchors = anchors.filter(a => a.anchorType === 'virtualIndex');
+                for (let anchor of indexAnchors) {
+                    const el = findIndexElement(anchor);
+                    if (el) {
+                        matchedAnchor = anchor;
+                        matchMethod = 'virtual_index';
+                        confidence = 60;
+                        return el;
+                    }
+                }
+                
+                return null;
+            }
+            
+            function findVueElement(anchor) {
+                if (!anchor.vueComponent) return null;
+                const vueComp = anchor.vueComponent;
+                
+                if (vueComp.dataV) {
+                    const elements = document.querySelectorAll('[' + vueComp.dataV + ']');
+                    for (let el of elements) {
+                        if (vueComp.name && el.className.includes(vueComp.name)) {
+                            return el;
+                        }
+                    }
+                }
+                return null;
+            }
+            
+            function findHashElement(anchor) {
+                if (!anchor.contentHash) return null;
+                const hash = anchor.contentHash;
+                
+                if (hash.text && hash.text.length > 20) {
+                    const searchText = hash.text.substring(0, 50);
+                    const allElements = document.querySelectorAll('*');
+                    for (let el of allElements) {
+                        if ((el.textContent || '').includes(searchText)) {
+                            return el;
+                        }
+                    }
+                }
+                return null;
+            }
+            
+            function findIndexElement(anchor) {
+                if (!anchor.virtualIndex) return null;
+                const vIdx = anchor.virtualIndex;
+                
+                if (vIdx.listIndex !== undefined) {
+                    const listElements = document.querySelectorAll('li, .item, .list-item');
+                    if (vIdx.listIndex < listElements.length) {
+                        return listElements[vIdx.listIndex];
+                    }
+                }
+                return null;
+            }
+            
+            // 앵커 찾기 실행
+            foundElement = await findAnchorsWithPreroll();
+            
+            if (foundElement && matchedAnchor) {
+                const ROOT = getROOT();
+                const rect = foundElement.getBoundingClientRect();
+                const isRootElement = (ROOT === document.documentElement || ROOT === document.body);
+                
+                // 절대 위치 계산 (스크롤러에 따라 다르게)
+                const scrollTop = isRootElement ? window.pageYOffset : ROOT.scrollTop;
+                const scrollLeft = isRootElement ? window.pageXOffset : ROOT.scrollLeft;
+                
+                const absY = scrollTop + rect.top;
+                const headerHeight = fixedHeaderHeight();
+                const finalY = Math.max(0, absY - headerHeight);
+                
+                // 오프셋 보정
+                let adjustedY = finalY;
+                if (matchedAnchor.offsetFromTop) {
+                    adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
+                }
+                
+                // 스크롤 실행
+                await preciseScrollTo(scrollLeft, adjustedY);
+                
+                const actualX = ROOT.scrollLeft || 0;
+                const actualY = ROOT.scrollTop || 0;
+                const diffX = Math.abs(actualX - targetX);
+                const diffY = Math.abs(actualY - targetY);
+                
+                logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                logs.push('매칭 신뢰도: ' + confidence + '%');
+                
                 document.documentElement.style.overflowAnchor = '';
+                
                 return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 3] 오류: ' + e.message]
+                    success: diffY <= 150, // 무한스크롤은 150px 허용
+                    anchorCount: anchors.length,
+                    matchedAnchor: {
+                        anchorType: matchedAnchor.anchorType,
+                        matchMethod: matchMethod,
+                        confidence: confidence
+                    },
+                    restoredPosition: { x: actualX, y: actualY },
+                    targetDifference: { x: diffX, y: diffY },
+                    logs: logs
                 };
             }
-        })()
+            
+            document.documentElement.style.overflowAnchor = '';
+            logs.push('무한스크롤 앵커 매칭 실패');
+            
+            return {
+                success: false,
+                anchorCount: anchors.length,
+                logs: logs
+            };
+        })().then(result => result).catch(e => {
+            document.documentElement.style.overflowAnchor = '';
+            return {
+                success: false,
+                error: e.message,
+                logs: ['[Step 3] 오류: ' + e.message]
+            };
+        })
         """
     }
     
@@ -1000,70 +991,66 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
+        // Promise 체이닝 방식으로 수정
         (async function() {
-            try {
-                \(generateCommonUtilityScript())
+            \(generateCommonUtilityScript())
+            
+            const logs = [];
+            const targetX = parseFloat('\(targetX)');
+            const targetY = parseFloat('\(targetY)');
+            const tolerance = 50; // 허용 오차 증가
+            
+            logs.push('[Step 4] 최종 검증 및 미세 보정');
+            logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+            
+            const ROOT = getROOT();
+            
+            // 현재 위치 확인
+            let currentX = ROOT.scrollLeft || 0;
+            let currentY = ROOT.scrollTop || 0;
+            
+            let diffX = Math.abs(currentX - targetX);
+            let diffY = Math.abs(currentY - targetY);
+            
+            logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
+            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+            
+            const withinTolerance = diffX <= tolerance && diffY <= tolerance;
+            let correctionApplied = false;
+            
+            // 허용 오차 초과 시 미세 보정
+            if (!withinTolerance) {
+                logs.push('허용 오차 초과 - 미세 보정 적용');
                 
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const tolerance = 50; // 허용 오차 증가
+                await preciseScrollTo(targetX, targetY);
+                correctionApplied = true;
                 
-                logs.push('[Step 4] 최종 검증 및 미세 보정');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                // 보정 후 위치 재측정
+                currentX = ROOT.scrollLeft || 0;
+                currentY = ROOT.scrollTop || 0;
+                diffX = Math.abs(currentX - targetX);
+                diffY = Math.abs(currentY - targetY);
                 
-                const ROOT = getROOT();
-                
-                // 현재 위치 확인
-                let currentX = ROOT.scrollLeft || 0;
-                let currentY = ROOT.scrollTop || 0;
-                
-                let diffX = Math.abs(currentX - targetX);
-                let diffY = Math.abs(currentY - targetY);
-                
-                logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
-                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                const withinTolerance = diffX <= tolerance && diffY <= tolerance;
-                let correctionApplied = false;
-                
-                // 허용 오차 초과 시 미세 보정
-                if (!withinTolerance) {
-                    logs.push('허용 오차 초과 - 미세 보정 적용');
-                    
-                    await preciseScrollTo(targetX, targetY);
-                    correctionApplied = true;
-                    
-                    // 보정 후 위치 재측정
-                    currentX = ROOT.scrollLeft || 0;
-                    currentY = ROOT.scrollTop || 0;
-                    diffX = Math.abs(currentX - targetX);
-                    diffY = Math.abs(currentY - targetY);
-                    
-                    logs.push('보정 후 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
-                    logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                }
-                
-                const success = diffY <= 100; // 최종 허용 오차
-                
-                return {
-                    success: success,
-                    targetPosition: { x: targetX, y: targetY },
-                    finalPosition: { x: currentX, y: currentY },
-                    finalDifference: { x: diffX, y: diffY },
-                    withinTolerance: diffX <= tolerance && diffY <= tolerance,
-                    correctionApplied: correctionApplied,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 4] 오류: ' + e.message]
-                };
+                logs.push('보정 후 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
+                logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
             }
-        })()
+            
+            const success = diffY <= 100; // 최종 허용 오차
+            
+            return {
+                success: success,
+                targetPosition: { x: targetX, y: targetY },
+                finalPosition: { x: currentX, y: currentY },
+                finalDifference: { x: diffX, y: diffY },
+                withinTolerance: diffX <= tolerance && diffY <= tolerance,
+                correctionApplied: correctionApplied,
+                logs: logs
+            };
+        })().then(result => result).catch(e => ({
+            success: false,
+            error: e.message,
+            logs: ['[Step 4] 오류: ' + e.message]
+        }))
         """
     }
     
