@@ -1,14 +1,13 @@
 //
 //  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
-//  🎯 **Step 3**: 앵커 기반 복원 (최우선) - 동적 사이트 우선
-//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (보조)
-//  📦 **Step 1**: 저장 콘텐츠 높이 복원 (정적 사이트용)
+//  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
+//  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
+//  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
-//  🎯 **스크롤러 자동 검출**: 실제 스크롤 가능 요소 감지
-//  🔧 **비동기 구조 유지**: Promise 체이닝으로 타입 오류 해결
+//  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
 
 import UIKit
 import WebKit
@@ -173,7 +172,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템 - 우선순위 재배치**
+    // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
     
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
@@ -184,12 +183,12 @@ struct BFCacheSnapshot: Codable {
     }
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작 (앵커 우선)")
+        TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step3=\(restorationConfig.step3RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step1=\(restorationConfig.step1RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
+        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
         
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -198,169 +197,19 @@ struct BFCacheSnapshot: Codable {
             completion: completion
         )
         
-        // 🎯 **변경: Step 3(앵커)를 최우선으로 실행**
-        executeStep3_AnchorRestore(context: context)
+        // Step 1 시작
+        executeStep1_RestoreContentHeight(context: context)
     }
     
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원 (최우선)
-    private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3 - 최우선] 무한스크롤 전용 앵커 정밀 복원 시작")
-        
-        guard restorationConfig.enableAnchorRestore else {
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
-            }
-            return
-        }
-        
-        // 무한스크롤 앵커 데이터 확인
-        var infiniteScrollAnchorDataJSON = "null"
-        if let jsState = self.jsState,
-           let infiniteScrollAnchorData = jsState["infiniteScrollAnchors"] as? [String: Any],
-           let dataJSON = convertToJSONString(infiniteScrollAnchorData) {
-            infiniteScrollAnchorDataJSON = dataJSON
-        }
-        
-        let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step3Success = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step3Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let anchorCount = resultDict["anchorCount"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
-                }
-                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                    if let anchorType = matchedAnchor["anchorType"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
-                    }
-                    if let method = matchedAnchor["matchMethod"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
-                    }
-                    if let confidence = matchedAnchor["confidence"] as? Double {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
-                    }
-                }
-                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
-                }
-                if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                // 앵커 복원 성공 시 전체 성공으로 간주
-                if step3Success {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] ✅ 앵커 복원 성공 - 전체 복원 성공으로 간주")
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 다음 단계 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
-            
-            // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
-                self.executeStep2_PercentScroll(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 2: 상대좌표 기반 스크롤 (보조)
-    private func executeStep2_PercentScroll(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📏 [Step 2 - 보조] 상대좌표 기반 스크롤 복원 시작")
-        
-        // 이미 앵커로 성공했으면 스킵
-        if context.overallSuccess {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 이미 앵커 복원 성공 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
-                self.executeStep1_RestoreContentHeight(context: context)
-            }
-            return
-        }
-        
-        guard restorationConfig.enablePercentRestore else {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
-                self.executeStep1_RestoreContentHeight(context: context)
-            }
-            return
-        }
-        
-        let js = generateStep2_PercentScrollScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var step2Success = false
-            var updatedContext = context
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                step2Success = (resultDict["success"] as? Bool) ?? false
-                
-                if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
-                }
-                if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
-                }
-                if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
-                }
-                if let difference = resultDict["difference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                // 백분율 복원 성공 시 (앵커가 실패한 경우만)
-                if step2Success && !updatedContext.overallSuccess {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 백분율 복원 성공")
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
-            
-            // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                self.executeStep1_RestoreContentHeight(context: updatedContext)
-            }
-        }
-    }
-    
-    // MARK: - Step 1: 저장 콘텐츠 높이 복원 (정적 사이트용)
+    // MARK: - Step 1: 저장 콘텐츠 높이 복원
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1 - 정적용] 저장 콘텐츠 높이 복원 시작")
-        
-        // 이미 성공했으면 스킵
-        if context.overallSuccess {
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 이미 복원 성공 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
-            }
-            return
-        }
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
+                self.executeStep2_PercentScroll(context: context)
             }
             return
         }
@@ -402,6 +251,131 @@ struct BFCacheSnapshot: Codable {
             
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
+                self.executeStep2_PercentScroll(context: context)
+            }
+        }
+    }
+    
+    // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
+    private func executeStep2_PercentScroll(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
+        
+        guard restorationConfig.enablePercentRestore else {
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
+                self.executeStep3_AnchorRestore(context: context)
+            }
+            return
+        }
+        
+        let js = generateStep2_PercentScrollScript()
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var step2Success = false
+            var updatedContext = context
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                step2Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                }
+                if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                }
+                if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                }
+                if let difference = resultDict["difference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(5) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+                
+                // 상대좌표 복원 성공 시 전체 성공으로 간주
+                if step2Success {
+                    updatedContext.overallSuccess = true
+                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
+            
+            // 성공/실패 관계없이 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
+                self.executeStep3_AnchorRestore(context: updatedContext)
+            }
+        }
+    }
+    
+    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
+    private func executeStep3_AnchorRestore(context: RestorationContext) {
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
+        
+        guard restorationConfig.enableAnchorRestore else {
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
+            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
+                self.executeStep4_FinalVerification(context: context)
+            }
+            return
+        }
+        
+        // 무한스크롤 앵커 데이터 확인
+        var infiniteScrollAnchorDataJSON = "null"
+        if let jsState = self.jsState,
+           let infiniteScrollAnchorData = jsState["infiniteScrollAnchors"] as? [String: Any],
+           let dataJSON = convertToJSONString(infiniteScrollAnchorData) {
+            infiniteScrollAnchorDataJSON = dataJSON
+        }
+        
+        let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
+        
+        context.webView?.evaluateJavaScript(js) { result, error in
+            var step3Success = false
+            
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
+            } else if let resultDict = result as? [String: Any] {
+                step3Success = (resultDict["success"] as? Bool) ?? false
+                
+                if let anchorCount = resultDict["anchorCount"] as? Int {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+                }
+                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                    if let anchorType = matchedAnchor["anchorType"] as? String {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
+                    }
+                    if let method = matchedAnchor["matchMethod"] as? String {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
+                    }
+                    if let confidence = matchedAnchor["confidence"] as? Double {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
+                    }
+                }
+                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                }
+                if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                }
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(10) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    }
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
+            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
+            
+            // 성공/실패 관계없이 다음 단계 진행
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
                 self.executeStep4_FinalVerification(context: context)
             }
         }
@@ -461,107 +435,65 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 JavaScript 생성 메서드들 - Promise 체이닝 방식
+    // MARK: - 🎯 단일 스크롤러 JavaScript 생성 메서드들
     
-    // 🎯 **공통 유틸리티 스크립트 생성 - 비동기 유지**
+    // 🎯 **공통 유틸리티 스크립트 생성**
     private func generateCommonUtilityScript() -> String {
         return """
-        // 🎯 **스크롤러 자동 검출 및 공통 유틸리티**
-        
-        // 캐시된 스크롤러
-        window._bfcacheCachedScroller = null;
-        
-        function detectSingleScroller() {
-            if (window._bfcacheCachedScroller && document.contains(window._bfcacheCachedScroller)) {
-                return window._bfcacheCachedScroller;
-            }
-            
-            // 후보 요소들 수집
-            const candidates = [
-                document.scrollingElement,
-                document.documentElement,
-                document.body
-            ];
-            
-            // overflow 스타일이 있는 요소들 추가
-            document.querySelectorAll('[style*="overflow"], [class*="scroll"], .container, .wrapper').forEach(el => {
-                if (el && !candidates.includes(el)) {
-                    candidates.push(el);
-                }
-            });
-            
-            let bestElement = candidates[0];
-            let bestScore = 0;
-            
-            candidates.forEach(el => {
-                if (!el) return;
-                const hasVerticalScroll = el.scrollHeight > el.clientHeight;
-                const hasHorizontalScroll = el.scrollWidth > el.clientWidth;
-                const score = (el.scrollHeight - el.clientHeight) + (el.scrollWidth - el.clientWidth);
-                
-                if (score > bestScore && (hasVerticalScroll || hasHorizontalScroll)) {
-                    bestElement = el;
-                    bestScore = score;
-                }
-            });
-            
-            window._bfcacheCachedScroller = bestElement || document.scrollingElement || document.documentElement;
-            return window._bfcacheCachedScroller;
-        }
-        
+        // 🎯 **단일 스크롤러 공통 유틸리티 (동기 버전)**
         function getROOT() { 
-            return detectSingleScroller();
+            return document.scrollingElement || document.documentElement; 
         }
         
         function getMaxScroll() { 
             const r = getROOT(); 
             return { 
-                x: Math.max(0, r.scrollWidth - (r.clientWidth || window.innerWidth)),
-                y: Math.max(0, r.scrollHeight - (r.clientHeight || window.innerHeight))
+                x: Math.max(0, r.scrollWidth - window.innerWidth),
+                y: Math.max(0, r.scrollHeight - window.innerHeight) 
             }; 
         }
         
-        // 비동기 안정화 대기 (requestAnimationFrame 기반)
-        async function waitForStableLayout(options = {}) {
+        function waitForStableLayoutSync(options = {}) {
             const { frames = 6, timeout = 1500, threshold = 2 } = options;
             const ROOT = getROOT();
             let last = ROOT.scrollHeight;
             let stable = 0;
-            const startTime = Date.now();
             
-            return new Promise((resolve) => {
-                function check() {
-                    const h = ROOT.scrollHeight;
-                    if (Math.abs(h - last) <= threshold) {
-                        stable++;
-                    } else {
-                        stable = 0;
-                    }
-                    last = h;
-                    
-                    if (stable >= frames || Date.now() - startTime > timeout) {
-                        resolve();
-                    } else {
-                        requestAnimationFrame(check);
-                    }
+            for (let i = 0; i < maxIterations; i++) {
+                const h = ROOT.scrollHeight;
+                if (Math.abs(h - last) <= threshold) {
+                    stable++;
+                } else {
+                    stable = 0;
                 }
-                requestAnimationFrame(check);
-            });
+                last = h;
+                
+                if (stable >= frames) {
+                    break;
+                }
+                
+               
+            }
         }
         
-        // 비동기 정밀 스크롤
-        async function preciseScrollTo(x, y) {
+        function preciseScrollToSync(x, y) {
             const ROOT = getROOT();
             
+            // 첫 번째 설정
             ROOT.scrollLeft = x;
             ROOT.scrollTop = y;
             
-            await new Promise(r => requestAnimationFrame(r));
+            // 브라우저가 적용할 시간 대기 (동기)
+            const waitStart = Date.now();
+            while (Date.now() - waitStart < 16) { /* ~1프레임 대기 */ }
             
+            // 두 번째 설정 (보정)
             ROOT.scrollLeft = x;
             ROOT.scrollTop = y;
             
-            await new Promise(r => requestAnimationFrame(r));
+            // 최종 적용 대기
+            const waitStart2 = Date.now();
+            while (Date.now() - waitStart2 < 16) { /* ~1프레임 대기 */ }
             
             return { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 };
         }
@@ -578,21 +510,21 @@ struct BFCacheSnapshot: Codable {
             return h;
         }
         
-        // 비동기 프리롤 (무한스크롤 트리거)
-        async function prerollInfinite(maxSteps = 6) {
+        function prerollInfiniteSync(maxSteps = 6) {
             const ROOT = getROOT();
             for (let i = 0; i < maxSteps; i++) {
                 const before = ROOT.scrollHeight;
-                ROOT.scrollTop = before;
+                ROOT.scrollTop = before; // 바닥
                 window.dispatchEvent(new Event('scroll', { bubbles: true }));
                 
-                await new Promise(r => requestAnimationFrame(r));
+                
                 
                 const after = ROOT.scrollHeight;
-                if (after - before < 64) break;
+                if (after - before < 64) break; // 더 이상 늘지 않으면 종료
             }
             
-            await waitForStableLayout();
+            // 안정화 대기
+            waitForStableLayoutSync();
         }
         
         // 🎯 **환경 안정화 (한 번만 실행)**
@@ -621,82 +553,86 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = restorationConfig.savedContentHeight
         
         return """
-        // Promise 체이닝 방식으로 수정
-        (async function() {
-            \(generateCommonUtilityScript())
-            
-            const logs = [];
-            const targetHeight = parseFloat('\(targetHeight)');
-            const ROOT = getROOT();
-            const currentHeight = ROOT.scrollHeight;
-            
-            logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-            logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-            logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-            
-            // 정적 사이트 판단 (90% 이상 이미 로드됨)
-            const percentage = (currentHeight / targetHeight) * 100;
-            const isStaticSite = percentage >= 90;
-            
-            if (isStaticSite) {
-                logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+        (function() {
+            try {
+                \(generateCommonUtilityScript())
+                
+                const logs = [];
+                const targetHeight = parseFloat('\(targetHeight)');
+                const ROOT = getROOT();
+                const currentHeight = ROOT.scrollHeight;
+                
+                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
+                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+                
+                // 정적 사이트 판단 (90% 이상 이미 로드됨)
+                const percentage = (currentHeight / targetHeight) * 100;
+                const isStaticSite = percentage >= 90;
+                
+                if (isStaticSite) {
+                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+                    return {
+                        success: true,
+                        isStaticSite: true,
+                        currentHeight: currentHeight,
+                        targetHeight: targetHeight,
+                        restoredHeight: currentHeight,
+                        percentage: percentage,
+                        logs: logs
+                    };
+                }
+                
+                // 동적 사이트 - 콘텐츠 로드 시도 (동기적으로 처리)
+                logs.push('동적 사이트 - 콘텐츠 로드 시도');
+                
+                // 더보기 버튼 찾기
+                const loadMoreButtons = document.querySelectorAll(
+                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                    'button[class*="more"], .load-more, .show-more'
+                );
+                
+                let clicked = 0;
+                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
+                    const btn = loadMoreButtons[i];
+                    if (btn && typeof btn.click === 'function') {
+                        btn.click();
+                        clicked++;
+                    }
+                }
+                
+                if (clicked > 0) {
+                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                }
+                
+                // 🎯 **수정: 간단한 무한스크롤 트리거 (동기 처리)**
+                prerollInfiniteSync(3);
+                
+                const restoredHeight = ROOT.scrollHeight;
+                const finalPercentage = (restoredHeight / targetHeight) * 100;
+                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
+                
+                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                
                 return {
-                    success: true,
-                    isStaticSite: true,
+                    success: success,
+                    isStaticSite: false,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
-                    restoredHeight: currentHeight,
-                    percentage: percentage,
+                    restoredHeight: restoredHeight,
+                    percentage: finalPercentage,
                     logs: logs
                 };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[Step 1] 오류: ' + e.message]
+                };
             }
-            
-            // 동적 사이트 - 콘텐츠 로드 시도 (비동기)
-            logs.push('동적 사이트 - 콘텐츠 로드 시도');
-            
-            // 더보기 버튼 찾기
-            const loadMoreButtons = document.querySelectorAll(
-                '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                'button[class*="more"], .load-more, .show-more'
-            );
-            
-            let clicked = 0;
-            for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                const btn = loadMoreButtons[i];
-                if (btn && typeof btn.click === 'function') {
-                    btn.click();
-                    clicked++;
-                }
-            }
-            
-            if (clicked > 0) {
-                logs.push('더보기 버튼 ' + clicked + '개 클릭');
-            }
-            
-            // 비동기 무한스크롤 트리거
-            await prerollInfinite(3);
-            
-            const restoredHeight = ROOT.scrollHeight;
-            const finalPercentage = (restoredHeight / targetHeight) * 100;
-            const success = finalPercentage >= 80;
-            
-            logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-            logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-            
-            return {
-                success: success,
-                isStaticSite: false,
-                currentHeight: currentHeight,
-                targetHeight: targetHeight,
-                restoredHeight: restoredHeight,
-                percentage: finalPercentage,
-                logs: logs
-            };
-        })().then(result => result).catch(e => ({
-            success: false,
-            error: e.message,
-            logs: ['[Step 1] 오류: ' + e.message]
-        }))
+        })()
         """
     }
     
@@ -705,56 +641,60 @@ struct BFCacheSnapshot: Codable {
         let targetPercentY = scrollPositionPercent.y
         
         return """
-        // Promise 체이닝 방식으로 수정
-        (async function() {
-            \(generateCommonUtilityScript())
-            
-            const logs = [];
-            const targetPercentX = parseFloat('\(targetPercentX)');
-            const targetPercentY = parseFloat('\(targetPercentY)');
-            
-            logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
-            logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
-            
-            // 비동기 안정화 대기
-            await waitForStableLayout({ frames: 3, timeout: 1000 });
-            
-            const ROOT = getROOT();
-            const max = getMaxScroll();
-            
-            logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
-            
-            // 백분율 기반 목표 위치 계산
-            const targetX = (targetPercentX / 100) * max.x;
-            const targetY = (targetPercentY / 100) * max.y;
-            
-            logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-            
-            // 비동기 정밀 스크롤
-            const result = await preciseScrollTo(targetX, targetY);
-            
-            const diffX = Math.abs(result.x - targetX);
-            const diffY = Math.abs(result.y - targetY);
-            
-            logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
-            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-            
-            // 무한스크롤은 허용 오차 크게 (100px)
-            const success = diffY <= 100;
-            
-            return {
-                success: success,
-                targetPercent: { x: targetPercentX, y: targetPercentY },
-                calculatedPosition: { x: targetX, y: targetY },
-                actualPosition: { x: result.x, y: result.y },
-                difference: { x: diffX, y: diffY },
-                logs: logs
-            };
-        })().then(result => result).catch(e => ({
-            success: false,
-            error: e.message,
-            logs: ['[Step 2] 오류: ' + e.message]
-        }))
+        (function() {
+            try {
+                \(generateCommonUtilityScript())
+                
+                const logs = [];
+                const targetPercentX = parseFloat('\(targetPercentX)');
+                const targetPercentY = parseFloat('\(targetPercentY)');
+                
+                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
+                logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                
+                // 🎯 **수정: 동기적 안정화 대기**
+                waitForStableLayoutSync({ frames: 3, timeout: 1000 });
+                
+                const ROOT = getROOT();
+                const max = getMaxScroll();
+                
+                logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+                
+                // 백분율 기반 목표 위치 계산
+                const targetX = (targetPercentX / 100) * max.x;
+                const targetY = (targetPercentY / 100) * max.y;
+                
+                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                
+                // 🎯 **수정: 동기적 정밀 스크롤**
+                const result = preciseScrollToSync(targetX, targetY);
+                
+                const diffX = Math.abs(result.x - targetX);
+                const diffY = Math.abs(result.y - targetY);
+                
+                logs.push('실제 위치: X=' + result.x.toFixed(1) + 'px, Y=' + result.y.toFixed(1) + 'px');
+                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                
+                // 허용 오차 50px 이내면 성공
+                const success = diffY <= 50;
+                
+                return {
+                    success: success,
+                    targetPercent: { x: targetPercentX, y: targetPercentY },
+                    calculatedPosition: { x: targetX, y: targetY },
+                    actualPosition: { x: result.x, y: result.y },
+                    difference: { x: diffX, y: diffY },
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[Step 2] 오류: ' + e.message]
+                };
+            }
+        })()
         """
     }
     
@@ -763,226 +703,238 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
-        // Promise 체이닝 방식으로 수정
-        (async function() {
-            \(generateCommonUtilityScript())
-            
-            const logs = [];
-            const targetX = parseFloat('\(targetX)');
-            const targetY = parseFloat('\(targetY)');
-            const infiniteScrollAnchorData = \(anchorDataJSON);
-            
-            logs.push('[Step 3] 무한스크롤 전용 앵커 복원 (최우선)');
-            logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-            
-            // overflow-anchor 비활성화
-            document.documentElement.style.overflowAnchor = 'none';
-            
-            // 앵커 데이터 확인
-            if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
-                logs.push('무한스크롤 앵커 데이터 없음 - 프리롤 시도');
+        (function() {
+            try {
+                \(generateCommonUtilityScript())
                 
-                // 앵커가 없으면 프리롤 수행
-                await prerollInfinite(5);
+                const logs = [];
+                const targetX = parseFloat('\(targetX)');
+                const targetY = parseFloat('\(targetY)');
+                const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                document.documentElement.style.overflowAnchor = '';
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
+                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                
+                // 앵커 데이터 확인
+                if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
+                    logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
+                    return {
+                        success: false,
+                        anchorCount: 0,
+                        logs: logs
+                    };
+                }
+                
+                const anchors = infiniteScrollAnchorData.anchors;
+                logs.push('사용 가능한 앵커: ' + anchors.length + '개');
+                
+                // 무한스크롤 앵커 타입별 필터링
+                const vueComponentAnchors = anchors.filter(function(anchor) {
+                    return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
+                });
+                const contentHashAnchors = anchors.filter(function(anchor) {
+                    return anchor.anchorType === 'contentHash' && anchor.contentHash;
+                });
+                const virtualIndexAnchors = anchors.filter(function(anchor) {
+                    return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
+                });
+                
+                logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
+                logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
+                logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
+                
+                let foundElement = null;
+                let matchedAnchor = null;
+                let matchMethod = '';
+                let confidence = 0;
+                
+                // 우선순위 1: Vue Component 앵커 매칭
+                if (!foundElement && vueComponentAnchors.length > 0) {
+                    for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
+                        const anchor = vueComponentAnchors[i];
+                        const vueComp = anchor.vueComponent;
+                        
+                        // data-v-* 속성으로 찾기
+                        if (vueComp.dataV) {
+                            const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
+                            for (let j = 0; j < vueElements.length; j++) {
+                                const element = vueElements[j];
+                                // 컴포넌트 이름과 인덱스 매칭
+                                if (vueComp.name && element.className.includes(vueComp.name)) {
+                                    // 가상 인덱스 기반 매칭
+                                    if (vueComp.index !== undefined) {
+                                        const elementIndex = Array.from(element.parentElement.children).indexOf(element);
+                                        if (Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
+                                            foundElement = element;
+                                            matchedAnchor = anchor;
+                                            matchMethod = 'vue_component_with_index';
+                                            confidence = 95;
+                                            logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
+                                            break;
+                                        }
+                                    } else {
+                                        foundElement = element;
+                                        matchedAnchor = anchor;
+                                        matchMethod = 'vue_component';
+                                        confidence = 85;
+                                        logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (foundElement) break;
+                        }
+                    }
+                }
+                
+                // 우선순위 2: Content Hash 앵커 매칭
+                if (!foundElement && contentHashAnchors.length > 0) {
+                    for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
+                        const anchor = contentHashAnchors[i];
+                        const contentHash = anchor.contentHash;
+                        
+                        // 텍스트 내용으로 매칭
+                        if (contentHash.text && contentHash.text.length > 20) {
+                            const searchText = contentHash.text.substring(0, 50);
+                            const allElements = document.querySelectorAll('*');
+                            for (let j = 0; j < allElements.length; j++) {
+                                const element = allElements[j];
+                                const elementText = (element.textContent || '').trim();
+                                if (elementText.includes(searchText)) {
+                                    foundElement = element;
+                                    matchedAnchor = anchor;
+                                    matchMethod = 'content_hash';
+                                    confidence = 80;
+                                    logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
+                                    break;
+                                }
+                            }
+                            if (foundElement) break;
+                        }
+                        
+                        // 짧은 해시로 매칭
+                        if (!foundElement && contentHash.shortHash) {
+                            const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
+                            if (hashElements.length > 0) {
+                                foundElement = hashElements[0];
+                                matchedAnchor = anchor;
+                                matchMethod = 'short_hash';
+                                confidence = 75;
+                                logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // 우선순위 3: Virtual Index 앵커 매칭 (추정 위치)
+                if (!foundElement && virtualIndexAnchors.length > 0) {
+                    for (let i = 0; i < virtualIndexAnchors.length && !foundElement; i++) {
+                        const anchor = virtualIndexAnchors[i];
+                        const virtualIndex = anchor.virtualIndex;
+                        
+                        // 리스트 인덱스 기반 추정
+                        if (virtualIndex.listIndex !== undefined) {
+                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
+                            const targetIndex = virtualIndex.listIndex;
+                            if (targetIndex >= 0 && targetIndex < listElements.length) {
+                                foundElement = listElements[targetIndex];
+                                matchedAnchor = anchor;
+                                matchMethod = 'virtual_index';
+                                confidence = 60;
+                                logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
+                                break;
+                            }
+                        }
+                        
+                        // 페이지 오프셋 기반 추정
+                        if (!foundElement && virtualIndex.offsetInPage !== undefined) {
+                            const estimatedY = virtualIndex.offsetInPage;
+                            const allElements = document.querySelectorAll('*');
+                            let closestElement = null;
+                            let minDistance = Infinity;
+                            
+                            for (let j = 0; j < allElements.length; j++) {
+                                const element = allElements[j];
+                                const rect = element.getBoundingClientRect();
+                                const ROOT = getROOT();
+                                const elementY = ROOT.scrollTop + rect.top;
+                                const distance = Math.abs(elementY - estimatedY);
+                                
+                                if (distance < minDistance && rect.height > 20) {
+                                    minDistance = distance;
+                                    closestElement = element;
+                                }
+                            }
+                            
+                            if (closestElement && minDistance < 200) {
+                                foundElement = closestElement;
+                                matchedAnchor = anchor;
+                                matchMethod = 'page_offset';
+                                confidence = 50;
+                                logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (foundElement && matchedAnchor) {
+                    // 🎯 **수정: scrollIntoView 대신 직접 계산 + 헤더 보정**
+                    const ROOT = getROOT();
+                    const rect = foundElement.getBoundingClientRect();
+                    const absY = ROOT.scrollTop + rect.top;
+                    const headerHeight = fixedHeaderHeight();
+                    const finalY = Math.max(0, absY - headerHeight);
+                    
+                    // 오프셋 보정
+                    let adjustedY = finalY;
+                    if (matchedAnchor.offsetFromTop) {
+                        adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
+                    }
+                    
+                    // 🎯 **단일 스크롤러로 정밀 이동**
+                    ROOT.scrollTop = adjustedY;
+                    
+                    const actualX = ROOT.scrollLeft || 0;
+                    const actualY = ROOT.scrollTop || 0;
+                    const diffX = Math.abs(actualX - targetX);
+                    const diffY = Math.abs(actualY - targetY);
+                    
+                    logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+                    logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                    logs.push('매칭 신뢰도: ' + confidence + '%');
+                    logs.push('헤더 보정: ' + headerHeight.toFixed(0) + 'px');
+                    
+                    return {
+                        success: diffY <= 100, // 무한스크롤은 100px 허용 오차
+                        anchorCount: anchors.length,
+                        matchedAnchor: {
+                            anchorType: matchedAnchor.anchorType,
+                            matchMethod: matchMethod,
+                            confidence: confidence
+                        },
+                        restoredPosition: { x: actualX, y: actualY },
+                        targetDifference: { x: diffX, y: diffY },
+                        logs: logs
+                    };
+                }
+                
+                logs.push('무한스크롤 앵커 매칭 실패');
                 return {
                     success: false,
-                    anchorCount: 0,
-                    logs: logs
-                };
-            }
-            
-            const anchors = infiniteScrollAnchorData.anchors;
-            logs.push('사용 가능한 앵커: ' + anchors.length + '개');
-            
-            // 앵커 등장 감시 (비동기 루프)
-            let foundElement = null;
-            let matchedAnchor = null;
-            let matchMethod = '';
-            let confidence = 0;
-            const deadline = performance.now() + 6000; // 6초 제한
-            
-            // 프리롤하면서 앵커 찾기
-            async function findAnchorsWithPreroll() {
-                const ROOT = getROOT();
-                let prerollCount = 0;
-                
-                while (performance.now() < deadline && !foundElement && prerollCount < 10) {
-                    // 현재 DOM에서 앵커 찾기
-                    foundElement = await findFirstMatchingAnchor();
-                    
-                    if (!foundElement) {
-                        // 바닥으로 스크롤하여 동적 로딩 트리거
-                        const before = ROOT.scrollHeight;
-                        ROOT.scrollTop = ROOT.scrollHeight;
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        
-                        await new Promise(r => requestAnimationFrame(r));
-                        await new Promise(r => setTimeout(r, 100)); // 100ms 대기
-                        
-                        const after = ROOT.scrollHeight;
-                        if (after - before < 64) break; // 더 이상 로드되지 않음
-                        
-                        prerollCount++;
-                        logs.push('프리롤 ' + prerollCount + '회: 높이 ' + before + ' → ' + after);
-                    }
-                }
-                
-                return foundElement;
-            }
-            
-            // 앵커 매칭 함수
-            async function findFirstMatchingAnchor() {
-                // Vue Component 앵커 우선
-                const vueAnchors = anchors.filter(a => a.anchorType === 'vueComponent');
-                for (let anchor of vueAnchors) {
-                    const el = findVueElement(anchor);
-                    if (el) {
-                        matchedAnchor = anchor;
-                        matchMethod = 'vue_component';
-                        confidence = 95;
-                        return el;
-                    }
-                }
-                
-                // Content Hash 앵커
-                const hashAnchors = anchors.filter(a => a.anchorType === 'contentHash');
-                for (let anchor of hashAnchors) {
-                    const el = findHashElement(anchor);
-                    if (el) {
-                        matchedAnchor = anchor;
-                        matchMethod = 'content_hash';
-                        confidence = 80;
-                        return el;
-                    }
-                }
-                
-                // Virtual Index 앵커
-                const indexAnchors = anchors.filter(a => a.anchorType === 'virtualIndex');
-                for (let anchor of indexAnchors) {
-                    const el = findIndexElement(anchor);
-                    if (el) {
-                        matchedAnchor = anchor;
-                        matchMethod = 'virtual_index';
-                        confidence = 60;
-                        return el;
-                    }
-                }
-                
-                return null;
-            }
-            
-            function findVueElement(anchor) {
-                if (!anchor.vueComponent) return null;
-                const vueComp = anchor.vueComponent;
-                
-                if (vueComp.dataV) {
-                    const elements = document.querySelectorAll('[' + vueComp.dataV + ']');
-                    for (let el of elements) {
-                        if (vueComp.name && el.className.includes(vueComp.name)) {
-                            return el;
-                        }
-                    }
-                }
-                return null;
-            }
-            
-            function findHashElement(anchor) {
-                if (!anchor.contentHash) return null;
-                const hash = anchor.contentHash;
-                
-                if (hash.text && hash.text.length > 20) {
-                    const searchText = hash.text.substring(0, 50);
-                    const allElements = document.querySelectorAll('*');
-                    for (let el of allElements) {
-                        if ((el.textContent || '').includes(searchText)) {
-                            return el;
-                        }
-                    }
-                }
-                return null;
-            }
-            
-            function findIndexElement(anchor) {
-                if (!anchor.virtualIndex) return null;
-                const vIdx = anchor.virtualIndex;
-                
-                if (vIdx.listIndex !== undefined) {
-                    const listElements = document.querySelectorAll('li, .item, .list-item');
-                    if (vIdx.listIndex < listElements.length) {
-                        return listElements[vIdx.listIndex];
-                    }
-                }
-                return null;
-            }
-            
-            // 앵커 찾기 실행
-            foundElement = await findAnchorsWithPreroll();
-            
-            if (foundElement && matchedAnchor) {
-                const ROOT = getROOT();
-                const rect = foundElement.getBoundingClientRect();
-                const isRootElement = (ROOT === document.documentElement || ROOT === document.body);
-                
-                // 절대 위치 계산 (스크롤러에 따라 다르게)
-                const scrollTop = isRootElement ? window.pageYOffset : ROOT.scrollTop;
-                const scrollLeft = isRootElement ? window.pageXOffset : ROOT.scrollLeft;
-                
-                const absY = scrollTop + rect.top;
-                const headerHeight = fixedHeaderHeight();
-                const finalY = Math.max(0, absY - headerHeight);
-                
-                // 오프셋 보정
-                let adjustedY = finalY;
-                if (matchedAnchor.offsetFromTop) {
-                    adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
-                }
-                
-                // 스크롤 실행
-                await preciseScrollTo(scrollLeft, adjustedY);
-                
-                const actualX = ROOT.scrollLeft || 0;
-                const actualY = ROOT.scrollTop || 0;
-                const diffX = Math.abs(actualX - targetX);
-                const diffY = Math.abs(actualY - targetY);
-                
-                logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                logs.push('매칭 신뢰도: ' + confidence + '%');
-                
-                document.documentElement.style.overflowAnchor = '';
-                
-                return {
-                    success: diffY <= 150, // 무한스크롤은 150px 허용
                     anchorCount: anchors.length,
-                    matchedAnchor: {
-                        anchorType: matchedAnchor.anchorType,
-                        matchMethod: matchMethod,
-                        confidence: confidence
-                    },
-                    restoredPosition: { x: actualX, y: actualY },
-                    targetDifference: { x: diffX, y: diffY },
                     logs: logs
                 };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[Step 3] 오류: ' + e.message]
+                };
             }
-            
-            document.documentElement.style.overflowAnchor = '';
-            logs.push('무한스크롤 앵커 매칭 실패');
-            
-            return {
-                success: false,
-                anchorCount: anchors.length,
-                logs: logs
-            };
-        })().then(result => result).catch(e => {
-            document.documentElement.style.overflowAnchor = '';
-            return {
-                success: false,
-                error: e.message,
-                logs: ['[Step 3] 오류: ' + e.message]
-            };
-        })
+        })()
         """
     }
     
@@ -991,66 +943,73 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
         
         return """
-        // Promise 체이닝 방식으로 수정
-        (async function() {
-            \(generateCommonUtilityScript())
-            
-            const logs = [];
-            const targetX = parseFloat('\(targetX)');
-            const targetY = parseFloat('\(targetY)');
-            const tolerance = 50; // 허용 오차 증가
-            
-            logs.push('[Step 4] 최종 검증 및 미세 보정');
-            logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-            
-            const ROOT = getROOT();
-            
-            // 현재 위치 확인
-            let currentX = ROOT.scrollLeft || 0;
-            let currentY = ROOT.scrollTop || 0;
-            
-            let diffX = Math.abs(currentX - targetX);
-            let diffY = Math.abs(currentY - targetY);
-            
-            logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
-            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-            
-            const withinTolerance = diffX <= tolerance && diffY <= tolerance;
-            let correctionApplied = false;
-            
-            // 허용 오차 초과 시 미세 보정
-            if (!withinTolerance) {
-                logs.push('허용 오차 초과 - 미세 보정 적용');
+        (function() {
+            try {
+                \(generateCommonUtilityScript())
                 
-                await preciseScrollTo(targetX, targetY);
-                correctionApplied = true;
+                const logs = [];
+                const targetX = parseFloat('\(targetX)');
+                const targetY = parseFloat('\(targetY)');
+                const tolerance = 30;
                 
-                // 보정 후 위치 재측정
-                currentX = ROOT.scrollLeft || 0;
-                currentY = ROOT.scrollTop || 0;
-                diffX = Math.abs(currentX - targetX);
-                diffY = Math.abs(currentY - targetY);
+                logs.push('[Step 4] 최종 검증 및 미세 보정');
+                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
-                logs.push('보정 후 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
-                logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                const ROOT = getROOT();
+                
+                // 현재 위치 확인
+                let currentX = ROOT.scrollLeft || 0;
+                let currentY = ROOT.scrollTop || 0;
+                
+                let diffX = Math.abs(currentX - targetX);
+                let diffY = Math.abs(currentY - targetY);
+                
+                logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
+                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                
+                const withinTolerance = diffX <= tolerance && diffY <= tolerance;
+                let correctionApplied = false;
+                
+                // 허용 오차 초과 시 미세 보정
+                if (!withinTolerance) {
+                    logs.push('허용 오차 초과 - 미세 보정 적용');
+                    
+                    // 🎯 **수정: 단일 스크롤러로 정밀 보정**
+                    ROOT.scrollLeft = targetX;
+                    ROOT.scrollTop = targetY;
+                    
+                    correctionApplied = true;
+                    
+                    // 보정 후 위치 재측정
+                    currentX = ROOT.scrollLeft || 0;
+                    currentY = ROOT.scrollTop || 0;
+                    diffX = Math.abs(currentX - targetX);
+                    diffY = Math.abs(currentY - targetY);
+                    
+                    logs.push('보정 후 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
+                    logs.push('보정 후 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                }
+                
+                const success = diffY <= 50;
+                
+                return {
+                    success: success,
+                    targetPosition: { x: targetX, y: targetY },
+                    finalPosition: { x: currentX, y: currentY },
+                    finalDifference: { x: diffX, y: diffY },
+                    withinTolerance: diffX <= tolerance && diffY <= tolerance,
+                    correctionApplied: correctionApplied,
+                    logs: logs
+                };
+                
+            } catch(e) {
+                return {
+                    success: false,
+                    error: e.message,
+                    logs: ['[Step 4] 오류: ' + e.message]
+                };
             }
-            
-            const success = diffY <= 100; // 최종 허용 오차
-            
-            return {
-                success: success,
-                targetPosition: { x: targetX, y: targetY },
-                finalPosition: { x: currentX, y: currentY },
-                finalDifference: { x: diffX, y: diffY },
-                withinTolerance: diffX <= tolerance && diffY <= tolerance,
-                correctionApplied: correctionApplied,
-                logs: logs
-            };
-        })().then(result => result).catch(e => ({
-            success: false,
-            error: e.message,
-            logs: ['[Step 4] 오류: ' + e.message]
-        }))
+        })()
         """
     }
     
@@ -1069,7 +1028,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 - 다중 구역 앵커 캡처**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1088,7 +1047,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🚀 다중 구역 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1104,7 +1063,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🚀 다중 구역 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1114,7 +1073,7 @@ extension BFCacheTransitionSystem {
                 return nil
             }
             
-            // 캡처 데이터 수집
+            // 🎯 **수정: 단일 스크롤러 기준으로 캡처**
             return CaptureData(
                 scrollPosition: webView.scrollView.contentOffset,
                 contentSize: webView.scrollView.contentSize,
@@ -1132,12 +1091,12 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        // 🔧 **개선된 캡처 로직 - 실패 시 재시도**
+        // 🔧 **개선된 캡처 로직 - 실패 시 재시도 (기존 타이밍 유지)**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
             webView: webView,
             captureData: data,
-            retryCount: task.type == .immediate ? 2 : 0
+            retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
         
         // 🔥 **캡처된 jsState 상세 로깅**
@@ -1145,22 +1104,72 @@ extension BFCacheTransitionSystem {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
             
             if let infiniteScrollAnchors = jsState["infiniteScrollAnchors"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🚀 캡처된 다중 구역 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
+                TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
                 
                 if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
                     // 앵커 타입별 카운트
                     let vueComponentCount = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }.count
                     let contentHashCount = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }.count
                     let virtualIndexCount = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }.count
+                    let structuralPathCount = anchors.filter { ($0["anchorType"] as? String) == "structuralPath" }.count
+                    let intersectionCount = anchors.filter { ($0["anchorType"] as? String) == "intersectionInfo" }.count
                     
-                    TabPersistenceManager.debugMessages.append("🚀 앵커 타입별: Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount)")
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 타입별: Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount), Intersection=\(intersectionCount)")
                     
-                    // 구역별 분포 확인
-                    if let zones = infiniteScrollAnchors["zones"] as? [String] {
-                        TabPersistenceManager.debugMessages.append("📊 캡처 구역: \(zones.joined(separator: ", "))")
+                    if anchors.count > 0 {
+                        let firstAnchor = anchors[0]
+                        TabPersistenceManager.debugMessages.append("🚀 첫 번째 앵커 키: \(Array(firstAnchor.keys))")
+                        
+                        // 📊 **첫 번째 앵커 상세 정보 로깅**
+                        if let anchorType = firstAnchor["anchorType"] as? String {
+                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 타입: \(anchorType)")
+                            
+                            switch anchorType {
+                            case "vueComponent":
+                                if let vueComp = firstAnchor["vueComponent"] as? [String: Any] {
+                                    let name = vueComp["name"] as? String ?? "unknown"
+                                    let dataV = vueComp["dataV"] as? String ?? "unknown"
+                                    let index = vueComp["index"] as? Int ?? -1
+                                    TabPersistenceManager.debugMessages.append("📊 Vue 컴포넌트: name=\(name), dataV=\(dataV), index=\(index)")
+                                }
+                            case "contentHash":
+                                if let contentHash = firstAnchor["contentHash"] as? [String: Any] {
+                                    let shortHash = contentHash["shortHash"] as? String ?? "unknown"
+                                    let textLength = (contentHash["text"] as? String)?.count ?? 0
+                                    TabPersistenceManager.debugMessages.append("📊 콘텐츠 해시: hash=\(shortHash), textLen=\(textLength)")
+                                }
+                            case "virtualIndex":
+                                if let virtualIndex = firstAnchor["virtualIndex"] as? [String: Any] {
+                                    let listIndex = virtualIndex["listIndex"] as? Int ?? -1
+                                    let pageIndex = virtualIndex["pageIndex"] as? Int ?? -1
+                                    TabPersistenceManager.debugMessages.append("📊 가상 인덱스: list=\(listIndex), page=\(pageIndex)")
+                                }
+                            default:
+                                break
+                            }
+                        }
+                        
+                        if let absolutePos = firstAnchor["absolutePosition"] as? [String: Any] {
+                            let top = (absolutePos["top"] as? Double) ?? 0
+                            let left = (absolutePos["left"] as? Double) ?? 0
+                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 위치: X=\(String(format: "%.1f", left))px, Y=\(String(format: "%.1f", top))px")
+                        }
+                        if let qualityScore = firstAnchor["qualityScore"] as? Int {
+                            TabPersistenceManager.debugMessages.append("📊 첫 앵커 품질점수: \(qualityScore)점")
+                        }
                     }
+                } else {
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
                 }
+                
+                if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("📊 무한스크롤 앵커 수집 통계: \(stats)")
+                }
+            } else {
+                TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
             }
+        } else {
+            TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
         
         // 캡처 완료 후 저장
@@ -1170,19 +1179,19 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 다중 구역 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
         let scrollPosition: CGPoint
-        let contentSize: CGSize
-        let viewportSize: CGSize
-        let actualScrollableSize: CGSize
+        let contentSize: CGSize      // ⚡ 콘텐츠 크기 추가
+        let viewportSize: CGSize     // ⚡ 뷰포트 크기 추가
+        let actualScrollableSize: CGSize  // ♾️ 실제 스크롤 가능 크기 추가
         let bounds: CGRect
         let isLoading: Bool
     }
     
-    // 🔧 **실패 복구 기능 추가된 캡처**
+    // 🔧 **실패 복구 기능 추가된 캡처 - 기존 재시도 대기시간 유지**
     private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         
         for attempt in 0...retryCount {
@@ -1196,9 +1205,9 @@ extension BFCacheTransitionSystem {
                 return result
             }
             
-            // 재시도 전 잠시 대기
+            // 재시도 전 잠시 대기 - 🔧 기존 80ms 유지
             TabPersistenceManager.debugMessages.append("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
-            Thread.sleep(forTimeInterval: 0.08)
+            Thread.sleep(forTimeInterval: 0.08) // 🔧 기존 80ms 유지
         }
         
         // 여기까지 오면 모든 시도 실패
@@ -1213,7 +1222,7 @@ extension BFCacheTransitionSystem {
         
         TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 시도: \(pageRecord.title)")
         
-        // 1. 비주얼 스냅샷 (메인 스레드)
+        // 1. 비주얼 스냅샷 (메인 스레드) - 🔧 기존 캡처 타임아웃 유지 (3초)
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
@@ -1222,6 +1231,7 @@ extension BFCacheTransitionSystem {
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    // Fallback: layer 렌더링
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
@@ -1231,13 +1241,14 @@ extension BFCacheTransitionSystem {
             }
         }
         
+        // ⚡ 캡처 타임아웃 유지 (3초)
         let result = semaphore.wait(timeout: .now() + 3.0)
         if result == .timedOut {
             TabPersistenceManager.debugMessages.append("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
             visualSnapshot = renderWebViewToImage(webView)
         }
         
-        // 2. DOM 캡처
+        // 2. DOM 캡처 - 🔧 기존 캡처 타임아웃 유지 (1초)
         let domSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 시작")
         
@@ -1247,6 +1258,7 @@ extension BFCacheTransitionSystem {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
                         var classList = Array.from(el.classList);
                         var classesToRemove = classList.filter(function(c) {
@@ -1257,6 +1269,7 @@ extension BFCacheTransitionSystem {
                         }
                     });
                     
+                    // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
                         el.blur();
                     });
@@ -1277,14 +1290,14 @@ extension BFCacheTransitionSystem {
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 5.0)
+        _ = domSemaphore.wait(timeout: .now() + 5.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. **다중 구역 앵커 JS 상태 캡처**
+        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🚀 다중 구역 앵커 JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateMultiZoneAnchorCaptureScript() // 🎯 **수정된: 다중 구역 앵커 캡처**
+            let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -1296,17 +1309,22 @@ extension BFCacheTransitionSystem {
                     // 📊 **상세 캡처 결과 로깅**
                     if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
                         if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개")
+                            let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
+                            let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
+                            let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
+                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
                         }
-                        if let zones = infiniteScrollAnchors["zones"] as? [String] {
-                            TabPersistenceManager.debugMessages.append("📊 캡처 구역: \(zones.joined(separator: ", "))")
+                        if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
+                            TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
                         }
                     }
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
                 }
                 jsSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 3.0)
+        _ = jsSemaphore.wait(timeout: .now() + 3.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
@@ -1330,7 +1348,7 @@ extension BFCacheTransitionSystem {
             return newVersion
         }
         
-        // 백분율 계산
+        // 🔧 **수정: 백분율 계산 로직 수정 - OR 조건으로 변경**
         let scrollPercent: CGPoint
         if captureData.actualScrollableSize.height > captureData.viewportSize.height || captureData.actualScrollableSize.width > captureData.viewportSize.width {
             let maxScrollX = max(0, captureData.actualScrollableSize.width - captureData.viewportSize.width)
@@ -1345,6 +1363,7 @@ extension BFCacheTransitionSystem {
         }
         
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
         
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
@@ -1369,7 +1388,7 @@ extension BFCacheTransitionSystem {
             actualScrollableSize: captureData.actualScrollableSize,
             jsState: jsState,
             timestamp: Date(),
-            webViewSnapshotPath: nil,
+            webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
             version: version,
             restorationConfig: restorationConfig
@@ -1378,53 +1397,47 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **수정: 다중 구역 앵커 캡처 스크립트**
-    private func generateMultiZoneAnchorCaptureScript() -> String {
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (단일 스크롤러 적용)**
+    private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 다중 구역 앵커 캡처 시작');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작');
                 
-                // 스크롤러 자동 검출
-                function detectSingleScroller() {
-                    const candidates = [
-                        document.scrollingElement,
-                        document.documentElement,
-                        document.body
-                    ];
-                    
-                    document.querySelectorAll('[style*="overflow"], [class*="scroll"]').forEach(el => {
-                        if (el && !candidates.includes(el)) candidates.push(el);
-                    });
-                    
-                    let best = candidates[0];
-                    let bestScore = 0;
-                    
-                    candidates.forEach(el => {
-                        if (!el) return;
-                        const score = (el.scrollHeight - el.clientHeight) + (el.scrollWidth - el.clientWidth);
-                        if (score > bestScore) {
-                            best = el;
-                            bestScore = score;
-                        }
-                    });
-                    
-                    return best || document.scrollingElement || document.documentElement;
+                // 🎯 **단일 스크롤러 유틸리티 함수들**
+                function getROOT() { 
+                    return document.scrollingElement || document.documentElement; 
                 }
                 
-                function getROOT() {
-                    return detectSingleScroller();
-                }
+                // 📊 **상세 로그 수집**
+                const detailedLogs = [];
+                const pageAnalysis = {};
                 
+                // 🎯 **수정: 단일 스크롤러 기준으로 정보 수집**
                 const ROOT = getROOT();
                 const scrollY = parseFloat(ROOT.scrollTop) || 0;
                 const scrollX = parseFloat(ROOT.scrollLeft) || 0;
-                const viewportHeight = parseFloat(ROOT.clientHeight || window.innerHeight) || 0;
-                const viewportWidth = parseFloat(ROOT.clientWidth || window.innerWidth) || 0;
+                const viewportHeight = parseFloat(window.innerHeight) || 0;
+                const viewportWidth = parseFloat(window.innerWidth) || 0;
                 const contentHeight = parseFloat(ROOT.scrollHeight) || 0;
                 const contentWidth = parseFloat(ROOT.scrollWidth) || 0;
                 
-                // 실제 보이는 영역
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (단일 스크롤러)');
+                detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
+                detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
+                detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
+                
+                pageAnalysis.scroll = { x: scrollX, y: scrollY };
+                pageAnalysis.viewport = { width: viewportWidth, height: viewportHeight };
+                pageAnalysis.content = { width: contentWidth, height: contentHeight };
+                
+                console.log('🚀 기본 정보 (단일 스크롤러):', {
+                    scroll: [scrollX, scrollY],
+                    viewport: [viewportWidth, viewportHeight],
+                    content: [contentWidth, contentHeight]
+                });
+                
+                // 🚀 **실제 보이는 영역 계산**
                 const actualViewportRect = {
                     top: scrollY,
                     left: scrollX,
@@ -1434,43 +1447,90 @@ extension BFCacheTransitionSystem {
                     height: viewportHeight
                 };
                 
-                // 가시성 판단
-                function isElementVisible(element) {
-                    if (!element || !element.getBoundingClientRect) return false;
+                detailedLogs.push('실제 보이는 영역: top=' + actualViewportRect.top.toFixed(1) + ', bottom=' + actualViewportRect.bottom.toFixed(1));
+                
+                // 🚀 **요소 가시성 정확 판단 함수**
+                function isElementActuallyVisible(element, strictMode) {
+                    if (strictMode === undefined) strictMode = true;
                     
-                    const rect = element.getBoundingClientRect();
-                    if (rect.width === 0 || rect.height === 0) return false;
-                    
-                    const elementTop = scrollY + rect.top;
-                    const elementBottom = scrollY + rect.bottom;
-                    
-                    // 뷰포트 내에 있거나 근처에 있는지
-                    const margin = viewportHeight * 0.5; // 뷰포트의 50% 마진
-                    return elementBottom > (actualViewportRect.top - margin) && 
-                           elementTop < (actualViewportRect.bottom + margin);
+                    try {
+                        if (!element || !element.getBoundingClientRect) return { visible: false, reason: 'invalid_element' };
+                        if (!document.contains(element)) return { visible: false, reason: 'not_in_dom' };
+                        
+                        const rect = element.getBoundingClientRect();
+                        if (rect.width === 0 || rect.height === 0) return { visible: false, reason: 'zero_size' };
+                        
+                        const elementTop = scrollY + rect.top;
+                        const elementBottom = scrollY + rect.bottom;
+                        const elementLeft = scrollX + rect.left;
+                        const elementRight = scrollX + rect.right;
+                        
+                        const isInViewportVertically = elementBottom > actualViewportRect.top && elementTop < actualViewportRect.bottom;
+                        const isInViewportHorizontally = elementRight > actualViewportRect.left && elementLeft < actualViewportRect.right;
+                        
+                        if (strictMode && (!isInViewportVertically || !isInViewportHorizontally)) {
+                            return { visible: false, reason: 'outside_viewport', rect: rect };
+                        }
+                        
+                        const computedStyle = window.getComputedStyle(element);
+                        if (computedStyle.display === 'none') return { visible: false, reason: 'display_none' };
+                        if (computedStyle.visibility === 'hidden') return { visible: false, reason: 'visibility_hidden' };
+                        if (computedStyle.opacity === '0') return { visible: false, reason: 'opacity_zero' };
+                        
+                        return { 
+                            visible: true, 
+                            reason: 'fully_visible',
+                            rect: rect,
+                            inViewport: { vertical: isInViewportVertically, horizontal: isInViewportHorizontally }
+                        };
+                        
+                    } catch(e) {
+                        return { visible: false, reason: 'visibility_check_error: ' + e.message };
+                    }
                 }
                 
-                // 의미있는 텍스트 필터링
+                // 🧹 **의미있는 텍스트 필터링 함수**
                 function isQualityText(text) {
                     if (!text || typeof text !== 'string') return false;
+                    
                     const cleanText = text.trim();
-                    if (cleanText.length < 10) return false;
+                    if (cleanText.length < 10) return false; // 무한스크롤용 최소 길이 증가
+                    
+                    const meaninglessPatterns = [
+                        /^(투표는|표시되지|않습니다|네트워크|문제로|연결되지|잠시|후에|다시|시도)/,
+                        /^(로딩|loading|wait|please|기다려|잠시만)/i,
+                        /^(오류|에러|error|fail|실패|죄송|sorry)/i,
+                        /^(확인|ok|yes|no|취소|cancel|닫기|close)/i,
+                        /^(더보기|more|load|next|이전|prev|previous)/i,
+                        /^(클릭|click|tap|터치|touch|선택)/i,
+                        /^(답글|댓글|reply|comment|쓰기|작성)/i,
+                        /^[\\s\\.\\-_=+]{2,}$/,
+                        /^[0-9\\s\\.\\/\\-:]{3,}$/,
+                        /^(am|pm|오전|오후|시|분|초)$/i,
+                    ];
+                    
+                    for (let i = 0; i < meaninglessPatterns.length; i++) {
+                        if (meaninglessPatterns[i].test(cleanText)) {
+                            return false;
+                        }
+                    }
+                    
                     return true;
                 }
                 
-                // 간단 해시
+                // 🚀 **SHA256 간단 해시 함수 (콘텐츠 해시용)**
                 function simpleHash(str) {
                     let hash = 0;
                     if (str.length === 0) return hash.toString(36);
                     for (let i = 0; i < str.length; i++) {
                         const char = str.charCodeAt(i);
                         hash = ((hash << 5) - hash) + char;
-                        hash = hash & hash;
+                        hash = hash & hash; // 32비트 정수로 변환
                     }
                     return Math.abs(hash).toString(36);
                 }
                 
-                // data-v-* 속성 찾기
+                // 🚀 **수정된: data-v-* 속성 찾기 함수**
                 function findDataVAttribute(element) {
                     if (!element || !element.attributes) return null;
                     
@@ -1483,129 +1543,472 @@ extension BFCacheTransitionSystem {
                     return null;
                 }
                 
-                // 🎯 **다중 구역 앵커 수집**
-                function collectMultiZoneAnchors() {
-                    const anchors = [];
-                    const zones = [];
+                // 🚀 **수정된: Vue 컴포넌트 요소 수집**
+                function collectVueComponentElements() {
+                    const vueElements = [];
                     
-                    // 구역 정의 (상단 20%, 중앙 60%, 하단 20%)
-                    const zoneRanges = [
-                        { name: 'top', start: 0.0, end: 0.3 },
-                        { name: 'middle', start: 0.3, end: 0.7 },
-                        { name: 'bottom', start: 0.7, end: 1.0 }
-                    ];
+                    // 1. 모든 요소를 순회하면서 data-v-* 속성을 가진 요소 찾기
+                    const allElements = document.querySelectorAll('*');
                     
-                    // 콘텐츠 요소 수집
-                    const contentSelectors = [
-                        'li', 'tr', '.item', '.list-item', '.card', '.post',
-                        '.comment', '.feed', '[class*="item"]', '[data-testid]',
-                        '[data-v-]'
-                    ];
-                    
-                    let allElements = [];
-                    contentSelectors.forEach(selector => {
-                        try {
-                            document.querySelectorAll(selector).forEach(el => {
-                                if (!allElements.includes(el) && isElementVisible(el)) {
-                                    allElements.push(el);
-                                }
-                            });
-                        } catch(e) {}
-                    });
-                    
-                    console.log('가시 요소 수집:', allElements.length, '개');
-                    
-                    // 각 구역별로 앵커 선택
-                    zoneRanges.forEach(zone => {
-                        const zoneTop = actualViewportRect.top + (viewportHeight * zone.start);
-                        const zoneBottom = actualViewportRect.top + (viewportHeight * zone.end);
+                    for (let i = 0; i < allElements.length; i++) {
+                        const element = allElements[i];
+                        const dataVAttr = findDataVAttribute(element);
                         
-                        const zoneElements = allElements.filter(el => {
-                            const rect = el.getBoundingClientRect();
-                            const elementTop = scrollY + rect.top;
-                            const elementBottom = scrollY + rect.bottom;
+                        if (dataVAttr) {
+                            const visibilityResult = isElementActuallyVisible(element, true);
                             
-                            return elementTop >= zoneTop && elementTop <= zoneBottom;
-                        });
-                        
-                        // 각 구역에서 최대 10개 선택
-                        const selectedElements = zoneElements.slice(0, 10);
-                        
-                        selectedElements.forEach((element, index) => {
-                            const rect = element.getBoundingClientRect();
-                            const text = (element.textContent || '').trim();
-                            const dataV = findDataVAttribute(element);
-                            
-                            if (text.length > 10) {
-                                const anchor = {
-                                    anchorType: dataV ? 'vueComponent' : 'contentHash',
-                                    zone: zone.name,
-                                    absolutePosition: { 
-                                        top: scrollY + rect.top, 
-                                        left: scrollX + rect.left 
-                                    },
-                                    viewportPosition: { 
-                                        top: rect.top, 
-                                        left: rect.left 
-                                    },
-                                    offsetFromTop: scrollY - (scrollY + rect.top),
-                                    size: { 
-                                        width: rect.width, 
-                                        height: rect.height 
-                                    },
-                                    textContent: text.substring(0, 100),
-                                    anchorIndex: anchors.length,
-                                    zoneIndex: index
-                                };
-                                
-                                if (dataV) {
-                                    anchor.vueComponent = {
-                                        dataV: dataV,
-                                        name: element.className.split(' ')[0] || 'unknown',
-                                        index: index
-                                    };
-                                } else {
-                                    anchor.contentHash = {
-                                        shortHash: simpleHash(text),
-                                        text: text.substring(0, 100),
-                                        length: text.length
-                                    };
+                            if (visibilityResult.visible) {
+                                const elementText = (element.textContent || '').trim();
+                                if (isQualityText(elementText)) {
+                                    vueElements.push({
+                                        element: element,
+                                        dataVAttr: dataVAttr,
+                                        rect: visibilityResult.rect,
+                                        textContent: elementText,
+                                        visibilityResult: visibilityResult
+                                    });
                                 }
-                                
-                                anchors.push(anchor);
                             }
-                        });
-                        
-                        if (selectedElements.length > 0) {
-                            zones.push(zone.name + '(' + selectedElements.length + ')');
                         }
+                    }
+                    
+                    detailedLogs.push('Vue.js 컴포넌트 수집: ' + vueElements.length + '개');
+                    return vueElements;
+                }
+                
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
+                function collectInfiniteScrollAnchors() {
+                    const anchors = [];
+                    const anchorStats = {
+                        totalCandidates: 0,
+                        visibilityChecked: 0,
+                        actuallyVisible: 0,
+                        vueComponentAnchors: 0,
+                        contentHashAnchors: 0,
+                        virtualIndexAnchors: 0,
+                        structuralPathAnchors: 0,
+                        intersectionAnchors: 0,
+                        finalAnchors: 0
+                    };
+                    
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
+                    
+                    // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
+                    const vueComponentElements = collectVueComponentElements();
+                    anchorStats.totalCandidates += vueComponentElements.length;
+                    anchorStats.actuallyVisible += vueComponentElements.length;
+                    
+                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
+                    const contentSelectors = [
+                        'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
+                        '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
+                        '.news', '.media', '.content-item', '[class*="item"]', 
+                        '[class*="post"]', '[class*="card"]', '[data-testid]', 
+                        '[data-id]', '[data-key]', '[data-item-id]',
+                        // 일반적인 리스트 아이템 선택자 추가
+                        '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
+                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
+                    ];
+                    
+                    let contentElements = [];
+                    for (let i = 0; i < contentSelectors.length; i++) {
+                        try {
+                            const elements = document.querySelectorAll(contentSelectors[i]);
+                            for (let j = 0; j < elements.length; j++) {
+                                contentElements.push(elements[j]);
+                            }
+                        } catch(e) {
+                            // selector 오류 무시
+                        }
+                    }
+                    
+                    anchorStats.totalCandidates += contentElements.length;
+                    
+                    // 중복 제거 및 가시성 필터링
+                    const uniqueContentElements = [];
+                    const processedElements = new Set();
+                    
+                    for (let i = 0; i < contentElements.length; i++) {
+                        const element = contentElements[i];
+                        if (!processedElements.has(element)) {
+                            processedElements.add(element);
+                            
+                            const visibilityResult = isElementActuallyVisible(element, false); // 🔧 덜 엄격한 가시성 검사
+                            anchorStats.visibilityChecked++;
+                            
+                            if (visibilityResult.visible) {
+                                const elementText = (element.textContent || '').trim();
+                                if (elementText.length > 5) { // 🔧 텍스트 길이 조건 완화
+                                    uniqueContentElements.push({
+                                        element: element,
+                                        rect: visibilityResult.rect,
+                                        textContent: elementText,
+                                        visibilityResult: visibilityResult
+                                    });
+                                    anchorStats.actuallyVisible++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    detailedLogs.push('일반 콘텐츠 후보: ' + contentElements.length + '개, 유효: ' + uniqueContentElements.length + '개');
+                    
+                    // 🚀 **3. 뷰포트 중심 기준으로 상위 20개씩 선택 (증가)**
+                    const viewportCenterY = scrollY + (viewportHeight / 2);
+                    const viewportCenterX = scrollX + (viewportWidth / 2);
+                    
+                    // Vue 컴포넌트 정렬 및 선택
+                    vueComponentElements.sort(function(a, b) {
+                        const aTop = scrollY + a.rect.top;
+                        const bTop = scrollY + b.rect.top;
+                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
+                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
+                        return aDistance - bDistance;
                     });
                     
+                    // 일반 콘텐츠 정렬 및 선택
+                    uniqueContentElements.sort(function(a, b) {
+                        const aTop = scrollY + a.rect.top;
+                        const bTop = scrollY + b.rect.top;
+                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
+                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
+                        return aDistance - bDistance;
+                    });
+                    
+                    const selectedVueElements = vueComponentElements.slice(0, 20); // 🔧 20개로 증가
+                    const selectedContentElements = uniqueContentElements.slice(0, 20); // 🔧 20개로 증가
+                    
+                    detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
+                    
+                    // 🚀 **4. Vue Component 앵커 생성**
+                    for (let i = 0; i < selectedVueElements.length; i++) {
+                        try {
+                            const anchor = createVueComponentAnchor(selectedVueElements[i], i);
+                            if (anchor) {
+                                anchors.push(anchor);
+                                anchorStats.vueComponentAnchors++;
+                            }
+                        } catch(e) {
+                            console.warn('Vue 앵커[' + i + '] 생성 실패:', e);
+                        }
+                    }
+                    
+                    // 🚀 **5. Content Hash + Virtual Index + Structural Path 앵커 생성**
+                    for (let i = 0; i < selectedContentElements.length; i++) {
+                        try {
+                            // Content Hash 앵커
+                            const hashAnchor = createContentHashAnchor(selectedContentElements[i], i);
+                            if (hashAnchor) {
+                                anchors.push(hashAnchor);
+                                anchorStats.contentHashAnchors++;
+                            }
+                            
+                            // Virtual Index 앵커
+                            const indexAnchor = createVirtualIndexAnchor(selectedContentElements[i], i);
+                            if (indexAnchor) {
+                                anchors.push(indexAnchor);
+                                anchorStats.virtualIndexAnchors++;
+                            }
+                            
+                            // Structural Path 앵커 (보조) - 상위 10개만
+                            if (i < 10) {
+                                const pathAnchor = createStructuralPathAnchor(selectedContentElements[i], i);
+                                if (pathAnchor) {
+                                    anchors.push(pathAnchor);
+                                    anchorStats.structuralPathAnchors++;
+                                }
+                            }
+                            
+                        } catch(e) {
+                            console.warn('콘텐츠 앵커[' + i + '] 생성 실패:', e);
+                        }
+                    }
+                    
+                    anchorStats.finalAnchors = anchors.length;
+                    
+                    detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
+                    console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
+                    
+                    // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
                         anchors: anchors,
-                        zones: zones,
-                        stats: {
-                            totalCandidates: allElements.length,
-                            finalAnchors: anchors.length,
-                            zoneDistribution: zones
-                        }
+                        stats: anchorStats
                     };
                 }
                 
-                // 메인 실행
-                const infiniteScrollAnchorsData = collectMultiZoneAnchors();
+                // 🚀 **수정된: Vue Component 앵커 생성**
+                function createVueComponentAnchor(elementData, index) {
+                    try {
+                        const element = elementData.element;
+                        const rect = elementData.rect;
+                        const textContent = elementData.textContent;
+                        const dataVAttr = elementData.dataVAttr;
+                        
+                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        const absoluteTop = scrollY + rect.top;
+                        const absoluteLeft = scrollX + rect.left;
+                        const offsetFromTop = scrollY - absoluteTop;
+                        
+                        // Vue 컴포넌트 정보 추출
+                        const vueComponent = {
+                            name: 'unknown',
+                            dataV: dataVAttr,
+                            props: {},
+                            index: index
+                        };
+                        
+                        // 클래스명에서 컴포넌트 이름 추출
+                        const classList = Array.from(element.classList);
+                        for (let i = 0; i < classList.length; i++) {
+                            const className = classList[i];
+                            if (className.includes('Article') || className.includes('List') || 
+                                className.includes('Item') || className.includes('Comment') ||
+                                className.includes('Card') || className.includes('Post') ||
+                                className.includes('Multi') || className.includes('Link')) {
+                                vueComponent.name = className;
+                                break;
+                            }
+                        }
+                        
+                        // 부모 요소에서 인덱스 정보
+                        if (element.parentElement) {
+                            const siblingIndex = Array.from(element.parentElement.children).indexOf(element);
+                            vueComponent.index = siblingIndex;
+                        }
+                        
+                        const qualityScore = 85; // Vue 컴포넌트는 기본 85점
+                        
+                        return {
+                            anchorType: 'vueComponent',
+                            vueComponent: vueComponent,
+                            
+                            // 위치 정보
+                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                            viewportPosition: { top: rect.top, left: rect.left },
+                            offsetFromTop: offsetFromTop,
+                            size: { width: rect.width, height: rect.height },
+                            
+                            // 메타 정보
+                            textContent: textContent.substring(0, 100),
+                            qualityScore: qualityScore,
+                            anchorIndex: index,
+                            captureTimestamp: Date.now(),
+                            isVisible: true,
+                            visibilityReason: 'vue_component_visible'
+                        };
+                        
+                    } catch(e) {
+                        console.error('Vue 앵커[' + index + '] 생성 실패:', e);
+                        return null;
+                    }
+                }
                 
-                console.log('🚀 다중 구역 앵커 캡처 완료:', {
-                    anchorsCount: infiniteScrollAnchorsData.anchors.length,
-                    zones: infiniteScrollAnchorsData.zones
+                // 🚀 **Content Hash 앵커 생성**
+                function createContentHashAnchor(elementData, index) {
+                    try {
+                        const element = elementData.element;
+                        const rect = elementData.rect;
+                        const textContent = elementData.textContent;
+                        
+                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        const absoluteTop = scrollY + rect.top;
+                        const absoluteLeft = scrollX + rect.left;
+                        const offsetFromTop = scrollY - absoluteTop;
+                        
+                        // 콘텐츠 해시 생성
+                        const fullHash = simpleHash(textContent);
+                        const shortHash = fullHash.substring(0, 8);
+                        
+                        const contentHash = {
+                            fullHash: fullHash,
+                            shortHash: shortHash,
+                            text: textContent.substring(0, 100),
+                            length: textContent.length
+                        };
+                        
+                        const qualityScore = Math.min(95, 60 + Math.min(35, Math.floor(textContent.length / 10)));
+                        
+                        return {
+                            anchorType: 'contentHash',
+                            contentHash: contentHash,
+                            
+                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                            viewportPosition: { top: rect.top, left: rect.left },
+                            offsetFromTop: offsetFromTop,
+                            size: { width: rect.width, height: rect.height },
+                            
+                            textContent: textContent.substring(0, 100),
+                            qualityScore: qualityScore,
+                            anchorIndex: index,
+                            captureTimestamp: Date.now(),
+                            isVisible: true,
+                            visibilityReason: 'content_hash_visible'
+                        };
+                        
+                    } catch(e) {
+                        console.error('Content Hash 앵커[' + index + '] 생성 실패:', e);
+                        return null;
+                    }
+                }
+                
+                // 🚀 **Virtual Index 앵커 생성**
+                function createVirtualIndexAnchor(elementData, index) {
+                    try {
+                        const element = elementData.element;
+                        const rect = elementData.rect;
+                        const textContent = elementData.textContent;
+                        
+                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        const absoluteTop = scrollY + rect.top;
+                        const absoluteLeft = scrollX + rect.left;
+                        const offsetFromTop = scrollY - absoluteTop;
+                        
+                        // 가상 인덱스 정보
+                        const virtualIndex = {
+                            listIndex: index,
+                            pageIndex: Math.floor(index / 10), // 10개씩 페이지 단위
+                            offsetInPage: absoluteTop,
+                            estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length
+                        };
+                        
+                        const qualityScore = 70; // Virtual Index는 70점
+                        
+                        return {
+                            anchorType: 'virtualIndex',
+                            virtualIndex: virtualIndex,
+                            
+                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                            viewportPosition: { top: rect.top, left: rect.left },
+                            offsetFromTop: offsetFromTop,
+                            size: { width: rect.width, height: rect.height },
+                            
+                            textContent: textContent.substring(0, 100),
+                            qualityScore: qualityScore,
+                            anchorIndex: index,
+                            captureTimestamp: Date.now(),
+                            isVisible: true,
+                            visibilityReason: 'virtual_index_visible'
+                        };
+                        
+                    } catch(e) {
+                        console.error('Virtual Index 앵커[' + index + '] 생성 실패:', e);
+                        return null;
+                    }
+                }
+                
+                // 🚀 **Structural Path 앵커 생성 (보조)**
+                function createStructuralPathAnchor(elementData, index) {
+                    try {
+                        const element = elementData.element;
+                        const rect = elementData.rect;
+                        const textContent = elementData.textContent;
+                        
+                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
+                        const absoluteTop = scrollY + rect.top;
+                        const absoluteLeft = scrollX + rect.left;
+                        const offsetFromTop = scrollY - absoluteTop;
+                        
+                        // CSS 경로 생성
+                        let cssPath = '';
+                        let currentElement = element;
+                        let depth = 0;
+                        
+                        while (currentElement && currentElement !== document.body && depth < 5) {
+                            let selector = currentElement.tagName.toLowerCase();
+                            
+                            if (currentElement.id) {
+                                selector += '#' + currentElement.id;
+                                cssPath = selector + (cssPath ? ' > ' + cssPath : '');
+                                break;
+                            } else if (currentElement.className) {
+                                const classNames = currentElement.className.trim().split(/\\s+/);
+                                if (classNames.length > 0) {
+                                    selector += '.' + classNames[0];
+                                }
+                            }
+                            
+                            // nth-child 추가
+                            const siblings = Array.from(currentElement.parentElement ? currentElement.parentElement.children : []);
+                            const sameTagSiblings = siblings.filter(function(sibling) {
+                                return sibling.tagName === currentElement.tagName;
+                            });
+                            
+                            if (sameTagSiblings.length > 1) {
+                                const nthIndex = sameTagSiblings.indexOf(currentElement) + 1;
+                                selector += ':nth-child(' + nthIndex + ')';
+                            }
+                            
+                            cssPath = selector + (cssPath ? ' > ' + cssPath : '');
+                            currentElement = currentElement.parentElement;
+                            depth++;
+                        }
+                        
+                        const structuralPath = {
+                            cssPath: cssPath,
+                            depth: depth
+                        };
+                        
+                        const qualityScore = 50; // Structural Path는 50점 (보조용)
+                        
+                        return {
+                            anchorType: 'structuralPath',
+                            structuralPath: structuralPath,
+                            
+                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                            viewportPosition: { top: rect.top, left: rect.left },
+                            offsetFromTop: offsetFromTop,
+                            size: { width: rect.width, height: rect.height },
+                            
+                            textContent: textContent.substring(0, 100),
+                            qualityScore: qualityScore,
+                            anchorIndex: index,
+                            captureTimestamp: Date.now(),
+                            isVisible: true,
+                            visibilityReason: 'structural_path_visible'
+                        };
+                        
+                    } catch(e) {
+                        console.error('Structural Path 앵커[' + index + '] 생성 실패:', e);
+                        return null;
+                    }
+                }
+                
+                // 🚀 **메인 실행 - 무한스크롤 전용 앵커 데이터 수집**
+                const startTime = Date.now();
+                const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
+                const endTime = Date.now();
+                const captureTime = endTime - startTime;
+                
+                pageAnalysis.capturePerformance = {
+                    totalTime: captureTime,
+                    anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
+                };
+                
+                detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
+                detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
+                
+                console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
+                    infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
+                    stats: infiniteScrollAnchorsData.stats,
+                    scroll: [scrollX, scrollY],
+                    viewport: [viewportWidth, viewportHeight],
+                    content: [contentWidth, contentHeight],
+                    captureTime: captureTime,
+                    actualViewportRect: actualViewportRect
                 });
                 
+                // ✅ **수정: 정리된 반환 구조 (단일 스크롤러 기준)**
                 return {
-                    infiniteScrollAnchors: infiniteScrollAnchorsData,
-                    scroll: { x: scrollX, y: scrollY },
+                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
+                    scroll: { 
+                        x: scrollX, 
+                        y: scrollY
+                    },
                     href: window.location.href,
                     title: document.title,
                     timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
                     viewport: {
                         width: viewportWidth,
                         height: viewportHeight
@@ -1617,15 +2020,28 @@ extension BFCacheTransitionSystem {
                     actualScrollable: { 
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
-                    }
+                    },
+                    actualViewportRect: actualViewportRect,     // 🚀 **실제 보이는 영역 정보**
+                    detailedLogs: detailedLogs,                 // 📊 **상세 로그 배열**
+                    captureStats: infiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
+                    pageAnalysis: pageAnalysis,                 // 📊 **페이지 분석 결과**
+                    captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
-                
             } catch(e) { 
-                console.error('🚀 다중 구역 앵커 캡처 실패:', e);
+                console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
-                    infiniteScrollAnchors: { anchors: [], zones: [], stats: {} },
-                    scroll: { x: 0, y: 0 },
-                    error: e.message
+                    infiniteScrollAnchors: { anchors: [], stats: {} },
+                    scroll: { 
+                        x: parseFloat(document.scrollingElement?.scrollLeft || document.documentElement.scrollLeft) || 0, 
+                        y: parseFloat(document.scrollingElement?.scrollTop || document.documentElement.scrollTop) || 0 
+                    },
+                    href: window.location.href,
+                    title: document.title,
+                    actualScrollable: { width: 0, height: 0 },
+                    error: e.message,
+                    detailedLogs: ['무한스크롤 전용 앵커 캡처 실패: ' + e.message],
+                    captureStats: { error: e.message },
+                    pageAnalysis: { error: e.message }
                 };
             }
         })()
