@@ -605,13 +605,13 @@ struct BFCacheSnapshot: Codable {
             } catch(e) {}
             
             const style = document.createElement('style');
-            style.textContent = \`
+            style.textContent = `
                 html, body { 
                     overflow-anchor: none !important; 
                     scroll-behavior: auto !important; 
                     -webkit-text-size-adjust: 100% !important; 
                 }
-            \`;
+            `;
             document.documentElement.appendChild(style);
         })();
         """
