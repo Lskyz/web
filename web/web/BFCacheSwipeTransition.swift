@@ -8,14 +8,12 @@
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
 //  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
-//  🆔 **데이터ID 기반 매칭**: 서버 데이터 고유ID로 정확한 아이템 식별
-//  📨 **postMessage 통신**: 아이프레임 안의 Vue/콘텐츠 데이터 수집
 
 import UIKit
 import WebKit
 import SwiftUI
 
-// MARK: - 📸 **데이터ID + postMessage 강화된 BFCache 페이지 스냅샷**
+// MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
     var domSnapshot: String?
@@ -316,9 +314,9 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원 + 🆔 데이터ID 매칭
+    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
     private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 데이터ID + postMessage 강화된 앵커 정밀 복원 시작")
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
         
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
@@ -336,7 +334,7 @@ struct BFCacheSnapshot: Codable {
             infiniteScrollAnchorDataJSON = dataJSON
         }
         
-        let js = generateStep3_EnhancedAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
+        let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
         
         context.webView?.evaluateJavaScript(js) { result, error in
             var step3Success = false
@@ -349,12 +347,6 @@ struct BFCacheSnapshot: Codable {
                 if let anchorCount = resultDict["anchorCount"] as? Int {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
                 }
-                if let dataIdMatches = resultDict["dataIdMatches"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🆔 [Step 3] 데이터ID 매칭: \(dataIdMatches)개")
-                }
-                if let postMessageData = resultDict["postMessageData"] as? Int {
-                    TabPersistenceManager.debugMessages.append("📨 [Step 3] postMessage 데이터: \(postMessageData)개")
-                }
                 if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
                     if let anchorType = matchedAnchor["anchorType"] as? String {
                         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
@@ -364,9 +356,6 @@ struct BFCacheSnapshot: Codable {
                     }
                     if let confidence = matchedAnchor["confidence"] as? Double {
                         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
-                    }
-                    if let dataId = matchedAnchor["dataId"] as? String {
-                        TabPersistenceManager.debugMessages.append("🆔 [Step 3] 매칭된 데이터ID: \(dataId)")
                     }
                 }
                 if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
@@ -715,8 +704,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // MARK: - 🆔 **강화된 Step 3: 데이터ID + postMessage 매칭**
-    private func generateStep3_EnhancedAnchorRestoreScript(anchorDataJSON: String) -> String {
+    private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
         
@@ -730,7 +718,7 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                logs.push('[Step 3] 데이터ID + postMessage 강화된 앵커 복원');
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -739,8 +727,6 @@ struct BFCacheSnapshot: Codable {
                     return {
                         success: false,
                         anchorCount: 0,
-                        dataIdMatches: 0,
-                        postMessageData: 0,
                         logs: logs
                     };
                 }
@@ -748,33 +734,17 @@ struct BFCacheSnapshot: Codable {
                 const anchors = infiniteScrollAnchorData.anchors;
                 logs.push('사용 가능한 앵커: ' + anchors.length + '개');
                 
-                // 🆔 **데이터ID 기반 앵커 우선 매칭**
-                const dataIdAnchors = anchors.filter(function(anchor) {
-                    return anchor.dataIdentifier && anchor.dataIdentifier.hasDataId === true;
-                });
-                
-                // 📨 **postMessage 데이터 앵커 필터링**
-                const postMessageAnchors = anchors.filter(function(anchor) {
-                    return anchor.postMessageData && Object.keys(anchor.postMessageData).length > 0;
-                });
-                
-                // Vue Component 앵커 필터링
+                // 무한스크롤 앵커 타입별 필터링
                 const vueComponentAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
                 });
-                
-                // Content Hash 앵커 필터링
                 const contentHashAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'contentHash' && anchor.contentHash;
                 });
-                
-                // Virtual Index 앵커 필터링
                 const virtualIndexAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
                 });
                 
-                logs.push('🆔 데이터ID 앵커: ' + dataIdAnchors.length + '개');
-                logs.push('📨 postMessage 앵커: ' + postMessageAnchors.length + '개');
                 logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
                 logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
                 logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
@@ -783,177 +753,8 @@ struct BFCacheSnapshot: Codable {
                 let matchedAnchor = null;
                 let matchMethod = '';
                 let confidence = 0;
-                let dataIdMatches = 0;
-                let postMessageDataCount = 0;
                 
-                // 🆔 **우선순위 1: 데이터ID 기반 정확 매칭 (최고 신뢰도)**
-                if (!foundElement && dataIdAnchors.length > 0) {
-                    for (let i = 0; i < dataIdAnchors.length && !foundElement; i++) {
-                        const anchor = dataIdAnchors[i];
-                        const dataId = anchor.dataIdentifier;
-                        
-                        logs.push('🆔 데이터ID 매칭 시도: ' + (dataId.primaryId || 'unknown'));
-                        
-                        // 우선순위별 데이터ID 매칭
-                        let matchingElement = null;
-                        
-                        // 1. Primary ID 매칭 (가장 정확함)
-                        if (dataId.primaryId) {
-                            matchingElement = document.querySelector('[data-id="' + dataId.primaryId + '"]') ||
-                                             document.querySelector('[data-item-id="' + dataId.primaryId + '"]') ||
-                                             document.querySelector('[data-key="' + dataId.primaryId + '"]') ||
-                                             document.querySelector('[id="' + dataId.primaryId + '"]');
-                            
-                            if (matchingElement) {
-                                foundElement = matchingElement;
-                                matchedAnchor = anchor;
-                                matchMethod = 'data_id_primary';
-                                confidence = 98;
-                                dataIdMatches++;
-                                logs.push('🎯 Primary ID 매칭 성공: ' + dataId.primaryId);
-                                break;
-                            }
-                        }
-                        
-                        // 2. Secondary ID 매칭
-                        if (!matchingElement && dataId.secondaryIds && dataId.secondaryIds.length > 0) {
-                            for (let j = 0; j < dataId.secondaryIds.length; j++) {
-                                const secId = dataId.secondaryIds[j];
-                                matchingElement = document.querySelector('[data-id="' + secId + '"]') ||
-                                                 document.querySelector('[data-item-id="' + secId + '"]') ||
-                                                 document.querySelector('[data-key="' + secId + '"]');
-                                
-                                if (matchingElement) {
-                                    foundElement = matchingElement;
-                                    matchedAnchor = anchor;
-                                    matchMethod = 'data_id_secondary';
-                                    confidence = 92;
-                                    dataIdMatches++;
-                                    logs.push('🎯 Secondary ID 매칭 성공: ' + secId);
-                                    break;
-                                }
-                            }
-                            if (matchingElement) break;
-                        }
-                        
-                        // 3. Combined ID 매칭 (복합 식별자)
-                        if (!matchingElement && dataId.combinedId) {
-                            matchingElement = document.querySelector('[data-combined-id="' + dataId.combinedId + '"]') ||
-                                             document.querySelector('[data-uuid="' + dataId.combinedId + '"]');
-                            
-                            if (matchingElement) {
-                                foundElement = matchingElement;
-                                matchedAnchor = anchor;
-                                matchMethod = 'data_id_combined';
-                                confidence = 90;
-                                dataIdMatches++;
-                                logs.push('🎯 Combined ID 매칭 성공: ' + dataId.combinedId);
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // 📨 **우선순위 2: postMessage 데이터 매칭 (iframe 내부 데이터)**
-                if (!foundElement && postMessageAnchors.length > 0) {
-                    for (let i = 0; i < postMessageAnchors.length && !foundElement; i++) {
-                        const anchor = postMessageAnchors[i];
-                        const postData = anchor.postMessageData;
-                        
-                        logs.push('📨 postMessage 데이터 매칭 시도');
-                        
-                        // Vue 인스턴스 데이터 매칭
-                        if (postData.vueInstanceData) {
-                            const vueData = postData.vueInstanceData;
-                            
-                            // Vue 컴포넌트 UID 기반 매칭
-                            if (vueData.uid) {
-                                const vueElements = document.querySelectorAll('[data-v-]');
-                                for (let j = 0; j < vueElements.length; j++) {
-                                    const elem = vueElements[j];
-                                    if (elem.__vue__ && elem.__vue__.$.uid === vueData.uid) {
-                                        foundElement = elem;
-                                        matchedAnchor = anchor;
-                                        matchMethod = 'postmessage_vue_uid';
-                                        confidence = 95;
-                                        postMessageDataCount++;
-                                        logs.push('📨 Vue UID 매칭 성공: ' + vueData.uid);
-                                        break;
-                                    }
-                                }
-                                if (foundElement) break;
-                            }
-                            
-                            // Vue props 데이터 매칭
-                            if (!foundElement && vueData.props && Object.keys(vueData.props).length > 0) {
-                                const vueElements = document.querySelectorAll('[data-v-]');
-                                for (let j = 0; j < vueElements.length; j++) {
-                                    const elem = vueElements[j];
-                                    if (elem.__vue__ && elem.__vue__.props) {
-                                        const elemProps = elem.__vue__.props;
-                                        let propsMatch = true;
-                                        
-                                        // 저장된 props와 현재 props 비교
-                                        for (let propKey in vueData.props) {
-                                            if (elemProps[propKey] !== vueData.props[propKey]) {
-                                                propsMatch = false;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        if (propsMatch) {
-                                            foundElement = elem;
-                                            matchedAnchor = anchor;
-                                            matchMethod = 'postmessage_vue_props';
-                                            confidence = 88;
-                                            postMessageDataCount++;
-                                            logs.push('📨 Vue Props 매칭 성공');
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (foundElement) break;
-                            }
-                        }
-                        
-                        // iframe 컨텐츠 데이터 매칭
-                        if (!foundElement && postData.iframeContent) {
-                            const iframeData = postData.iframeContent;
-                            
-                            // iframe src 기반 매칭
-                            if (iframeData.src) {
-                                const iframes = document.querySelectorAll('iframe[src*="' + iframeData.src.substring(0, 50) + '"]');
-                                if (iframes.length > 0) {
-                                    // iframe 내부의 특정 요소 찾기
-                                    for (let k = 0; k < iframes.length; k++) {
-                                        try {
-                                            const iframe = iframes[k];
-                                            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                                            if (iframeDoc && iframeData.elementId) {
-                                                const targetElement = iframeDoc.getElementById(iframeData.elementId);
-                                                if (targetElement) {
-                                                    foundElement = iframe; // iframe 자체를 반환
-                                                    matchedAnchor = anchor;
-                                                    matchMethod = 'postmessage_iframe_content';
-                                                    confidence = 85;
-                                                    postMessageDataCount++;
-                                                    logs.push('📨 iframe 콘텐츠 매칭 성공');
-                                                    break;
-                                                }
-                                            }
-                                        } catch(e) {
-                                            // iframe 접근 권한 없음 (CORS)
-                                            logs.push('📨 iframe 접근 권한 없음: ' + e.message);
-                                        }
-                                    }
-                                    if (foundElement) break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 🎯 **우선순위 3: Vue Component 앵커 매칭 (기존 방식)**
+                // 우선순위 1: Vue Component 앵커 매칭
                 if (!foundElement && vueComponentAnchors.length > 0) {
                     for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
                         const anchor = vueComponentAnchors[i];
@@ -973,7 +774,7 @@ struct BFCacheSnapshot: Codable {
                                             foundElement = element;
                                             matchedAnchor = anchor;
                                             matchMethod = 'vue_component_with_index';
-                                            confidence = 85;
+                                            confidence = 95;
                                             logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
                                             break;
                                         }
@@ -981,7 +782,7 @@ struct BFCacheSnapshot: Codable {
                                         foundElement = element;
                                         matchedAnchor = anchor;
                                         matchMethod = 'vue_component';
-                                        confidence = 80;
+                                        confidence = 85;
                                         logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
                                         break;
                                     }
@@ -992,7 +793,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **우선순위 4: Content Hash 앵커 매칭**
+                // 우선순위 2: Content Hash 앵커 매칭
                 if (!foundElement && contentHashAnchors.length > 0) {
                     for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
                         const anchor = contentHashAnchors[i];
@@ -1009,7 +810,7 @@ struct BFCacheSnapshot: Codable {
                                     foundElement = element;
                                     matchedAnchor = anchor;
                                     matchMethod = 'content_hash';
-                                    confidence = 75;
+                                    confidence = 80;
                                     logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
                                     break;
                                 }
@@ -1024,7 +825,7 @@ struct BFCacheSnapshot: Codable {
                                 foundElement = hashElements[0];
                                 matchedAnchor = anchor;
                                 matchMethod = 'short_hash';
-                                confidence = 70;
+                                confidence = 75;
                                 logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
                                 break;
                             }
@@ -1032,7 +833,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
                 
-                // 🎯 **우선순위 5: Virtual Index 앵커 매칭 (추정 위치)**
+                // 우선순위 3: Virtual Index 앵커 매칭 (추정 위치)
                 if (!foundElement && virtualIndexAnchors.length > 0) {
                     for (let i = 0; i < virtualIndexAnchors.length && !foundElement; i++) {
                         const anchor = virtualIndexAnchors[i];
@@ -1040,7 +841,7 @@ struct BFCacheSnapshot: Codable {
                         
                         // 리스트 인덱스 기반 추정
                         if (virtualIndex.listIndex !== undefined) {
-                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"], .ListItem');
+                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
                             const targetIndex = virtualIndex.listIndex;
                             if (targetIndex >= 0 && targetIndex < listElements.length) {
                                 foundElement = listElements[targetIndex];
@@ -1111,35 +912,24 @@ struct BFCacheSnapshot: Codable {
                     logs.push('매칭 신뢰도: ' + confidence + '%');
                     logs.push('헤더 보정: ' + headerHeight.toFixed(0) + 'px');
                     
-                    // 🆔 **매칭된 데이터ID 정보 포함**
-                    const resultMatchedAnchor = {
-                        anchorType: matchedAnchor.anchorType,
-                        matchMethod: matchMethod,
-                        confidence: confidence
-                    };
-                    
-                    if (matchedAnchor.dataIdentifier && matchedAnchor.dataIdentifier.primaryId) {
-                        resultMatchedAnchor.dataId = matchedAnchor.dataIdentifier.primaryId;
-                    }
-                    
                     return {
-                        success: diffY <= 100, // 허용 오차 100px
+                        success: diffY <= 100, // 무한스크롤은 100px 허용 오차
                         anchorCount: anchors.length,
-                        dataIdMatches: dataIdMatches,
-                        postMessageData: postMessageDataCount,
-                        matchedAnchor: resultMatchedAnchor,
+                        matchedAnchor: {
+                            anchorType: matchedAnchor.anchorType,
+                            matchMethod: matchMethod,
+                            confidence: confidence
+                        },
                         restoredPosition: { x: actualX, y: actualY },
                         targetDifference: { x: diffX, y: diffY },
                         logs: logs
                     };
                 }
                 
-                logs.push('데이터ID + postMessage 앵커 매칭 실패');
+                logs.push('무한스크롤 앵커 매칭 실패');
                 return {
                     success: false,
                     anchorCount: anchors.length,
-                    dataIdMatches: dataIdMatches,
-                    postMessageData: postMessageDataCount,
                     logs: logs
                 };
                 
@@ -1244,7 +1034,7 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 데이터ID + postMessage 강화된 앵커 캡처)**
+    // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처)**
     
     private struct CaptureTask {
         let pageRecord: PageRecord
@@ -1263,7 +1053,7 @@ extension BFCacheTransitionSystem {
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
         // 🌐 캡처 대상 사이트 로그
-        TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 강화된 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
@@ -1279,7 +1069,7 @@ extension BFCacheTransitionSystem {
             return
         }
         
-        TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
@@ -1320,66 +1110,25 @@ extension BFCacheTransitionSystem {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
             
             if let infiniteScrollAnchors = jsState["infiniteScrollAnchors"] as? [String: Any] {
-                TabPersistenceManager.debugMessages.append("🆔 캡처된 데이터ID + postMessage 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
+                TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
                 
                 if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                    // 🆔 **데이터ID 앵커 카운트**
-                    let dataIdAnchors = anchors.filter { 
-                        if let dataId = $0["dataIdentifier"] as? [String: Any] {
-                            return dataId["hasDataId"] as? Bool == true
-                        }
-                        return false
-                    }
-                    
-                    // 📨 **postMessage 앵커 카운트**
-                    let postMessageAnchors = anchors.filter { 
-                        if let postData = $0["postMessageData"] as? [String: Any] {
-                            return !postData.isEmpty
-                        }
-                        return false
-                    }
-                    
-                    // 기존 앵커 타입 카운트
+                    // 앵커 타입별 카운트
                     let vueComponentCount = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }.count
                     let contentHashCount = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }.count
                     let virtualIndexCount = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }.count
                     let structuralPathCount = anchors.filter { ($0["anchorType"] as? String) == "structuralPath" }.count
+                    let intersectionCount = anchors.filter { ($0["anchorType"] as? String) == "intersectionInfo" }.count
                     
-                    TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 앵커 타입별: DataID=\(dataIdAnchors.count), PostMsg=\(postMessageAnchors.count), Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount)")
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 타입별: Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount), Intersection=\(intersectionCount)")
                     
                     if anchors.count > 0 {
                         let firstAnchor = anchors[0]
-                        TabPersistenceManager.debugMessages.append("🆔 첫 번째 앵커 키: \(Array(firstAnchor.keys))")
+                        TabPersistenceManager.debugMessages.append("🚀 첫 번째 앵커 키: \(Array(firstAnchor.keys))")
                         
                         // 📊 **첫 번째 앵커 상세 정보 로깅**
                         if let anchorType = firstAnchor["anchorType"] as? String {
                             TabPersistenceManager.debugMessages.append("📊 첫 앵커 타입: \(anchorType)")
-                            
-                            // 🆔 **데이터ID 정보 로깅**
-                            if let dataId = firstAnchor["dataIdentifier"] as? [String: Any] {
-                                let hasDataId = dataId["hasDataId"] as? Bool ?? false
-                                let primaryId = dataId["primaryId"] as? String ?? "unknown"
-                                let secondaryCount = (dataId["secondaryIds"] as? [String])?.count ?? 0
-                                TabPersistenceManager.debugMessages.append("🆔 데이터ID: hasId=\(hasDataId), primary=\(primaryId), secondary=\(secondaryCount)개")
-                            }
-                            
-                            // 📨 **postMessage 정보 로깅**
-                            if let postData = firstAnchor["postMessageData"] as? [String: Any] {
-                                let keys = Array(postData.keys)
-                                TabPersistenceManager.debugMessages.append("📨 postMessage 키: \(keys)")
-                                
-                                if let vueData = postData["vueInstanceData"] as? [String: Any] {
-                                    let uid = vueData["uid"] as? Int ?? -1
-                                    let propsCount = (vueData["props"] as? [String: Any])?.count ?? 0
-                                    TabPersistenceManager.debugMessages.append("📨 Vue 인스턴스: uid=\(uid), props=\(propsCount)개")
-                                }
-                                
-                                if let iframeData = postData["iframeContent"] as? [String: Any] {
-                                    let src = (iframeData["src"] as? String)?.prefix(30) ?? "unknown"
-                                    let elementId = iframeData["elementId"] as? String ?? "unknown"
-                                    TabPersistenceManager.debugMessages.append("📨 iframe 콘텐츠: src=\(src), elementId=\(elementId)")
-                                }
-                            }
                             
                             switch anchorType {
                             case "vueComponent":
@@ -1416,14 +1165,14 @@ extension BFCacheTransitionSystem {
                         }
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 앵커 데이터 캡처 실패")
+                    TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
                 }
                 
                 if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("📊 데이터ID + postMessage 앵커 수집 통계: \(stats)")
+                    TabPersistenceManager.debugMessages.append("📊 무한스크롤 앵커 수집 통계: \(stats)")
                 }
             } else {
-                TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 앵커 데이터 캡처 실패")
+                TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
             }
         } else {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
@@ -1436,7 +1185,7 @@ extension BFCacheTransitionSystem {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 데이터ID + postMessage 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -1515,6 +1264,22 @@ extension BFCacheTransitionSystem {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
+                        var classList = Array.from(el.classList);
+                        var classesToRemove = classList.filter(function(c) {
+                            return c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus');
+                        });
+                        for (var i = 0; i < classesToRemove.length; i++) {
+                            el.classList.remove(classesToRemove[i]);
+                        }
+                    });
+                    
+                    // input focus 제거
+                    document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
+                        el.blur();
+                    });
+                    
                     var html = document.documentElement.outerHTML;
                     return html.length > 500000 ? html.substring(0, 500000) : html;
                 } catch(e) { return null; }
@@ -1533,12 +1298,12 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 5.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
         
-        // 3. ✅ **수정: 데이터ID + postMessage 강화된 JS 상태 캡처** 
+        // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🆔 데이터ID + postMessage 강화된 JS 상태 캡처 시작")
+        TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
         
         DispatchQueue.main.sync {
-            let jsScript = generateEnhancedDataIdPostMessageCaptureScript() // 🆔 **수정된: 데이터ID + postMessage 강화된 캡처**
+            let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
             
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
@@ -1550,31 +1315,13 @@ extension BFCacheTransitionSystem {
                     // 📊 **상세 캡처 결과 로깅**
                     if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
                         if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                            // 🆔 **데이터ID 앵커 카운트**
-                            let dataIdAnchors = anchors.filter { 
-                                if let dataId = $0["dataIdentifier"] as? [String: Any] {
-                                    return dataId["hasDataId"] as? Bool == true
-                                }
-                                return false
-                            }
-                            
-                            // 📨 **postMessage 앵커 카운트**
-                            let postMessageAnchors = anchors.filter { 
-                                if let postData = $0["postMessageData"] as? [String: Any] {
-                                    return !postData.isEmpty
-                                }
-                                return false
-                            }
-                            
-                            // 기존 앵커 타입 카운트
                             let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
                             let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
                             let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
-                            
-                            TabPersistenceManager.debugMessages.append("🆔 JS 캡처된 앵커: 총 \(anchors.count)개 (DataID=\(dataIdAnchors.count), PostMsg=\(postMessageAnchors.count), Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
+                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
                         }
                         if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
-                            TabPersistenceManager.debugMessages.append("📊 데이터ID + postMessage JS 캡처 통계: \(stats)")
+                            TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
                         }
                     }
                 } else {
@@ -1656,12 +1403,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🆔 **수정: 데이터ID + postMessage 강화된 JavaScript 앵커 캡처 스크립트**
-    private func generateEnhancedDataIdPostMessageCaptureScript() -> String {
+    // 🚀 **수정: JavaScript 앵커 캡처 스크립트 개선 (단일 스크롤러 적용)**
+    private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🆔 데이터ID + postMessage 강화된 앵커 캡처 시작');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작');
                 
                 // 🎯 **단일 스크롤러 유틸리티 함수들**
                 function getROOT() { 
@@ -1681,7 +1428,7 @@ extension BFCacheTransitionSystem {
                 const contentHeight = parseFloat(ROOT.scrollHeight) || 0;
                 const contentWidth = parseFloat(ROOT.scrollWidth) || 0;
                 
-                detailedLogs.push('🆔 데이터ID + postMessage 강화된 앵커 캡처 시작 (단일 스크롤러)');
+                detailedLogs.push('🚀 무한스크롤 전용 앵커 캡처 시작 (단일 스크롤러)');
                 detailedLogs.push('스크롤 위치: X=' + scrollX.toFixed(1) + 'px, Y=' + scrollY.toFixed(1) + 'px');
                 detailedLogs.push('뷰포트 크기: ' + viewportWidth.toFixed(0) + ' x ' + viewportHeight.toFixed(0));
                 detailedLogs.push('콘텐츠 크기: ' + contentWidth.toFixed(0) + ' x ' + contentHeight.toFixed(0));
@@ -1690,7 +1437,7 @@ extension BFCacheTransitionSystem {
                 pageAnalysis.viewport = { width: viewportWidth, height: viewportHeight };
                 pageAnalysis.content = { width: contentWidth, height: contentHeight };
                 
-                console.log('🆔 기본 정보 (단일 스크롤러):', {
+                console.log('🚀 기본 정보 (단일 스크롤러):', {
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight]
@@ -1777,211 +1524,6 @@ extension BFCacheTransitionSystem {
                     return true;
                 }
                 
-                // 🆔 **데이터ID 추출 함수**
-                function extractDataIdentifiers(element) {
-                    const dataIdentifier = {
-                        hasDataId: false,
-                        primaryId: null,
-                        secondaryIds: [],
-                        combinedId: null,
-                        sourceAttributes: []
-                    };
-                    
-                    if (!element || !element.attributes) return dataIdentifier;
-                    
-                    // 🆔 **우선순위별 데이터 속성 추출**
-                    const prioritizedAttributes = [
-                        'data-id', 'data-item-id', 'data-key', 'data-uuid', 'data-item-key',
-                        'id', 'data-testid', 'data-cy', 'data-test', 'data-automation-id',
-                        'data-entity-id', 'data-record-id', 'data-model-id', 'data-pk',
-                        'data-index', 'data-position', 'data-order', 'data-seq',
-                        'data-post-id', 'data-comment-id', 'data-user-id', 'data-article-id'
-                    ];
-                    
-                    for (let i = 0; i < prioritizedAttributes.length; i++) {
-                        const attrName = prioritizedAttributes[i];
-                        const attrValue = element.getAttribute(attrName);
-                        
-                        if (attrValue && attrValue.trim().length > 0) {
-                            dataIdentifier.hasDataId = true;
-                            dataIdentifier.sourceAttributes.push({
-                                name: attrName,
-                                value: attrValue.trim()
-                            });
-                            
-                            // Primary ID 설정 (첫 번째로 발견된 것)
-                            if (!dataIdentifier.primaryId) {
-                                dataIdentifier.primaryId = attrValue.trim();
-                            } else {
-                                // Secondary ID로 추가
-                                if (!dataIdentifier.secondaryIds.includes(attrValue.trim())) {
-                                    dataIdentifier.secondaryIds.push(attrValue.trim());
-                                }
-                            }
-                        }
-                    }
-                    
-                    // 🆔 **복합 식별자 생성** (여러 속성 조합)
-                    if (dataIdentifier.sourceAttributes.length > 1) {
-                        const combinedParts = dataIdentifier.sourceAttributes
-                            .slice(0, 3) // 최대 3개 속성만 사용
-                            .map(function(attr) { return attr.name + ':' + attr.value; });
-                        dataIdentifier.combinedId = combinedParts.join('|');
-                    }
-                    
-                    return dataIdentifier;
-                }
-                
-                // 📨 **postMessage 데이터 수집 함수**
-                function collectPostMessageData(element) {
-                    const postMessageData = {};
-                    
-                    try {
-                        // 🚀 **Vue 인스턴스 데이터 수집**
-                        if (element.__vue__ || element._vnode || element.__vueParentComponent) {
-                            const vueInstanceData = {};
-                            
-                            // Vue 3.x 인스턴스
-                            if (element.__vueParentComponent) {
-                                const vueInstance = element.__vueParentComponent;
-                                vueInstanceData.version = '3.x';
-                                vueInstanceData.uid = vueInstance.uid;
-                                
-                                if (vueInstance.props && typeof vueInstance.props === 'object') {
-                                    vueInstanceData.props = {};
-                                    for (let propKey in vueInstance.props) {
-                                        const propValue = vueInstance.props[propKey];
-                                        // 직렬화 가능한 값만 저장
-                                        if (typeof propValue === 'string' || typeof propValue === 'number' || typeof propValue === 'boolean') {
-                                            vueInstanceData.props[propKey] = propValue;
-                                        }
-                                    }
-                                }
-                                
-                                if (vueInstance.data && typeof vueInstance.data === 'object') {
-                                    vueInstanceData.data = {};
-                                    for (let dataKey in vueInstance.data) {
-                                        const dataValue = vueInstance.data[dataKey];
-                                        if (typeof dataValue === 'string' || typeof dataValue === 'number' || typeof dataValue === 'boolean') {
-                                            vueInstanceData.data[dataKey] = dataValue;
-                                        }
-                                    }
-                                }
-                            }
-                            // Vue 2.x 인스턴스
-                            else if (element.__vue__) {
-                                const vueInstance = element.__vue__;
-                                vueInstanceData.version = '2.x';
-                                vueInstanceData.uid = vueInstance.$vnode ? vueInstance.$vnode.componentOptions.tag : 'unknown';
-                                
-                                if (vueInstance.$props && typeof vueInstance.$props === 'object') {
-                                    vueInstanceData.props = {};
-                                    for (let propKey in vueInstance.$props) {
-                                        const propValue = vueInstance.$props[propKey];
-                                        if (typeof propValue === 'string' || typeof propValue === 'number' || typeof propValue === 'boolean') {
-                                            vueInstanceData.props[propKey] = propValue;
-                                        }
-                                    }
-                                }
-                                
-                                if (vueInstance.$data && typeof vueInstance.$data === 'object') {
-                                    vueInstanceData.data = {};
-                                    for (let dataKey in vueInstance.$data) {
-                                        const dataValue = vueInstance.$data[dataKey];
-                                        if (typeof dataValue === 'string' || typeof dataValue === 'number' || typeof dataValue === 'boolean') {
-                                            vueInstanceData.data[dataKey] = dataValue;
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if (Object.keys(vueInstanceData).length > 0) {
-                                postMessageData.vueInstanceData = vueInstanceData;
-                            }
-                        }
-                        
-                        // 📨 **iframe 콘텐츠 데이터 수집**
-                        if (element.tagName === 'IFRAME') {
-                            const iframeContent = {};
-                            iframeContent.src = element.src || '';
-                            iframeContent.id = element.id || '';
-                            iframeContent.className = element.className || '';
-                            
-                            // iframe 내부 접근 시도 (CORS 허용 시에만)
-                            try {
-                                const iframeDoc = element.contentDocument || element.contentWindow.document;
-                                if (iframeDoc) {
-                                    iframeContent.title = iframeDoc.title || '';
-                                    iframeContent.url = iframeDoc.URL || '';
-                                    
-                                    // iframe 내부의 첫 번째 식별 가능한 요소 찾기
-                                    const firstIdElement = iframeDoc.querySelector('[id], [data-id], [data-key]');
-                                    if (firstIdElement) {
-                                        iframeContent.elementId = firstIdElement.id || firstIdElement.getAttribute('data-id') || firstIdElement.getAttribute('data-key') || '';
-                                    }
-                                }
-                            } catch(e) {
-                                // CORS로 접근 불가 - 외부 속성만 수집
-                                iframeContent.crossOrigin = true;
-                                iframeContent.accessError = e.message;
-                            }
-                            
-                            postMessageData.iframeContent = iframeContent;
-                        }
-                        
-                        // 📨 **React 인스턴스 데이터 수집** (React Fiber)
-                        const reactFiberKey = Object.keys(element).find(function(key) {
-                            return key.startsWith('__reactInternalInstance') || key.startsWith('_reactInternalFiber');
-                        });
-                        
-                        if (reactFiberKey) {
-                            const reactInstance = element[reactFiberKey];
-                            const reactInstanceData = {};
-                            
-                            if (reactInstance.memoizedProps && typeof reactInstance.memoizedProps === 'object') {
-                                reactInstanceData.props = {};
-                                for (let propKey in reactInstance.memoizedProps) {
-                                    const propValue = reactInstance.memoizedProps[propKey];
-                                    if (typeof propValue === 'string' || typeof propValue === 'number' || typeof propValue === 'boolean') {
-                                        reactInstanceData.props[propKey] = propValue;
-                                    }
-                                }
-                            }
-                            
-                            if (reactInstance.type && typeof reactInstance.type === 'string') {
-                                reactInstanceData.componentType = reactInstance.type;
-                            }
-                            
-                            if (Object.keys(reactInstanceData).length > 0) {
-                                postMessageData.reactInstanceData = reactInstanceData;
-                            }
-                        }
-                        
-                        // 📨 **Angular 인스턴스 데이터 수집**
-                        if (element.ng || element.__ngContext__) {
-                            const angularInstanceData = {};
-                            
-                            if (element.__ngContext__ && element.__ngContext__.length > 0) {
-                                const context = element.__ngContext__[0];
-                                if (context && typeof context === 'object') {
-                                    angularInstanceData.hasContext = true;
-                                    angularInstanceData.contextKeys = Object.keys(context).slice(0, 10); // 최대 10개만
-                                }
-                            }
-                            
-                            if (Object.keys(angularInstanceData).length > 0) {
-                                postMessageData.angularInstanceData = angularInstanceData;
-                            }
-                        }
-                        
-                    } catch(e) {
-                        // postMessage 데이터 수집 실패 무시
-                        postMessageData.collectionError = e.message;
-                    }
-                    
-                    return postMessageData;
-                }
-                
                 // 🚀 **SHA256 간단 해시 함수 (콘텐츠 해시용)**
                 function simpleHash(str) {
                     let hash = 0;
@@ -2040,61 +1582,38 @@ extension BFCacheTransitionSystem {
                     return vueElements;
                 }
                 
-                // 🆔 **핵심: 데이터ID + postMessage 강화된 앵커 수집**
-                function collectEnhancedInfiniteScrollAnchors() {
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
+                function collectInfiniteScrollAnchors() {
                     const anchors = [];
                     const anchorStats = {
                         totalCandidates: 0,
                         visibilityChecked: 0,
                         actuallyVisible: 0,
-                        dataIdAnchors: 0,
-                        postMessageAnchors: 0,
                         vueComponentAnchors: 0,
                         contentHashAnchors: 0,
                         virtualIndexAnchors: 0,
                         structuralPathAnchors: 0,
+                        intersectionAnchors: 0,
                         finalAnchors: 0
                     };
                     
-                    detailedLogs.push('🆔 데이터ID + postMessage 강화된 앵커 수집 시작');
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
                     
                     // 🚀 **1. Vue.js 컴포넌트 요소 우선 수집**
                     const vueComponentElements = collectVueComponentElements();
                     anchorStats.totalCandidates += vueComponentElements.length;
                     anchorStats.actuallyVisible += vueComponentElements.length;
                     
-                    // 🚀 **2. 데이터ID가 있는 요소들 우선 수집**
-                    const dataIdSelectors = [
-                        '[data-id]', '[data-item-id]', '[data-key]', '[data-uuid]', '[data-item-key]',
-                        '[data-testid]', '[data-cy]', '[data-test]', '[data-automation-id]',
-                        '[data-entity-id]', '[data-record-id]', '[data-model-id]', '[data-pk]',
-                        '[data-index]', '[data-position]', '[data-order]', '[data-seq]',
-                        '[data-post-id]', '[data-comment-id]', '[data-user-id]', '[data-article-id]'
-                    ];
-                    
-                    let dataIdElements = [];
-                    for (let i = 0; i < dataIdSelectors.length; i++) {
-                        try {
-                            const elements = document.querySelectorAll(dataIdSelectors[i]);
-                            for (let j = 0; j < elements.length; j++) {
-                                dataIdElements.push(elements[j]);
-                            }
-                        } catch(e) {
-                            // selector 오류 무시
-                        }
-                    }
-                    
-                    anchorStats.totalCandidates += dataIdElements.length;
-                    
-                    // 🚀 **3. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
+                    // 🚀 **2. 일반 콘텐츠 요소 수집 (무한스크롤용) - 수정된 선택자**
                     const contentSelectors = [
                         'li', 'tr', 'td', '.item', '.list-item', '.card', '.post', '.article',
                         '.comment', '.reply', '.feed', '.thread', '.message', '.product', 
                         '.news', '.media', '.content-item', '[class*="item"]', 
-                        '[class*="post"]', '[class*="card"]', 
+                        '[class*="post"]', '[class*="card"]', '[data-testid]', 
+                        '[data-id]', '[data-key]', '[data-item-id]',
                         // 일반적인 리스트 아이템 선택자 추가
                         '.ListItem', '.ArticleListItem', '.MultiLinkWrap', 
-                        '[class*="List"]', '[class*="Item"]', 'iframe' // iframe도 추가
+                        '[class*="List"]', '[class*="Item"]', '[data-v-]'
                     ];
                     
                     let contentElements = [];
@@ -2111,41 +1630,14 @@ extension BFCacheTransitionSystem {
                     
                     anchorStats.totalCandidates += contentElements.length;
                     
-                    // 🔍 **데이터ID 요소 처리 및 가시성 필터링**
-                    const uniqueDataIdElements = [];
-                    const processedDataIdElements = new Set();
-                    
-                    for (let i = 0; i < dataIdElements.length; i++) {
-                        const element = dataIdElements[i];
-                        if (!processedDataIdElements.has(element)) {
-                            processedDataIdElements.add(element);
-                            
-                            const visibilityResult = isElementActuallyVisible(element, false); // 덜 엄격한 가시성 검사
-                            anchorStats.visibilityChecked++;
-                            
-                            if (visibilityResult.visible) {
-                                const elementText = (element.textContent || '').trim();
-                                if (elementText.length > 3) { // 데이터ID 요소는 텍스트 조건 완화
-                                    uniqueDataIdElements.push({
-                                        element: element,
-                                        rect: visibilityResult.rect,
-                                        textContent: elementText,
-                                        visibilityResult: visibilityResult
-                                    });
-                                    anchorStats.actuallyVisible++;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // 중복 제거 및 가시성 필터링 (일반 콘텐츠)
+                    // 중복 제거 및 가시성 필터링
                     const uniqueContentElements = [];
-                    const processedContentElements = new Set();
+                    const processedElements = new Set();
                     
                     for (let i = 0; i < contentElements.length; i++) {
                         const element = contentElements[i];
-                        if (!processedContentElements.has(element)) {
-                            processedContentElements.add(element);
+                        if (!processedElements.has(element)) {
+                            processedElements.add(element);
                             
                             const visibilityResult = isElementActuallyVisible(element, false); // 🔧 덜 엄격한 가시성 검사
                             anchorStats.visibilityChecked++;
@@ -2165,24 +1657,14 @@ extension BFCacheTransitionSystem {
                         }
                     }
                     
-                    detailedLogs.push('데이터ID 요소: ' + dataIdElements.length + '개, 유효: ' + uniqueDataIdElements.length + '개');
                     detailedLogs.push('일반 콘텐츠 후보: ' + contentElements.length + '개, 유효: ' + uniqueContentElements.length + '개');
                     
-                    // 🚀 **4. 뷰포트 중심 기준으로 상위 25개씩 선택 (증가)**
+                    // 🚀 **3. 뷰포트 중심 기준으로 상위 20개씩 선택 (증가)**
                     const viewportCenterY = scrollY + (viewportHeight / 2);
                     const viewportCenterX = scrollX + (viewportWidth / 2);
                     
                     // Vue 컴포넌트 정렬 및 선택
                     vueComponentElements.sort(function(a, b) {
-                        const aTop = scrollY + a.rect.top;
-                        const bTop = scrollY + b.rect.top;
-                        const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
-                        const bDistance = Math.abs(bTop + (b.rect.height / 2) - viewportCenterY);
-                        return aDistance - bDistance;
-                    });
-                    
-                    // 데이터ID 요소 정렬 및 선택
-                    uniqueDataIdElements.sort(function(a, b) {
                         const aTop = scrollY + a.rect.top;
                         const bTop = scrollY + b.rect.top;
                         const aDistance = Math.abs(aTop + (a.rect.height / 2) - viewportCenterY);
@@ -2199,44 +1681,25 @@ extension BFCacheTransitionSystem {
                         return aDistance - bDistance;
                     });
                     
-                    const selectedVueElements = vueComponentElements.slice(0, 25); // 🔧 25개로 증가
-                    const selectedDataIdElements = uniqueDataIdElements.slice(0, 25); // 🆔 데이터ID 요소 25개
-                    const selectedContentElements = uniqueContentElements.slice(0, 25); // 🔧 25개로 증가
+                    const selectedVueElements = vueComponentElements.slice(0, 20); // 🔧 20개로 증가
+                    const selectedContentElements = uniqueContentElements.slice(0, 20); // 🔧 20개로 증가
                     
-                    detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, DataID=' + selectedDataIdElements.length + '개, Content=' + selectedContentElements.length + '개');
+                    detailedLogs.push('뷰포트 중심 기준 선택: Vue=' + selectedVueElements.length + '개, Content=' + selectedContentElements.length + '개');
                     
-                    // 🆔 **5. 데이터ID 앵커 생성 (최우선)**
-                    for (let i = 0; i < selectedDataIdElements.length; i++) {
-                        try {
-                            const anchor = createDataIdAnchor(selectedDataIdElements[i], i);
-                            if (anchor) {
-                                anchors.push(anchor);
-                                anchorStats.dataIdAnchors++;
-                            }
-                        } catch(e) {
-                            console.warn('데이터ID 앵커[' + i + '] 생성 실패:', e);
-                        }
-                    }
-                    
-                    // 📨 **6. postMessage 강화된 Vue Component 앵커 생성**
+                    // 🚀 **4. Vue Component 앵커 생성**
                     for (let i = 0; i < selectedVueElements.length; i++) {
                         try {
-                            const anchor = createEnhancedVueComponentAnchor(selectedVueElements[i], i);
+                            const anchor = createVueComponentAnchor(selectedVueElements[i], i);
                             if (anchor) {
                                 anchors.push(anchor);
                                 anchorStats.vueComponentAnchors++;
-                                
-                                // postMessage 데이터가 있으면 카운트
-                                if (anchor.postMessageData && Object.keys(anchor.postMessageData).length > 0) {
-                                    anchorStats.postMessageAnchors++;
-                                }
                             }
                         } catch(e) {
                             console.warn('Vue 앵커[' + i + '] 생성 실패:', e);
                         }
                     }
                     
-                    // 🚀 **7. Content Hash + Virtual Index + Structural Path 앵커 생성**
+                    // 🚀 **5. Content Hash + Virtual Index + Structural Path 앵커 생성**
                     for (let i = 0; i < selectedContentElements.length; i++) {
                         try {
                             // Content Hash 앵커
@@ -2269,8 +1732,8 @@ extension BFCacheTransitionSystem {
                     
                     anchorStats.finalAnchors = anchors.length;
                     
-                    detailedLogs.push('데이터ID + postMessage 강화된 앵커 생성 완료: ' + anchors.length + '개');
-                    console.log('🆔 데이터ID + postMessage 앵커 수집 완료:', anchors.length, '개');
+                    detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
+                    console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
                     
                     // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
@@ -2279,54 +1742,8 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🆔 **새로운: 데이터ID 앵커 생성 (최고 우선순위)**
-                function createDataIdAnchor(elementData, index) {
-                    try {
-                        const element = elementData.element;
-                        const rect = elementData.rect;
-                        const textContent = elementData.textContent;
-                        
-                        // 🎯 **수정: 단일 스크롤러 기준으로 계산**
-                        const absoluteTop = scrollY + rect.top;
-                        const absoluteLeft = scrollX + rect.left;
-                        const offsetFromTop = scrollY - absoluteTop;
-                        
-                        // 🆔 **데이터ID 정보 추출**
-                        const dataIdentifier = extractDataIdentifiers(element);
-                        
-                        // 📨 **postMessage 데이터 수집**
-                        const postMessageData = collectPostMessageData(element);
-                        
-                        const qualityScore = 95; // 데이터ID는 최고 신뢰도 95점
-                        
-                        return {
-                            anchorType: 'dataId',
-                            dataIdentifier: dataIdentifier,
-                            postMessageData: postMessageData,
-                            
-                            // 위치 정보
-                            absolutePosition: { top: absoluteTop, left: absoluteLeft },
-                            viewportPosition: { top: rect.top, left: rect.left },
-                            offsetFromTop: offsetFromTop,
-                            size: { width: rect.width, height: rect.height },
-                            
-                            // 메타 정보
-                            textContent: textContent.substring(0, 100),
-                            qualityScore: qualityScore,
-                            anchorIndex: index,
-                            captureTimestamp: Date.now(),
-                            isVisible: true,
-                            visibilityReason: 'data_id_visible'
-                        };
-                        
-                    } catch(e) {
-                        console.error('데이터ID 앵커[' + index + '] 생성 실패:', e);
-                        return null;
-                    }
-                }
-                
-                // 📨 **수정된: postMessage 강화된 Vue Component 앵커 생성**
-                function createEnhancedVueComponentAnchor(elementData, index) {
+                // 🚀 **수정된: Vue Component 앵커 생성**
+                function createVueComponentAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
                         const rect = elementData.rect;
@@ -2365,26 +1782,11 @@ extension BFCacheTransitionSystem {
                             vueComponent.index = siblingIndex;
                         }
                         
-                        // 🆔 **데이터ID 정보 추가**
-                        const dataIdentifier = extractDataIdentifiers(element);
-                        
-                        // 📨 **postMessage 데이터 수집**
-                        const postMessageData = collectPostMessageData(element);
-                        
-                        // 📨 postMessage 데이터가 있으면 신뢰도 증가
-                        let qualityScore = 85; // Vue 컴포넌트는 기본 85점
-                        if (Object.keys(postMessageData).length > 0) {
-                            qualityScore += 5; // postMessage 데이터가 있으면 +5점
-                        }
-                        if (dataIdentifier.hasDataId) {
-                            qualityScore += 5; // 데이터ID가 있으면 +5점
-                        }
+                        const qualityScore = 85; // Vue 컴포넌트는 기본 85점
                         
                         return {
                             anchorType: 'vueComponent',
                             vueComponent: vueComponent,
-                            dataIdentifier: dataIdentifier,
-                            postMessageData: postMessageData,
                             
                             // 위치 정보
                             absolutePosition: { top: absoluteTop, left: absoluteLeft },
@@ -2407,7 +1809,7 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🚀 **Content Hash 앵커 생성** (기존 유지, 데이터ID 추가)
+                // 🚀 **Content Hash 앵커 생성**
                 function createContentHashAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
@@ -2430,22 +1832,11 @@ extension BFCacheTransitionSystem {
                             length: textContent.length
                         };
                         
-                        // 🆔 **데이터ID 정보 추가**
-                        const dataIdentifier = extractDataIdentifiers(element);
-                        
-                        // 📨 **postMessage 데이터 수집**
-                        const postMessageData = collectPostMessageData(element);
-                        
-                        let qualityScore = Math.min(95, 60 + Math.min(35, Math.floor(textContent.length / 10)));
-                        if (dataIdentifier.hasDataId) {
-                            qualityScore += 5; // 데이터ID가 있으면 +5점
-                        }
+                        const qualityScore = Math.min(95, 60 + Math.min(35, Math.floor(textContent.length / 10)));
                         
                         return {
                             anchorType: 'contentHash',
                             contentHash: contentHash,
-                            dataIdentifier: dataIdentifier,
-                            postMessageData: postMessageData,
                             
                             absolutePosition: { top: absoluteTop, left: absoluteLeft },
                             viewportPosition: { top: rect.top, left: rect.left },
@@ -2466,7 +1857,7 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🚀 **Virtual Index 앵커 생성** (기존 유지, 데이터ID 추가)
+                // 🚀 **Virtual Index 앵커 생성**
                 function createVirtualIndexAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
@@ -2486,22 +1877,11 @@ extension BFCacheTransitionSystem {
                             estimatedTotal: document.querySelectorAll('li, .item, .list-item, .ListItem').length
                         };
                         
-                        // 🆔 **데이터ID 정보 추가**
-                        const dataIdentifier = extractDataIdentifiers(element);
-                        
-                        // 📨 **postMessage 데이터 수집**
-                        const postMessageData = collectPostMessageData(element);
-                        
-                        let qualityScore = 70; // Virtual Index는 70점
-                        if (dataIdentifier.hasDataId) {
-                            qualityScore += 10; // 데이터ID가 있으면 +10점
-                        }
+                        const qualityScore = 70; // Virtual Index는 70점
                         
                         return {
                             anchorType: 'virtualIndex',
                             virtualIndex: virtualIndex,
-                            dataIdentifier: dataIdentifier,
-                            postMessageData: postMessageData,
                             
                             absolutePosition: { top: absoluteTop, left: absoluteLeft },
                             viewportPosition: { top: rect.top, left: rect.left },
@@ -2522,7 +1902,7 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🚀 **Structural Path 앵커 생성 (보조)** (기존 유지, 데이터ID 추가)
+                // 🚀 **Structural Path 앵커 생성 (보조)**
                 function createStructuralPathAnchor(elementData, index) {
                     try {
                         const element = elementData.element;
@@ -2574,22 +1954,11 @@ extension BFCacheTransitionSystem {
                             depth: depth
                         };
                         
-                        // 🆔 **데이터ID 정보 추가**
-                        const dataIdentifier = extractDataIdentifiers(element);
-                        
-                        // 📨 **postMessage 데이터 수집**
-                        const postMessageData = collectPostMessageData(element);
-                        
-                        let qualityScore = 50; // Structural Path는 50점 (보조용)
-                        if (dataIdentifier.hasDataId) {
-                            qualityScore += 15; // 데이터ID가 있으면 +15점
-                        }
+                        const qualityScore = 50; // Structural Path는 50점 (보조용)
                         
                         return {
                             anchorType: 'structuralPath',
                             structuralPath: structuralPath,
-                            dataIdentifier: dataIdentifier,
-                            postMessageData: postMessageData,
                             
                             absolutePosition: { top: absoluteTop, left: absoluteLeft },
                             viewportPosition: { top: rect.top, left: rect.left },
@@ -2610,24 +1979,24 @@ extension BFCacheTransitionSystem {
                     }
                 }
                 
-                // 🆔 **메인 실행 - 데이터ID + postMessage 강화된 앵커 데이터 수집**
+                // 🚀 **메인 실행 - 무한스크롤 전용 앵커 데이터 수집**
                 const startTime = Date.now();
-                const enhancedInfiniteScrollAnchorsData = collectEnhancedInfiniteScrollAnchors();
+                const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
                 const captureTime = endTime - startTime;
                 
                 pageAnalysis.capturePerformance = {
                     totalTime: captureTime,
-                    anchorsPerSecond: enhancedInfiniteScrollAnchorsData.anchors.length > 0 ? (enhancedInfiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
+                    anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
-                detailedLogs.push('=== 데이터ID + postMessage 강화된 앵커 캡처 완료 (' + captureTime + 'ms) ===');
-                detailedLogs.push('최종 강화된 앵커: ' + enhancedInfiniteScrollAnchorsData.anchors.length + '개');
+                detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
+                detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
                 detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
-                console.log('🆔 데이터ID + postMessage 강화된 앵커 캡처 완료:', {
-                    enhancedAnchorsCount: enhancedInfiniteScrollAnchorsData.anchors.length,
-                    stats: enhancedInfiniteScrollAnchorsData.stats,
+                console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
+                    infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
+                    stats: infiniteScrollAnchorsData.stats,
                     scroll: [scrollX, scrollY],
                     viewport: [viewportWidth, viewportHeight],
                     content: [contentWidth, contentHeight],
@@ -2635,9 +2004,9 @@ extension BFCacheTransitionSystem {
                     actualViewportRect: actualViewportRect
                 });
                 
-                // ✅ **수정: 정리된 반환 구조 (데이터ID + postMessage 기반)**
+                // ✅ **수정: 정리된 반환 구조 (단일 스크롤러 기준)**
                 return {
-                    infiniteScrollAnchors: enhancedInfiniteScrollAnchorsData, // 🆔 **데이터ID + postMessage 강화된 앵커 데이터**
+                    infiniteScrollAnchors: infiniteScrollAnchorsData, // 🚀 **무한스크롤 전용 앵커 데이터**
                     scroll: { 
                         x: scrollX, 
                         y: scrollY
@@ -2660,12 +2029,12 @@ extension BFCacheTransitionSystem {
                     },
                     actualViewportRect: actualViewportRect,     // 🚀 **실제 보이는 영역 정보**
                     detailedLogs: detailedLogs,                 // 📊 **상세 로그 배열**
-                    captureStats: enhancedInfiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
+                    captureStats: infiniteScrollAnchorsData.stats,  // 🔧 **수정: stats 직접 할당**
                     pageAnalysis: pageAnalysis,                 // 📊 **페이지 분석 결과**
                     captureTime: captureTime                    // 📊 **캡처 소요 시간**
                 };
             } catch(e) { 
-                console.error('🆔 데이터ID + postMessage 강화된 앵커 캡처 실패:', e);
+                console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
                     infiniteScrollAnchors: { anchors: [], stats: {} },
                     scroll: { 
@@ -2676,7 +2045,7 @@ extension BFCacheTransitionSystem {
                     title: document.title,
                     actualScrollable: { width: 0, height: 0 },
                     error: e.message,
-                    detailedLogs: ['데이터ID + postMessage 강화된 앵커 캡처 실패: ' + e.message],
+                    detailedLogs: ['무한스크롤 전용 앵커 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
                     pageAnalysis: { error: e.message }
                 };
