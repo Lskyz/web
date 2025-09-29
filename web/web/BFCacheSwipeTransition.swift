@@ -7,7 +7,7 @@
 //  📍 **절대좌표 풀백**: 모든 앵커 실패시 최후 수단
 //  📏 **스크롤러 탐지**: 가장 긴 스크롤러 자동 선택
 //  🔧 **callAsyncJavaScript 사용**: iOS 14+ Promise 직접 처리
-//  🐛 **복원 에러 수정**: 파라미터 접근 방식 수정 및 상세 디버깅
+//  🐛 **복원 에러 수정**: arguments 객체 접근 방식 수정
 
 import UIKit
 import WebKit
@@ -146,7 +146,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - 에러 수정**
+    // MARK: - 🎯 **핵심: callAsyncJavaScript 복원 - arguments 접근 방식 수정**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
@@ -163,7 +163,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📌 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
         TabPersistenceManager.debugMessages.append("📌 스크롤러 높이: \(String(format: "%.0f", anchors.scrollerHeight))px")
         
-        // 🐛 수정: arguments 객체 정확히 구성
+        // 🐛 수정: arguments 객체 구성
         let arguments: [String: Any] = [
             "targetY": scrollPosition.y,
             "percentY": scrollPositionPercent.y,
@@ -174,8 +174,8 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
         TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
         
-        // callAsyncJavaScript 사용
-        let js = generateAsyncRestorationScript(anchors: anchors)
+        // callAsyncJavaScript 사용 (iOS 14+)
+        let js = generateAsyncRestorationScript()
         
         TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
         
@@ -363,40 +363,39 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (파라미터 접근 수정)
+    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (arguments 객체 접근 수정)
     
-    private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
+    private func generateAsyncRestorationScript() -> String {
         return """
         const logs = [];
         const startTime = Date.now();
         
         try {
             logs.push('🎯 통합 앵커 복원 시작');
-            logs.push('파라미터 확인:');
-            logs.push('  targetY 타입: ' + typeof targetY);
-            logs.push('  percentY 타입: ' + typeof percentY);
-            logs.push('  anchorsData 타입: ' + typeof anchorsData);
-            logs.push('  primaryScroller 타입: ' + typeof primaryScroller);
+            logs.push('arguments 객체 확인:');
+            logs.push('  arguments 타입: ' + typeof arguments);
+            logs.push('  arguments 키: ' + Object.keys(arguments).join(', '));
             
-            // 🐛 수정: arguments에서 직접 접근 (변수명 중복 제거)
-            const target_Y = targetY;
-            const percent_Y = percentY;
-            const anchors_array = anchorsData;
-            const primary_scroller = primaryScroller;
+            // 🐛 수정: arguments 객체에서 프로퍼티로 접근
+            const target_Y = arguments.targetY;
+            const percent_Y = arguments.percentY;
+            const anchors_array = arguments.anchorsData;
+            const primary_scroller = arguments.primaryScroller;
             
             logs.push('파라미터 값:');
             logs.push('  target_Y: ' + target_Y);
             logs.push('  percent_Y: ' + percent_Y);
-            logs.push('  anchors_array 길이: ' + (anchors_array ? anchors_array.length : 'null'));
+            logs.push('  anchors_array 타입: ' + typeof anchors_array);
+            logs.push('  anchors_array 길이: ' + (Array.isArray(anchors_array) ? anchors_array.length : 'not array'));
             logs.push('  primary_scroller: ' + primary_scroller);
             
             // 파라미터 검증
             if (typeof target_Y !== 'number' || typeof percent_Y !== 'number') {
-                throw new Error('Invalid parameters: targetY or percentY is not a number');
+                throw new Error('Invalid parameters: targetY=' + typeof target_Y + ' percentY=' + typeof percent_Y);
             }
             
             if (!Array.isArray(anchors_array)) {
-                throw new Error('Invalid parameters: anchorsData is not an array');
+                throw new Error('Invalid parameters: anchorsData is not array, type=' + typeof anchors_array);
             }
             
             // 스크롤러 탐지
