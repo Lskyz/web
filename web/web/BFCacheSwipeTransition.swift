@@ -140,7 +140,21 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         
-        // MessageHandler 등록 (일시적)
+        var didFinish = false
+        var timeoutWorkItem: DispatchWorkItem?
+
+        let finish: (Bool) -> Void = { [weak webView] success in
+            guard !didFinish else { return }
+            didFinish = true
+            timeoutWorkItem?.cancel()
+            timeoutWorkItem = nil
+            if let webView = webView {
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
+            }
+            completion(success)
+        }
+
+        // MessageHandler 등록 (임시)
         let messageHandler = BFCacheRestoreMessageHandler { result in
             // 결과 처리
             let success = (result["success"] as? Bool) ?? false
@@ -165,20 +179,18 @@ struct BFCacheSnapshot: Codable {
             
             TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
             
-            // MessageHandler 제거
-            webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
-            
-            completion(success)
+            finish(success)
         }
         
         webView.configuration.userContentController.add(messageHandler, name: "bfcacheRestoreResult")
         
         // 타임아웃 설정 (5초)
-        let timeoutTimer = DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+        let timeoutItem = DispatchWorkItem {
             TabPersistenceManager.debugMessages.append("⏰ 복원 타임아웃 (5초 초과)")
-            webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
-            completion(false)
+            finish(false)
         }
+        timeoutWorkItem = timeoutItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: timeoutItem)
         
         // JavaScript 스크립트 실행
         let js = generatePriorityBasedRestoreScript()
@@ -186,14 +198,12 @@ struct BFCacheSnapshot: Codable {
         webView.evaluateJavaScript(js) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 실행 실패: \(error.localizedDescription)")
-                webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
-                completion(false)
+                finish(false)
             } else {
-                TabPersistenceManager.debugMessages.append("✅ 복원 스크립트 실행 시작")
+                TabPersistenceManager.debugMessages.append("✅ 복원 스크립트 실행 성공")
             }
         }
-    }
-    
+
     // MARK: - 🎯 **MessageHandler 기반 복원 스크립트 생성**
     
     private func generatePriorityBasedRestoreScript() -> String {
