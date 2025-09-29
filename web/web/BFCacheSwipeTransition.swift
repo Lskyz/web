@@ -1,10 +1,11 @@
 //
 //  BFCacheSnapshotManager.swift
-//  🎯 **통합 앵커 기반 BFCache 복원 시스템**
-//  📦 **영속적 ID + CSS 셀렉터 + 콘텐츠 해시 조합**
-//  🔄 **MutationObserver + ResizeObserver 기반 렌더링 감지**
-//  ♾️ **앵커 미발견 시 로딩 트리거 및 재시도**
-//  📍 **최종 풀백: 절대 좌표 복원**
+//  🎯 **통합 단일 복원 시스템**
+//  📌 **영속적 앵커 조합**: ID + CSS 셀렉터 + 콘텐츠 해시
+//  👀 **동적 대기**: MutationObserver + ResizeObserver 활용
+//  🔄 **앵커 재시도**: 로딩 트리거 후 재탐색
+//  📍 **절대좌표 풀백**: 모든 앵커 실패시 최후 수단
+//  📏 **스크롤러 탐지**: 가장 긴 스크롤러 자동 선택
 
 import UIKit
 import WebKit
@@ -25,6 +26,27 @@ struct BFCacheSnapshot: Codable {
     let captureStatus: CaptureStatus
     let version: Int
     
+    // 🎯 통합 앵커 데이터
+    let unifiedAnchors: UnifiedAnchors?
+    
+    struct UnifiedAnchors: Codable {
+        let primaryScrollerSelector: String? // 가장 긴 스크롤러 셀렉터
+        let scrollerHeight: CGFloat
+        let anchors: [UnifiedAnchor]
+        let captureStats: [String: Int]
+    }
+    
+    struct UnifiedAnchor: Codable {
+        let persistentId: String?         // data-id, data-key 등
+        let cssSelector: String           // CSS 경로
+        let contentHash: String?          // 콘텐츠 해시
+        let textPreview: String?          // 텍스트 미리보기
+        let relativePosition: CGPoint     // 앵커 기준 상대 위치
+        let absolutePosition: CGPoint     // 절대 위치 (풀백용)
+        let confidence: Int               // 신뢰도 점수
+        let elementInfo: [String: String] // 추가 요소 정보
+    }
+    
     enum CaptureStatus: String, Codable {
         case complete
         case partial
@@ -34,18 +56,10 @@ struct BFCacheSnapshot: Codable {
     
     // Codable을 위한 CodingKeys
     enum CodingKeys: String, CodingKey {
-        case pageRecord
-        case domSnapshot
-        case scrollPosition
-        case scrollPositionPercent
-        case contentSize
-        case viewportSize
-        case actualScrollableSize
-        case jsState
-        case timestamp
-        case webViewSnapshotPath
-        case captureStatus
-        case version
+        case pageRecord, domSnapshot, scrollPosition, scrollPositionPercent
+        case contentSize, viewportSize, actualScrollableSize
+        case jsState, timestamp, webViewSnapshotPath
+        case captureStatus, version, unifiedAnchors
     }
     
     // Custom encoding/decoding for [String: Any]
@@ -58,6 +72,7 @@ struct BFCacheSnapshot: Codable {
         contentSize = try container.decodeIfPresent(CGSize.self, forKey: .contentSize) ?? CGSize.zero
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
+        unifiedAnchors = try container.decodeIfPresent(UnifiedAnchors.self, forKey: .unifiedAnchors)
         
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
             jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
@@ -78,6 +93,7 @@ struct BFCacheSnapshot: Codable {
         try container.encode(contentSize, forKey: .contentSize)
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
+        try container.encodeIfPresent(unifiedAnchors, forKey: .unifiedAnchors)
         
         if let js = jsState {
             let jsData = try JSONSerialization.data(withJSONObject: js)
@@ -90,33 +106,6 @@ struct BFCacheSnapshot: Codable {
         try container.encode(version, forKey: .version)
     }
     
-    // 직접 초기화용 init
-    init(pageRecord: PageRecord, 
-         domSnapshot: String? = nil, 
-         scrollPosition: CGPoint, 
-         scrollPositionPercent: CGPoint = CGPoint.zero,
-         contentSize: CGSize = CGSize.zero,
-         viewportSize: CGSize = CGSize.zero,
-         actualScrollableSize: CGSize = CGSize.zero,
-         jsState: [String: Any]? = nil, 
-         timestamp: Date, 
-         webViewSnapshotPath: String? = nil, 
-         captureStatus: CaptureStatus = .partial, 
-         version: Int = 1) {
-        self.pageRecord = pageRecord
-        self.domSnapshot = domSnapshot
-        self.scrollPosition = scrollPosition
-        self.scrollPositionPercent = scrollPositionPercent
-        self.contentSize = contentSize
-        self.viewportSize = viewportSize
-        self.actualScrollableSize = actualScrollableSize
-        self.jsState = jsState
-        self.timestamp = timestamp
-        self.webViewSnapshotPath = webViewSnapshotPath
-        self.captureStatus = captureStatus
-        self.version = version
-    }
-    
     // 이미지 로드 메서드
     func loadImage() -> UIImage? {
         guard let path = webViewSnapshotPath else { return nil }
@@ -125,464 +114,421 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **통합 복원 시스템**
+    // MARK: - 🎯 **핵심: 통합 단일 복원 시스템**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        TabPersistenceManager.debugMessages.append("🎯 통합 앵커 기반 BFCache 복원 시작")
-        TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
-        TabPersistenceManager.debugMessages.append("📊 목표 위치: Y=\(String(format: "%.1f", scrollPosition.y))px (\(String(format: "%.2f", scrollPositionPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
+        TabPersistenceManager.debugMessages.append("📊 목표 위치: Y=\(String(format: "%.1f", scrollPosition.y))px (\(String(format: "%.1f", scrollPositionPercent.y))%)")
         
-        let js = generateIntegratedRestorationScript()
+        guard let anchors = unifiedAnchors else {
+            TabPersistenceManager.debugMessages.append("❌ 앵커 데이터 없음 - 절대좌표 풀백")
+            restoreWithAbsolutePosition(webView: webView, completion: completion)
+            return
+        }
         
-        webView.evaluateJavaScript(js) { result, error in
+        TabPersistenceManager.debugMessages.append("📌 앵커 수: \(anchors.anchors.count)개, 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
+        
+        // 통합 복원 스크립트 실행
+        let js = generateUnifiedRestorationScript(anchors: anchors)
+        
+        webView.evaluateJavaScript(js) { [weak self] result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
-                completion(false)
-            } else if let resultDict = result as? [String: Any] {
-                let success = (resultDict["success"] as? Bool) ?? false
-                
-                // 로그 출력
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                // 통계 출력
-                if let stats = resultDict["stats"] as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("📊 복원 통계: \(stats)")
-                }
-                
-                TabPersistenceManager.debugMessages.append("🎯 통합 복원 완료: \(success ? "성공" : "실패")")
-                completion(success)
-            } else {
-                TabPersistenceManager.debugMessages.append("❌ 복원 결과 파싱 오류")
-                completion(false)
+                self?.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                return
             }
+            
+            guard let resultDict = result as? [String: Any] else {
+                TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패")
+                self?.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                return
+            }
+            
+            // 결과 분석
+            let success = (resultDict["success"] as? Bool) ?? false
+            
+            if let phase = resultDict["phase"] as? String {
+                TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
+            }
+            
+            if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                if let selector = matchedAnchor["selector"] as? String {
+                    TabPersistenceManager.debugMessages.append("✅ 매칭된 앵커: \(selector)")
+                }
+                if let confidence = matchedAnchor["confidence"] as? Int {
+                    TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
+                }
+            }
+            
+            if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+            }
+            
+            if let difference = resultDict["difference"] as? [String: Double] {
+                TabPersistenceManager.debugMessages.append("📏 목표 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+            }
+            
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(20) {
+                    TabPersistenceManager.debugMessages.append("  JS: \(log)")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🎯 복원 \(success ? "성공" : "실패")")
+            completion(success)
+        }
+    }
+    
+    // 절대좌표 풀백
+    private func restoreWithAbsolutePosition(webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        TabPersistenceManager.debugMessages.append("📍 절대좌표 풀백 사용")
+        
+        let js = """
+        (function() {
+            const scroller = document.scrollingElement || document.documentElement;
+            const targetX = \(scrollPosition.x);
+            const targetY = \(scrollPosition.y);
+            
+            scroller.scrollLeft = targetX;
+            scroller.scrollTop = targetY;
+            
+            return {
+                success: true,
+                phase: 'absolute_fallback',
+                finalPosition: { x: scroller.scrollLeft, y: scroller.scrollTop },
+                difference: {
+                    x: Math.abs(scroller.scrollLeft - targetX),
+                    y: Math.abs(scroller.scrollTop - targetY)
+                }
+            };
+        })()
+        """
+        
+        webView.evaluateJavaScript(js) { _, _ in
+            completion(false) // 풀백이므로 부분 성공
         }
     }
     
     // MARK: - 🎯 통합 복원 JavaScript 생성
     
-    private func generateIntegratedRestorationScript() -> String {
-        let targetY = scrollPosition.y
-        let targetX = scrollPosition.x
-        let targetPercentY = scrollPositionPercent.y
-        let savedContentHeight = actualScrollableSize.height
-        
-        // 앵커 데이터 JSON 변환
-        var anchorDataJSON = "null"
-        if let jsState = self.jsState,
-           let anchorData = jsState["unifiedAnchors"] as? [[String: Any]] {
-            if let dataJSON = try? JSONSerialization.data(withJSONObject: anchorData),
-               let jsonString = String(data: dataJSON, encoding: .utf8) {
-                anchorDataJSON = jsonString
-            }
+    private func generateUnifiedRestorationScript(anchors: UnifiedAnchors) -> String {
+        // 앵커 데이터를 JSON으로 변환
+        let anchorsJSON: String
+        if let data = try? JSONEncoder().encode(anchors.anchors),
+           let jsonString = String(data: data, encoding: .utf8) {
+            anchorsJSON = jsonString
+        } else {
+            anchorsJSON = "[]"
         }
+        
+        let targetY = scrollPosition.y
+        let percentY = scrollPositionPercent.y
+        let primaryScroller = anchors.primaryScrollerSelector ?? "document.scrollingElement || document.documentElement"
         
         return """
         (function() {
-            'use strict';
-            
             const logs = [];
-            const stats = {
-                renderingWaitTime: 0,
-                anchorMatches: 0,
-                loadingTriggered: false,
-                finalMethod: 'none',
-                finalDifference: 0
-            };
+            const startTime = Date.now();
             
-            // 🎯 타겟 정보
-            const targetY = \(targetY);
-            const targetX = \(targetX);
-            const targetPercentY = \(targetPercentY);
-            const savedContentHeight = \(savedContentHeight);
-            const anchorData = \(anchorDataJSON);
-            
-            logs.push('🎯 통합 복원 시작: Y=' + targetY.toFixed(1) + 'px (' + targetPercentY.toFixed(2) + '%)');
-            
-            // 🔧 유틸리티 함수들
-            function getROOT() {
-                return document.scrollingElement || document.documentElement;
-            }
-            
-            function getCurrentScroll() {
-                const root = getROOT();
-                return {
-                    x: root.scrollLeft || 0,
-                    y: root.scrollTop || 0
-                };
-            }
-            
-            function getMaxScroll() {
-                const root = getROOT();
-                return {
-                    x: Math.max(0, root.scrollWidth - window.innerWidth),
-                    y: Math.max(0, root.scrollHeight - window.innerHeight)
-                };
-            }
-            
-            function scrollToPosition(x, y) {
-                const root = getROOT();
-                root.scrollLeft = x;
-                root.scrollTop = y;
-                return getCurrentScroll();
-            }
-            
-            // 🔍 앵커 매칭 함수들
-            function findElementByPersistentId(anchorInfo) {
-                if (!anchorInfo || !anchorInfo.persistentId) return null;
+            try {
+                logs.push('🎯 통합 앵커 복원 시작');
                 
-                const { id, dataTestId, dataId, ariaLabel } = anchorInfo.persistentId;
-                
-                if (id) {
-                    const element = document.getElementById(id);
-                    if (element) return element;
-                }
-                
-                if (dataTestId) {
-                    const element = document.querySelector('[data-testid="' + dataTestId + '"]');
-                    if (element) return element;
-                }
-                
-                if (dataId) {
-                    const element = document.querySelector('[data-id="' + dataId + '"]');
-                    if (element) return element;
-                }
-                
-                if (ariaLabel) {
-                    const element = document.querySelector('[aria-label="' + ariaLabel + '"]');
-                    if (element) return element;
-                }
-                
-                return null;
-            }
-            
-            function findElementByCssSelector(anchorInfo) {
-                if (!anchorInfo || !anchorInfo.cssSelector) return null;
-                
-                try {
-                    const element = document.querySelector(anchorInfo.cssSelector);
-                    return element;
-                } catch(e) {
-                    return null;
-                }
-            }
-            
-            function findElementByContentHash(anchorInfo) {
-                if (!anchorInfo || !anchorInfo.contentHash) return null;
-                
-                const searchText = anchorInfo.contentHash.text;
-                if (!searchText || searchText.length < 10) return null;
-                
-                const allElements = document.querySelectorAll('*');
-                for (let i = 0; i < allElements.length; i++) {
-                    const element = allElements[i];
-                    const elementText = (element.textContent || '').trim();
-                    if (elementText.includes(searchText)) {
+                // 스크롤러 탐지
+                function findBestScroller() {
+                    const selector = '\(primaryScroller)';
+                    if (selector === 'document.scrollingElement || document.documentElement') {
+                        return document.scrollingElement || document.documentElement;
+                    }
+                    
+                    const element = document.querySelector(selector);
+                    if (element && element.scrollHeight > element.clientHeight) {
+                        logs.push('커스텀 스크롤러 사용: ' + selector);
                         return element;
                     }
-                }
-                
-                return null;
-            }
-            
-            // 🔄 로딩 트리거 함수
-            function triggerContentLoading() {
-                logs.push('🔄 콘텐츠 로딩 트리거 시작');
-                stats.loadingTriggered = true;
-                
-                const root = getROOT();
-                const beforeHeight = root.scrollHeight;
-                
-                // 더보기 버튼 클릭
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(3, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
-                    }
-                }
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 무한 스크롤 트리거
-                root.scrollTop = root.scrollHeight;
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                root.scrollTop = 0; // 다시 위로
-                
-                const afterHeight = root.scrollHeight;
-                const loaded = afterHeight - beforeHeight;
-                
-                if (loaded > 0) {
-                    logs.push('로딩됨: ' + loaded.toFixed(0) + 'px');
-                    return true;
-                }
-                
-                return false;
-            }
-            
-            // 🎯 통합 앵커 복원 함수
-            function restoreWithAnchors(anchors) {
-                if (!anchors || anchors.length === 0) {
-                    logs.push('앵커 데이터 없음');
-                    return false;
-                }
-                
-                logs.push('앵커 복원 시도: ' + anchors.length + '개');
-                
-                for (let i = 0; i < anchors.length; i++) {
-                    const anchor = anchors[i];
-                    let element = null;
-                    let matchMethod = '';
                     
+                    // 폴백: 가장 긴 스크롤러 찾기
+                    const scrollables = Array.from(document.querySelectorAll('*')).filter(el => {
+                        const style = getComputedStyle(el);
+                        return (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                                style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                               el.scrollHeight > el.clientHeight;
+                    });
+                    
+                    if (scrollables.length > 0) {
+                        scrollables.sort((a, b) => b.scrollHeight - a.scrollHeight);
+                        logs.push('가장 긴 스크롤러 자동 선택: ' + scrollables[0].tagName);
+                        return scrollables[0];
+                    }
+                    
+                    return document.scrollingElement || document.documentElement;
+                }
+                
+                const scroller = findBestScroller();
+                const targetY = \(targetY);
+                const percentY = \(percentY);
+                const anchors = \(anchorsJSON);
+                
+                logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
+                logs.push('앵커 수: ' + anchors.length);
+                
+                // DOM 렌더링 완료 대기
+                function waitForDOM() {
+                    return new Promise((resolve) => {
+                        if (document.readyState === 'complete') {
+                            logs.push('DOM 이미 완료');
+                            resolve();
+                            return;
+                        }
+                        
+                        let observer = null;
+                        let resizeObserver = null;
+                        let timeoutId = null;
+                        let changeCount = 0;
+                        let lastHeight = scroller.scrollHeight;
+                        
+                        function checkStability() {
+                            const currentHeight = scroller.scrollHeight;
+                            if (Math.abs(currentHeight - lastHeight) < 10) {
+                                changeCount++;
+                                if (changeCount >= 3) {
+                                    logs.push('DOM 안정화 확인 (높이: ' + currentHeight + 'px)');
+                                    cleanup();
+                                    resolve();
+                                }
+                            } else {
+                                changeCount = 0;
+                                lastHeight = currentHeight;
+                            }
+                        }
+                        
+                        function cleanup() {
+                            if (observer) observer.disconnect();
+                            if (resizeObserver) resizeObserver.disconnect();
+                            if (timeoutId) clearTimeout(timeoutId);
+                        }
+                        
+                        // MutationObserver 설정
+                        observer = new MutationObserver(() => {
+                            checkStability();
+                        });
+                        
+                        observer.observe(document.body, {
+                            childList: true,
+                            subtree: true,
+                            attributes: false,
+                            characterData: false
+                        });
+                        
+                        // ResizeObserver 설정
+                        if (window.ResizeObserver) {
+                            resizeObserver = new ResizeObserver(() => {
+                                checkStability();
+                            });
+                            resizeObserver.observe(scroller === document.documentElement ? document.body : scroller);
+                        }
+                        
+                        // 타임아웃 설정 (최대 3초)
+                        timeoutId = setTimeout(() => {
+                            logs.push('DOM 대기 타임아웃');
+                            cleanup();
+                            resolve();
+                        }, 3000);
+                    });
+                }
+                
+                // 앵커 찾기 함수
+                function findAnchor(anchor) {
                     // 1. 영속적 ID로 찾기
-                    element = findElementByPersistentId(anchor);
-                    if (element) {
-                        matchMethod = 'persistentId';
+                    if (anchor.persistentId) {
+                        const elements = document.querySelectorAll(
+                            '[data-id="' + anchor.persistentId + '"], ' +
+                            '[data-key="' + anchor.persistentId + '"], ' +
+                            '[id="' + anchor.persistentId + '"]'
+                        );
+                        if (elements.length > 0) {
+                            return { element: elements[0], method: 'persistent_id', confidence: 95 };
+                        }
                     }
                     
                     // 2. CSS 셀렉터로 찾기
-                    if (!element) {
-                        element = findElementByCssSelector(anchor);
-                        if (element) {
-                            matchMethod = 'cssSelector';
+                    if (anchor.cssSelector) {
+                        try {
+                            const elements = document.querySelectorAll(anchor.cssSelector);
+                            if (elements.length === 1) {
+                                return { element: elements[0], method: 'css_selector', confidence: 85 };
+                            }
+                            
+                            // 여러 개면 콘텐츠 해시로 필터링
+                            if (elements.length > 1 && anchor.contentHash) {
+                                for (let el of elements) {
+                                    const hash = simpleHash(el.textContent || '');
+                                    if (hash === anchor.contentHash) {
+                                        return { element: el, method: 'css_with_hash', confidence: 90 };
+                                    }
+                                }
+                            }
+                        } catch(e) {
+                            // 셀렉터 오류 무시
                         }
                     }
                     
                     // 3. 콘텐츠 해시로 찾기
-                    if (!element) {
-                        element = findElementByContentHash(anchor);
-                        if (element) {
-                            matchMethod = 'contentHash';
-                        }
-                    }
-                    
-                    if (element) {
-                        stats.anchorMatches++;
-                        const rect = element.getBoundingClientRect();
-                        const root = getROOT();
-                        const elementY = root.scrollTop + rect.top;
-                        
-                        // 저장된 오프셋 적용
-                        const offsetY = anchor.offsetFromViewport || 0;
-                        const targetScrollY = Math.max(0, elementY - offsetY);
-                        
-                        scrollToPosition(targetX, targetScrollY);
-                        
-                        const current = getCurrentScroll();
-                        const diff = Math.abs(current.y - targetY);
-                        
-                        logs.push('앵커 매치 [' + matchMethod + ']: 차이=' + diff.toFixed(1) + 'px');
-                        
-                        if (diff < 100) {
-                            stats.finalMethod = 'anchor_' + matchMethod;
-                            stats.finalDifference = diff;
-                            return true;
-                        }
-                    }
-                }
-                
-                return false;
-            }
-            
-            // 🔄 DOM 렌더링 대기 함수
-            function waitForRendering(callback) {
-                const startTime = Date.now();
-                let renderingComplete = false;
-                let observerTimeout = null;
-                
-                // MutationObserver 설정
-                const mutationObserver = new MutationObserver(function(mutations) {
-                    // DOM 변경 감지됨
-                });
-                
-                // ResizeObserver 설정
-                const resizeObserver = new ResizeObserver(function(entries) {
-                    // 크기 변경 감지됨
-                });
-                
-                // 안정화 체크
-                function checkStability() {
-                    const root = getROOT();
-                    const currentHeight = root.scrollHeight;
-                    
-                    if (observerTimeout) {
-                        clearTimeout(observerTimeout);
-                    }
-                    
-                    observerTimeout = setTimeout(function() {
-                        // 200ms 동안 변화 없으면 안정화로 판단
-                        renderingComplete = true;
-                        cleanup();
-                        const waitTime = Date.now() - startTime;
-                        stats.renderingWaitTime = waitTime;
-                        logs.push('렌더링 완료 감지: ' + waitTime + 'ms');
-                        callback();
-                    }, 200);
-                }
-                
-                function cleanup() {
-                    mutationObserver.disconnect();
-                    resizeObserver.disconnect();
-                    if (observerTimeout) {
-                        clearTimeout(observerTimeout);
-                    }
-                }
-                
-                // 관찰 시작
-                mutationObserver.observe(document.body, {
-                    childList: true,
-                    subtree: true,
-                    attributes: false,
-                    characterData: false
-                });
-                
-                const root = getROOT();
-                resizeObserver.observe(root);
-                resizeObserver.observe(document.body);
-                
-                // 변경 감지 시작
-                mutationObserver.callback = checkStability;
-                resizeObserver.callback = checkStability;
-                
-                checkStability();
-                
-                // 최대 대기 시간 (2초)
-                setTimeout(function() {
-                    if (!renderingComplete) {
-                        cleanup();
-                        logs.push('렌더링 대기 타임아웃');
-                        callback();
-                    }
-                }, 2000);
-            }
-            
-            // 🎯 메인 복원 로직
-            function performRestoration() {
-                const root = getROOT();
-                const currentHeight = root.scrollHeight;
-                
-                logs.push('현재 콘텐츠 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('저장된 콘텐츠 높이: ' + savedContentHeight.toFixed(0) + 'px');
-                
-                // 1. 앵커 기반 복원 시도
-                if (anchorData && anchorData.length > 0) {
-                    if (restoreWithAnchors(anchorData)) {
-                        logs.push('✅ 앵커 복원 성공');
-                        return finishRestoration(true);
-                    }
-                    
-                    // 2. 앵커 못 찾으면 로딩 트리거 후 재시도
-                    logs.push('앵커 못 찾음 - 콘텐츠 로딩 시도');
-                    if (triggerContentLoading()) {
-                        // 로딩 후 렌더링 대기
-                        waitForRendering(function() {
-                            if (restoreWithAnchors(anchorData)) {
-                                logs.push('✅ 로딩 후 앵커 복원 성공');
-                                return finishRestoration(true);
-                            } else {
-                                logs.push('로딩 후에도 앵커 못 찾음');
-                                fallbackToAbsolutePosition();
-                            }
+                    if (anchor.contentHash && anchor.textPreview) {
+                        const searchText = anchor.textPreview.substring(0, 50);
+                        const candidates = Array.from(document.querySelectorAll('*')).filter(el => {
+                            const text = el.textContent || '';
+                            return text.length > 20 && text.includes(searchText);
                         });
-                        return; // 비동기 처리 중
+                        
+                        for (let el of candidates) {
+                            const hash = simpleHash(el.textContent || '');
+                            if (hash === anchor.contentHash) {
+                                return { element: el, method: 'content_hash', confidence: 75 };
+                            }
+                        }
                     }
+                    
+                    return null;
                 }
                 
-                // 3. 최종 풀백: 절대 좌표 복원
-                fallbackToAbsolutePosition();
-            }
-            
-            // 📍 절대 좌표 풀백
-            function fallbackToAbsolutePosition() {
-                logs.push('📍 절대 좌표 풀백 시작');
-                
-                const max = getMaxScroll();
-                
-                // 퍼센트 기반 복원 시도
-                if (targetPercentY > 0) {
-                    const calculatedY = (targetPercentY / 100) * max.y;
-                    scrollToPosition(targetX, calculatedY);
-                    
-                    const current = getCurrentScroll();
-                    const diff = Math.abs(current.y - targetY);
-                    
-                    logs.push('퍼센트 복원: Y=' + calculatedY.toFixed(1) + 'px, 차이=' + diff.toFixed(1) + 'px');
-                    
-                    if (diff < 50) {
-                        stats.finalMethod = 'percent';
-                        stats.finalDifference = diff;
-                        return finishRestoration(true);
+                // 간단한 해시 함수
+                function simpleHash(str) {
+                    let hash = 0;
+                    if (!str || str.length === 0) return '';
+                    for (let i = 0; i < str.length; i++) {
+                        const char = str.charCodeAt(i);
+                        hash = ((hash << 5) - hash) + char;
+                        hash = hash & hash;
                     }
+                    return Math.abs(hash).toString(36);
                 }
                 
-                // 절대 좌표 복원
-                scrollToPosition(targetX, targetY);
-                const current = getCurrentScroll();
-                const diff = Math.abs(current.y - targetY);
+                // 로딩 트리거 함수
+                function triggerLoading() {
+                    logs.push('로딩 트리거 시도');
+                    
+                    // 스크롤 이벤트 발생
+                    scroller.scrollTop = scroller.scrollHeight;
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    
+                    // IntersectionObserver 트리거
+                    const bottomElement = document.elementFromPoint(
+                        window.innerWidth / 2,
+                        window.innerHeight - 10
+                    );
+                    if (bottomElement) {
+                        bottomElement.scrollIntoView({ block: 'end' });
+                    }
+                    
+                    // 더보기 버튼 클릭
+                    const loadMoreButtons = document.querySelectorAll(
+                        'button[class*="more"], [class*="load"], .load-more'
+                    );
+                    loadMoreButtons.forEach(btn => {
+                        if (btn && typeof btn.click === 'function') {
+                            btn.click();
+                        }
+                    });
+                    
+                    return new Promise(resolve => {
+                        setTimeout(resolve, 500); // 로딩 대기
+                    });
+                }
                 
-                logs.push('절대 좌표 복원: Y=' + targetY.toFixed(1) + 'px, 차이=' + diff.toFixed(1) + 'px');
+                // 복원 실행
+                async function performRestoration() {
+                    await waitForDOM();
+                    
+                    let matchedAnchor = null;
+                    let bestMatch = null;
+                    let phase = 'initial';
+                    
+                    // 첫 번째 시도: 모든 앵커 탐색
+                    for (let anchor of anchors) {
+                        const result = findAnchor(anchor);
+                        if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
+                            bestMatch = result;
+                            matchedAnchor = anchor;
+                            if (result.confidence >= 90) break; // 충분히 신뢰할 수 있으면 중단
+                        }
+                    }
+                    
+                    // 앵커를 못 찾았으면 로딩 트리거 후 재시도
+                    if (!bestMatch || bestMatch.confidence < 75) {
+                        logs.push('앵커 신뢰도 낮음 - 로딩 트리거');
+                        await triggerLoading();
+                        await waitForDOM();
+                        
+                        phase = 'after_loading';
+                        
+                        // 재시도
+                        for (let anchor of anchors) {
+                            const result = findAnchor(anchor);
+                            if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
+                                bestMatch = result;
+                                matchedAnchor = anchor;
+                                if (result.confidence >= 90) break;
+                            }
+                        }
+                    }
+                    
+                    // 앵커 기반 스크롤
+                    if (bestMatch && matchedAnchor) {
+                        logs.push('앵커 매칭: ' + bestMatch.method + ' (신뢰도: ' + bestMatch.confidence + '%)');
+                        
+                        const rect = bestMatch.element.getBoundingClientRect();
+                        const elementTop = scroller.scrollTop + rect.top;
+                        const targetScrollTop = elementTop - matchedAnchor.relativePosition.y;
+                        
+                        scroller.scrollTop = targetScrollTop;
+                        
+                        logs.push('앵커 기반 스크롤: ' + targetScrollTop.toFixed(1) + 'px');
+                        phase = 'anchor_restored';
+                    } else {
+                        // 절대좌표 풀백
+                        logs.push('앵커 없음 - 절대좌표 풀백');
+                        
+                        // 백분율 우선 시도
+                        if (percentY > 0) {
+                            const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+                            scroller.scrollTop = (percentY / 100) * maxScroll;
+                        } else {
+                            scroller.scrollTop = targetY;
+                        }
+                        
+                        phase = 'absolute_fallback';
+                    }
+                    
+                    // 최종 위치
+                    const finalY = scroller.scrollTop;
+                    const difference = Math.abs(finalY - targetY);
+                    const success = difference < 100; // 100px 이내면 성공
+                    
+                    return {
+                        success: success,
+                        phase: phase,
+                        matchedAnchor: bestMatch ? {
+                            method: bestMatch.method,
+                            confidence: bestMatch.confidence,
+                            selector: matchedAnchor?.cssSelector
+                        } : null,
+                        finalPosition: { x: scroller.scrollLeft, y: finalY },
+                        targetPosition: { x: 0, y: targetY },
+                        difference: { x: 0, y: difference },
+                        logs: logs,
+                        duration: Date.now() - startTime
+                    };
+                }
                 
-                stats.finalMethod = 'absolute';
-                stats.finalDifference = diff;
-                finishRestoration(diff < 100);
-            }
-            
-            // 완료 처리
-            function finishRestoration(success) {
-                const current = getCurrentScroll();
-                const max = getMaxScroll();
-                
-                logs.push('=== 복원 완료 ===');
-                logs.push('최종 위치: Y=' + current.y.toFixed(1) + 'px');
-                logs.push('목표 위치: Y=' + targetY.toFixed(1) + 'px');
-                logs.push('최종 차이: ' + Math.abs(current.y - targetY).toFixed(1) + 'px');
-                logs.push('복원 방법: ' + stats.finalMethod);
-                logs.push('성공 여부: ' + (success ? '성공' : '실패'));
-                
-                return {
-                    success: success,
-                    finalPosition: current,
-                    targetPosition: { x: targetX, y: targetY },
-                    difference: Math.abs(current.y - targetY),
-                    method: stats.finalMethod,
-                    stats: stats,
-                    logs: logs
-                };
-            }
-            
-            // 실행 시작
-            try {
-                // DOM 렌더링 대기 후 복원 시작
-                waitForRendering(function() {
-                    performRestoration();
-                });
-                
-                // 동기적 반환 (비동기 처리는 콜백으로)
-                return {
-                    success: false,
-                    message: 'Processing...',
-                    logs: logs,
-                    stats: stats
-                };
+                // 실행
+                return performRestoration();
                 
             } catch(e) {
-                logs.push('❌ 오류: ' + e.message);
                 return {
                     success: false,
+                    phase: 'error',
                     error: e.message,
-                    logs: logs,
-                    stats: stats
+                    logs: logs
                 };
             }
         })()
@@ -593,7 +539,8 @@ struct BFCacheSnapshot: Codable {
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
     
-    // MARK: - 캡처 작업 구조체
+    // MARK: - 🔧 통합 캡처 작업
+    
     private struct CaptureTask {
         let pageRecord: PageRecord
         let tabID: UUID?
@@ -610,7 +557,7 @@ extension BFCacheTransitionSystem {
         
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
         
-        TabPersistenceManager.debugMessages.append("📸 통합 앵커 캡처 시작: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("📸 통합 앵커 캡처 시작: \(pageRecord.url.host ?? "unknown")")
         
         serialQueue.async { [weak self] in
             self?.performAtomicCapture(task)
@@ -621,15 +568,14 @@ extension BFCacheTransitionSystem {
         let pageID = task.pageRecord.id
         
         guard let webView = task.webView else {
-            TabPersistenceManager.debugMessages.append("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
+            TabPersistenceManager.debugMessages.append("❌ 웹뷰 해제됨 - 캡처 취소")
             return
         }
         
-        TabPersistenceManager.debugMessages.append("📸 원자적 캡처 시작: \(task.pageRecord.title) (\(task.type))")
-        
+        // 메인 스레드에서 웹뷰 상태 확인
         let captureData = DispatchQueue.main.sync { () -> CaptureData? in
             guard webView.window != nil, !webView.bounds.isEmpty else {
-                TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵")
+                TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨")
                 return nil
             }
             
@@ -655,32 +601,14 @@ extension BFCacheTransitionSystem {
             retryCount: task.type == .immediate ? 2 : 0
         )
         
-        // 캡처된 앵커 데이터 로깅
-        if let jsState = captureResult.snapshot.jsState {
-            if let anchors = jsState["unifiedAnchors"] as? [[String: Any]] {
-                TabPersistenceManager.debugMessages.append("📦 통합 앵커 캡처: \(anchors.count)개")
-                
-                var persistentCount = 0
-                var cssCount = 0
-                var hashCount = 0
-                
-                for anchor in anchors {
-                    if anchor["persistentId"] != nil { persistentCount += 1 }
-                    if anchor["cssSelector"] != nil { cssCount += 1 }
-                    if anchor["contentHash"] != nil { hashCount += 1 }
-                }
-                
-                TabPersistenceManager.debugMessages.append("📦 앵커 타입: ID=\(persistentCount), CSS=\(cssCount), Hash=\(hashCount)")
-            }
-        }
-        
+        // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
         
-        TabPersistenceManager.debugMessages.append("✅ 캡처 완료: \(task.pageRecord.title)")
+        TabPersistenceManager.debugMessages.append("✅ 통합 앵커 캡처 완료: \(task.pageRecord.title)")
     }
     
     private struct CaptureData {
@@ -699,7 +627,7 @@ extension BFCacheTransitionSystem {
             
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
-                    TabPersistenceManager.debugMessages.append("🔄 재시도 후 캡처 성공: \(pageRecord.title) (시도: \(attempt + 1))")
+                    TabPersistenceManager.debugMessages.append("🔄 재시도 후 캡처 성공: 시도 \(attempt + 1)")
                 }
                 return result
             }
@@ -708,16 +636,29 @@ extension BFCacheTransitionSystem {
             Thread.sleep(forTimeInterval: 0.08)
         }
         
-        return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, actualScrollableSize: captureData.actualScrollableSize, timestamp: Date(), captureStatus: .failed, version: 1), nil)
+        // 모든 시도 실패
+        return (BFCacheSnapshot(
+            pageRecord: pageRecord,
+            domSnapshot: nil,
+            scrollPosition: captureData.scrollPosition,
+            scrollPositionPercent: CGPoint.zero,
+            contentSize: captureData.contentSize,
+            viewportSize: captureData.viewportSize,
+            actualScrollableSize: captureData.actualScrollableSize,
+            jsState: nil,
+            timestamp: Date(),
+            webViewSnapshotPath: nil,
+            captureStatus: .failed,
+            version: 1,
+            unifiedAnchors: nil
+        ), nil)
     }
     
     private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
-        var jsState: [String: Any]? = nil
+        var unifiedAnchors: BFCacheSnapshot.UnifiedAnchors? = nil
         let semaphore = DispatchSemaphore(value: 0)
-        
-        TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 시도: \(pageRecord.title)")
         
         // 1. 비주얼 스냅샷
         DispatchQueue.main.sync {
@@ -727,11 +668,10 @@ extension BFCacheTransitionSystem {
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("📸 스냅샷 실패: \(error.localizedDescription)")
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
-                    TabPersistenceManager.debugMessages.append("📸 스냅샷 성공")
                 }
                 semaphore.signal()
             }
@@ -745,7 +685,6 @@ extension BFCacheTransitionSystem {
         
         // 2. DOM 캡처
         let domSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 시작")
         
         DispatchQueue.main.sync {
             let domScript = """
@@ -753,62 +692,52 @@ extension BFCacheTransitionSystem {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
-                    document.querySelectorAll('[class*="active"], [class*="pressed"]').forEach(function(el) {
-                        var classList = Array.from(el.classList);
-                        for (var i = 0; i < classList.length; i++) {
-                            if (classList[i].includes('active') || classList[i].includes('pressed')) {
-                                el.classList.remove(classList[i]);
-                            }
-                        }
+                    // 활성 상태 제거
+                    document.querySelectorAll('[class*="active"], [class*="pressed"]').forEach(el => {
+                        const classes = Array.from(el.classList).filter(c => 
+                            !c.includes('active') && !c.includes('pressed')
+                        );
+                        el.className = classes.join(' ');
                     });
                     
-                    document.querySelectorAll('input:focus, textarea:focus').forEach(function(el) {
-                        el.blur();
-                    });
-                    
-                    var html = document.documentElement.outerHTML;
+                    const html = document.documentElement.outerHTML;
                     return html.length > 500000 ? html.substring(0, 500000) : html;
                 } catch(e) { return null; }
             })()
             """
             
             webView.evaluateJavaScript(domScript) { result, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 실패: \(error.localizedDescription)")
-                } else if let dom = result as? String {
+                if let dom = result as? String {
                     domSnapshot = dom
-                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 성공: \(dom.count)문자")
+                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처: \(dom.count)문자")
                 }
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 5.0)
+        _ = domSemaphore.wait(timeout: .now() + 1.0)
         
-        // 3. 통합 앵커 JS 상태 캡처
-        let jsSemaphore = DispatchSemaphore(value: 0)
-        TabPersistenceManager.debugMessages.append("📦 통합 앵커 JS 캡처 시작")
+        // 3. 통합 앵커 캡처
+        let anchorSemaphore = DispatchSemaphore(value: 0)
         
         DispatchQueue.main.sync {
-            let jsScript = generateUnifiedAnchorCaptureScript()
+            let anchorScript = generateUnifiedAnchorCaptureScript()
             
-            webView.evaluateJavaScript(jsScript) { result, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("❌ JS 캡처 오류: \(error.localizedDescription)")
-                } else if let data = result as? [String: Any] {
-                    jsState = data
-                    TabPersistenceManager.debugMessages.append("✅ JS 캡처 성공")
+            webView.evaluateJavaScript(anchorScript) { result, error in
+                if let data = result as? [String: Any] {
+                    unifiedAnchors = self.parseUnifiedAnchors(from: data)
+                    TabPersistenceManager.debugMessages.append("📌 앵커 캡처: \(unifiedAnchors?.anchors.count ?? 0)개")
                 }
-                jsSemaphore.signal()
+                anchorSemaphore.signal()
             }
         }
-        _ = jsSemaphore.wait(timeout: .now() + 3.0)
+        _ = anchorSemaphore.wait(timeout: .now() + 2.0)
         
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
-        if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
+        if visualSnapshot != nil && domSnapshot != nil && unifiedAnchors != nil {
             captureStatus = .complete
         } else if visualSnapshot != nil {
-            captureStatus = jsState != nil ? .partial : .visualOnly
+            captureStatus = unifiedAnchors != nil ? .partial : .visualOnly
         } else {
             captureStatus = .failed
         }
@@ -834,8 +763,6 @@ extension BFCacheTransitionSystem {
             scrollPercent = CGPoint.zero
         }
         
-        TabPersistenceManager.debugMessages.append("📊 캡처 완료: Y=\(String(format: "%.1f", captureData.scrollPosition.y))px (\(String(format: "%.2f", scrollPercent.y))%)")
-        
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -844,182 +771,248 @@ extension BFCacheTransitionSystem {
             contentSize: captureData.contentSize,
             viewportSize: captureData.viewportSize,
             actualScrollableSize: captureData.actualScrollableSize,
-            jsState: jsState,
+            jsState: nil,
             timestamp: Date(),
             webViewSnapshotPath: nil,
             captureStatus: captureStatus,
-            version: version
+            version: version,
+            unifiedAnchors: unifiedAnchors
         )
         
         return (snapshot, visualSnapshot)
     }
     
-    // 🎯 통합 앵커 캡처 JavaScript
+    // 통합 앵커 파싱
+    private func parseUnifiedAnchors(from data: [String: Any]) -> BFCacheSnapshot.UnifiedAnchors? {
+        guard let anchorsArray = data["anchors"] as? [[String: Any]] else {
+            return nil
+        }
+        
+        let anchors = anchorsArray.compactMap { dict -> BFCacheSnapshot.UnifiedAnchor? in
+            guard let cssSelector = dict["cssSelector"] as? String,
+                  let absolutePos = dict["absolutePosition"] as? [String: Double],
+                  let relativePos = dict["relativePosition"] as? [String: Double] else {
+                return nil
+            }
+            
+            return BFCacheSnapshot.UnifiedAnchor(
+                persistentId: dict["persistentId"] as? String,
+                cssSelector: cssSelector,
+                contentHash: dict["contentHash"] as? String,
+                textPreview: dict["textPreview"] as? String,
+                relativePosition: CGPoint(x: relativePos["x"] ?? 0, y: relativePos["y"] ?? 0),
+                absolutePosition: CGPoint(x: absolutePos["x"] ?? 0, y: absolutePos["y"] ?? 0),
+                confidence: (dict["confidence"] as? Int) ?? 0,
+                elementInfo: (dict["elementInfo"] as? [String: String]) ?? [:]
+            )
+        }
+        
+        let stats = (data["stats"] as? [String: Int]) ?? [:]
+        
+        return BFCacheSnapshot.UnifiedAnchors(
+            primaryScrollerSelector: data["primaryScroller"] as? String,
+            scrollerHeight: (data["scrollerHeight"] as? Double).map { CGFloat($0) } ?? 0,
+            anchors: anchors,
+            captureStats: stats
+        )
+    }
+    
+    // MARK: - JavaScript 앵커 캡처 스크립트
+    
     private func generateUnifiedAnchorCaptureScript() -> String {
         return """
         (function() {
-            'use strict';
-            
             try {
-                console.log('📦 통합 앵커 캡처 시작');
+                const logs = [];
                 
-                const ROOT = document.scrollingElement || document.documentElement;
-                const scrollY = ROOT.scrollTop || 0;
-                const scrollX = ROOT.scrollLeft || 0;
-                const viewportHeight = window.innerHeight;
-                const viewportWidth = window.innerWidth;
-                
-                // 앵커 수집 함수
-                function collectUnifiedAnchors() {
-                    const anchors = [];
-                    const viewportCenterY = scrollY + (viewportHeight / 2);
-                    
-                    // 보이는 영역의 요소들 수집
-                    const candidates = [];
-                    const selectors = [
-                        '[id]', '[data-testid]', '[data-id]', '[aria-label]',
-                        'article', 'section', 'li', '.item', '.post', '.card',
-                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+                // 가장 긴 스크롤러 찾기
+                function findLongestScroller() {
+                    const candidates = [
+                        document.documentElement,
+                        document.body,
+                        ...Array.from(document.querySelectorAll('*')).filter(el => {
+                            const style = getComputedStyle(el);
+                            return (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                                    style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                                   el.scrollHeight > el.clientHeight;
+                        })
                     ];
                     
-                    for (let selector of selectors) {
-                        try {
-                            const elements = document.querySelectorAll(selector);
-                            for (let element of elements) {
-                                const rect = element.getBoundingClientRect();
-                                if (rect.height > 0 && rect.width > 0) {
-                                    // 뷰포트 내에 있는지 확인
-                                    const inViewport = rect.bottom > 0 && rect.top < viewportHeight;
-                                    if (inViewport) {
-                                        candidates.push({
-                                            element: element,
-                                            rect: rect,
-                                            distance: Math.abs((scrollY + rect.top + rect.height/2) - viewportCenterY)
-                                        });
-                                    }
-                                }
-                            }
-                        } catch(e) {
-                            // 선택자 오류 무시
-                        }
-                    }
+                    candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
                     
-                    // 뷰포트 중심 기준으로 정렬
-                    candidates.sort((a, b) => a.distance - b.distance);
+                    const scroller = candidates[0] || document.documentElement;
+                    const selector = scroller === document.documentElement ? null :
+                                    scroller.id ? '#' + scroller.id :
+                                    scroller.className ? '.' + scroller.className.split(' ')[0] :
+                                    scroller.tagName.toLowerCase();
                     
-                    // 상위 30개만 선택
-                    const selected = candidates.slice(0, 30);
-                    
-                    for (let item of selected) {
-                        const element = item.element;
-                        const rect = item.rect;
-                        
-                        const anchor = {
-                            // 영속적 ID
-                            persistentId: null,
-                            // CSS 셀렉터
-                            cssSelector: null,
-                            // 콘텐츠 해시
-                            contentHash: null,
-                            // 위치 정보
-                            offsetFromViewport: rect.top,
-                            absoluteY: scrollY + rect.top,
-                            relativePercent: ((scrollY + rect.top) / ROOT.scrollHeight) * 100
-                        };
-                        
-                        // 영속적 ID 수집
-                        if (element.id) {
-                            anchor.persistentId = { id: element.id };
-                        } else if (element.dataset.testid) {
-                            anchor.persistentId = { dataTestId: element.dataset.testid };
-                        } else if (element.dataset.id) {
-                            anchor.persistentId = { dataId: element.dataset.id };
-                        } else if (element.getAttribute('aria-label')) {
-                            anchor.persistentId = { ariaLabel: element.getAttribute('aria-label') };
-                        }
-                        
-                        // CSS 셀렉터 생성
-                        try {
-                            let selector = '';
-                            let current = element;
-                            let depth = 0;
-                            
-                            while (current && current !== document.body && depth < 3) {
-                                let part = current.tagName.toLowerCase();
-                                
-                                if (current.id) {
-                                    part = '#' + current.id;
-                                    selector = part + (selector ? ' > ' + selector : '');
-                                    break;
-                                }
-                                
-                                if (current.className && typeof current.className === 'string') {
-                                    const classes = current.className.trim().split(/\\s+/);
-                                    if (classes.length > 0 && classes[0]) {
-                                        part += '.' + classes[0];
-                                    }
-                                }
-                                
-                                // nth-child 추가
-                                if (current.parentElement) {
-                                    const siblings = Array.from(current.parentElement.children);
-                                    const index = siblings.indexOf(current);
-                                    if (index > 0) {
-                                        part += ':nth-child(' + (index + 1) + ')';
-                                    }
-                                }
-                                
-                                selector = part + (selector ? ' > ' + selector : '');
-                                current = current.parentElement;
-                                depth++;
-                            }
-                            
-                            if (selector) {
-                                anchor.cssSelector = selector;
-                            }
-                        } catch(e) {
-                            // 셀렉터 생성 실패 무시
-                        }
-                        
-                        // 콘텐츠 해시
-                        const text = (element.textContent || '').trim();
-                        if (text.length >= 20) {
-                            anchor.contentHash = {
-                                text: text.substring(0, 100),
-                                length: text.length
-                            };
-                        }
-                        
-                        // 유효한 앵커만 추가
-                        if (anchor.persistentId || anchor.cssSelector || anchor.contentHash) {
-                            anchors.push(anchor);
-                        }
-                    }
-                    
-                    return anchors;
+                    return { element: scroller, selector: selector };
                 }
                 
-                const anchors = collectUnifiedAnchors();
-                console.log('📦 통합 앵커 수집 완료:', anchors.length);
+                const scrollerInfo = findLongestScroller();
+                const scroller = scrollerInfo.element;
+                const scrollY = scroller.scrollTop || 0;
+                const scrollHeight = scroller.scrollHeight || 0;
+                const clientHeight = scroller.clientHeight || window.innerHeight;
+                
+                logs.push('스크롤러: ' + (scrollerInfo.selector || 'document'));
+                logs.push('스크롤 위치: ' + scrollY + '/' + scrollHeight);
+                
+                // 보이는 영역
+                const viewportTop = scrollY;
+                const viewportBottom = scrollY + clientHeight;
+                const viewportCenter = scrollY + (clientHeight / 2);
+                
+                // 요소 수집
+                const visibleElements = [];
+                const allElements = document.querySelectorAll(
+                    'article, section, li, div[class], [data-id], [data-key], .item, .post, .card'
+                );
+                
+                for (let element of allElements) {
+                    const rect = element.getBoundingClientRect();
+                    const absoluteTop = scrollY + rect.top;
+                    const absoluteBottom = scrollY + rect.bottom;
+                    
+                    // 보이는 영역에 있는지 확인
+                    if (absoluteBottom > viewportTop && absoluteTop < viewportBottom) {
+                        const text = (element.textContent || '').trim();
+                        if (text.length > 20) {
+                            visibleElements.push({
+                                element: element,
+                                rect: rect,
+                                absoluteTop: absoluteTop,
+                                text: text,
+                                distanceFromCenter: Math.abs(absoluteTop + rect.height/2 - viewportCenter)
+                            });
+                        }
+                    }
+                }
+                
+                // 중심에 가까운 순으로 정렬
+                visibleElements.sort((a, b) => a.distanceFromCenter - b.distanceFromCenter);
+                
+                // 상위 30개 선택
+                const selectedElements = visibleElements.slice(0, 30);
+                logs.push('선택된 요소: ' + selectedElements.length);
+                
+                // 앵커 생성
+                const anchors = [];
+                const stats = {
+                    total: selectedElements.length,
+                    withId: 0,
+                    withDataAttr: 0,
+                    withHash: 0
+                };
+                
+                function simpleHash(str) {
+                    if (!str) return '';
+                    let hash = 0;
+                    for (let i = 0; i < Math.min(str.length, 100); i++) {
+                        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                        hash = hash & hash;
+                    }
+                    return Math.abs(hash).toString(36);
+                }
+                
+                function getCSSPath(element) {
+                    const path = [];
+                    let current = element;
+                    let depth = 0;
+                    
+                    while (current && current !== document.body && depth < 5) {
+                        let selector = current.tagName.toLowerCase();
+                        
+                        if (current.id) {
+                            selector = '#' + current.id;
+                            path.unshift(selector);
+                            break;
+                        }
+                        
+                        if (current.className) {
+                            const classes = current.className.trim().split(/\\s+/)
+                                .filter(c => c && !c.includes('active') && !c.includes('hover'));
+                            if (classes.length > 0) {
+                                selector += '.' + classes[0];
+                            }
+                        }
+                        
+                        // nth-child 추가
+                        if (current.parentElement) {
+                            const siblings = Array.from(current.parentElement.children);
+                            const sameTagSiblings = siblings.filter(s => s.tagName === current.tagName);
+                            if (sameTagSiblings.length > 1) {
+                                const index = sameTagSiblings.indexOf(current) + 1;
+                                selector += ':nth-child(' + index + ')';
+                            }
+                        }
+                        
+                        path.unshift(selector);
+                        current = current.parentElement;
+                        depth++;
+                    }
+                    
+                    return path.join(' > ');
+                }
+                
+                for (let item of selectedElements) {
+                    const element = item.element;
+                    const rect = item.rect;
+                    
+                    // 영속적 ID 추출
+                    let persistentId = null;
+                    if (element.id) {
+                        persistentId = element.id;
+                        stats.withId++;
+                    } else if (element.dataset.id) {
+                        persistentId = element.dataset.id;
+                        stats.withDataAttr++;
+                    } else if (element.dataset.key) {
+                        persistentId = element.dataset.key;
+                        stats.withDataAttr++;
+                    }
+                    
+                    // CSS 경로
+                    const cssPath = getCSSPath(element);
+                    
+                    // 콘텐츠 해시
+                    const hash = simpleHash(item.text);
+                    if (hash) stats.withHash++;
+                    
+                    // 상대 위치 (앵커에서 스크롤 위치까지의 거리)
+                    const relativeY = scrollY - item.absoluteTop;
+                    
+                    anchors.push({
+                        persistentId: persistentId,
+                        cssSelector: cssPath,
+                        contentHash: hash,
+                        textPreview: item.text.substring(0, 100),
+                        relativePosition: { x: 0, y: relativeY },
+                        absolutePosition: { x: rect.left, y: item.absoluteTop },
+                        confidence: persistentId ? 95 : (hash ? 75 : 50),
+                        elementInfo: {
+                            tag: element.tagName,
+                            classes: element.className || '',
+                            width: rect.width.toString(),
+                            height: rect.height.toString()
+                        }
+                    });
+                }
                 
                 return {
-                    unifiedAnchors: anchors,
-                    scroll: { x: scrollX, y: scrollY },
-                    viewport: { width: viewportWidth, height: viewportHeight },
-                    content: { 
-                        width: ROOT.scrollWidth,
-                        height: ROOT.scrollHeight
-                    },
-                    timestamp: Date.now(),
-                    href: window.location.href,
-                    title: document.title
+                    anchors: anchors,
+                    stats: stats,
+                    primaryScroller: scrollerInfo.selector,
+                    scrollerHeight: scrollHeight,
+                    scrollPosition: { x: 0, y: scrollY },
+                    logs: logs
                 };
                 
             } catch(e) {
-                console.error('📦 앵커 캡처 실패:', e);
                 return {
-                    unifiedAnchors: [],
-                    error: e.message
+                    error: e.message,
+                    anchors: [],
+                    stats: {}
                 };
             }
         })()
@@ -1031,5 +1024,24 @@ extension BFCacheTransitionSystem {
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
+    }
+    
+    // MARK: - JavaScript 스크립트
+    
+    static func makeBFCacheScript() -> WKUserScript {
+        let scriptSource = """
+        window.addEventListener('pageshow', function(event) {
+            if (event.persisted) {
+                console.log('📸 BFCache 페이지 복원');
+            }
+        });
+        
+        window.addEventListener('pagehide', function(event) {
+            if (event.persisted) {
+                console.log('💾 BFCache 페이지 저장');
+            }
+        });
+        """
+        return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
