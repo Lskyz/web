@@ -212,8 +212,9 @@ struct BFCacheSnapshot: Codable {
         }
         
         return """
-        (async function() {
-            try {
+        (function() {
+            (async function() {
+                try {
                 const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
@@ -707,6 +708,8 @@ struct BFCacheSnapshot: Codable {
                     logs: ['우선순위 기반 복원 실패: ' + e.message]
                 });
             }
+            })();
+            return true;
         })();
         """
     }
