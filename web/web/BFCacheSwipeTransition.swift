@@ -159,82 +159,60 @@ struct BFCacheSnapshot: Codable {
         
         TabPersistenceManager.debugMessages.append("📌 앵커 수: \(anchors.anchors.count)개, 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
         
-        // iOS 14+ callAsyncJavaScript 사용
-        if #available(iOS 14.0, *) {
-            let js = generateAsyncRestorationScript(anchors: anchors)
-            let arguments: [String: Any] = [
-                "targetY": scrollPosition.y,
-                "percentY": scrollPositionPercent.y,
-                "anchorsData": convertAnchorsToDict(anchors.anchors),
-                "primaryScroller": anchors.primaryScrollerSelector ?? "document.scrollingElement || document.documentElement"
-            ]
-            
-            webView.callAsyncJavaScript(js, arguments: arguments, in: nil, in: .page) { result in
-                switch result {
-                case .success(let value):
-                    guard let resultDict = value as? [String: Any] else {
-                        TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패")
-                        self.restoreWithAbsolutePosition(webView: webView, completion: completion)
-                        return
-                    }
-                    
-                    // 결과 분석
-                    let success = (resultDict["success"] as? Bool) ?? false
-                    
-                    if let phase = resultDict["phase"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
-                    }
-                    
-                    if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                        if let selector = matchedAnchor["selector"] as? String {
-                            TabPersistenceManager.debugMessages.append("✅ 매칭된 앵커: \(selector)")
-                        }
-                        if let confidence = matchedAnchor["confidence"] as? Int {
-                            TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
-                        }
-                    }
-                    
-                    if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                    }
-                    
-                    if let difference = resultDict["difference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 목표 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                    }
-                    
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(20) {
-                            TabPersistenceManager.debugMessages.append("  JS: \(log)")
-                        }
-                    }
-                    
-                    TabPersistenceManager.debugMessages.append("🎯 복원 \(success ? "성공" : "실패")")
-                    completion(success)
-                    
-                case .failure(let error):
-                    TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
-                    self.restoreWithAbsolutePosition(webView: webView, completion: completion)
-                }
-            }
-        } else {
-            // iOS 13 이하 폴백 - evaluateJavaScript 사용
-            let js = generateFallbackRestorationScript(anchors: anchors)
-            webView.evaluateJavaScript(js) { result, error in
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
-                    self.restoreWithAbsolutePosition(webView: webView, completion: completion)
-                    return
-                }
-                
-                guard let resultDict = result as? [String: Any] else {
+        // callAsyncJavaScript 사용
+        let js = generateAsyncRestorationScript(anchors: anchors)
+        let arguments: [String: Any] = [
+            "targetY": scrollPosition.y,
+            "percentY": scrollPositionPercent.y,
+            "anchorsData": convertAnchorsToDict(anchors.anchors),
+            "primaryScroller": anchors.primaryScrollerSelector ?? "document.scrollingElement || document.documentElement"
+        ]
+        
+        webView.callAsyncJavaScript(js, arguments: arguments, in: nil, in: .page) { result in
+            switch result {
+            case .success(let value):
+                guard let resultDict = value as? [String: Any] else {
                     TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패")
                     self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                     return
                 }
                 
+                // 결과 분석
                 let success = (resultDict["success"] as? Bool) ?? false
+                
+                if let phase = resultDict["phase"] as? String {
+                    TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
+                }
+                
+                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                    if let selector = matchedAnchor["selector"] as? String {
+                        TabPersistenceManager.debugMessages.append("✅ 매칭된 앵커: \(selector)")
+                    }
+                    if let confidence = matchedAnchor["confidence"] as? Int {
+                        TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
+                    }
+                }
+                
+                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                }
+                
+                if let difference = resultDict["difference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 목표 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                }
+                
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(20) {
+                        TabPersistenceManager.debugMessages.append("  JS: \(log)")
+                    }
+                }
+                
                 TabPersistenceManager.debugMessages.append("🎯 복원 \(success ? "성공" : "실패")")
                 completion(success)
+                
+            case .failure(let error):
+                TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
+                self.restoreWithAbsolutePosition(webView: webView, completion: completion)
             }
         }
     }
@@ -294,7 +272,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 iOS 14+ callAsyncJavaScript용 복원 스크립트
+    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (arguments 직접 접근으로 수정)
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
         return """
@@ -304,16 +282,21 @@ struct BFCacheSnapshot: Codable {
         try {
             logs.push('🎯 통합 앵커 복원 시작');
             
+            // 파라미터를 직접 변수로 접근
+            const targetY = targetY;
+            const percentY = percentY;
+            const anchors = anchorsData;
+            const primaryScrollerSelector = primaryScroller;
+            
             // 스크롤러 탐지
             function findBestScroller() {
-                const selector = arguments[0].primaryScroller;
-                if (selector === 'document.scrollingElement || document.documentElement') {
+                if (primaryScrollerSelector === 'document.scrollingElement || document.documentElement') {
                     return document.scrollingElement || document.documentElement;
                 }
                 
-                const element = document.querySelector(selector);
+                const element = document.querySelector(primaryScrollerSelector);
                 if (element && element.scrollHeight > element.clientHeight) {
-                    logs.push('커스텀 스크롤러 사용: ' + selector);
+                    logs.push('커스텀 스크롤러 사용: ' + primaryScrollerSelector);
                     return element;
                 }
                 
@@ -335,9 +318,6 @@ struct BFCacheSnapshot: Codable {
             }
             
             const scroller = findBestScroller();
-            const targetY = arguments[0].targetY;
-            const percentY = arguments[0].percentY;
-            const anchors = arguments[0].anchorsData;
             
             logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
             logs.push('앵커 수: ' + anchors.length);
@@ -597,90 +577,6 @@ struct BFCacheSnapshot: Codable {
                 logs: logs
             };
         }
-        """
-    }
-    
-    // MARK: - iOS 13 이하 폴백 스크립트 (동기 버전)
-    
-    private func generateFallbackRestorationScript(anchors: UnifiedAnchors) -> String {
-        // 앵커 데이터를 JSON으로 변환
-        let anchorsJSON: String
-        if let data = try? JSONEncoder().encode(anchors.anchors),
-           let jsonString = String(data: data, encoding: .utf8) {
-            anchorsJSON = jsonString
-        } else {
-            anchorsJSON = "[]"
-        }
-        
-        let targetY = scrollPosition.y
-        let percentY = scrollPositionPercent.y
-        let primaryScroller = anchors.primaryScrollerSelector ?? "document.scrollingElement || document.documentElement"
-        
-        return """
-        (function() {
-            const logs = [];
-            const startTime = Date.now();
-            
-            try {
-                logs.push('🎯 폴백 복원 시작');
-                
-                const scroller = \(primaryScroller);
-                const targetY = \(targetY);
-                const percentY = \(percentY);
-                const anchors = \(anchorsJSON);
-                
-                // 간단한 앵커 매칭 시도
-                let restored = false;
-                
-                for (let anchor of anchors) {
-                    if (anchor.cssSelector) {
-                        try {
-                            const element = document.querySelector(anchor.cssSelector);
-                            if (element) {
-                                const rect = element.getBoundingClientRect();
-                                const elementTop = scroller.scrollTop + rect.top;
-                                const targetScrollTop = elementTop - anchor.relativePosition.y;
-                                scroller.scrollTop = targetScrollTop;
-                                restored = true;
-                                logs.push('앵커 복원 성공');
-                                break;
-                            }
-                        } catch(e) {}
-                    }
-                }
-                
-                if (!restored) {
-                    // 백분율 또는 절대 위치로 폴백
-                    if (percentY > 0) {
-                        const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-                        scroller.scrollTop = (percentY / 100) * maxScroll;
-                    } else {
-                        scroller.scrollTop = targetY;
-                    }
-                    logs.push('절대좌표 폴백');
-                }
-                
-                const finalY = scroller.scrollTop;
-                const difference = Math.abs(finalY - targetY);
-                
-                return {
-                    success: difference < 100,
-                    phase: restored ? 'anchor_restored' : 'absolute_fallback',
-                    finalPosition: { x: 0, y: finalY },
-                    difference: { x: 0, y: difference },
-                    logs: logs,
-                    duration: Date.now() - startTime
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    phase: 'error',
-                    error: e.message,
-                    logs: logs
-                };
-            }
-        })()
         """
     }
 }
