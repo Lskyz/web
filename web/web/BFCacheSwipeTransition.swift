@@ -10,6 +10,7 @@
 //  🐛 **파라미터 접근 수정**: arguments 객체 대신 함수 파라미터 직접 사용
 //  🌐 **가상 스크롤 대응**: 목표 위치까지 스크롤하여 DOM 렌더링 유도
 //  🔧 **Promise 반환 수정**: return 키워드 추가로 IIFE Promise 확실히 반환
+//  🟡 **네비게이션 중단 감지**: visibilityState 체크 + WKError 4 재시도
 
 import UIKit
 import WebKit
@@ -148,9 +149,16 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - Promise 반환 수정**
+    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - 네비게이션 중단 처리**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        // 🟡 **변경 3: 로딩 중이면 복원 호출하지 않기**
+        guard webView.isLoading == false else {
+            TabPersistenceManager.debugMessages.append("⏸️ 로딩 중 - 복원 스킵")
+            completion(false)
+            return
+        }
+        
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: Y=\(String(format: "%.1f", scrollPosition.y))px (\(String(format: "%.1f", scrollPositionPercent.y))%)")
         TabPersistenceManager.debugMessages.append("🔍 캡처 상태: \(captureStatus.rawValue), 버전: \(version)")
@@ -176,7 +184,6 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
         TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
         
-        // 🔧 수정: return 키워드 추가로 Promise를 확실히 반환
         let js = generateAsyncRestorationScript(anchors: anchors)
         
         TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
@@ -219,6 +226,13 @@ struct BFCacheSnapshot: Codable {
                 
                 if let phase = resultDict["phase"] as? String {
                     TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
+                    
+                    // 🟡 네비게이션 중단 감지
+                    if phase == "aborted_by_navigation" {
+                        TabPersistenceManager.debugMessages.append("🟡 네비게이션 중단 감지됨")
+                        completion(false)
+                        return
+                    }
                 }
                 
                 if let error = resultDict["error"] as? String {
@@ -269,10 +283,26 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("  오류 타입: \(type(of: error))")
                 TabPersistenceManager.debugMessages.append("  오류 설명: \(error.localizedDescription)")
                 
-                // WKError 세부 정보
+                // 🟡 **변경 2: WKError code 4 재시도 로직**
                 if let wkError = error as? WKError {
                     TabPersistenceManager.debugMessages.append("  WKError 코드: \(wkError.code.rawValue)")
                     TabPersistenceManager.debugMessages.append("  WKError 에러코드: \(wkError.errorCode)")
+                    
+                    // WKError.javaScriptExceptionOccurred (code 4) 체크
+                    if wkError.code == .javaScriptExceptionOccurred,
+                       let message = wkError.userInfo["WKJavaScriptExceptionMessage"] as? String,
+                       message.contains("Completion handler for function call is no longer reachable") {
+                        TabPersistenceManager.debugMessages.append("🟡 JS 콜백 중단 감지 → 짧은 재시도")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak webView] in
+                            guard let webView = webView else { 
+                                completion(false)
+                                return
+                            }
+                            self.restore(to: webView, completion: completion)
+                        }
+                        return
+                    }
+                    
                     if !wkError.userInfo.isEmpty {
                         TabPersistenceManager.debugMessages.append("  WKError userInfo: \(wkError.userInfo)")
                     }
@@ -378,13 +408,17 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🔧 **수정된 복원 스크립트 - return 키워드 추가로 Promise 확실히 반환**
+    // MARK: - 🔧 **복원 스크립트 - 네비게이션 중단 감지 추가**
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
-        // 🔧 핵심 수정: return 키워드 추가로 IIFE Promise를 WebKit이 await 하도록 보장
+        // 🟡 **변경 1: visibilityState 체크 추가**
         return """
-        // return 키워드로 async IIFE의 Promise를 반환 - WebKit이 await 후 결과 전달
         return (async function() {
+            // 🟡 네비게이션 중단 감지 - 즉시 종료
+            if (document.visibilityState === 'hidden') {
+                return { success: false, phase: 'aborted_by_navigation', logs: [], duration: 0 };
+            }
+            
             const logs = [];
             const startTime = Date.now();
             
