@@ -8,7 +8,7 @@
 //  🎯 5순위: 상대좌표 풀백
 //  ⚡ 비동기 처리 + 렌더링 안정 대기
 //  🔒 타입 안전성: Swift 호환 기본 타입만 사용
-//  🔧 폴링 방식으로 async 결과 수신
+//  📨 MessageHandler 방식으로 비동기 결과 수신
 //
 
 import UIKit
@@ -132,7 +132,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **우선순위 기반 복원 시스템 (폴링 방식)**
+    // MARK: - 🎯 **MessageHandler 기반 복원 시스템**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 우선순위 기반 BFCache 복원 시작")
@@ -140,91 +140,61 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         
+        // MessageHandler 등록 (일시적)
+        let messageHandler = BFCacheRestoreMessageHandler { result in
+            // 결과 처리
+            let success = (result["success"] as? Bool) ?? false
+            
+            if let method = result["method"] as? String {
+                TabPersistenceManager.debugMessages.append("✅ 복원 방법: \(method)")
+            }
+            
+            if let finalPosition = result["finalPosition"] as? [String: Double] {
+                TabPersistenceManager.debugMessages.append("📍 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+            }
+            
+            if let difference = result["difference"] as? [String: Double] {
+                TabPersistenceManager.debugMessages.append("📏 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+            }
+            
+            if let logs = result["logs"] as? [String] {
+                for log in logs.prefix(10) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
+                }
+            }
+            
+            TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
+            
+            // MessageHandler 제거
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
+            
+            completion(success)
+        }
+        
+        webView.configuration.userContentController.add(messageHandler, name: "bfcacheRestoreResult")
+        
+        // 타임아웃 설정 (5초)
+        let timeoutTimer = DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            TabPersistenceManager.debugMessages.append("⏰ 복원 타임아웃 (5초 초과)")
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
+            completion(false)
+        }
+        
+        // JavaScript 스크립트 실행
         let js = generatePriorityBasedRestoreScript()
         
-        // 1단계: 비동기 복원 시작
         webView.evaluateJavaScript(js) { result, error in
             if let error = error {
-                TabPersistenceManager.debugMessages.append("❌ 복원 시작 실패: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 실행 실패: \(error.localizedDescription)")
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: "bfcacheRestoreResult")
                 completion(false)
-                return
-            }
-            
-            if let resultDict = result as? [String: Any], let initiated = resultDict["initiated"] as? Bool, initiated {
-                TabPersistenceManager.debugMessages.append("✅ 복원 프로세스 시작됨")
-                // 2단계: 폴링으로 결과 확인
-                self.pollRestoreResult(webView: webView, completion: completion)
             } else {
-                TabPersistenceManager.debugMessages.append("❌ 복원 시작 실패: 응답 형식 오류")
-                completion(false)
+                TabPersistenceManager.debugMessages.append("✅ 복원 스크립트 실행 시작")
             }
         }
     }
     
-    // MARK: - 🔄 **폴링으로 복원 결과 확인**
-    
-    private func pollRestoreResult(webView: WKWebView, attempts: Int = 0, completion: @escaping (Bool) -> Void) {
-        // 최대 50회 시도 (5초)
-        guard attempts < 50 else {
-            TabPersistenceManager.debugMessages.append("⏰ 복원 타임아웃 (5초 초과)")
-            completion(false)
-            return
-        }
-        
-        let checkScript = """
-        (function() {
-            if (window._bfcacheRestoreInProgress === false && window._bfcacheRestoreResult !== null) {
-                const result = window._bfcacheRestoreResult;
-                // 결과 읽은 후 정리
-                window._bfcacheRestoreResult = null;
-                delete window._bfcacheRestoreInProgress;
-                return result;
-            }
-            return null;
-        })()
-        """
-        
-        webView.evaluateJavaScript(checkScript) { result, error in
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("❌ 복원 결과 확인 오류: \(error.localizedDescription)")
-                completion(false)
-                return
-            }
-            
-            if let resultDict = result as? [String: Any] {
-                // 결과 수신 성공
-                let success = (resultDict["success"] as? Bool) ?? false
-                
-                if let method = resultDict["method"] as? String {
-                    TabPersistenceManager.debugMessages.append("✅ 복원 방법: \(method)")
-                }
-                
-                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📍 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                }
-                
-                if let difference = resultDict["difference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                }
-                
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-                
-                TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
-                completion(success)
-            } else {
-                // 아직 결과가 준비되지 않음 - 재시도
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.pollRestoreResult(webView: webView, attempts: attempts + 1, completion: completion)
-                }
-            }
-        }
-    }
-    
-    // MARK: - 🎯 **우선순위 기반 복원 스크립트 생성 (폴링 방식)**
+    // MARK: - 🎯 **MessageHandler 기반 복원 스크립트 생성**
     
     private func generatePriorityBasedRestoreScript() -> String {
         let targetX = scrollPosition.x
@@ -242,516 +212,502 @@ struct BFCacheSnapshot: Codable {
         }
         
         return """
-        (function() {
-            // 전역 변수로 진행 상태 및 결과 저장
-            window._bfcacheRestoreInProgress = true;
-            window._bfcacheRestoreResult = null;
-            
-            // 비동기 복원 프로세스 시작
-            (async function() {
-                try {
-                    const logs = [];
-                    const targetX = parseFloat('\(targetX)');
-                    const targetY = parseFloat('\(targetY)');
-                    const targetPercentX = parseFloat('\(targetPercentX)');
-                    const targetPercentY = parseFloat('\(targetPercentY)');
-                    const urlFragment = '\(urlFragment)';
-                    const anchorData = \(anchorDataJSON);
+        (async function() {
+            try {
+                const logs = [];
+                const targetX = parseFloat('\(targetX)');
+                const targetY = parseFloat('\(targetY)');
+                const targetPercentX = parseFloat('\(targetPercentX)');
+                const targetPercentY = parseFloat('\(targetPercentY)');
+                const urlFragment = '\(urlFragment)';
+                const anchorData = \(anchorDataJSON);
+                
+                logs.push('🎯 우선순위 기반 복원 시작');
+                logs.push('목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                
+                // 🎯 **공통 유틸리티**
+                function getROOT() { 
+                    return document.scrollingElement || document.documentElement; 
+                }
+                
+                function getMaxScroll() { 
+                    const r = getROOT(); 
+                    return { 
+                        x: Math.max(0, r.scrollWidth - window.innerWidth),
+                        y: Math.max(0, r.scrollHeight - window.innerHeight) 
+                    }; 
+                }
+                
+                // 🎯 **렌더링 안정 대기 (비동기)**
+                async function waitForStableLayout(options = {}) {
+                    const { frames = 6, timeout = 2000, threshold = 2 } = options;
+                    const ROOT = getROOT();
                     
-                    logs.push('🎯 우선순위 기반 복원 시작');
-                    logs.push('목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                    logs.push('백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+                    return new Promise((resolve) => {
+                        let last = ROOT.scrollHeight;
+                        let stable = 0;
+                        let rafCount = 0;
+                        const maxRaf = Math.ceil(timeout / 16);
+                        
+                        const checkStability = () => {
+                            const h = ROOT.scrollHeight;
+                            if (Math.abs(h - last) <= threshold) {
+                                stable++;
+                            } else {
+                                stable = 0;
+                            }
+                            last = h;
+                            
+                            rafCount++;
+                            
+                            if (stable >= frames || rafCount >= maxRaf) {
+                                resolve(stable >= frames);
+                            } else {
+                                requestAnimationFrame(checkStability);
+                            }
+                        };
+                        
+                        requestAnimationFrame(checkStability);
+                    });
+                }
+                
+                // 🎯 **MutationObserver + ResizeObserver 안정 대기**
+                async function waitForDOMStable(options = {}) {
+                    const { timeout = 1000, stableTime = 300 } = options;
                     
-                    // 🎯 **공통 유틸리티**
-                    function getROOT() { 
-                        return document.scrollingElement || document.documentElement; 
-                    }
-                    
-                    function getMaxScroll() { 
-                        const r = getROOT(); 
-                        return { 
-                            x: Math.max(0, r.scrollWidth - window.innerWidth),
-                            y: Math.max(0, r.scrollHeight - window.innerHeight) 
-                        }; 
-                    }
-                    
-                    // 🎯 **렌더링 안정 대기 (비동기)**
-                    async function waitForStableLayout(options = {}) {
-                        const { frames = 6, timeout = 2000, threshold = 2 } = options;
+                    return new Promise((resolve) => {
+                        let timer = null;
+                        let timeoutTimer = null;
+                        
+                        const cleanup = () => {
+                            if (timer) clearTimeout(timer);
+                            if (timeoutTimer) clearTimeout(timeoutTimer);
+                            if (mutationObs) mutationObs.disconnect();
+                            if (resizeObs) resizeObs.disconnect();
+                        };
+                        
+                        const markStable = () => {
+                            cleanup();
+                            resolve(true);
+                        };
+                        
+                        const resetTimer = () => {
+                            if (timer) clearTimeout(timer);
+                            timer = setTimeout(markStable, stableTime);
+                        };
+                        
                         const ROOT = getROOT();
                         
-                        return new Promise((resolve) => {
-                            let last = ROOT.scrollHeight;
-                            let stable = 0;
-                            let rafCount = 0;
-                            const maxRaf = Math.ceil(timeout / 16);
-                            
-                            const checkStability = () => {
-                                const h = ROOT.scrollHeight;
-                                if (Math.abs(h - last) <= threshold) {
-                                    stable++;
-                                } else {
-                                    stable = 0;
-                                }
-                                last = h;
-                                
-                                rafCount++;
-                                
-                                if (stable >= frames || rafCount >= maxRaf) {
-                                    resolve(stable >= frames);
-                                } else {
-                                    requestAnimationFrame(checkStability);
-                                }
-                            };
-                            
-                            requestAnimationFrame(checkStability);
+                        const mutationObs = new MutationObserver(resetTimer);
+                        mutationObs.observe(ROOT, { 
+                            childList: true, 
+                            subtree: true,
+                            attributes: false,
+                            characterData: false 
                         });
+                        
+                        const resizeObs = new ResizeObserver(resetTimer);
+                        resizeObs.observe(ROOT);
+                        
+                        resetTimer();
+                        
+                        timeoutTimer = setTimeout(() => {
+                            cleanup();
+                            resolve(false);
+                        }, timeout);
+                    });
+                }
+                
+                // 🎯 **정밀 스크롤 함수**
+                function preciseScrollTo(x, y) {
+                    const ROOT = getROOT();
+                    
+                    // scroll-behavior 강제 비활성화
+                    const originalBehavior = ROOT.style.scrollBehavior;
+                    ROOT.style.scrollBehavior = 'auto';
+                    document.documentElement.style.scrollBehavior = 'auto';
+                    document.body.style.scrollBehavior = 'auto';
+                    
+                    // 고정 헤더 높이 보정
+                    const headerHeight = fixedHeaderHeight();
+                    const adjustedY = Math.max(0, y - headerHeight);
+                    
+                    ROOT.scrollLeft = x;
+                    ROOT.scrollTop = adjustedY;
+                    
+                    // 원래 상태로 복원
+                    if (originalBehavior) {
+                        ROOT.style.scrollBehavior = originalBehavior;
                     }
                     
-                    // 🎯 **MutationObserver + ResizeObserver 안정 대기**
-                    async function waitForDOMStable(options = {}) {
-                        const { timeout = 1000, stableTime = 300 } = options;
+                    return { 
+                        x: ROOT.scrollLeft || 0, 
+                        y: ROOT.scrollTop || 0,
+                        headerAdjustment: headerHeight
+                    };
+                }
+                
+                function fixedHeaderHeight() {
+                    const cands = document.querySelectorAll('header, [class*="header"], [class*="gnb"], [class*="navbar"], [class*="nav-bar"]');
+                    let h = 0;
+                    cands.forEach(el => {
+                        const cs = getComputedStyle(el);
+                        if (cs.position === 'fixed' || cs.position === 'sticky') {
+                            h = Math.max(h, el.getBoundingClientRect().height);
+                        }
+                    });
+                    return h;
+                }
+                
+                // 🎯 **1순위: 요소 id/URL 해시**
+                async function tryPriority1_IdHash() {
+                    logs.push('🎯 [1순위] 요소 id/URL 해시 시도');
+                    
+                    if (urlFragment) {
+                        logs.push('URL Fragment: #' + urlFragment);
                         
-                        return new Promise((resolve) => {
-                            let timer = null;
-                            let timeoutTimer = null;
-                            
-                            const cleanup = () => {
-                                if (timer) clearTimeout(timer);
-                                if (timeoutTimer) clearTimeout(timeoutTimer);
-                                if (mutationObs) mutationObs.disconnect();
-                                if (resizeObs) resizeObs.disconnect();
-                            };
-                            
-                            const markStable = () => {
-                                cleanup();
-                                resolve(true);
-                            };
-                            
-                            const resetTimer = () => {
-                                if (timer) clearTimeout(timer);
-                                timer = setTimeout(markStable, stableTime);
-                            };
-                            
+                        // id로 찾기
+                        let targetElement = document.getElementById(urlFragment);
+                        
+                        // data-anchor로 찾기
+                        if (!targetElement) {
+                            targetElement = document.querySelector('[data-anchor="' + urlFragment + '"]');
+                        }
+                        
+                        if (targetElement) {
                             const ROOT = getROOT();
+                            const rect = targetElement.getBoundingClientRect();
+                            const absoluteY = ROOT.scrollTop + rect.top;
                             
-                            const mutationObs = new MutationObserver(resetTimer);
-                            mutationObs.observe(ROOT, { 
-                                childList: true, 
-                                subtree: true,
-                                attributes: false,
-                                characterData: false 
-                            });
+                            const result = preciseScrollTo(0, absoluteY);
+                            logs.push('✅ [1순위] 성공: id/해시로 요소 찾음');
+                            logs.push('요소 위치: Y=' + absoluteY.toFixed(1) + 'px');
                             
-                            const resizeObs = new ResizeObserver(resetTimer);
-                            resizeObs.observe(ROOT);
-                            
-                            resetTimer();
-                            
-                            timeoutTimer = setTimeout(() => {
-                                cleanup();
-                                resolve(false);
-                            }, timeout);
-                        });
-                    }
-                    
-                    // 🎯 **정밀 스크롤 함수**
-                    function preciseScrollTo(x, y) {
-                        const ROOT = getROOT();
-                        
-                        // scroll-behavior 강제 비활성화
-                        const originalBehavior = ROOT.style.scrollBehavior;
-                        ROOT.style.scrollBehavior = 'auto';
-                        document.documentElement.style.scrollBehavior = 'auto';
-                        document.body.style.scrollBehavior = 'auto';
-                        
-                        // 고정 헤더 높이 보정
-                        const headerHeight = fixedHeaderHeight();
-                        const adjustedY = Math.max(0, y - headerHeight);
-                        
-                        ROOT.scrollLeft = x;
-                        ROOT.scrollTop = adjustedY;
-                        
-                        // 원래 상태로 복원
-                        if (originalBehavior) {
-                            ROOT.style.scrollBehavior = originalBehavior;
+                            return {
+                                success: true,
+                                method: 'priority1_id_hash',
+                                element: targetElement.tagName + (targetElement.id ? '#' + targetElement.id : ''),
+                                result: result
+                            };
                         }
                         
-                        return { 
-                            x: ROOT.scrollLeft || 0, 
-                            y: ROOT.scrollTop || 0,
-                            headerAdjustment: headerHeight
-                        };
+                        logs.push('❌ [1순위] 실패: id/해시 요소 없음');
+                    } else {
+                        logs.push('⏭️ [1순위] 스킵: URL Fragment 없음');
                     }
                     
-                    function fixedHeaderHeight() {
-                        const cands = document.querySelectorAll('header, [class*="header"], [class*="gnb"], [class*="navbar"], [class*="nav-bar"]');
-                        let h = 0;
-                        cands.forEach(el => {
-                            const cs = getComputedStyle(el);
-                            if (cs.position === 'fixed' || cs.position === 'sticky') {
-                                h = Math.max(h, el.getBoundingClientRect().height);
-                            }
-                        });
-                        return h;
-                    }
+                    return { success: false };
+                }
+                
+                // 🎯 **2순위: 안정적 속성 기반 CSS**
+                async function tryPriority2_StableAttributes() {
+                    logs.push('🎯 [2순위] 안정적 속성 기반 CSS 시도');
                     
-                    // 🎯 **1순위: 요소 id/URL 해시**
-                    async function tryPriority1_IdHash() {
-                        logs.push('🎯 [1순위] 요소 id/URL 해시 시도');
-                        
-                        if (urlFragment) {
-                            logs.push('URL Fragment: #' + urlFragment);
-                            
-                            // id로 찾기
-                            let targetElement = document.getElementById(urlFragment);
-                            
-                            // data-anchor로 찾기
-                            if (!targetElement) {
-                                targetElement = document.querySelector('[data-anchor="' + urlFragment + '"]');
-                            }
-                            
-                            if (targetElement) {
-                                const ROOT = getROOT();
-                                const rect = targetElement.getBoundingClientRect();
-                                const absoluteY = ROOT.scrollTop + rect.top;
-                                
-                                const result = preciseScrollTo(0, absoluteY);
-                                logs.push('✅ [1순위] 성공: id/해시로 요소 찾음');
-                                logs.push('요소 위치: Y=' + absoluteY.toFixed(1) + 'px');
-                                
-                                return {
-                                    success: true,
-                                    method: 'priority1_id_hash',
-                                    element: targetElement.tagName + (targetElement.id ? '#' + targetElement.id : ''),
-                                    result: result
-                                };
-                            }
-                            
-                            logs.push('❌ [1순위] 실패: id/해시 요소 없음');
-                        } else {
-                            logs.push('⏭️ [1순위] 스킵: URL Fragment 없음');
-                        }
-                        
+                    if (!anchorData || !anchorData.anchors || anchorData.anchors.length === 0) {
+                        logs.push('⏭️ [2순위] 스킵: 앵커 데이터 없음');
                         return { success: false };
                     }
                     
-                    // 🎯 **2순위: 안정적 속성 기반 CSS**
-                    async function tryPriority2_StableAttributes() {
-                        logs.push('🎯 [2순위] 안정적 속성 기반 CSS 시도');
+                    const anchors = anchorData.anchors;
+                    logs.push('앵커 데이터: ' + anchors.length + '개');
+                    
+                    // 안정적 속성을 가진 앵커 우선 탐색
+                    for (let i = 0; i < anchors.length; i++) {
+                        const anchor = anchors[i];
+                        let targetElement = null;
+                        let matchMethod = '';
                         
-                        if (!anchorData || !anchorData.anchors || anchorData.anchors.length === 0) {
-                            logs.push('⏭️ [2순위] 스킵: 앵커 데이터 없음');
-                            return { success: false };
+                        // data-id로 찾기
+                        if (anchor.element && anchor.element.dataset && anchor.element.dataset.id) {
+                            targetElement = document.querySelector('[data-id="' + anchor.element.dataset.id + '"]');
+                            matchMethod = 'data-id';
                         }
                         
-                        const anchors = anchorData.anchors;
-                        logs.push('앵커 데이터: ' + anchors.length + '개');
-                        
-                        // 안정적 속성을 가진 앵커 우선 탐색
-                        for (let i = 0; i < anchors.length; i++) {
-                            const anchor = anchors[i];
-                            let targetElement = null;
-                            let matchMethod = '';
-                            
-                            // data-id로 찾기
-                            if (anchor.element && anchor.element.dataset && anchor.element.dataset.id) {
-                                targetElement = document.querySelector('[data-id="' + anchor.element.dataset.id + '"]');
-                                matchMethod = 'data-id';
-                            }
-                            
-                            // data-anchor로 찾기
-                            if (!targetElement && anchor.element && anchor.element.dataset && anchor.element.dataset.anchor) {
-                                targetElement = document.querySelector('[data-anchor="' + anchor.element.dataset.anchor + '"]');
-                                matchMethod = 'data-anchor';
-                            }
-                            
-                            // data-test-id로 찾기
-                            if (!targetElement && anchor.element && anchor.element.dataset && anchor.element.dataset.testId) {
-                                targetElement = document.querySelector('[data-test-id="' + anchor.element.dataset.testId + '"]');
-                                matchMethod = 'data-test-id';
-                            }
-                            
-                            // itemid로 찾기
-                            if (!targetElement && anchor.element && anchor.element.itemId) {
-                                targetElement = document.querySelector('[itemid="' + anchor.element.itemId + '"]');
-                                matchMethod = 'itemid';
-                            }
-                            
-                            if (targetElement) {
-                                const ROOT = getROOT();
-                                const rect = targetElement.getBoundingClientRect();
-                                const absoluteY = ROOT.scrollTop + rect.top;
-                                
-                                const result = preciseScrollTo(0, absoluteY);
-                                logs.push('✅ [2순위] 성공: ' + matchMethod + '로 요소 찾음');
-                                
-                                return {
-                                    success: true,
-                                    method: 'priority2_stable_attr_' + matchMethod,
-                                    result: result
-                                };
-                            }
+                        // data-anchor로 찾기
+                        if (!targetElement && anchor.element && anchor.element.dataset && anchor.element.dataset.anchor) {
+                            targetElement = document.querySelector('[data-anchor="' + anchor.element.dataset.anchor + '"]');
+                            matchMethod = 'data-anchor';
                         }
                         
-                        logs.push('❌ [2순위] 실패: 안정적 속성 매칭 없음');
+                        // data-test-id로 찾기
+                        if (!targetElement && anchor.element && anchor.element.dataset && anchor.element.dataset.testId) {
+                            targetElement = document.querySelector('[data-test-id="' + anchor.element.dataset.testId + '"]');
+                            matchMethod = 'data-test-id';
+                        }
+                        
+                        // itemid로 찾기
+                        if (!targetElement && anchor.element && anchor.element.itemId) {
+                            targetElement = document.querySelector('[itemid="' + anchor.element.itemId + '"]');
+                            matchMethod = 'itemid';
+                        }
+                        
+                        if (targetElement) {
+                            const ROOT = getROOT();
+                            const rect = targetElement.getBoundingClientRect();
+                            const absoluteY = ROOT.scrollTop + rect.top;
+                            
+                            const result = preciseScrollTo(0, absoluteY);
+                            logs.push('✅ [2순위] 성공: ' + matchMethod + '로 요소 찾음');
+                            
+                            return {
+                                success: true,
+                                method: 'priority2_stable_attr_' + matchMethod,
+                                result: result
+                            };
+                        }
+                    }
+                    
+                    logs.push('❌ [2순위] 실패: 안정적 속성 매칭 없음');
+                    return { success: false };
+                }
+                
+                // 🎯 **3순위: 구조+역할 보강 CSS**
+                async function tryPriority3_StructuralRole() {
+                    logs.push('🎯 [3순위] 구조+역할 보강 CSS 시도');
+                    
+                    if (!anchorData || !anchorData.anchors || anchorData.anchors.length === 0) {
+                        logs.push('⏭️ [3순위] 스킵: 앵커 데이터 없음');
                         return { success: false };
                     }
                     
-                    // 🎯 **3순위: 구조+역할 보강 CSS**
-                    async function tryPriority3_StructuralRole() {
-                        logs.push('🎯 [3순위] 구조+역할 보강 CSS 시도');
+                    const anchors = anchorData.anchors;
+                    
+                    // role, ARIA 속성을 가진 앵커 탐색
+                    for (let i = 0; i < anchors.length; i++) {
+                        const anchor = anchors[i];
+                        let targetElement = null;
+                        let matchMethod = '';
                         
-                        if (!anchorData || !anchorData.anchors || anchorData.anchors.length === 0) {
-                            logs.push('⏭️ [3순위] 스킵: 앵커 데이터 없음');
-                            return { success: false };
-                        }
-                        
-                        const anchors = anchorData.anchors;
-                        
-                        // role, ARIA 속성을 가진 앵커 탐색
-                        for (let i = 0; i < anchors.length; i++) {
-                            const anchor = anchors[i];
-                            let targetElement = null;
-                            let matchMethod = '';
-                            
-                            // role로 찾기
-                            if (anchor.element && anchor.element.role) {
-                                const roleElements = document.querySelectorAll('[role="' + anchor.element.role + '"]');
-                                if (roleElements.length > 0) {
-                                    // 텍스트 내용으로 추가 매칭
-                                    for (let j = 0; j < roleElements.length; j++) {
-                                        const elem = roleElements[j];
-                                        if (anchor.textContent && elem.textContent && 
-                                            elem.textContent.includes(anchor.textContent.substring(0, 50))) {
-                                            targetElement = elem;
-                                            matchMethod = 'role_with_text';
-                                            break;
-                                        }
-                                    }
-                                    if (!targetElement) {
-                                        targetElement = roleElements[0];
-                                        matchMethod = 'role';
+                        // role로 찾기
+                        if (anchor.element && anchor.element.role) {
+                            const roleElements = document.querySelectorAll('[role="' + anchor.element.role + '"]');
+                            if (roleElements.length > 0) {
+                                // 텍스트 내용으로 추가 매칭
+                                for (let j = 0; j < roleElements.length; j++) {
+                                    const elem = roleElements[j];
+                                    if (anchor.textContent && elem.textContent && 
+                                        elem.textContent.includes(anchor.textContent.substring(0, 50))) {
+                                        targetElement = elem;
+                                        matchMethod = 'role_with_text';
+                                        break;
                                     }
                                 }
+                                if (!targetElement) {
+                                    targetElement = roleElements[0];
+                                    matchMethod = 'role';
+                                }
                             }
+                        }
+                        
+                        // aria-labelledby로 찾기
+                        if (!targetElement && anchor.element && anchor.element.ariaLabelledBy) {
+                            targetElement = document.querySelector('[aria-labelledby="' + anchor.element.ariaLabelledBy + '"]');
+                            matchMethod = 'aria-labelledby';
+                        }
+                        
+                        if (targetElement) {
+                            const ROOT = getROOT();
+                            const rect = targetElement.getBoundingClientRect();
+                            const absoluteY = ROOT.scrollTop + rect.top;
                             
-                            // aria-labelledby로 찾기
-                            if (!targetElement && anchor.element && anchor.element.ariaLabelledBy) {
-                                targetElement = document.querySelector('[aria-labelledby="' + anchor.element.ariaLabelledBy + '"]');
-                                matchMethod = 'aria-labelledby';
+                            const result = preciseScrollTo(0, absoluteY);
+                            logs.push('✅ [3순위] 성공: ' + matchMethod + '로 요소 찾음');
+                            
+                            return {
+                                success: true,
+                                method: 'priority3_structural_' + matchMethod,
+                                result: result
+                            };
+                        }
+                    }
+                    
+                    logs.push('❌ [3순위] 실패: 구조+역할 매칭 없음');
+                    return { success: false };
+                }
+                
+                // 🎯 **4순위: 로딩 트리거 후 재탐색**
+                async function tryPriority4_LoadingTrigger() {
+                    logs.push('🎯 [4순위] 로딩 트리거 후 재탐색 시도');
+                    
+                    // 더보기 버튼 찾기
+                    const loadMoreButtons = document.querySelectorAll(
+                        '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                        'button[class*="more"], .load-more, .show-more, ' +
+                        '[aria-label*="more"], [aria-label*="load"]'
+                    );
+                    
+                    if (loadMoreButtons.length > 0) {
+                        logs.push('더보기 버튼 발견: ' + loadMoreButtons.length + '개');
+                        
+                        // 버튼 클릭
+                        let clicked = 0;
+                        for (let i = 0; i < Math.min(3, loadMoreButtons.length); i++) {
+                            const btn = loadMoreButtons[i];
+                            if (btn && typeof btn.click === 'function') {
+                                btn.click();
+                                clicked++;
                             }
+                        }
+                        
+                        if (clicked > 0) {
+                            logs.push('더보기 버튼 클릭: ' + clicked + '개');
                             
-                            if (targetElement) {
-                                const ROOT = getROOT();
-                                const rect = targetElement.getBoundingClientRect();
-                                const absoluteY = ROOT.scrollTop + rect.top;
-                                
-                                const result = preciseScrollTo(0, absoluteY);
-                                logs.push('✅ [3순위] 성공: ' + matchMethod + '로 요소 찾음');
-                                
+                            // 렌더링 안정 대기
+                            await waitForStableLayout({ frames: 4, timeout: 1500 });
+                            await waitForDOMStable({ timeout: 800, stableTime: 200 });
+                            
+                            logs.push('렌더링 안정 대기 완료');
+                            
+                            // 재탐색: 2순위, 3순위 재시도
+                            const retry2 = await tryPriority2_StableAttributes();
+                            if (retry2.success) {
+                                logs.push('✅ [4순위] 성공: 로딩 후 2순위 재탐색');
                                 return {
                                     success: true,
-                                    method: 'priority3_structural_' + matchMethod,
-                                    result: result
+                                    method: 'priority4_loading_retry2',
+                                    result: retry2.result
+                                };
+                            }
+                            
+                            const retry3 = await tryPriority3_StructuralRole();
+                            if (retry3.success) {
+                                logs.push('✅ [4순위] 성공: 로딩 후 3순위 재탐색');
+                                return {
+                                    success: true,
+                                    method: 'priority4_loading_retry3',
+                                    result: retry3.result
                                 };
                             }
                         }
-                        
-                        logs.push('❌ [3순위] 실패: 구조+역할 매칭 없음');
-                        return { success: false };
                     }
                     
-                    // 🎯 **4순위: 로딩 트리거 후 재탐색**
-                    async function tryPriority4_LoadingTrigger() {
-                        logs.push('🎯 [4순위] 로딩 트리거 후 재탐색 시도');
-                        
-                        // 더보기 버튼 찾기
-                        const loadMoreButtons = document.querySelectorAll(
-                            '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                            'button[class*="more"], .load-more, .show-more, ' +
-                            '[aria-label*="more"], [aria-label*="load"]'
-                        );
-                        
-                        if (loadMoreButtons.length > 0) {
-                            logs.push('더보기 버튼 발견: ' + loadMoreButtons.length + '개');
-                            
-                            // 버튼 클릭
-                            let clicked = 0;
-                            for (let i = 0; i < Math.min(3, loadMoreButtons.length); i++) {
-                                const btn = loadMoreButtons[i];
-                                if (btn && typeof btn.click === 'function') {
-                                    btn.click();
-                                    clicked++;
-                                }
-                            }
-                            
-                            if (clicked > 0) {
-                                logs.push('더보기 버튼 클릭: ' + clicked + '개');
-                                
-                                // 렌더링 안정 대기
-                                await waitForStableLayout({ frames: 4, timeout: 1500 });
-                                await waitForDOMStable({ timeout: 800, stableTime: 200 });
-                                
-                                logs.push('렌더링 안정 대기 완료');
-                                
-                                // 재탐색: 2순위, 3순위 재시도
-                                const retry2 = await tryPriority2_StableAttributes();
-                                if (retry2.success) {
-                                    logs.push('✅ [4순위] 성공: 로딩 후 2순위 재탐색');
-                                    return {
-                                        success: true,
-                                        method: 'priority4_loading_retry2',
-                                        result: retry2.result
-                                    };
-                                }
-                                
-                                const retry3 = await tryPriority3_StructuralRole();
-                                if (retry3.success) {
-                                    logs.push('✅ [4순위] 성공: 로딩 후 3순위 재탐색');
-                                    return {
-                                        success: true,
-                                        method: 'priority4_loading_retry3',
-                                        result: retry3.result
-                                    };
-                                }
-                            }
-                        }
-                        
-                        logs.push('❌ [4순위] 실패: 로딩 트리거 후에도 매칭 없음');
-                        return { success: false };
-                    }
+                    logs.push('❌ [4순위] 실패: 로딩 트리거 후에도 매칭 없음');
+                    return { success: false };
+                }
+                
+                // 🎯 **5순위: 상대좌표 풀백**
+                async function tryPriority5_RelativePosition() {
+                    logs.push('🎯 [5순위] 상대좌표 풀백 시도');
                     
-                    // 🎯 **5순위: 상대좌표 풀백**
-                    async function tryPriority5_RelativePosition() {
-                        logs.push('🎯 [5순위] 상대좌표 풀백 시도');
-                        
-                        // 렌더링 안정 대기
-                        await waitForStableLayout({ frames: 3, timeout: 1000 });
-                        
-                        const ROOT = getROOT();
-                        const max = getMaxScroll();
-                        
-                        // 백분율 기반 복원
-                        const calcX = (targetPercentX / 100) * max.x;
-                        const calcY = (targetPercentY / 100) * max.y;
-                        
-                        logs.push('백분율 계산: X=' + calcX.toFixed(1) + 'px, Y=' + calcY.toFixed(1) + 'px');
-                        
-                        const result = preciseScrollTo(calcX, calcY);
-                        
-                        logs.push('✅ [5순위] 상대좌표 풀백 적용');
-                        
-                        return {
-                            success: true,
-                            method: 'priority5_relative_position',
-                            result: result
-                        };
-                    }
+                    // 렌더링 안정 대기
+                    await waitForStableLayout({ frames: 3, timeout: 1000 });
                     
-                    // 🎯 **메인 실행 로직**
-                    let finalResult = null;
+                    const ROOT = getROOT();
+                    const max = getMaxScroll();
                     
-                    // 1순위 시도
-                    finalResult = await tryPriority1_IdHash();
-                    if (finalResult.success) {
-                        const diffX = Math.abs(finalResult.result.x - targetX);
-                        const diffY = Math.abs(finalResult.result.y - targetY);
-                        
-                        window._bfcacheRestoreResult = {
-                            success: true,
-                            method: finalResult.method,
-                            finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
-                            difference: { x: diffX, y: diffY },
-                            headerAdjustment: finalResult.result.headerAdjustment || 0,
-                            logs: logs
-                        };
-                        window._bfcacheRestoreInProgress = false;
-                        return;
-                    }
+                    // 백분율 기반 복원
+                    const calcX = (targetPercentX / 100) * max.x;
+                    const calcY = (targetPercentY / 100) * max.y;
                     
-                    // 2순위 시도
-                    finalResult = await tryPriority2_StableAttributes();
-                    if (finalResult.success) {
-                        const diffX = Math.abs(finalResult.result.x - targetX);
-                        const diffY = Math.abs(finalResult.result.y - targetY);
-                        
-                        window._bfcacheRestoreResult = {
-                            success: true,
-                            method: finalResult.method,
-                            finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
-                            difference: { x: diffX, y: diffY },
-                            headerAdjustment: finalResult.result.headerAdjustment || 0,
-                            logs: logs
-                        };
-                        window._bfcacheRestoreInProgress = false;
-                        return;
-                    }
+                    logs.push('백분율 계산: X=' + calcX.toFixed(1) + 'px, Y=' + calcY.toFixed(1) + 'px');
                     
-                    // 3순위 시도
-                    finalResult = await tryPriority3_StructuralRole();
-                    if (finalResult.success) {
-                        const diffX = Math.abs(finalResult.result.x - targetX);
-                        const diffY = Math.abs(finalResult.result.y - targetY);
-                        
-                        window._bfcacheRestoreResult = {
-                            success: true,
-                            method: finalResult.method,
-                            finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
-                            difference: { x: diffX, y: diffY },
-                            headerAdjustment: finalResult.result.headerAdjustment || 0,
-                            logs: logs
-                        };
-                        window._bfcacheRestoreInProgress = false;
-                        return;
-                    }
+                    const result = preciseScrollTo(calcX, calcY);
                     
-                    // 4순위 시도
-                    finalResult = await tryPriority4_LoadingTrigger();
-                    if (finalResult.success) {
-                        const diffX = Math.abs(finalResult.result.x - targetX);
-                        const diffY = Math.abs(finalResult.result.y - targetY);
-                        
-                        window._bfcacheRestoreResult = {
-                            success: true,
-                            method: finalResult.method,
-                            finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
-                            difference: { x: diffX, y: diffY },
-                            headerAdjustment: finalResult.result.headerAdjustment || 0,
-                            logs: logs
-                        };
-                        window._bfcacheRestoreInProgress = false;
-                        return;
-                    }
+                    logs.push('✅ [5순위] 상대좌표 풀백 적용');
                     
-                    // 5순위 시도 (최종 풀백)
-                    finalResult = await tryPriority5_RelativePosition();
+                    return {
+                        success: true,
+                        method: 'priority5_relative_position',
+                        result: result
+                    };
+                }
+                
+                // 🎯 **메인 실행 로직**
+                let finalResult = null;
+                
+                // 1순위 시도
+                finalResult = await tryPriority1_IdHash();
+                if (finalResult.success) {
                     const diffX = Math.abs(finalResult.result.x - targetX);
                     const diffY = Math.abs(finalResult.result.y - targetY);
                     
-                    window._bfcacheRestoreResult = {
-                        success: diffY <= 50, // 50px 허용 오차
+                    // 📨 MessageHandler로 결과 전송
+                    window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                        success: true,
                         method: finalResult.method,
                         finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
                         difference: { x: diffX, y: diffY },
                         headerAdjustment: finalResult.result.headerAdjustment || 0,
                         logs: logs
-                    };
-                    window._bfcacheRestoreInProgress = false;
-                    
-                } catch(e) {
-                    window._bfcacheRestoreResult = {
-                        success: false,
-                        error: e.message,
-                        logs: ['우선순위 기반 복원 실패: ' + e.message]
-                    };
-                    window._bfcacheRestoreInProgress = false;
+                    });
+                    return;
                 }
-            })();
-            
-            // 즉시 반환 (비동기 작업은 백그라운드에서 계속됨)
-            return { initiated: true };
-        })()
+                
+                // 2순위 시도
+                finalResult = await tryPriority2_StableAttributes();
+                if (finalResult.success) {
+                    const diffX = Math.abs(finalResult.result.x - targetX);
+                    const diffY = Math.abs(finalResult.result.y - targetY);
+                    
+                    window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                        success: true,
+                        method: finalResult.method,
+                        finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
+                        difference: { x: diffX, y: diffY },
+                        headerAdjustment: finalResult.result.headerAdjustment || 0,
+                        logs: logs
+                    });
+                    return;
+                }
+                
+                // 3순위 시도
+                finalResult = await tryPriority3_StructuralRole();
+                if (finalResult.success) {
+                    const diffX = Math.abs(finalResult.result.x - targetX);
+                    const diffY = Math.abs(finalResult.result.y - targetY);
+                    
+                    window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                        success: true,
+                        method: finalResult.method,
+                        finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
+                        difference: { x: diffX, y: diffY },
+                        headerAdjustment: finalResult.result.headerAdjustment || 0,
+                        logs: logs
+                    });
+                    return;
+                }
+                
+                // 4순위 시도
+                finalResult = await tryPriority4_LoadingTrigger();
+                if (finalResult.success) {
+                    const diffX = Math.abs(finalResult.result.x - targetX);
+                    const diffY = Math.abs(finalResult.result.y - targetY);
+                    
+                    window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                        success: true,
+                        method: finalResult.method,
+                        finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
+                        difference: { x: diffX, y: diffY },
+                        headerAdjustment: finalResult.result.headerAdjustment || 0,
+                        logs: logs
+                    });
+                    return;
+                }
+                
+                // 5순위 시도 (최종 풀백)
+                finalResult = await tryPriority5_RelativePosition();
+                const diffX = Math.abs(finalResult.result.x - targetX);
+                const diffY = Math.abs(finalResult.result.y - targetY);
+                
+                window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                    success: diffY <= 50, // 50px 허용 오차
+                    method: finalResult.method,
+                    finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
+                    difference: { x: diffX, y: diffY },
+                    headerAdjustment: finalResult.result.headerAdjustment || 0,
+                    logs: logs
+                });
+                
+            } catch(e) {
+                // 에러 발생 시에도 MessageHandler로 전송
+                window.webkit.messageHandlers.bfcacheRestoreResult.postMessage({
+                    success: false,
+                    error: e.message,
+                    logs: ['우선순위 기반 복원 실패: ' + e.message]
+                });
+            }
+        })();
         """
     }
     
@@ -763,6 +719,28 @@ struct BFCacheSnapshot: Codable {
         } catch {
             TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
             return nil
+        }
+    }
+}
+
+// MARK: - 📨 **BFCache 복원 결과 MessageHandler**
+class BFCacheRestoreMessageHandler: NSObject, WKScriptMessageHandler {
+    private let completion: ([String: Any]) -> Void
+    
+    init(completion: @escaping ([String: Any]) -> Void) {
+        self.completion = completion
+        super.init()
+    }
+    
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "bfcacheRestoreResult",
+              let result = message.body as? [String: Any] else {
+            TabPersistenceManager.debugMessages.append("❌ MessageHandler: 잘못된 메시지 형식")
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.completion(result)
         }
     }
 }
