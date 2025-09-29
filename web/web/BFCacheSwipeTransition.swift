@@ -9,7 +9,8 @@
 //  🔧 **callAsyncJavaScript 사용**: iOS 14+ Promise 직접 처리
 //  🐛 **파라미터 접근 수정**: arguments 객체 대신 함수 파라미터 직접 사용
 //  🌐 **가상 스크롤 대응**: 목표 위치까지 스크롤하여 DOM 렌더링 유도
-//  🔧 **Promise 반환 수정**: async 함수 래핑으로 completion handler 도달 보장
+//  🔧 **Promise 반환 수정**: async 함수에서 명시적 return 사용
+//  ✅ **타입 에러 해결**: Optional unwrapping 및 nil 처리 강화
 
 import UIKit
 import WebKit
@@ -148,7 +149,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - Promise 수정**
+    // MARK: - 🎯 **핵심: 타입 에러 수정된 통합 복원**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
@@ -176,7 +177,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
         TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
         
-        // 🔧 수정: async 함수로 감싸서 Promise를 확실히 반환
+        // 🔧 수정: 명시적 return이 있는 JavaScript 코드
         let js = generateAsyncRestorationScript(anchors: anchors)
         
         TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
@@ -188,12 +189,22 @@ struct BFCacheSnapshot: Codable {
             case .success(let value):
                 TabPersistenceManager.debugMessages.append("✅ 스크립트 실행 성공")
                 
-                guard let resultDict = value as? [String: Any] else {
-                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: 반환값이 Dictionary가 아님")
-                    TabPersistenceManager.debugMessages.append("❌ 실제 타입: \(type(of: value))")
-                    if let str = value as? String {
+                // 🔧 수정: nil 체크 후 Dictionary 캐스팅
+                guard let unwrappedValue = value else {
+                    TabPersistenceManager.debugMessages.append("❌ 반환값이 nil - 절대좌표 풀백")
+                    self.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                    return
+                }
+                
+                guard let resultDict = unwrappedValue as? [String: Any] else {
+                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: Dictionary 캐스팅 실패")
+                    TabPersistenceManager.debugMessages.append("❌ 실제 타입: \(type(of: unwrappedValue))")
+                    
+                    // 디버깅용 - 문자열인 경우 내용 출력
+                    if let str = unwrappedValue as? String {
                         TabPersistenceManager.debugMessages.append("❌ 문자열 결과: \(str.prefix(200))")
                     }
+                    
                     self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                     return
                 }
@@ -365,27 +376,27 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🔧 **수정된 복원 스크립트 - Promise 래핑 강화**
+    // MARK: - 🔧 **수정된 복원 스크립트 - 명시적 return 강화**
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
-        // 🔧 핵심 수정: async 함수로 감싸고 Promise를 명시적으로 반환
+        // 🔧 핵심 수정: 함수 본문에서 명시적으로 값 return
         return """
-        // async 함수로 감싸서 Promise를 확실히 반환
-        (async function() {
+        // async 함수로 정의하고 명시적으로 결과를 return
+        async function() {
             const logs = [];
             const startTime = Date.now();
             
             try {
                 logs.push('🎯 통합 앵커 복원 시작');
                 logs.push('파라미터 확인:');
-                logs.push('  targetY: ' + targetY);
-                logs.push('  percentY: ' + percentY);
+                logs.push('  targetY: ' + (typeof targetY !== 'undefined' ? targetY : 'undefined'));
+                logs.push('  percentY: ' + (typeof percentY !== 'undefined' ? percentY : 'undefined'));
                 logs.push('  anchorsData 길이: ' + (anchorsData ? anchorsData.length : 'null'));
-                logs.push('  primaryScroller: ' + primaryScroller);
+                logs.push('  primaryScroller: ' + (primaryScroller || 'undefined'));
                 
                 // 파라미터 검증
-                if (typeof targetY !== 'number' || typeof percentY !== 'number') {
-                    throw new Error('Invalid parameters: targetY or percentY is not a number');
+                if (typeof targetY === 'undefined' || typeof percentY === 'undefined') {
+                    throw new Error('Invalid parameters: targetY or percentY is undefined');
                 }
                 
                 if (!Array.isArray(anchorsData)) {
@@ -753,7 +764,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('  목표 차이: ' + difference);
                 logs.push('  성공 여부: ' + success);
                 
-                // 🔧 수정: 결과 객체를 Promise로 반환
+                // 🔧 핵심 수정: 명시적으로 객체를 return
                 return {
                     success: success,
                     phase: phase,
@@ -773,7 +784,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('❌ 오류 발생: ' + e.toString());
                 logs.push('오류 스택: ' + (e.stack || 'N/A'));
                 
-                // 🔧 수정: 에러 객체도 Promise로 반환
+                // 🔧 핵심 수정: 에러 시에도 명시적으로 객체를 return
                 return {
                     success: false,
                     phase: 'error',
@@ -782,7 +793,7 @@ struct BFCacheSnapshot: Codable {
                     duration: Date.now() - startTime
                 };
             }
-        })()
+        }
         """
     }
 }
