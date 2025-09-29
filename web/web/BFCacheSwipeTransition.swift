@@ -7,6 +7,7 @@
 //  📍 **절대좌표 풀백**: 모든 앵커 실패시 최후 수단
 //  📏 **스크롤러 탐지**: 가장 긴 스크롤러 자동 선택
 //  🔧 **callAsyncJavaScript 사용**: iOS 14+ Promise 직접 처리
+//  🐛 **복원 에러 수정**: 파라미터 접근 방식 수정 및 상세 디버깅
 
 import UIKit
 import WebKit
@@ -145,22 +146,24 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원**
+    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - 에러 수정**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: Y=\(String(format: "%.1f", scrollPosition.y))px (\(String(format: "%.1f", scrollPositionPercent.y))%)")
+        TabPersistenceManager.debugMessages.append("🔍 캡처 상태: \(captureStatus.rawValue), 버전: \(version)")
         
         guard let anchors = unifiedAnchors else {
-            TabPersistenceManager.debugMessages.append("❌ 앵커 데이터 없음 - 절대좌표 풀백")
+            TabPersistenceManager.debugMessages.append("❌ 앵커 데이터 없음 - 절대좌표 풀백 사용")
             restoreWithAbsolutePosition(webView: webView, completion: completion)
             return
         }
         
-        TabPersistenceManager.debugMessages.append("📌 앵커 수: \(anchors.anchors.count)개, 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
+        TabPersistenceManager.debugMessages.append("📌 앵커 수: \(anchors.anchors.count)개")
+        TabPersistenceManager.debugMessages.append("📌 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
+        TabPersistenceManager.debugMessages.append("📌 스크롤러 높이: \(String(format: "%.0f", anchors.scrollerHeight))px")
         
-        // callAsyncJavaScript 사용
-        let js = generateAsyncRestorationScript(anchors: anchors)
+        // 🐛 수정: arguments 객체 정확히 구성
         let arguments: [String: Any] = [
             "targetY": scrollPosition.y,
             "percentY": scrollPositionPercent.y,
@@ -168,20 +171,43 @@ struct BFCacheSnapshot: Codable {
             "primaryScroller": anchors.primaryScrollerSelector ?? "document.scrollingElement || document.documentElement"
         ]
         
+        TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
+        TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
+        
+        // callAsyncJavaScript 사용
+        let js = generateAsyncRestorationScript(anchors: anchors)
+        
+        TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
+        
         webView.callAsyncJavaScript(js, arguments: arguments, in: nil, in: .page) { result in
+            TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 완료")
+            
             switch result {
             case .success(let value):
+                TabPersistenceManager.debugMessages.append("✅ 스크립트 실행 성공")
+                
                 guard let resultDict = value as? [String: Any] else {
-                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패")
+                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: 반환값이 Dictionary가 아님")
+                    TabPersistenceManager.debugMessages.append("❌ 실제 타입: \(type(of: value))")
+                    if let str = value as? String {
+                        TabPersistenceManager.debugMessages.append("❌ 문자열 결과: \(str.prefix(200))")
+                    }
                     self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                     return
                 }
                 
+                TabPersistenceManager.debugMessages.append("📊 결과 Dictionary 파싱 성공")
+                
                 // 결과 분석
                 let success = (resultDict["success"] as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("📊 성공 플래그: \(success)")
                 
                 if let phase = resultDict["phase"] as? String {
                     TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
+                }
+                
+                if let error = resultDict["error"] as? String {
+                    TabPersistenceManager.debugMessages.append("❌ JavaScript 에러: \(error)")
                 }
                 
                 if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
@@ -191,27 +217,53 @@ struct BFCacheSnapshot: Codable {
                     if let confidence = matchedAnchor["confidence"] as? Int {
                         TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
                     }
+                    if let method = matchedAnchor["method"] as? String {
+                        TabPersistenceManager.debugMessages.append("🔍 매칭 방법: \(method)")
+                    }
                 }
                 
                 if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
                     TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
                 }
                 
-                if let difference = resultDict["difference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 목표 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("🎯 목표 위치: Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
                 }
                 
+                if let difference = resultDict["difference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 위치 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                }
+                
+                if let duration = resultDict["duration"] as? Int {
+                    TabPersistenceManager.debugMessages.append("⏱️ 실행 시간: \(duration)ms")
+                }
+                
+                // JavaScript 로그 출력
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(20) {
-                        TabPersistenceManager.debugMessages.append("  JS: \(log)")
+                    TabPersistenceManager.debugMessages.append("📝 JS 로그 (\(logs.count)개):")
+                    for (index, log) in logs.prefix(30).enumerated() {
+                        TabPersistenceManager.debugMessages.append("  [\(index)] \(log)")
                     }
                 }
                 
-                TabPersistenceManager.debugMessages.append("🎯 복원 \(success ? "성공" : "실패")")
+                TabPersistenceManager.debugMessages.append("🎯 복원 최종 결과: \(success ? "성공" : "실패")")
                 completion(success)
                 
             case .failure(let error):
-                TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 실행 오류:")
+                TabPersistenceManager.debugMessages.append("  오류 타입: \(type(of: error))")
+                TabPersistenceManager.debugMessages.append("  오류 설명: \(error.localizedDescription)")
+                
+                // WKError 세부 정보
+                if let wkError = error as? WKError {
+                    TabPersistenceManager.debugMessages.append("  WKError 코드: \(wkError.code.rawValue)")
+                    TabPersistenceManager.debugMessages.append("  WKError 도메인: \(wkError.domain)")
+                    if let userInfo = wkError.userInfo as? [String: Any] {
+                        TabPersistenceManager.debugMessages.append("  WKError userInfo: \(userInfo)")
+                    }
+                }
+                
+                TabPersistenceManager.debugMessages.append("❌ 절대좌표 풀백으로 전환")
                 self.restoreWithAbsolutePosition(webView: webView, completion: completion)
             }
         }
@@ -219,6 +271,8 @@ struct BFCacheSnapshot: Codable {
     
     // 앵커 데이터를 Dictionary로 변환
     private func convertAnchorsToDict(_ anchors: [UnifiedAnchor]) -> [[String: Any]] {
+        TabPersistenceManager.debugMessages.append("🔄 앵커 변환 시작: \(anchors.count)개")
+        
         return anchors.map { anchor in
             var dict: [String: Any] = [
                 "cssSelector": anchor.cssSelector,
@@ -245,34 +299,65 @@ struct BFCacheSnapshot: Codable {
     // 절대좌표 풀백
     private func restoreWithAbsolutePosition(webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("📍 절대좌표 풀백 사용")
+        TabPersistenceManager.debugMessages.append("  목표: X=\(scrollPosition.x), Y=\(scrollPosition.y)")
         
         let js = """
         (function() {
-            const scroller = document.scrollingElement || document.documentElement;
-            const targetX = \(scrollPosition.x);
-            const targetY = \(scrollPosition.y);
-            
-            scroller.scrollLeft = targetX;
-            scroller.scrollTop = targetY;
-            
-            return {
-                success: true,
-                phase: 'absolute_fallback',
-                finalPosition: { x: scroller.scrollLeft, y: scroller.scrollTop },
-                difference: {
-                    x: Math.abs(scroller.scrollLeft - targetX),
-                    y: Math.abs(scroller.scrollTop - targetY)
-                }
-            };
+            try {
+                const scroller = document.scrollingElement || document.documentElement;
+                const targetX = \(scrollPosition.x);
+                const targetY = \(scrollPosition.y);
+                
+                const beforeX = scroller.scrollLeft;
+                const beforeY = scroller.scrollTop;
+                
+                scroller.scrollLeft = targetX;
+                scroller.scrollTop = targetY;
+                
+                const afterX = scroller.scrollLeft;
+                const afterY = scroller.scrollTop;
+                
+                return {
+                    success: true,
+                    phase: 'absolute_fallback',
+                    before: { x: beforeX, y: beforeY },
+                    target: { x: targetX, y: targetY },
+                    finalPosition: { x: afterX, y: afterY },
+                    difference: {
+                        x: Math.abs(afterX - targetX),
+                        y: Math.abs(afterY - targetY)
+                    }
+                };
+            } catch(e) {
+                return {
+                    success: false,
+                    phase: 'absolute_fallback',
+                    error: e.toString()
+                };
+            }
         })()
         """
         
-        webView.evaluateJavaScript(js) { _, _ in
-            completion(false) // 풀백이므로 부분 성공
+        webView.evaluateJavaScript(js) { result, error in
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("❌ 절대좌표 풀백 실패: \(error.localizedDescription)")
+                completion(false)
+            } else if let resultDict = result as? [String: Any] {
+                if let finalPos = resultDict["finalPosition"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📍 풀백 최종 위치: Y=\(finalPos["y"] ?? 0)")
+                }
+                if let diff = resultDict["difference"] as? [String: Double] {
+                    TabPersistenceManager.debugMessages.append("📏 풀백 차이: Y=\(diff["y"] ?? 0)")
+                }
+                completion(false) // 풀백이므로 부분 성공
+            } else {
+                TabPersistenceManager.debugMessages.append("❌ 절대좌표 풀백 결과 파싱 실패")
+                completion(false)
+            }
         }
     }
     
-    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (arguments 직접 접근으로 수정)
+    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (파라미터 접근 수정)
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
         return """
@@ -281,23 +366,51 @@ struct BFCacheSnapshot: Codable {
         
         try {
             logs.push('🎯 통합 앵커 복원 시작');
+            logs.push('파라미터 확인:');
+            logs.push('  targetY 타입: ' + typeof targetY);
+            logs.push('  percentY 타입: ' + typeof percentY);
+            logs.push('  anchorsData 타입: ' + typeof anchorsData);
+            logs.push('  primaryScroller 타입: ' + typeof primaryScroller);
             
-            // 파라미터를 직접 변수로 접근
-            const targetY = targetY;
-            const percentY = percentY;
-            const anchors = anchorsData;
-            const primaryScrollerSelector = primaryScroller;
+            // 🐛 수정: arguments에서 직접 접근 (변수명 중복 제거)
+            const target_Y = targetY;
+            const percent_Y = percentY;
+            const anchors_array = anchorsData;
+            const primary_scroller = primaryScroller;
+            
+            logs.push('파라미터 값:');
+            logs.push('  target_Y: ' + target_Y);
+            logs.push('  percent_Y: ' + percent_Y);
+            logs.push('  anchors_array 길이: ' + (anchors_array ? anchors_array.length : 'null'));
+            logs.push('  primary_scroller: ' + primary_scroller);
+            
+            // 파라미터 검증
+            if (typeof target_Y !== 'number' || typeof percent_Y !== 'number') {
+                throw new Error('Invalid parameters: targetY or percentY is not a number');
+            }
+            
+            if (!Array.isArray(anchors_array)) {
+                throw new Error('Invalid parameters: anchorsData is not an array');
+            }
             
             // 스크롤러 탐지
             function findBestScroller() {
-                if (primaryScrollerSelector === 'document.scrollingElement || document.documentElement') {
-                    return document.scrollingElement || document.documentElement;
+                logs.push('스크롤러 탐지 시작');
+                
+                if (primary_scroller === 'document.scrollingElement || document.documentElement') {
+                    const defaultScroller = document.scrollingElement || document.documentElement;
+                    logs.push('기본 스크롤러 사용');
+                    return defaultScroller;
                 }
                 
-                const element = document.querySelector(primaryScrollerSelector);
-                if (element && element.scrollHeight > element.clientHeight) {
-                    logs.push('커스텀 스크롤러 사용: ' + primaryScrollerSelector);
-                    return element;
+                try {
+                    const element = document.querySelector(primary_scroller);
+                    if (element && element.scrollHeight > element.clientHeight) {
+                        logs.push('커스텀 스크롤러 발견: ' + primary_scroller);
+                        return element;
+                    }
+                } catch(e) {
+                    logs.push('커스텀 스크롤러 선택 실패: ' + e.message);
                 }
                 
                 // 폴백: 가장 긴 스크롤러 찾기
@@ -314,17 +427,23 @@ struct BFCacheSnapshot: Codable {
                     return scrollables[0];
                 }
                 
+                logs.push('폴백: document 스크롤러 사용');
                 return document.scrollingElement || document.documentElement;
             }
             
             const scroller = findBestScroller();
+            logs.push('선택된 스크롤러: ' + (scroller.id || scroller.className || scroller.tagName));
+            logs.push('스크롤러 높이: ' + scroller.scrollHeight + 'px');
+            logs.push('스크롤러 뷰포트: ' + scroller.clientHeight + 'px');
             
-            logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
-            logs.push('앵커 수: ' + anchors.length);
+            logs.push('목표: Y=' + target_Y.toFixed(1) + 'px (' + percent_Y.toFixed(1) + '%)');
+            logs.push('앵커 수: ' + anchors_array.length);
             
             // DOM 렌더링 완료 대기
             async function waitForDOM() {
                 return new Promise((resolve) => {
+                    logs.push('DOM 대기 시작');
+                    
                     if (document.readyState === 'complete') {
                         logs.push('DOM 이미 완료');
                         resolve();
@@ -349,6 +468,7 @@ struct BFCacheSnapshot: Codable {
                         } else {
                             changeCount = 0;
                             lastHeight = currentHeight;
+                            logs.push('DOM 높이 변경: ' + lastHeight + ' -> ' + currentHeight);
                         }
                     }
                     
@@ -391,13 +511,23 @@ struct BFCacheSnapshot: Codable {
             function findAnchor(anchor) {
                 // 1. 영속적 ID로 찾기
                 if (anchor.persistentId) {
-                    const elements = document.querySelectorAll(
-                        '[data-id="' + anchor.persistentId + '"], ' +
-                        '[data-key="' + anchor.persistentId + '"], ' +
+                    logs.push('ID 검색: ' + anchor.persistentId);
+                    const selectors = [
+                        '[data-id="' + anchor.persistentId + '"]',
+                        '[data-key="' + anchor.persistentId + '"]', 
                         '[id="' + anchor.persistentId + '"]'
-                    );
-                    if (elements.length > 0) {
-                        return { element: elements[0], method: 'persistent_id', confidence: 95 };
+                    ];
+                    
+                    for (let selector of selectors) {
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                logs.push('ID 매칭 성공: ' + selector);
+                                return { element: elements[0], method: 'persistent_id', confidence: 95 };
+                            }
+                        } catch(e) {
+                            logs.push('ID 선택자 오류: ' + e.message);
+                        }
                     }
                 }
                 
@@ -406,34 +536,40 @@ struct BFCacheSnapshot: Codable {
                     try {
                         const elements = document.querySelectorAll(anchor.cssSelector);
                         if (elements.length === 1) {
+                            logs.push('CSS 셀렉터 매칭: ' + anchor.cssSelector);
                             return { element: elements[0], method: 'css_selector', confidence: 85 };
                         }
                         
                         // 여러 개면 콘텐츠 해시로 필터링
                         if (elements.length > 1 && anchor.contentHash) {
+                            logs.push('CSS 셀렉터 다중 매칭: ' + elements.length + '개');
                             for (let el of elements) {
                                 const hash = simpleHash(el.textContent || '');
                                 if (hash === anchor.contentHash) {
+                                    logs.push('해시 매칭 성공');
                                     return { element: el, method: 'css_with_hash', confidence: 90 };
                                 }
                             }
                         }
                     } catch(e) {
-                        // 셀렉터 오류 무시
+                        logs.push('CSS 셀렉터 오류: ' + e.message);
                     }
                 }
                 
                 // 3. 콘텐츠 해시로 찾기
                 if (anchor.contentHash && anchor.textPreview) {
+                    logs.push('콘텐츠 해시 검색 시작');
                     const searchText = anchor.textPreview.substring(0, 50);
                     const candidates = Array.from(document.querySelectorAll('*')).filter(el => {
                         const text = el.textContent || '';
                         return text.length > 20 && text.includes(searchText);
                     });
                     
+                    logs.push('후보 요소: ' + candidates.length + '개');
                     for (let el of candidates) {
                         const hash = simpleHash(el.textContent || '');
                         if (hash === anchor.contentHash) {
+                            logs.push('해시 매칭 성공');
                             return { element: el, method: 'content_hash', confidence: 75 };
                         }
                     }
@@ -493,30 +629,42 @@ struct BFCacheSnapshot: Codable {
             let bestMatch = null;
             let phase = 'initial';
             
+            logs.push('앵커 탐색 시작');
+            
             // 첫 번째 시도: 모든 앵커 탐색
-            for (let anchor of anchors) {
+            for (let i = 0; i < anchors_array.length; i++) {
+                const anchor = anchors_array[i];
+                logs.push('앵커 [' + i + '] 검사');
+                
                 const result = findAnchor(anchor);
                 if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
                     bestMatch = result;
                     matchedAnchor = anchor;
-                    if (result.confidence >= 90) break; // 충분히 신뢰할 수 있으면 중단
+                    logs.push('더 나은 매칭 발견: 신뢰도 ' + result.confidence);
+                    if (result.confidence >= 90) {
+                        logs.push('충분한 신뢰도 - 탐색 중단');
+                        break;
+                    }
                 }
             }
             
             // 앵커를 못 찾았으면 로딩 트리거 후 재시도
             if (!bestMatch || bestMatch.confidence < 75) {
-                logs.push('앵커 신뢰도 낮음 - 로딩 트리거');
+                logs.push('앵커 신뢰도 낮음 (' + (bestMatch ? bestMatch.confidence : 0) + ') - 로딩 트리거');
                 await triggerLoading();
                 await waitForDOM();
                 
                 phase = 'after_loading';
                 
+                logs.push('로딩 후 재시도');
                 // 재시도
-                for (let anchor of anchors) {
+                for (let i = 0; i < anchors_array.length; i++) {
+                    const anchor = anchors_array[i];
                     const result = findAnchor(anchor);
                     if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
                         bestMatch = result;
                         matchedAnchor = anchor;
+                        logs.push('로딩 후 더 나은 매칭: 신뢰도 ' + result.confidence);
                         if (result.confidence >= 90) break;
                     }
                 }
@@ -524,26 +672,32 @@ struct BFCacheSnapshot: Codable {
             
             // 앵커 기반 스크롤
             if (bestMatch && matchedAnchor) {
-                logs.push('앵커 매칭: ' + bestMatch.method + ' (신뢰도: ' + bestMatch.confidence + '%)');
+                logs.push('앵커 매칭 성공: ' + bestMatch.method + ' (신뢰도: ' + bestMatch.confidence + '%)');
                 
                 const rect = bestMatch.element.getBoundingClientRect();
                 const elementTop = scroller.scrollTop + rect.top;
                 const targetScrollTop = elementTop - matchedAnchor.relativePosition.y;
                 
+                logs.push('요소 위치: ' + elementTop);
+                logs.push('상대 오프셋: ' + matchedAnchor.relativePosition.y);
+                logs.push('목표 스크롤: ' + targetScrollTop);
+                
                 scroller.scrollTop = targetScrollTop;
                 
-                logs.push('앵커 기반 스크롤: ' + targetScrollTop.toFixed(1) + 'px');
+                logs.push('앵커 기반 스크롤 완료');
                 phase = 'anchor_restored';
             } else {
                 // 절대좌표 풀백
                 logs.push('앵커 없음 - 절대좌표 풀백');
                 
                 // 백분율 우선 시도
-                if (percentY > 0) {
+                if (percent_Y > 0) {
                     const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-                    scroller.scrollTop = (percentY / 100) * maxScroll;
+                    scroller.scrollTop = (percent_Y / 100) * maxScroll;
+                    logs.push('백분율 스크롤: ' + scroller.scrollTop);
                 } else {
-                    scroller.scrollTop = targetY;
+                    scroller.scrollTop = target_Y;
+                    logs.push('절대 위치 스크롤: ' + target_Y);
                 }
                 
                 phase = 'absolute_fallback';
@@ -551,8 +705,13 @@ struct BFCacheSnapshot: Codable {
             
             // 최종 위치
             const finalY = scroller.scrollTop;
-            const difference = Math.abs(finalY - targetY);
+            const difference = Math.abs(finalY - target_Y);
             const success = difference < 100; // 100px 이내면 성공
+            
+            logs.push('최종 결과:');
+            logs.push('  최종 위치: ' + finalY);
+            logs.push('  목표 차이: ' + difference);
+            logs.push('  성공 여부: ' + success);
             
             return {
                 success: success,
@@ -563,18 +722,22 @@ struct BFCacheSnapshot: Codable {
                     selector: matchedAnchor?.cssSelector
                 } : null,
                 finalPosition: { x: scroller.scrollLeft, y: finalY },
-                targetPosition: { x: 0, y: targetY },
+                targetPosition: { x: 0, y: target_Y },
                 difference: { x: 0, y: difference },
                 logs: logs,
                 duration: Date.now() - startTime
             };
             
         } catch(e) {
+            logs.push('❌ 오류 발생: ' + e.toString());
+            logs.push('오류 스택: ' + (e.stack || 'N/A'));
+            
             return {
                 success: false,
                 phase: 'error',
-                error: e.message,
-                logs: logs
+                error: e.toString() + ' | Stack: ' + (e.stack || 'N/A'),
+                logs: logs,
+                duration: Date.now() - startTime
             };
         }
         """
