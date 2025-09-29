@@ -189,78 +189,85 @@ struct BFCacheSnapshot: Codable {
             case .success(let value):
                 TabPersistenceManager.debugMessages.append("✅ 스크립트 실행 성공")
                 
-                // 🔧 수정: nil 체크 후 Dictionary 캐스팅
-                guard let unwrappedValue = value else {
-                    TabPersistenceManager.debugMessages.append("❌ 반환값이 nil - 절대좌표 풀백")
-                    self.restoreWithAbsolutePosition(webView: webView, completion: completion)
-                    return
-                }
-                
-                guard let resultDict = unwrappedValue as? [String: Any] else {
-                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: Dictionary 캐스팅 실패")
-                    TabPersistenceManager.debugMessages.append("❌ 실제 타입: \(type(of: unwrappedValue))")
+                // 🔧 수정: Optional 체크와 타입 캐스팅 분리
+                if let value = value {
+                    // value가 nil이 아닌 경우
+                    TabPersistenceManager.debugMessages.append("📊 반환값 타입: \(type(of: value))")
                     
-                    // 디버깅용 - 문자열인 경우 내용 출력
-                    if let str = unwrappedValue as? String {
-                        TabPersistenceManager.debugMessages.append("❌ 문자열 결과: \(str.prefix(200))")
+                    // Dictionary로 캐스팅 시도
+                    if let resultDict = value as? [String: Any] {
+                        TabPersistenceManager.debugMessages.append("📊 결과 Dictionary 파싱 성공")
+                        
+                        // 결과 분석
+                        let success = (resultDict["success"] as? Bool) ?? false
+                        TabPersistenceManager.debugMessages.append("📊 성공 플래그: \(success)")
+                        
+                        if let phase = resultDict["phase"] as? String {
+                            TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
+                        }
+                        
+                        if let error = resultDict["error"] as? String {
+                            TabPersistenceManager.debugMessages.append("❌ JavaScript 에러: \(error)")
+                        }
+                        
+                        if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                            if let selector = matchedAnchor["selector"] as? String {
+                                TabPersistenceManager.debugMessages.append("✅ 매칭된 앵커: \(selector)")
+                            }
+                            if let confidence = matchedAnchor["confidence"] as? Int {
+                                TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
+                            }
+                            if let method = matchedAnchor["method"] as? String {
+                                TabPersistenceManager.debugMessages.append("🔍 매칭 방법: \(method)")
+                            }
+                        }
+                        
+                        if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                            TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                        }
+                        
+                        if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
+                            TabPersistenceManager.debugMessages.append("🎯 목표 위치: Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+                        }
+                        
+                        if let difference = resultDict["difference"] as? [String: Double] {
+                            TabPersistenceManager.debugMessages.append("📏 위치 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                        }
+                        
+                        if let duration = resultDict["duration"] as? Int {
+                            TabPersistenceManager.debugMessages.append("⏱️ 실행 시간: \(duration)ms")
+                        }
+                        
+                        // JavaScript 로그 출력
+                        if let logs = resultDict["logs"] as? [String] {
+                            TabPersistenceManager.debugMessages.append("📝 JS 로그 (\(logs.count)개):")
+                            for (index, log) in logs.prefix(30).enumerated() {
+                                TabPersistenceManager.debugMessages.append("  [\(index)] \(log)")
+                            }
+                        }
+                        
+                        TabPersistenceManager.debugMessages.append("🎯 복원 최종 결과: \(success ? "성공" : "실패")")
+                        completion(success)
+                    } else {
+                        // Dictionary로 캐스팅 실패
+                        TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: Dictionary 캐스팅 실패")
+                        
+                        // 디버깅용 - 다른 타입 확인
+                        if let str = value as? String {
+                            TabPersistenceManager.debugMessages.append("❌ 문자열 결과: \(str.prefix(200))")
+                        } else if let num = value as? NSNumber {
+                            TabPersistenceManager.debugMessages.append("❌ 숫자 결과: \(num)")
+                        } else if let arr = value as? [Any] {
+                            TabPersistenceManager.debugMessages.append("❌ 배열 결과: \(arr.count)개 항목")
+                        }
+                        
+                        self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                     }
-                    
+                } else {
+                    // value가 nil인 경우
+                    TabPersistenceManager.debugMessages.append("❌ 반환값이 nil - JavaScript가 아무것도 반환하지 않음")
                     self.restoreWithAbsolutePosition(webView: webView, completion: completion)
-                    return
                 }
-                
-                TabPersistenceManager.debugMessages.append("📊 결과 Dictionary 파싱 성공")
-                
-                // 결과 분석
-                let success = (resultDict["success"] as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("📊 성공 플래그: \(success)")
-                
-                if let phase = resultDict["phase"] as? String {
-                    TabPersistenceManager.debugMessages.append("🔄 복원 단계: \(phase)")
-                }
-                
-                if let error = resultDict["error"] as? String {
-                    TabPersistenceManager.debugMessages.append("❌ JavaScript 에러: \(error)")
-                }
-                
-                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                    if let selector = matchedAnchor["selector"] as? String {
-                        TabPersistenceManager.debugMessages.append("✅ 매칭된 앵커: \(selector)")
-                    }
-                    if let confidence = matchedAnchor["confidence"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📊 신뢰도: \(confidence)%")
-                    }
-                    if let method = matchedAnchor["method"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 매칭 방법: \(method)")
-                    }
-                }
-                
-                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📍 최종 위치: Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                }
-                
-                if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🎯 목표 위치: Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
-                }
-                
-                if let difference = resultDict["difference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("📏 위치 차이: Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                }
-                
-                if let duration = resultDict["duration"] as? Int {
-                    TabPersistenceManager.debugMessages.append("⏱️ 실행 시간: \(duration)ms")
-                }
-                
-                // JavaScript 로그 출력
-                if let logs = resultDict["logs"] as? [String] {
-                    TabPersistenceManager.debugMessages.append("📝 JS 로그 (\(logs.count)개):")
-                    for (index, log) in logs.prefix(30).enumerated() {
-                        TabPersistenceManager.debugMessages.append("  [\(index)] \(log)")
-                    }
-                }
-                
-                TabPersistenceManager.debugMessages.append("🎯 복원 최종 결과: \(success ? "성공" : "실패")")
-                completion(success)
                 
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 실행 오류:")
@@ -376,423 +383,421 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🔧 **수정된 복원 스크립트 - 명시적 return 강화**
+    // MARK: - 🔧 **수정된 복원 스크립트 - 올바른 형식의 함수 본체**
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
-        // 🔧 핵심 수정: 함수 본문에서 명시적으로 값 return
+        // 🔧 핵심 수정: callAsyncJavaScript는 함수 본체를 기대하므로, 
+        // function 선언 없이 본체만 제공하고 명시적으로 Promise를 return
         return """
-        // async 함수로 정의하고 명시적으로 결과를 return
-        async function() {
-            const logs = [];
-            const startTime = Date.now();
+        const logs = [];
+        const startTime = Date.now();
+        
+        try {
+            logs.push('🎯 통합 앵커 복원 시작');
+            logs.push('파라미터 확인:');
+            logs.push('  targetY: ' + (typeof targetY !== 'undefined' ? targetY : 'undefined'));
+            logs.push('  percentY: ' + (typeof percentY !== 'undefined' ? percentY : 'undefined'));
+            logs.push('  anchorsData 길이: ' + (anchorsData ? anchorsData.length : 'null'));
+            logs.push('  primaryScroller: ' + (primaryScroller || 'undefined'));
             
-            try {
-                logs.push('🎯 통합 앵커 복원 시작');
-                logs.push('파라미터 확인:');
-                logs.push('  targetY: ' + (typeof targetY !== 'undefined' ? targetY : 'undefined'));
-                logs.push('  percentY: ' + (typeof percentY !== 'undefined' ? percentY : 'undefined'));
-                logs.push('  anchorsData 길이: ' + (anchorsData ? anchorsData.length : 'null'));
-                logs.push('  primaryScroller: ' + (primaryScroller || 'undefined'));
+            // 파라미터 검증
+            if (typeof targetY === 'undefined' || typeof percentY === 'undefined') {
+                throw new Error('Invalid parameters: targetY or percentY is undefined');
+            }
+            
+            if (!Array.isArray(anchorsData)) {
+                throw new Error('Invalid parameters: anchorsData is not an array');
+            }
+            
+            // 스크롤러 탐지
+            function findBestScroller() {
+                logs.push('스크롤러 탐지 시작');
                 
-                // 파라미터 검증
-                if (typeof targetY === 'undefined' || typeof percentY === 'undefined') {
-                    throw new Error('Invalid parameters: targetY or percentY is undefined');
+                if (primaryScroller === 'document.scrollingElement || document.documentElement') {
+                    const defaultScroller = document.scrollingElement || document.documentElement;
+                    logs.push('기본 스크롤러 사용');
+                    return defaultScroller;
                 }
                 
-                if (!Array.isArray(anchorsData)) {
-                    throw new Error('Invalid parameters: anchorsData is not an array');
+                try {
+                    const element = document.querySelector(primaryScroller);
+                    if (element && element.scrollHeight > element.clientHeight) {
+                        logs.push('커스텀 스크롤러 발견: ' + primaryScroller);
+                        return element;
+                    }
+                } catch(e) {
+                    logs.push('커스텀 스크롤러 선택 실패: ' + e.message);
                 }
                 
-                // 스크롤러 탐지
-                function findBestScroller() {
-                    logs.push('스크롤러 탐지 시작');
+                // 폴백: 가장 긴 스크롤러 찾기
+                const scrollables = Array.from(document.querySelectorAll('*')).filter(el => {
+                    const style = getComputedStyle(el);
+                    return (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                            style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                           el.scrollHeight > el.clientHeight;
+                });
+                
+                if (scrollables.length > 0) {
+                    scrollables.sort((a, b) => b.scrollHeight - a.scrollHeight);
+                    logs.push('가장 긴 스크롤러 자동 선택: ' + scrollables[0].tagName);
+                    return scrollables[0];
+                }
+                
+                logs.push('폴백: document 스크롤러 사용');
+                return document.scrollingElement || document.documentElement;
+            }
+            
+            const scroller = findBestScroller();
+            logs.push('선택된 스크롤러: ' + (scroller.id || scroller.className || scroller.tagName));
+            logs.push('스크롤러 높이: ' + scroller.scrollHeight + 'px');
+            logs.push('스크롤러 뷰포트: ' + scroller.clientHeight + 'px');
+            
+            logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
+            logs.push('앵커 수: ' + anchorsData.length);
+            
+            // 🌐 가상 스크롤 감지 및 대응
+            const isVirtualScroll = scroller.scrollHeight < targetY * 0.5;
+            if (isVirtualScroll) {
+                logs.push('🌐 가상 스크롤 감지: 스크롤러 높이(' + scroller.scrollHeight + ') < 목표의 50%(' + (targetY * 0.5).toFixed(0) + ')');
+            }
+            
+            // DOM 렌더링 완료 대기 (Promise 반환)
+            async function waitForDOM() {
+                return new Promise((resolve) => {
+                    logs.push('DOM 대기 시작');
                     
-                    if (primaryScroller === 'document.scrollingElement || document.documentElement') {
-                        const defaultScroller = document.scrollingElement || document.documentElement;
-                        logs.push('기본 스크롤러 사용');
-                        return defaultScroller;
+                    if (document.readyState === 'complete') {
+                        logs.push('DOM 이미 완료');
+                        resolve();
+                        return;
                     }
                     
-                    try {
-                        const element = document.querySelector(primaryScroller);
-                        if (element && element.scrollHeight > element.clientHeight) {
-                            logs.push('커스텀 스크롤러 발견: ' + primaryScroller);
-                            return element;
+                    let observer = null;
+                    let resizeObserver = null;
+                    let timeoutId = null;
+                    let changeCount = 0;
+                    let lastHeight = scroller.scrollHeight;
+                    
+                    function checkStability() {
+                        const currentHeight = scroller.scrollHeight;
+                        if (Math.abs(currentHeight - lastHeight) < 10) {
+                            changeCount++;
+                            if (changeCount >= 3) {
+                                logs.push('DOM 안정화 확인 (높이: ' + currentHeight + 'px)');
+                                cleanup();
+                                resolve();
+                            }
+                        } else {
+                            changeCount = 0;
+                            lastHeight = currentHeight;
+                            logs.push('DOM 높이 변경: ' + lastHeight + ' -> ' + currentHeight);
                         }
-                    } catch(e) {
-                        logs.push('커스텀 스크롤러 선택 실패: ' + e.message);
                     }
                     
-                    // 폴백: 가장 긴 스크롤러 찾기
-                    const scrollables = Array.from(document.querySelectorAll('*')).filter(el => {
-                        const style = getComputedStyle(el);
-                        return (style.overflow === 'auto' || style.overflow === 'scroll' ||
-                                style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                               el.scrollHeight > el.clientHeight;
+                    function cleanup() {
+                        if (observer) observer.disconnect();
+                        if (resizeObserver) resizeObserver.disconnect();
+                        if (timeoutId) clearTimeout(timeoutId);
+                    }
+                    
+                    // MutationObserver 설정
+                    observer = new MutationObserver(() => {
+                        checkStability();
                     });
                     
-                    if (scrollables.length > 0) {
-                        scrollables.sort((a, b) => b.scrollHeight - a.scrollHeight);
-                        logs.push('가장 긴 스크롤러 자동 선택: ' + scrollables[0].tagName);
-                        return scrollables[0];
-                    }
+                    observer.observe(document.body, {
+                        childList: true,
+                        subtree: true,
+                        attributes: false,
+                        characterData: false
+                    });
                     
-                    logs.push('폴백: document 스크롤러 사용');
-                    return document.scrollingElement || document.documentElement;
-                }
-                
-                const scroller = findBestScroller();
-                logs.push('선택된 스크롤러: ' + (scroller.id || scroller.className || scroller.tagName));
-                logs.push('스크롤러 높이: ' + scroller.scrollHeight + 'px');
-                logs.push('스크롤러 뷰포트: ' + scroller.clientHeight + 'px');
-                
-                logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
-                logs.push('앵커 수: ' + anchorsData.length);
-                
-                // 🌐 가상 스크롤 감지 및 대응
-                const isVirtualScroll = scroller.scrollHeight < targetY * 0.5;
-                if (isVirtualScroll) {
-                    logs.push('🌐 가상 스크롤 감지: 스크롤러 높이(' + scroller.scrollHeight + ') < 목표의 50%(' + (targetY * 0.5).toFixed(0) + ')');
-                }
-                
-                // DOM 렌더링 완료 대기 (Promise 반환)
-                async function waitForDOM() {
-                    return new Promise((resolve) => {
-                        logs.push('DOM 대기 시작');
-                        
-                        if (document.readyState === 'complete') {
-                            logs.push('DOM 이미 완료');
-                            resolve();
-                            return;
-                        }
-                        
-                        let observer = null;
-                        let resizeObserver = null;
-                        let timeoutId = null;
-                        let changeCount = 0;
-                        let lastHeight = scroller.scrollHeight;
-                        
-                        function checkStability() {
-                            const currentHeight = scroller.scrollHeight;
-                            if (Math.abs(currentHeight - lastHeight) < 10) {
-                                changeCount++;
-                                if (changeCount >= 3) {
-                                    logs.push('DOM 안정화 확인 (높이: ' + currentHeight + 'px)');
-                                    cleanup();
-                                    resolve();
-                                }
-                            } else {
-                                changeCount = 0;
-                                lastHeight = currentHeight;
-                                logs.push('DOM 높이 변경: ' + lastHeight + ' -> ' + currentHeight);
-                            }
-                        }
-                        
-                        function cleanup() {
-                            if (observer) observer.disconnect();
-                            if (resizeObserver) resizeObserver.disconnect();
-                            if (timeoutId) clearTimeout(timeoutId);
-                        }
-                        
-                        // MutationObserver 설정
-                        observer = new MutationObserver(() => {
+                    // ResizeObserver 설정
+                    if (window.ResizeObserver) {
+                        resizeObserver = new ResizeObserver(() => {
                             checkStability();
                         });
-                        
-                        observer.observe(document.body, {
-                            childList: true,
-                            subtree: true,
-                            attributes: false,
-                            characterData: false
-                        });
-                        
-                        // ResizeObserver 설정
-                        if (window.ResizeObserver) {
-                            resizeObserver = new ResizeObserver(() => {
-                                checkStability();
-                            });
-                            resizeObserver.observe(scroller === document.documentElement ? document.body : scroller);
-                        }
-                        
-                        // 타임아웃 설정 (최대 3초)
-                        timeoutId = setTimeout(() => {
-                            logs.push('DOM 대기 타임아웃');
-                            cleanup();
-                            resolve();
-                        }, 3000);
-                    });
-                }
+                        resizeObserver.observe(scroller === document.documentElement ? document.body : scroller);
+                    }
+                    
+                    // 타임아웃 설정 (최대 3초)
+                    timeoutId = setTimeout(() => {
+                        logs.push('DOM 대기 타임아웃');
+                        cleanup();
+                        resolve();
+                    }, 3000);
+                });
+            }
+            
+            // 🌐 가상 스크롤 렌더링 유도 (Promise 반환)
+            async function triggerVirtualScrollRendering(targetY) {
+                logs.push('🌐 가상 스크롤 렌더링 트리거 시작: 목표 Y=' + targetY.toFixed(0));
                 
-                // 🌐 가상 스크롤 렌더링 유도 (Promise 반환)
-                async function triggerVirtualScrollRendering(targetY) {
-                    logs.push('🌐 가상 스크롤 렌더링 트리거 시작: 목표 Y=' + targetY.toFixed(0));
-                    
-                    const steps = 5;
-                    const stepSize = targetY / steps;
-                    
-                    for (let i = 1; i <= steps; i++) {
-                        const scrollY = stepSize * i;
-                        scroller.scrollTop = scrollY;
-                        logs.push('🌐 단계 ' + i + '/' + steps + ': Y=' + scrollY.toFixed(0));
-                        
-                        // 스크롤 이벤트 발생
-                        window.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-                        
-                        // DOM 렌더링 대기
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                        
-                        const newHeight = scroller.scrollHeight;
-                        logs.push('🌐 스크롤러 높이 갱신: ' + newHeight + 'px');
-                        
-                        if (newHeight >= targetY * 1.2) {
-                            logs.push('🌐 충분한 높이 확보 - 렌더링 트리거 완료');
-                            break;
-                        }
-                    }
-                    
-                    await waitForDOM();
-                }
+                const steps = 5;
+                const stepSize = targetY / steps;
                 
-                // 앵커 찾기 함수
-                function findAnchor(anchor) {
-                    // 1. 영속적 ID로 찾기
-                    if (anchor.persistentId) {
-                        logs.push('ID 검색: ' + anchor.persistentId);
-                        const selectors = [
-                            '[data-id="' + anchor.persistentId + '"]',
-                            '[data-key="' + anchor.persistentId + '"]', 
-                            '[id="' + anchor.persistentId + '"]'
-                        ];
-                        
-                        for (let selector of selectors) {
-                            try {
-                                const elements = document.querySelectorAll(selector);
-                                if (elements.length > 0) {
-                                    logs.push('ID 매칭 성공: ' + selector);
-                                    return { element: elements[0], method: 'persistent_id', confidence: 95 };
-                                }
-                            } catch(e) {
-                                logs.push('ID 선택자 오류: ' + e.message);
-                            }
-                        }
-                    }
-                    
-                    // 2. CSS 셀렉터로 찾기
-                    if (anchor.cssSelector) {
-                        try {
-                            const elements = document.querySelectorAll(anchor.cssSelector);
-                            if (elements.length === 1) {
-                                logs.push('CSS 셀렉터 매칭: ' + anchor.cssSelector);
-                                return { element: elements[0], method: 'css_selector', confidence: 85 };
-                            }
-                            
-                            // 여러 개면 콘텐츠 해시로 필터링
-                            if (elements.length > 1 && anchor.contentHash) {
-                                logs.push('CSS 셀렉터 다중 매칭: ' + elements.length + '개');
-                                for (let el of elements) {
-                                    const hash = simpleHash(el.textContent || '');
-                                    if (hash === anchor.contentHash) {
-                                        logs.push('해시 매칭 성공');
-                                        return { element: el, method: 'css_with_hash', confidence: 90 };
-                                    }
-                                }
-                            }
-                        } catch(e) {
-                            logs.push('CSS 셀렉터 오류: ' + e.message);
-                        }
-                    }
-                    
-                    // 3. 콘텐츠 해시로 찾기
-                    if (anchor.contentHash && anchor.textPreview) {
-                        logs.push('콘텐츠 해시 검색 시작');
-                        const searchText = anchor.textPreview.substring(0, 50);
-                        const candidates = Array.from(document.querySelectorAll('*')).filter(el => {
-                            const text = el.textContent || '';
-                            return text.length > 20 && text.includes(searchText);
-                        });
-                        
-                        logs.push('후보 요소: ' + candidates.length + '개');
-                        for (let el of candidates) {
-                            const hash = simpleHash(el.textContent || '');
-                            if (hash === anchor.contentHash) {
-                                logs.push('해시 매칭 성공');
-                                return { element: el, method: 'content_hash', confidence: 75 };
-                            }
-                        }
-                    }
-                    
-                    return null;
-                }
-                
-                // 간단한 해시 함수
-                function simpleHash(str) {
-                    let hash = 0;
-                    if (!str || str.length === 0) return '';
-                    for (let i = 0; i < str.length; i++) {
-                        const char = str.charCodeAt(i);
-                        hash = ((hash << 5) - hash) + char;
-                        hash = hash & hash;
-                    }
-                    return Math.abs(hash).toString(36);
-                }
-                
-                // 로딩 트리거 함수 (Promise 반환)
-                async function triggerLoading() {
-                    logs.push('로딩 트리거 시도');
+                for (let i = 1; i <= steps; i++) {
+                    const scrollY = stepSize * i;
+                    scroller.scrollTop = scrollY;
+                    logs.push('🌐 단계 ' + i + '/' + steps + ': Y=' + scrollY.toFixed(0));
                     
                     // 스크롤 이벤트 발생
-                    scroller.scrollTop = scroller.scrollHeight;
                     window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
                     
-                    // IntersectionObserver 트리거
-                    const bottomElement = document.elementFromPoint(
-                        window.innerWidth / 2,
-                        window.innerHeight - 10
-                    );
-                    if (bottomElement) {
-                        bottomElement.scrollIntoView({ block: 'end' });
+                    // DOM 렌더링 대기
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    
+                    const newHeight = scroller.scrollHeight;
+                    logs.push('🌐 스크롤러 높이 갱신: ' + newHeight + 'px');
+                    
+                    if (newHeight >= targetY * 1.2) {
+                        logs.push('🌐 충분한 높이 확보 - 렌더링 트리거 완료');
+                        break;
                     }
+                }
+                
+                await waitForDOM();
+            }
+            
+            // 앵커 찾기 함수
+            function findAnchor(anchor) {
+                // 1. 영속적 ID로 찾기
+                if (anchor.persistentId) {
+                    logs.push('ID 검색: ' + anchor.persistentId);
+                    const selectors = [
+                        '[data-id="' + anchor.persistentId + '"]',
+                        '[data-key="' + anchor.persistentId + '"]', 
+                        '[id="' + anchor.persistentId + '"]'
+                    ];
                     
-                    // 더보기 버튼 클릭
-                    const loadMoreButtons = document.querySelectorAll(
-                        'button[class*="more"], [class*="load"], .load-more'
-                    );
-                    loadMoreButtons.forEach(btn => {
-                        if (btn && typeof btn.click === 'function') {
-                            btn.click();
+                    for (let selector of selectors) {
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) {
+                                logs.push('ID 매칭 성공: ' + selector);
+                                return { element: elements[0], method: 'persistent_id', confidence: 95 };
+                            }
+                        } catch(e) {
+                            logs.push('ID 선택자 오류: ' + e.message);
                         }
+                    }
+                }
+                
+                // 2. CSS 셀렉터로 찾기
+                if (anchor.cssSelector) {
+                    try {
+                        const elements = document.querySelectorAll(anchor.cssSelector);
+                        if (elements.length === 1) {
+                            logs.push('CSS 셀렉터 매칭: ' + anchor.cssSelector);
+                            return { element: elements[0], method: 'css_selector', confidence: 85 };
+                        }
+                        
+                        // 여러 개면 콘텐츠 해시로 필터링
+                        if (elements.length > 1 && anchor.contentHash) {
+                            logs.push('CSS 셀렉터 다중 매칭: ' + elements.length + '개');
+                            for (let el of elements) {
+                                const hash = simpleHash(el.textContent || '');
+                                if (hash === anchor.contentHash) {
+                                    logs.push('해시 매칭 성공');
+                                    return { element: el, method: 'css_with_hash', confidence: 90 };
+                                }
+                            }
+                        }
+                    } catch(e) {
+                        logs.push('CSS 셀렉터 오류: ' + e.message);
+                    }
+                }
+                
+                // 3. 콘텐츠 해시로 찾기
+                if (anchor.contentHash && anchor.textPreview) {
+                    logs.push('콘텐츠 해시 검색 시작');
+                    const searchText = anchor.textPreview.substring(0, 50);
+                    const candidates = Array.from(document.querySelectorAll('*')).filter(el => {
+                        const text = el.textContent || '';
+                        return text.length > 20 && text.includes(searchText);
                     });
                     
-                    return new Promise(resolve => {
-                        setTimeout(resolve, 500);
-                    });
+                    logs.push('후보 요소: ' + candidates.length + '개');
+                    for (let el of candidates) {
+                        const hash = simpleHash(el.textContent || '');
+                        if (hash === anchor.contentHash) {
+                            logs.push('해시 매칭 성공');
+                            return { element: el, method: 'content_hash', confidence: 75 };
+                        }
+                    }
                 }
                 
-                // 🌐 가상 스크롤이면 먼저 렌더링 유도
-                if (isVirtualScroll) {
-                    await triggerVirtualScrollRendering(targetY);
-                } else {
-                    await waitForDOM();
+                return null;
+            }
+            
+            // 간단한 해시 함수
+            function simpleHash(str) {
+                let hash = 0;
+                if (!str || str.length === 0) return '';
+                for (let i = 0; i < str.length; i++) {
+                    const char = str.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                }
+                return Math.abs(hash).toString(36);
+            }
+            
+            // 로딩 트리거 함수 (Promise 반환)
+            async function triggerLoading() {
+                logs.push('로딩 트리거 시도');
+                
+                // 스크롤 이벤트 발생
+                scroller.scrollTop = scroller.scrollHeight;
+                window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                
+                // IntersectionObserver 트리거
+                const bottomElement = document.elementFromPoint(
+                    window.innerWidth / 2,
+                    window.innerHeight - 10
+                );
+                if (bottomElement) {
+                    bottomElement.scrollIntoView({ block: 'end' });
                 }
                 
-                let matchedAnchor = null;
-                let bestMatch = null;
-                let phase = 'initial';
+                // 더보기 버튼 클릭
+                const loadMoreButtons = document.querySelectorAll(
+                    'button[class*="more"], [class*="load"], .load-more'
+                );
+                loadMoreButtons.forEach(btn => {
+                    if (btn && typeof btn.click === 'function') {
+                        btn.click();
+                    }
+                });
                 
-                logs.push('앵커 탐색 시작');
+                return new Promise(resolve => {
+                    setTimeout(resolve, 500);
+                });
+            }
+            
+            // 🌐 가상 스크롤이면 먼저 렌더링 유도
+            if (isVirtualScroll) {
+                await triggerVirtualScrollRendering(targetY);
+            } else {
+                await waitForDOM();
+            }
+            
+            let matchedAnchor = null;
+            let bestMatch = null;
+            let phase = 'initial';
+            
+            logs.push('앵커 탐색 시작');
+            
+            // 첫 번째 시도: 모든 앵커 탐색
+            for (let i = 0; i < anchorsData.length; i++) {
+                const anchor = anchorsData[i];
+                logs.push('앵커 [' + i + '] 검사');
                 
-                // 첫 번째 시도: 모든 앵커 탐색
+                const result = findAnchor(anchor);
+                if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
+                    bestMatch = result;
+                    matchedAnchor = anchor;
+                    logs.push('더 나은 매칭 발견: 신뢰도 ' + result.confidence);
+                    if (result.confidence >= 90) {
+                        logs.push('충분한 신뢰도 - 탐색 중단');
+                        break;
+                    }
+                }
+            }
+            
+            // 앵커를 못 찾았으면 로딩 트리거 후 재시도
+            if (!bestMatch || bestMatch.confidence < 75) {
+                logs.push('앵커 신뢰도 낮음 (' + (bestMatch ? bestMatch.confidence : 0) + ') - 로딩 트리거');
+                await triggerLoading();
+                await waitForDOM();
+                
+                phase = 'after_loading';
+                
+                logs.push('로딩 후 재시도');
+                // 재시도
                 for (let i = 0; i < anchorsData.length; i++) {
                     const anchor = anchorsData[i];
-                    logs.push('앵커 [' + i + '] 검사');
-                    
                     const result = findAnchor(anchor);
                     if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
                         bestMatch = result;
                         matchedAnchor = anchor;
-                        logs.push('더 나은 매칭 발견: 신뢰도 ' + result.confidence);
-                        if (result.confidence >= 90) {
-                            logs.push('충분한 신뢰도 - 탐색 중단');
-                            break;
-                        }
+                        logs.push('로딩 후 더 나은 매칭: 신뢰도 ' + result.confidence);
+                        if (result.confidence >= 90) break;
                     }
                 }
-                
-                // 앵커를 못 찾았으면 로딩 트리거 후 재시도
-                if (!bestMatch || bestMatch.confidence < 75) {
-                    logs.push('앵커 신뢰도 낮음 (' + (bestMatch ? bestMatch.confidence : 0) + ') - 로딩 트리거');
-                    await triggerLoading();
-                    await waitForDOM();
-                    
-                    phase = 'after_loading';
-                    
-                    logs.push('로딩 후 재시도');
-                    // 재시도
-                    for (let i = 0; i < anchorsData.length; i++) {
-                        const anchor = anchorsData[i];
-                        const result = findAnchor(anchor);
-                        if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
-                            bestMatch = result;
-                            matchedAnchor = anchor;
-                            logs.push('로딩 후 더 나은 매칭: 신뢰도 ' + result.confidence);
-                            if (result.confidence >= 90) break;
-                        }
-                    }
-                }
-                
-                // 앵커 기반 스크롤
-                if (bestMatch && matchedAnchor) {
-                    logs.push('앵커 매칭 성공: ' + bestMatch.method + ' (신뢰도: ' + bestMatch.confidence + '%)');
-                    
-                    const rect = bestMatch.element.getBoundingClientRect();
-                    const elementTop = scroller.scrollTop + rect.top;
-                    const targetScrollTop = elementTop - matchedAnchor.relativePosition.y;
-                    
-                    logs.push('요소 위치: ' + elementTop);
-                    logs.push('상대 오프셋: ' + matchedAnchor.relativePosition.y);
-                    logs.push('목표 스크롤: ' + targetScrollTop);
-                    
-                    scroller.scrollTop = targetScrollTop;
-                    
-                    logs.push('앵커 기반 스크롤 완료');
-                    phase = 'anchor_restored';
-                } else {
-                    // 절대좌표 풀백
-                    logs.push('앵커 없음 - 절대좌표 풀백');
-                    
-                    // 백분율 우선 시도
-                    if (percentY > 0) {
-                        const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-                        scroller.scrollTop = (percentY / 100) * maxScroll;
-                        logs.push('백분율 스크롤: ' + scroller.scrollTop);
-                    } else {
-                        scroller.scrollTop = targetY;
-                        logs.push('절대 위치 스크롤: ' + targetY);
-                    }
-                    
-                    phase = 'absolute_fallback';
-                }
-                
-                // 최종 위치
-                const finalY = scroller.scrollTop;
-                const difference = Math.abs(finalY - targetY);
-                const success = difference < 100;
-                
-                logs.push('최종 결과:');
-                logs.push('  최종 위치: ' + finalY);
-                logs.push('  목표 차이: ' + difference);
-                logs.push('  성공 여부: ' + success);
-                
-                // 🔧 핵심 수정: 명시적으로 객체를 return
-                return {
-                    success: success,
-                    phase: phase,
-                    matchedAnchor: bestMatch ? {
-                        method: bestMatch.method,
-                        confidence: bestMatch.confidence,
-                        selector: matchedAnchor?.cssSelector
-                    } : null,
-                    finalPosition: { x: scroller.scrollLeft, y: finalY },
-                    targetPosition: { x: 0, y: targetY },
-                    difference: { x: 0, y: difference },
-                    logs: logs,
-                    duration: Date.now() - startTime
-                };
-                
-            } catch(e) {
-                logs.push('❌ 오류 발생: ' + e.toString());
-                logs.push('오류 스택: ' + (e.stack || 'N/A'));
-                
-                // 🔧 핵심 수정: 에러 시에도 명시적으로 객체를 return
-                return {
-                    success: false,
-                    phase: 'error',
-                    error: e.toString() + ' | Stack: ' + (e.stack || 'N/A'),
-                    logs: logs,
-                    duration: Date.now() - startTime
-                };
             }
+            
+            // 앵커 기반 스크롤
+            if (bestMatch && matchedAnchor) {
+                logs.push('앵커 매칭 성공: ' + bestMatch.method + ' (신뢰도: ' + bestMatch.confidence + '%)');
+                
+                const rect = bestMatch.element.getBoundingClientRect();
+                const elementTop = scroller.scrollTop + rect.top;
+                const targetScrollTop = elementTop - matchedAnchor.relativePosition.y;
+                
+                logs.push('요소 위치: ' + elementTop);
+                logs.push('상대 오프셋: ' + matchedAnchor.relativePosition.y);
+                logs.push('목표 스크롤: ' + targetScrollTop);
+                
+                scroller.scrollTop = targetScrollTop;
+                
+                logs.push('앵커 기반 스크롤 완료');
+                phase = 'anchor_restored';
+            } else {
+                // 절대좌표 풀백
+                logs.push('앵커 없음 - 절대좌표 풀백');
+                
+                // 백분율 우선 시도
+                if (percentY > 0) {
+                    const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+                    scroller.scrollTop = (percentY / 100) * maxScroll;
+                    logs.push('백분율 스크롤: ' + scroller.scrollTop);
+                } else {
+                    scroller.scrollTop = targetY;
+                    logs.push('절대 위치 스크롤: ' + targetY);
+                }
+                
+                phase = 'absolute_fallback';
+            }
+            
+            // 최종 위치
+            const finalY = scroller.scrollTop;
+            const difference = Math.abs(finalY - targetY);
+            const success = difference < 100;
+            
+            logs.push('최종 결과:');
+            logs.push('  최종 위치: ' + finalY);
+            logs.push('  목표 차이: ' + difference);
+            logs.push('  성공 여부: ' + success);
+            
+            // 🔧 핵심 수정: Promise를 반환해야 함
+            return Promise.resolve({
+                success: success,
+                phase: phase,
+                matchedAnchor: bestMatch ? {
+                    method: bestMatch.method,
+                    confidence: bestMatch.confidence,
+                    selector: matchedAnchor?.cssSelector
+                } : null,
+                finalPosition: { x: scroller.scrollLeft, y: finalY },
+                targetPosition: { x: 0, y: targetY },
+                difference: { x: 0, y: difference },
+                logs: logs,
+                duration: Date.now() - startTime
+            });
+            
+        } catch(e) {
+            logs.push('❌ 오류 발생: ' + e.toString());
+            logs.push('오류 스택: ' + (e.stack || 'N/A'));
+            
+            // 🔧 핵심 수정: 에러 시에도 Promise를 반환
+            return Promise.resolve({
+                success: false,
+                phase: 'error',
+                error: e.toString() + ' | Stack: ' + (e.stack || 'N/A'),
+                logs: logs,
+                duration: Date.now() - startTime
+            });
         }
         """
     }
