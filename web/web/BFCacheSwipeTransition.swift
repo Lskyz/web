@@ -152,10 +152,44 @@ struct BFCacheSnapshot: Codable {
     // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - 네비게이션 중단 처리**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
-        // 🟡 **변경 3: 로딩 중이면 복원 호출하지 않기**
+        // 🟡 **변경 3: 로딩 중이면 완료 대기 후 복원**
         guard webView.isLoading == false else {
-            TabPersistenceManager.debugMessages.append("⏸️ 로딩 중 - 복원 스킵")
-            completion(false)
+            TabPersistenceManager.debugMessages.append("⏸️ 로딩 중 - 완료 대기")
+            
+            var observer: NSKeyValueObservation?
+            var timeoutWorkItem: DispatchWorkItem?
+            
+            // 로딩 완료 감지
+            observer = webView.observe(\.isLoading, options: [.new]) { [weak self, weak webView] _, change in
+                guard let self = self, let webView = webView else {
+                    completion(false)
+                    return
+                }
+                
+                if change.newValue == false {
+                    observer?.invalidate()
+                    timeoutWorkItem?.cancel()
+                    
+                    TabPersistenceManager.debugMessages.append("✅ 로딩 완료 - 복원 재시도")
+                    
+                    // DOM 렌더링 안정화 대기 (짧은 지연)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        self.restore(to: webView, completion: completion)
+                    }
+                }
+            }
+            
+            // 타임아웃 (3초)
+            timeoutWorkItem = DispatchWorkItem { [weak observer] in
+                observer?.invalidate()
+                TabPersistenceManager.debugMessages.append("⏰ 로딩 대기 타임아웃 - 복원 포기")
+                completion(false)
+            }
+            
+            if let workItem = timeoutWorkItem {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: workItem)
+            }
+            
             return
         }
         
