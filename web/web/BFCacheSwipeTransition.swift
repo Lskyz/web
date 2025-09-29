@@ -30,21 +30,21 @@ struct BFCacheSnapshot: Codable {
     let unifiedAnchors: UnifiedAnchors?
     
     struct UnifiedAnchors: Codable {
-        let primaryScrollerSelector: String? // 가장 긴 스크롤러 셀렉터
+        let primaryScrollerSelector: String?
         let scrollerHeight: CGFloat
         let anchors: [UnifiedAnchor]
         let captureStats: [String: Int]
     }
     
     struct UnifiedAnchor: Codable {
-        let persistentId: String?         // data-id, data-key 등
-        let cssSelector: String           // CSS 경로
-        let contentHash: String?          // 콘텐츠 해시
-        let textPreview: String?          // 텍스트 미리보기
-        let relativePosition: CGPoint     // 앵커 기준 상대 위치
-        let absolutePosition: CGPoint     // 절대 위치 (풀백용)
-        let confidence: Int               // 신뢰도 점수
-        let elementInfo: [String: String] // 추가 요소 정보
+        let persistentId: String?
+        let cssSelector: String
+        let contentHash: String?
+        let textPreview: String?
+        let relativePosition: CGPoint
+        let absolutePosition: CGPoint
+        let confidence: Int
+        let elementInfo: [String: String]
     }
     
     enum CaptureStatus: String, Codable {
@@ -52,6 +52,35 @@ struct BFCacheSnapshot: Codable {
         case partial
         case visualOnly
         case failed
+    }
+    
+    // 일반 초기화자
+    init(pageRecord: PageRecord,
+         domSnapshot: String? = nil,
+         scrollPosition: CGPoint,
+         scrollPositionPercent: CGPoint,
+         contentSize: CGSize,
+         viewportSize: CGSize,
+         actualScrollableSize: CGSize,
+         jsState: [String: Any]? = nil,
+         timestamp: Date,
+         webViewSnapshotPath: String? = nil,
+         captureStatus: CaptureStatus,
+         version: Int,
+         unifiedAnchors: UnifiedAnchors? = nil) {
+        self.pageRecord = pageRecord
+        self.domSnapshot = domSnapshot
+        self.scrollPosition = scrollPosition
+        self.scrollPositionPercent = scrollPositionPercent
+        self.contentSize = contentSize
+        self.viewportSize = viewportSize
+        self.actualScrollableSize = actualScrollableSize
+        self.jsState = jsState
+        self.timestamp = timestamp
+        self.webViewSnapshotPath = webViewSnapshotPath
+        self.captureStatus = captureStatus
+        self.version = version
+        self.unifiedAnchors = unifiedAnchors
     }
     
     // Codable을 위한 CodingKeys
@@ -62,7 +91,7 @@ struct BFCacheSnapshot: Codable {
         case captureStatus, version, unifiedAnchors
     }
     
-    // Custom encoding/decoding for [String: Any]
+    // Custom decoding
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         pageRecord = try container.decode(PageRecord.self, forKey: .pageRecord)
@@ -84,6 +113,7 @@ struct BFCacheSnapshot: Codable {
         version = try container.decode(Int.self, forKey: .version)
     }
     
+    // Custom encoding
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(pageRecord, forKey: .pageRecord)
@@ -131,16 +161,16 @@ struct BFCacheSnapshot: Codable {
         // 통합 복원 스크립트 실행
         let js = generateUnifiedRestorationScript(anchors: anchors)
         
-        webView.evaluateJavaScript(js) { [weak self] result, error in
+        webView.evaluateJavaScript(js) { result, error in
             if let error = error {
                 TabPersistenceManager.debugMessages.append("❌ 복원 스크립트 오류: \(error.localizedDescription)")
-                self?.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                 return
             }
             
             guard let resultDict = result as? [String: Any] else {
                 TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패")
-                self?.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                self.restoreWithAbsolutePosition(webView: webView, completion: completion)
                 return
             }
             
