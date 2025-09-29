@@ -7,7 +7,8 @@
 //  📍 **절대좌표 풀백**: 모든 앵커 실패시 최후 수단
 //  📏 **스크롤러 탐지**: 가장 긴 스크롤러 자동 선택
 //  🔧 **callAsyncJavaScript 사용**: iOS 14+ Promise 직접 처리
-//  🐛 **복원 에러 수정**: arguments 객체 접근 방식 수정
+//  🐛 **파라미터 접근 수정**: arguments 객체 대신 함수 파라미터 직접 사용
+//  🌐 **가상 스크롤 대응**: 목표 위치까지 스크롤하여 DOM 렌더링 유도
 
 import UIKit
 import WebKit
@@ -146,7 +147,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript 복원 - arguments 접근 방식 수정**
+    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - 파라미터 접근 수정**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
@@ -163,7 +164,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📌 스크롤러: \(anchors.primaryScrollerSelector ?? "document")")
         TabPersistenceManager.debugMessages.append("📌 스크롤러 높이: \(String(format: "%.0f", anchors.scrollerHeight))px")
         
-        // 🐛 수정: arguments 객체 구성
+        // 🐛 수정: arguments 딕셔너리 키들이 자동으로 함수 파라미터가 됨
         let arguments: [String: Any] = [
             "targetY": scrollPosition.y,
             "percentY": scrollPositionPercent.y,
@@ -174,8 +175,8 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
         TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
         
-        // callAsyncJavaScript 사용 (iOS 14+)
-        let js = generateAsyncRestorationScript()
+        // 🐛 수정: 함수 본문에서 파라미터를 직접 사용 (arguments 변수명 사용하지 않음)
+        let js = generateAsyncRestorationScript(anchors: anchors)
         
         TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
         
@@ -363,55 +364,47 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (arguments 객체 접근 수정)
+    // MARK: - 🎯 callAsyncJavaScript용 복원 스크립트 (파라미터 직접 사용 + 가상 스크롤 대응)
     
-    private func generateAsyncRestorationScript() -> String {
+    private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
         return """
+        // 🐛 수정: 함수 파라미터로 직접 접근 (targetY, percentY, anchorsData, primaryScroller)
+        // Swift의 arguments 딕셔너리 키들이 자동으로 함수 파라미터가 됨
+        
         const logs = [];
         const startTime = Date.now();
         
         try {
             logs.push('🎯 통합 앵커 복원 시작');
-            logs.push('arguments 객체 확인:');
-            logs.push('  arguments 타입: ' + typeof arguments);
-            logs.push('  arguments 키: ' + Object.keys(arguments).join(', '));
-            
-            // 🐛 수정: arguments 객체에서 프로퍼티로 접근
-            const target_Y = arguments.targetY;
-            const percent_Y = arguments.percentY;
-            const anchors_array = arguments.anchorsData;
-            const primary_scroller = arguments.primaryScroller;
-            
-            logs.push('파라미터 값:');
-            logs.push('  target_Y: ' + target_Y);
-            logs.push('  percent_Y: ' + percent_Y);
-            logs.push('  anchors_array 타입: ' + typeof anchors_array);
-            logs.push('  anchors_array 길이: ' + (Array.isArray(anchors_array) ? anchors_array.length : 'not array'));
-            logs.push('  primary_scroller: ' + primary_scroller);
+            logs.push('파라미터 확인:');
+            logs.push('  targetY: ' + targetY);
+            logs.push('  percentY: ' + percentY);
+            logs.push('  anchorsData 길이: ' + (anchorsData ? anchorsData.length : 'null'));
+            logs.push('  primaryScroller: ' + primaryScroller);
             
             // 파라미터 검증
-            if (typeof target_Y !== 'number' || typeof percent_Y !== 'number') {
-                throw new Error('Invalid parameters: targetY=' + typeof target_Y + ' percentY=' + typeof percent_Y);
+            if (typeof targetY !== 'number' || typeof percentY !== 'number') {
+                throw new Error('Invalid parameters: targetY or percentY is not a number');
             }
             
-            if (!Array.isArray(anchors_array)) {
-                throw new Error('Invalid parameters: anchorsData is not array, type=' + typeof anchors_array);
+            if (!Array.isArray(anchorsData)) {
+                throw new Error('Invalid parameters: anchorsData is not an array');
             }
             
             // 스크롤러 탐지
             function findBestScroller() {
                 logs.push('스크롤러 탐지 시작');
                 
-                if (primary_scroller === 'document.scrollingElement || document.documentElement') {
+                if (primaryScroller === 'document.scrollingElement || document.documentElement') {
                     const defaultScroller = document.scrollingElement || document.documentElement;
                     logs.push('기본 스크롤러 사용');
                     return defaultScroller;
                 }
                 
                 try {
-                    const element = document.querySelector(primary_scroller);
+                    const element = document.querySelector(primaryScroller);
                     if (element && element.scrollHeight > element.clientHeight) {
-                        logs.push('커스텀 스크롤러 발견: ' + primary_scroller);
+                        logs.push('커스텀 스크롤러 발견: ' + primaryScroller);
                         return element;
                     }
                 } catch(e) {
@@ -441,8 +434,14 @@ struct BFCacheSnapshot: Codable {
             logs.push('스크롤러 높이: ' + scroller.scrollHeight + 'px');
             logs.push('스크롤러 뷰포트: ' + scroller.clientHeight + 'px');
             
-            logs.push('목표: Y=' + target_Y.toFixed(1) + 'px (' + percent_Y.toFixed(1) + '%)');
-            logs.push('앵커 수: ' + anchors_array.length);
+            logs.push('목표: Y=' + targetY.toFixed(1) + 'px (' + percentY.toFixed(1) + '%)');
+            logs.push('앵커 수: ' + anchorsData.length);
+            
+            // 🌐 가상 스크롤 감지 및 대응
+            const isVirtualScroll = scroller.scrollHeight < targetY * 0.5; // 목표의 50%도 안되면 가상 스크롤
+            if (isVirtualScroll) {
+                logs.push('🌐 가상 스크롤 감지: 스크롤러 높이(' + scroller.scrollHeight + ') < 목표의 50%(' + (targetY * 0.5).toFixed(0) + ')');
+            }
             
             // DOM 렌더링 완료 대기
             async function waitForDOM() {
@@ -510,6 +509,40 @@ struct BFCacheSnapshot: Codable {
                         resolve();
                     }, 3000);
                 });
+            }
+            
+            // 🌐 가상 스크롤 렌더링 유도
+            async function triggerVirtualScrollRendering(targetY) {
+                logs.push('🌐 가상 스크롤 렌더링 트리거 시작: 목표 Y=' + targetY.toFixed(0));
+                
+                const steps = 5; // 5단계로 스크롤
+                const stepSize = targetY / steps;
+                
+                for (let i = 1; i <= steps; i++) {
+                    const scrollY = stepSize * i;
+                    scroller.scrollTop = scrollY;
+                    logs.push('🌐 단계 ' + i + '/' + steps + ': Y=' + scrollY.toFixed(0));
+                    
+                    // 스크롤 이벤트 발생
+                    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    
+                    // DOM 렌더링 대기
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    
+                    // 높이 확인
+                    const newHeight = scroller.scrollHeight;
+                    logs.push('🌐 스크롤러 높이 갱신: ' + newHeight + 'px');
+                    
+                    // 충분히 높아졌으면 중단
+                    if (newHeight >= targetY * 1.2) {
+                        logs.push('🌐 충분한 높이 확보 - 렌더링 트리거 완료');
+                        break;
+                    }
+                }
+                
+                // 최종 DOM 대기
+                await waitForDOM();
             }
             
             // 앵커 찾기 함수
@@ -627,8 +660,13 @@ struct BFCacheSnapshot: Codable {
                 });
             }
             
-            // 복원 실행
-            await waitForDOM();
+            // 🌐 가상 스크롤이면 먼저 렌더링 유도
+            if (isVirtualScroll) {
+                await triggerVirtualScrollRendering(targetY);
+            } else {
+                // 복원 실행
+                await waitForDOM();
+            }
             
             let matchedAnchor = null;
             let bestMatch = null;
@@ -637,8 +675,8 @@ struct BFCacheSnapshot: Codable {
             logs.push('앵커 탐색 시작');
             
             // 첫 번째 시도: 모든 앵커 탐색
-            for (let i = 0; i < anchors_array.length; i++) {
-                const anchor = anchors_array[i];
+            for (let i = 0; i < anchorsData.length; i++) {
+                const anchor = anchorsData[i];
                 logs.push('앵커 [' + i + '] 검사');
                 
                 const result = findAnchor(anchor);
@@ -663,8 +701,8 @@ struct BFCacheSnapshot: Codable {
                 
                 logs.push('로딩 후 재시도');
                 // 재시도
-                for (let i = 0; i < anchors_array.length; i++) {
-                    const anchor = anchors_array[i];
+                for (let i = 0; i < anchorsData.length; i++) {
+                    const anchor = anchorsData[i];
                     const result = findAnchor(anchor);
                     if (result && (!bestMatch || result.confidence > bestMatch.confidence)) {
                         bestMatch = result;
@@ -696,13 +734,13 @@ struct BFCacheSnapshot: Codable {
                 logs.push('앵커 없음 - 절대좌표 풀백');
                 
                 // 백분율 우선 시도
-                if (percent_Y > 0) {
+                if (percentY > 0) {
                     const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-                    scroller.scrollTop = (percent_Y / 100) * maxScroll;
+                    scroller.scrollTop = (percentY / 100) * maxScroll;
                     logs.push('백분율 스크롤: ' + scroller.scrollTop);
                 } else {
-                    scroller.scrollTop = target_Y;
-                    logs.push('절대 위치 스크롤: ' + target_Y);
+                    scroller.scrollTop = targetY;
+                    logs.push('절대 위치 스크롤: ' + targetY);
                 }
                 
                 phase = 'absolute_fallback';
@@ -710,7 +748,7 @@ struct BFCacheSnapshot: Codable {
             
             // 최종 위치
             const finalY = scroller.scrollTop;
-            const difference = Math.abs(finalY - target_Y);
+            const difference = Math.abs(finalY - targetY);
             const success = difference < 100; // 100px 이내면 성공
             
             logs.push('최종 결과:');
@@ -727,7 +765,7 @@ struct BFCacheSnapshot: Codable {
                     selector: matchedAnchor?.cssSelector
                 } : null,
                 finalPosition: { x: scroller.scrollLeft, y: finalY },
-                targetPosition: { x: 0, y: target_Y },
+                targetPosition: { x: 0, y: targetY },
                 difference: { x: 0, y: difference },
                 logs: logs,
                 duration: Date.now() - startTime
