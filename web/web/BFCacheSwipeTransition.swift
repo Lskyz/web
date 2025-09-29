@@ -9,7 +9,7 @@
 //  🔧 **callAsyncJavaScript 사용**: iOS 14+ Promise 직접 처리
 //  🐛 **파라미터 접근 수정**: arguments 객체 대신 함수 파라미터 직접 사용
 //  🌐 **가상 스크롤 대응**: 목표 위치까지 스크롤하여 DOM 렌더링 유도
-//  🔧 **Promise 반환 수정**: async 함수 래핑으로 completion handler 도달 보장
+//  🔧 **Promise 반환 수정**: return 키워드 추가로 IIFE Promise 확실히 반환
 
 import UIKit
 import WebKit
@@ -148,7 +148,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - Promise 수정**
+    // MARK: - 🎯 **핵심: callAsyncJavaScript를 사용한 통합 복원 - Promise 반환 수정**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 통합 앵커 복원 시작: \(pageRecord.url.host ?? "unknown")")
@@ -176,7 +176,7 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔧 파라미터 준비: targetY=\(scrollPosition.y), percentY=\(scrollPositionPercent.y)")
         TabPersistenceManager.debugMessages.append("🔧 앵커 데이터 크기: \(anchors.anchors.count)개")
         
-        // 🔧 수정: async 함수로 감싸서 Promise를 확실히 반환
+        // 🔧 수정: return 키워드 추가로 Promise를 확실히 반환
         let js = generateAsyncRestorationScript(anchors: anchors)
         
         TabPersistenceManager.debugMessages.append("📝 복원 스크립트 실행 시작")
@@ -188,9 +188,22 @@ struct BFCacheSnapshot: Codable {
             case .success(let value):
                 TabPersistenceManager.debugMessages.append("✅ 스크립트 실행 성공")
                 
-                guard let resultDict = value as? [String: Any] else {
-                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: 반환값이 Dictionary가 아님")
-                    TabPersistenceManager.debugMessages.append("❌ 실제 타입: \(type(of: value))")
+                // 🔧 브리징 안전성 보강
+                let resultDict: [String: Any]
+                if let dict = value as? [String: Any] {
+                    resultDict = dict
+                } else if let nsdict = value as? NSDictionary {
+                    // 브리지 안전 변환
+                    let data = try? JSONSerialization.data(withJSONObject: nsdict, options: [])
+                    let obj = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+                    guard let bridged = obj else {
+                        TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: Dictionary 브리징 실패 (type=\(type(of: value)))")
+                        self.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                        return
+                    }
+                    resultDict = bridged
+                } else {
+                    TabPersistenceManager.debugMessages.append("❌ 결과 파싱 실패: 반환값이 Dictionary가 아님 (type=\(type(of: value)))")
                     if let str = value as? String {
                         TabPersistenceManager.debugMessages.append("❌ 문자열 결과: \(str.prefix(200))")
                     }
@@ -365,13 +378,13 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🔧 **수정된 복원 스크립트 - Promise 래핑 강화**
+    // MARK: - 🔧 **수정된 복원 스크립트 - return 키워드 추가로 Promise 확실히 반환**
     
     private func generateAsyncRestorationScript(anchors: UnifiedAnchors) -> String {
-        // 🔧 핵심 수정: async 함수로 감싸고 Promise를 명시적으로 반환
+        // 🔧 핵심 수정: return 키워드 추가로 IIFE Promise를 WebKit이 await 하도록 보장
         return """
-        // async 함수로 감싸서 Promise를 확실히 반환
-        (async function() {
+        // return 키워드로 async IIFE의 Promise를 반환 - WebKit이 await 후 결과 전달
+        return (async function() {
             const logs = [];
             const startTime = Date.now();
             
@@ -753,7 +766,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('  목표 차이: ' + difference);
                 logs.push('  성공 여부: ' + success);
                 
-                // 🔧 수정: 결과 객체를 Promise로 반환
+                // 결과 객체 반환
                 return {
                     success: success,
                     phase: phase,
@@ -773,7 +786,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('❌ 오류 발생: ' + e.toString());
                 logs.push('오류 스택: ' + (e.stack || 'N/A'));
                 
-                // 🔧 수정: 에러 객체도 Promise로 반환
+                // 에러 객체 반환
                 return {
                     success: false,
                     phase: 'error',
@@ -782,7 +795,7 @@ struct BFCacheSnapshot: Codable {
                     duration: Date.now() - startTime
                 };
             }
-        })()
+        })();
         """
     }
 }
