@@ -570,7 +570,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\\$1');
                 }
 
                 function datasetKeyToAttr(key) {
@@ -848,7 +848,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\\$1');
                 }
 
                 function datasetKeyToAttr(key) {
@@ -1163,7 +1163,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\\$1');
                 }
 
                 function datasetKeyToAttr(key) {
@@ -1683,7 +1683,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\\$1');
                 }
 
                 function datasetKeyToAttr(key) {
@@ -2564,7 +2564,7 @@ extension BFCacheTransitionSystem {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\\$1');
                 }
 
                 // -- DOM path builder (lightweight)
@@ -2754,7 +2754,7 @@ extension BFCacheTransitionSystem {
                                 hasIndexGap = true;
                             }
 
-                            const text = (item.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 120);
+                            const text = (item.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 120);
                             const relativeTop = container.scrollTop + (itemRect.top - rect.top);
                             const transform = item.style.transform || window.getComputedStyle(item).transform || '';
 
