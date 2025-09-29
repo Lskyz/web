@@ -174,6 +174,7 @@ struct BFCacheSnapshot: Codable {
             if let logs = result["logs"] as? [String] {
                 for log in logs.prefix(10) {
                     TabPersistenceManager.debugMessages.append("   \(log)")
+                }
             }
             
             TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
@@ -836,7 +837,6 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
     }
 
-    }
     
     private struct CaptureData {
         let scrollPosition: CGPoint
