@@ -188,15 +188,19 @@ struct BFCacheSnapshot: Codable {
             switch result {
             case .success(let value):
                 TabPersistenceManager.debugMessages.append("✅ 스크립트 실행 성공")
+                TabPersistenceManager.debugMessages.append("📊 반환값 타입: \(type(of: value))")
                 
-                // 🔧 수정: Optional 체크와 타입 캐스팅 분리
-                if let value = value {
-                    // value가 nil이 아닌 경우
-                    TabPersistenceManager.debugMessages.append("📊 반환값 타입: \(type(of: value))")
-                    
-                    // Dictionary로 캐스팅 시도
-                    if let resultDict = value as? [String: Any] {
-                        TabPersistenceManager.debugMessages.append("📊 결과 Dictionary 파싱 성공")
+                // 🔧 수정: value는 Any 타입 (Optional 아님)
+                // NSNull 체크 먼저 수행
+                if value is NSNull {
+                    TabPersistenceManager.debugMessages.append("❌ JavaScript가 null/undefined 반환")
+                    self.restoreWithAbsolutePosition(webView: webView, completion: completion)
+                    return
+                }
+                
+                // Dictionary로 캐스팅 시도
+                if let resultDict = value as? [String: Any] {
+                    TabPersistenceManager.debugMessages.append("📊 결과 Dictionary 파싱 성공")
                         
                         // 결과 분석
                         let success = (resultDict["success"] as? Bool) ?? false
