@@ -7,7 +7,8 @@
 //  🎯 4순위: 로딩 트리거 후 재탐색
 //  🎯 5순위: 상대좌표 풀백
 //  ⚡ 비동기 처리 + 렌더링 안정 대기
-//  🔒 타입 안전성: JSON.stringify로 안전한 타입 변환
+//  🔒 타입 안전성: Swift 호환 기본 타입만 사용
+//  🔧 Promise 처리 수정: then/catch로 결과 반환
 //
 
 import UIKit
@@ -131,7 +132,7 @@ struct BFCacheSnapshot: Codable {
         return UIImage(contentsOfFile: url.path)
     }
     
-    // MARK: - 🎯 **우선순위 기반 복원 시스템 (타입 안전 수정)**
+    // MARK: - 🎯 **우선순위 기반 복원 시스템**
     
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 우선순위 기반 BFCache 복원 시작")
@@ -146,34 +147,32 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("❌ 복원 JavaScript 오류: \(error.localizedDescription)")
-            } else if let jsonString = result as? String {
-                // 🔒 **타입 안전 수정**: JSON 문자열로 받아서 파싱
-                if let jsonData = jsonString.data(using: .utf8),
-                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                    success = (resultDict["success"] as? Bool) ?? false
-                    
-                    if let method = resultDict["method"] as? String {
-                        TabPersistenceManager.debugMessages.append("✅ 복원 방법: \(method)")
+            } else if let resultDict = result as? [String: Any] {
+                success = (resultDict["success"] as? Bool) ?? false
+                
+                if let method = resultDict["method"] as? String {
+                    TabPersistenceManager.debugMessages.append("✅ 복원 방법: \(method)")
+                }
+                
+                if let finalPosition = resultDict["finalPosition"] as? [String: Any] {
+                    let xPos = (finalPosition["x"] as? NSNumber)?.doubleValue ?? 0.0
+                    let yPos = (finalPosition["y"] as? NSNumber)?.doubleValue ?? 0.0
+                    TabPersistenceManager.debugMessages.append("📍 최종 위치: X=\(String(format: "%.1f", xPos))px, Y=\(String(format: "%.1f", yPos))px")
+                }
+                
+                if let difference = resultDict["difference"] as? [String: Any] {
+                    let xDiff = (difference["x"] as? NSNumber)?.doubleValue ?? 0.0
+                    let yDiff = (difference["y"] as? NSNumber)?.doubleValue ?? 0.0
+                    TabPersistenceManager.debugMessages.append("📏 위치 차이: X=\(String(format: "%.1f", xDiff))px, Y=\(String(format: "%.1f", yDiff))px")
+                }
+                
+                if let logs = resultDict["logs"] as? [String] {
+                    for log in logs.prefix(10) {
+                        TabPersistenceManager.debugMessages.append("   \(log)")
                     }
-                    
-                    if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📍 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                    }
-                    
-                    if let difference = resultDict["difference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                    }
-                    
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(10) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-                } else {
-                    TabPersistenceManager.debugMessages.append("❌ JSON 파싱 실패")
                 }
             } else {
-                TabPersistenceManager.debugMessages.append("❌ 예상치 못한 반환 타입: \(type(of: result))")
+                TabPersistenceManager.debugMessages.append("⚠️ 예상하지 못한 결과 타입: \(type(of: result))")
             }
             
             TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
@@ -181,7 +180,7 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - 🎯 **우선순위 기반 복원 스크립트 생성 (타입 안전 수정)**
+    // MARK: - 🎯 **우선순위 기반 복원 스크립트 생성**
     
     private func generatePriorityBasedRestoreScript() -> String {
         let targetX = scrollPosition.x
@@ -198,48 +197,22 @@ struct BFCacheSnapshot: Codable {
             anchorDataJSON = dataJSON
         }
         
+        // 🔧 **핵심 수정**: Promise를 .then()과 .catch()로 처리하여 결과 반환
         return """
+        // Promise를 처리하여 결과 반환하는 래퍼
         (async function() {
             try {
                 const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const targetPercentX = parseFloat('\(targetPercentX)');
-                const targetPercentY = parseFloat('\(targetPercentY)');
+                const targetX = \(targetX);
+                const targetY = \(targetY);
+                const targetPercentX = \(targetPercentX);
+                const targetPercentY = \(targetPercentY);
                 const urlFragment = '\(urlFragment)';
                 const anchorData = \(anchorDataJSON);
                 
                 logs.push('🎯 우선순위 기반 복원 시작');
                 logs.push('목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 logs.push('백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
-                
-                // 🔒 **타입 안전 유틸리티**: undefined/null을 안전한 값으로 변환
-                function toSafeJSON(obj) {
-                    if (obj === undefined || obj === null) return null;
-                    if (typeof obj === 'function') return null;
-                    if (typeof obj === 'symbol') return null;
-                    if (obj instanceof Node || obj instanceof Element) {
-                        // DOM 객체는 필요한 속성만 추출
-                        return {
-                            tagName: obj.tagName || null,
-                            id: obj.id || null,
-                            className: obj.className || null
-                        };
-                    }
-                    if (typeof obj === 'object') {
-                        if (Array.isArray(obj)) {
-                            return obj.map(toSafeJSON);
-                        }
-                        const safe = {};
-                        for (const key in obj) {
-                            if (obj.hasOwnProperty(key)) {
-                                safe[key] = toSafeJSON(obj[key]);
-                            }
-                        }
-                        return safe;
-                    }
-                    return obj;
-                }
                 
                 // 🎯 **공통 유틸리티**
                 function getROOT() { 
@@ -637,7 +610,7 @@ struct BFCacheSnapshot: Codable {
                     const diffX = Math.abs(finalResult.result.x - targetX);
                     const diffY = Math.abs(finalResult.result.y - targetY);
                     
-                    const safeResult = {
+                    return {
                         success: true,
                         method: finalResult.method,
                         finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
@@ -645,9 +618,6 @@ struct BFCacheSnapshot: Codable {
                         headerAdjustment: finalResult.result.headerAdjustment || 0,
                         logs: logs
                     };
-                    
-                    // 🔒 **타입 안전 수정**: JSON.stringify로 문자열로 반환
-                    return JSON.stringify(toSafeJSON(safeResult));
                 }
                 
                 // 2순위 시도
@@ -656,7 +626,7 @@ struct BFCacheSnapshot: Codable {
                     const diffX = Math.abs(finalResult.result.x - targetX);
                     const diffY = Math.abs(finalResult.result.y - targetY);
                     
-                    const safeResult = {
+                    return {
                         success: true,
                         method: finalResult.method,
                         finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
@@ -664,8 +634,6 @@ struct BFCacheSnapshot: Codable {
                         headerAdjustment: finalResult.result.headerAdjustment || 0,
                         logs: logs
                     };
-                    
-                    return JSON.stringify(toSafeJSON(safeResult));
                 }
                 
                 // 3순위 시도
@@ -674,7 +642,7 @@ struct BFCacheSnapshot: Codable {
                     const diffX = Math.abs(finalResult.result.x - targetX);
                     const diffY = Math.abs(finalResult.result.y - targetY);
                     
-                    const safeResult = {
+                    return {
                         success: true,
                         method: finalResult.method,
                         finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
@@ -682,8 +650,6 @@ struct BFCacheSnapshot: Codable {
                         headerAdjustment: finalResult.result.headerAdjustment || 0,
                         logs: logs
                     };
-                    
-                    return JSON.stringify(toSafeJSON(safeResult));
                 }
                 
                 // 4순위 시도
@@ -692,7 +658,7 @@ struct BFCacheSnapshot: Codable {
                     const diffX = Math.abs(finalResult.result.x - targetX);
                     const diffY = Math.abs(finalResult.result.y - targetY);
                     
-                    const safeResult = {
+                    return {
                         success: true,
                         method: finalResult.method,
                         finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
@@ -700,8 +666,6 @@ struct BFCacheSnapshot: Codable {
                         headerAdjustment: finalResult.result.headerAdjustment || 0,
                         logs: logs
                     };
-                    
-                    return JSON.stringify(toSafeJSON(safeResult));
                 }
                 
                 // 5순위 시도 (최종 풀백)
@@ -709,7 +673,7 @@ struct BFCacheSnapshot: Codable {
                 const diffX = Math.abs(finalResult.result.x - targetX);
                 const diffY = Math.abs(finalResult.result.y - targetY);
                 
-                const safeResult = {
+                return {
                     success: diffY <= 50, // 50px 허용 오차
                     method: finalResult.method,
                     finalPosition: { x: finalResult.result.x, y: finalResult.result.y },
@@ -718,17 +682,26 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 };
                 
-                return JSON.stringify(toSafeJSON(safeResult));
-                
             } catch(e) {
-                const errorResult = {
+                return {
                     success: false,
                     error: e.message,
                     logs: ['우선순위 기반 복원 실패: ' + e.message]
                 };
-                return JSON.stringify(errorResult);
             }
         })()
+        .then(function(result) {
+            // 🔧 **핵심**: Promise 결과를 직접 반환 (Swift가 처리할 수 있는 형태)
+            return result;
+        })
+        .catch(function(error) {
+            // 에러 처리
+            return {
+                success: false,
+                error: error.toString(),
+                logs: ['Promise 처리 실패: ' + error.toString()]
+            };
+        });
         """
     }
     
@@ -923,7 +896,7 @@ extension BFCacheTransitionSystem {
         }
         _ = domSemaphore.wait(timeout: .now() + 5.0)
         
-        // 3. JS 상태 캡처 (🔒 타입 안전 수정)
+        // 3. JS 상태 캡처
         let jsSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 시작")
         
@@ -933,15 +906,9 @@ extension BFCacheTransitionSystem {
             webView.evaluateJavaScript(jsScript) { result, error in
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
-                } else if let jsonString = result as? String {
-                    // 🔒 **타입 안전 수정**: JSON 문자열로 받아서 파싱
-                    if let jsonData = jsonString.data(using: .utf8),
-                       let data = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                        jsState = data
-                        TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("🔥 JS 상태 파싱 실패")
-                    }
+                } else if let data = result as? [String: Any] {
+                    jsState = data
+                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
                 } else {
                     TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
                 }
@@ -1005,40 +972,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🔥 **앵커 캡처 스크립트 (타입 안전 수정)**
+    // 🔥 **앵커 캡처 스크립트**
     private func generateAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
                 console.log('📸 앵커 캡처 시작');
-                
-                // 🔒 **타입 안전 유틸리티**: undefined/null을 안전한 값으로 변환
-                function toSafeJSON(obj) {
-                    if (obj === undefined || obj === null) return null;
-                    if (typeof obj === 'function') return null;
-                    if (typeof obj === 'symbol') return null;
-                    if (obj instanceof Node || obj instanceof Element) {
-                        // DOM 객체는 필요한 속성만 추출
-                        return {
-                            tagName: obj.tagName || null,
-                            id: obj.id || null,
-                            className: obj.className || null
-                        };
-                    }
-                    if (typeof obj === 'object') {
-                        if (Array.isArray(obj)) {
-                            return obj.map(toSafeJSON);
-                        }
-                        const safe = {};
-                        for (const key in obj) {
-                            if (obj.hasOwnProperty(key)) {
-                                safe[key] = toSafeJSON(obj[key]);
-                            }
-                        }
-                        return safe;
-                    }
-                    return obj;
-                }
                 
                 function getROOT() { 
                     return document.scrollingElement || document.documentElement; 
@@ -1078,7 +1017,7 @@ extension BFCacheTransitionSystem {
                             const anchorData = {
                                 absolutePosition: { top: elementTop, left: scrollX + rect.left },
                                 element: {
-                                    tagName: el.tagName || null,
+                                    tagName: el.tagName,
                                     id: el.id || null,
                                     dataset: {
                                         id: el.dataset.id || null,
@@ -1098,7 +1037,7 @@ extension BFCacheTransitionSystem {
                 
                 console.log('📸 앵커 캡처 완료:', anchors.length, '개');
                 
-                const result = {
+                return {
                     infiniteScrollAnchors: {
                         anchors: anchors,
                         stats: { totalAnchors: anchors.length }
@@ -1108,19 +1047,14 @@ extension BFCacheTransitionSystem {
                     title: document.title,
                     timestamp: Date.now()
                 };
-                
-                // 🔒 **타입 안전 수정**: JSON.stringify로 문자열로 반환
-                return JSON.stringify(toSafeJSON(result));
-                
             } catch(e) { 
                 console.error('📸 앵커 캡처 실패:', e);
-                const errorResult = {
+                return {
                     infiniteScrollAnchors: { anchors: [], stats: {} },
                     scroll: { x: 0, y: 0 },
                     href: window.location.href,
                     error: e.message
                 };
-                return JSON.stringify(errorResult);
             }
         })()
         """
