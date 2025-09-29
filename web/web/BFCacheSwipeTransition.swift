@@ -35,7 +35,7 @@ struct BFCacheSnapshot: Codable {
         case partial
         case visualOnly
         case failed
-    }
+        }
     
     // Codable을 위한 CodingKeys
     enum CodingKeys: String, CodingKey {
@@ -174,7 +174,6 @@ struct BFCacheSnapshot: Codable {
             if let logs = result["logs"] as? [String] {
                 for log in logs.prefix(10) {
                     TabPersistenceManager.debugMessages.append("   \(log)")
-                }
             }
             
             TabPersistenceManager.debugMessages.append("🎯 BFCache 복원 완료: \(success ? "성공" : "실패")")
@@ -203,6 +202,8 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("✅ 복원 스크립트 실행 성공")
             }
         }
+
+    }
 
     // MARK: - 🎯 **MessageHandler 기반 복원 스크립트 생성**
     
@@ -833,6 +834,8 @@ extension BFCacheTransitionSystem {
         }
         
         TabPersistenceManager.debugMessages.append("✅ 직렬 캡처 완료: \(task.pageRecord.title)")
+    }
+
     }
     
     private struct CaptureData {
