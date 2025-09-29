@@ -564,74 +564,264 @@ struct BFCacheSnapshot: Codable {
                 \(generateCommonUtilityScript())
                 
                 const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)');
-                const ROOT = getROOT();
-                const currentHeight = ROOT.scrollHeight;
-                
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                
-                // 정적 사이트 판단 (90% 이상 이미 로드됨)
-                const percentage = (currentHeight / targetHeight) * 100;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+
+                function cssEscapeCompat(value) {
+                    if (value === null || value === undefined) return '';
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                }
+
+                function datasetKeyToAttr(key) {
+                    return 'data-' + String(key || '').replace(/([A-Z])/g, '-$1').toLowerCase();
+                }
+
+                function locateVirtualContainer(containerInfo) {
+                    const resultLogs = [];
+                    if (!containerInfo) {
+                        resultLogs.push('Virtual container info missing');
+                        return { element: null, logs: resultLogs };
+                    }
+
+                    let container = null;
+                    if (containerInfo.domPath) {
+                        try {
+                            container = document.querySelector(containerInfo.domPath);
+                            if (container) {
+                                resultLogs.push('Matched container by domPath');
+                                return { element: container, logs: resultLogs };
+                            } else {
+                                resultLogs.push('DomPath not found: ' + containerInfo.domPath);
+                            }
+                        } catch(e) {
+                            resultLogs.push('DomPath lookup error: ' + e.message);
+                        }
+                    }
+
+                    if (!container && containerInfo.id) {
+                        container = document.getElementById(containerInfo.id);
+                        if (container) {
+                            resultLogs.push('Matched container by id #' + containerInfo.id);
+                            return { element: container, logs: resultLogs };
+                        } else {
+                            resultLogs.push('ID not found: #' + containerInfo.id);
+                        }
+                    }
+
+                    if (!container && containerInfo.classList && containerInfo.classList.length) {
+                        for (let i = 0; i < containerInfo.classList.length; i++) {
+                            const cls = containerInfo.classList[i];
+                            try {
+                                const candidate = document.querySelector('.' + cssEscapeCompat(cls));
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by class .' + cls);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container && containerInfo.dataset) {
+                        const keys = Object.keys(containerInfo.dataset);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attrName = datasetKeyToAttr(keys[i]);
+                            const value = containerInfo.dataset[keys[i]];
+                            if (!value) continue;
+                            try {
+                                const selector = '[' + attrName + '="' + cssEscapeCompat(value) + '"]';
+                                const candidate = document.querySelector(selector);
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by dataset ' + selector);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container) {
+                        const fallbackCandidates = Array.from(document.querySelectorAll('[class*="virtual"], [data-virtualized], [data-virtual], [data-virtual-scroll], [data-windowed]')).filter(function(el) {
+                            if (!el || !el.getBoundingClientRect) return false;
+                            const rect = el.getBoundingClientRect();
+                            return rect.height >= 60 && Math.abs((el.scrollHeight || 0) - (el.clientHeight || 0)) > 20;
+                        });
+                        if (fallbackCandidates.length > 0) {
+                            container = fallbackCandidates[0];
+                            resultLogs.push('Fallback virtual container selected by heuristics');
+                        } else {
+                            resultLogs.push('Virtual container fallback search failed');
+                        }
+                    }
+
+                    return { element: container, logs: resultLogs };
+                }
+
+                function trySelectorsInContainer(container, selectors, triedSelectors) {
+                    if (!container || !selectors) return null;
+                    triedSelectors = triedSelectors || new Set();
+                    for (let i = 0; i < selectors.length; i++) {
+                        const selector = selectors[i];
+                        if (!selector || triedSelectors.has(selector)) continue;
+                        triedSelectors.add(selector);
+                        try {
+                            const found = container.querySelector(selector);
+                            if (found) {
+                                return found;
+                            }
+                        } catch(e) {}
+                    }
+                    return null;
+                }
+
+                function buildSelectorsFromDescriptor(descriptor) {
+                    const selectors = [];
+                    if (!descriptor) return selectors;
+                    if (descriptor.attributes) {
+                        const keys = Object.keys(descriptor.attributes);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.attributes[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    if (descriptor.aria) {
+                        const keys = Object.keys(descriptor.aria);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.aria[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    return selectors;
+                }
+
+                function findVirtualFocusElement(container, anchorInfo) {
+                    if (!container || !anchorInfo) return null;
+                    const triedSelectors = new Set();
+                    const tryQueue = [];
+                    if (anchorInfo.focusItem) {
+                        tryQueue.push(anchorInfo.focusItem);
+                    }
+                    if (anchorInfo.visibleItems && anchorInfo.visibleItems.length) {
+                        for (let i = 0; i < Math.min(anchorInfo.visibleItems.length, 6); i++) {
+                            tryQueue.push(anchorInfo.visibleItems[i]);
+                        }
+                    }
+
+                    for (let i = 0; i < tryQueue.length; i++) {
+                        const descriptor = tryQueue[i];
+                        if (!descriptor) continue;
+
+                        if (descriptor.domPath) {
+                            try {
+                                const absoluteMatch = document.querySelector(descriptor.domPath);
+                                if (absoluteMatch && container.contains(absoluteMatch)) {
+                                    return absoluteMatch;
+                                }
+                            } catch(e) {}
+                        }
+
+                        const selectors = buildSelectorsFromDescriptor(descriptor);
+                        const found = trySelectorsInContainer(container, selectors, triedSelectors);
+                        if (found) {
+                            return found;
+                        }
+
+                        if (descriptor.text) {
+                            const snippet = descriptor.text.trim().toLowerCase().slice(0, 40);
+                            if (snippet.length >= 3) {
+                                const nodes = Array.from(container.querySelectorAll(descriptor.tagName || '[data-index],[data-key],div,li'));
+                                let bestMatch = null;
+                                let bestScore = Infinity;
+                                for (let j = 0; j < nodes.length && j < 80; j++) {
+                                    const node = nodes[j];
+                                    const nodeText = (node.textContent || '').trim().toLowerCase();
+                                    if (!nodeText) continue;
+                                    const index = nodeText.indexOf(snippet);
+                                    if (index !== -1 && index < bestScore) {
+                                        bestScore = index;
+                                        bestMatch = node;
+                                    } else if (!bestMatch && nodeText.startsWith(snippet.split(' ')[0])) {
+                                        bestMatch = node;
+                                    }
+                                }
+                                if (bestMatch) {
+                                    return bestMatch;
+                                }
+                            }
+                        }
+                    }
+
+                    return null;
+                }
+
+                function restoreVirtualScrollerAnchor(anchor) {
+                    const resultLogs = [];
+                    if (!anchor || !anchor.virtualScroller) {
+                        return { element: null, logs: resultLogs };
+                    }
+
+                    const info = anchor.virtualScroller;
+                    const containerInfo = info.container || {};
+                    const located = locateVirtualContainer(containerInfo);
+                    if (located.logs && located.logs.length) {
+                        for (let i = 0; i < located.logs.length; i++) {
+                            resultLogs.push(located.logs[i]);
+                        }
+                    }
+                    const container = located.element;
+                    if (!container) {
+                        resultLogs.push('Virtual container element not found');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+                    let targetScrollTop = typeof containerInfo.scrollTop === 'number' ? containerInfo.scrollTop : container.scrollTop;
+                    if (typeof containerInfo.scrollPercent === 'number' && isFinite(containerInfo.scrollPercent) && maxScroll > 0) {
+                        targetScrollTop = Math.max(0, Math.min(maxScroll, containerInfo.scrollPercent * maxScroll));
+                    }
+                    targetScrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+                    const beforeScroll = container.scrollTop;
+                    container.scrollTop = targetScrollTop;
+                    if (typeof containerInfo.scrollLeft === 'number') {
+                        container.scrollLeft = containerInfo.scrollLeft;
+                    }
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    const waitStart = Date.now();
+                    while (Date.now() - waitStart < 32) {}
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+                    resultLogs.push('Virtual container scrollTop ' + beforeScroll.toFixed(1) + ' -> ' + container.scrollTop.toFixed(1));
+
+                    const focusElement = findVirtualFocusElement(container, info);
+                    if (!focusElement) {
+                        resultLogs.push('Virtual focus element not found after scroll');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
                     return {
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: percentage,
-                        logs: logs
+                        element: focusElement,
+                        logs: resultLogs,
+                        containerPath: containerInfo.domPath || null,
+                        method: 'virtual_scroller',
+                        confidence: Math.min(90, Math.max(60, info.confidence || 60))
                     };
                 }
-                
-                // 동적 사이트 - 콘텐츠 로드 시도 (동기적으로 처리)
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
-                
-                // 더보기 버튼 찾기
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                for (let i = 0; i < Math.min(5, loadMoreButtons.length); i++) {
-                    const btn = loadMoreButtons[i];
-                    if (btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked++;
-                    }
-                }
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                }
-                
-                // 🎯 **수정: 간단한 무한스크롤 트리거 (동기 처리)**
-                prerollInfiniteSync(3);
-                
-                const restoredHeight = ROOT.scrollHeight;
-                const finalPercentage = (restoredHeight / targetHeight) * 100;
-                const success = finalPercentage >= 80; // 80% 이상 복원 시 성공
-                
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                
-                return {
-                    success: success,
-                    isStaticSite: false,
-                    currentHeight: currentHeight,
-                    targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
-                    logs: logs
-                };
-                
-            } catch(e) {
+
+ catch(e) {
                 return {
                     success: false,
                     error: e.message,
@@ -652,6 +842,259 @@ struct BFCacheSnapshot: Codable {
                 \(generateCommonUtilityScript())
                 
                 const logs = [];
+
+                function cssEscapeCompat(value) {
+                    if (value === null || value === undefined) return '';
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                }
+
+                function datasetKeyToAttr(key) {
+                    return 'data-' + String(key || '').replace(/([A-Z])/g, '-$1').toLowerCase();
+                }
+
+                function locateVirtualContainer(containerInfo) {
+                    const resultLogs = [];
+                    if (!containerInfo) {
+                        resultLogs.push('Virtual container info missing');
+                        return { element: null, logs: resultLogs };
+                    }
+
+                    let container = null;
+                    if (containerInfo.domPath) {
+                        try {
+                            container = document.querySelector(containerInfo.domPath);
+                            if (container) {
+                                resultLogs.push('Matched container by domPath');
+                                return { element: container, logs: resultLogs };
+                            } else {
+                                resultLogs.push('DomPath not found: ' + containerInfo.domPath);
+                            }
+                        } catch(e) {
+                            resultLogs.push('DomPath lookup error: ' + e.message);
+                        }
+                    }
+
+                    if (!container && containerInfo.id) {
+                        container = document.getElementById(containerInfo.id);
+                        if (container) {
+                            resultLogs.push('Matched container by id #' + containerInfo.id);
+                            return { element: container, logs: resultLogs };
+                        } else {
+                            resultLogs.push('ID not found: #' + containerInfo.id);
+                        }
+                    }
+
+                    if (!container && containerInfo.classList && containerInfo.classList.length) {
+                        for (let i = 0; i < containerInfo.classList.length; i++) {
+                            const cls = containerInfo.classList[i];
+                            try {
+                                const candidate = document.querySelector('.' + cssEscapeCompat(cls));
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by class .' + cls);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container && containerInfo.dataset) {
+                        const keys = Object.keys(containerInfo.dataset);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attrName = datasetKeyToAttr(keys[i]);
+                            const value = containerInfo.dataset[keys[i]];
+                            if (!value) continue;
+                            try {
+                                const selector = '[' + attrName + '="' + cssEscapeCompat(value) + '"]';
+                                const candidate = document.querySelector(selector);
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by dataset ' + selector);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container) {
+                        const fallbackCandidates = Array.from(document.querySelectorAll('[class*="virtual"], [data-virtualized], [data-virtual], [data-virtual-scroll], [data-windowed]')).filter(function(el) {
+                            if (!el || !el.getBoundingClientRect) return false;
+                            const rect = el.getBoundingClientRect();
+                            return rect.height >= 60 && Math.abs((el.scrollHeight || 0) - (el.clientHeight || 0)) > 20;
+                        });
+                        if (fallbackCandidates.length > 0) {
+                            container = fallbackCandidates[0];
+                            resultLogs.push('Fallback virtual container selected by heuristics');
+                        } else {
+                            resultLogs.push('Virtual container fallback search failed');
+                        }
+                    }
+
+                    return { element: container, logs: resultLogs };
+                }
+
+                function trySelectorsInContainer(container, selectors, triedSelectors) {
+                    if (!container || !selectors) return null;
+                    triedSelectors = triedSelectors || new Set();
+                    for (let i = 0; i < selectors.length; i++) {
+                        const selector = selectors[i];
+                        if (!selector || triedSelectors.has(selector)) continue;
+                        triedSelectors.add(selector);
+                        try {
+                            const found = container.querySelector(selector);
+                            if (found) {
+                                return found;
+                            }
+                        } catch(e) {}
+                    }
+                    return null;
+                }
+
+                function buildSelectorsFromDescriptor(descriptor) {
+                    const selectors = [];
+                    if (!descriptor) return selectors;
+                    if (descriptor.attributes) {
+                        const keys = Object.keys(descriptor.attributes);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.attributes[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    if (descriptor.aria) {
+                        const keys = Object.keys(descriptor.aria);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.aria[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    return selectors;
+                }
+
+                function findVirtualFocusElement(container, anchorInfo) {
+                    if (!container || !anchorInfo) return null;
+                    const triedSelectors = new Set();
+                    const tryQueue = [];
+                    if (anchorInfo.focusItem) {
+                        tryQueue.push(anchorInfo.focusItem);
+                    }
+                    if (anchorInfo.visibleItems && anchorInfo.visibleItems.length) {
+                        for (let i = 0; i < Math.min(anchorInfo.visibleItems.length, 6); i++) {
+                            tryQueue.push(anchorInfo.visibleItems[i]);
+                        }
+                    }
+
+                    for (let i = 0; i < tryQueue.length; i++) {
+                        const descriptor = tryQueue[i];
+                        if (!descriptor) continue;
+
+                        if (descriptor.domPath) {
+                            try {
+                                const absoluteMatch = document.querySelector(descriptor.domPath);
+                                if (absoluteMatch && container.contains(absoluteMatch)) {
+                                    return absoluteMatch;
+                                }
+                            } catch(e) {}
+                        }
+
+                        const selectors = buildSelectorsFromDescriptor(descriptor);
+                        const found = trySelectorsInContainer(container, selectors, triedSelectors);
+                        if (found) {
+                            return found;
+                        }
+
+                        if (descriptor.text) {
+                            const snippet = descriptor.text.trim().toLowerCase().slice(0, 40);
+                            if (snippet.length >= 3) {
+                                const nodes = Array.from(container.querySelectorAll(descriptor.tagName || '[data-index],[data-key],div,li'));
+                                let bestMatch = null;
+                                let bestScore = Infinity;
+                                for (let j = 0; j < nodes.length && j < 80; j++) {
+                                    const node = nodes[j];
+                                    const nodeText = (node.textContent || '').trim().toLowerCase();
+                                    if (!nodeText) continue;
+                                    const index = nodeText.indexOf(snippet);
+                                    if (index !== -1 && index < bestScore) {
+                                        bestScore = index;
+                                        bestMatch = node;
+                                    } else if (!bestMatch && nodeText.startsWith(snippet.split(' ')[0])) {
+                                        bestMatch = node;
+                                    }
+                                }
+                                if (bestMatch) {
+                                    return bestMatch;
+                                }
+                            }
+                        }
+                    }
+
+                    return null;
+                }
+
+                
+
+                    const info = anchor.virtualScroller;
+                    const containerInfo = info.container || {};
+                    const located = locateVirtualContainer(containerInfo);
+                    if (located.logs && located.logs.length) {
+                        for (let i = 0; i < located.logs.length; i++) {
+                            resultLogs.push(located.logs[i]);
+                        }
+                    }
+                    const container = located.element;
+                    if (!container) {
+                        resultLogs.push('Virtual container element not found');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+                    let targetScrollTop = typeof containerInfo.scrollTop === 'number' ? containerInfo.scrollTop : container.scrollTop;
+                    if (typeof containerInfo.scrollPercent === 'number' && isFinite(containerInfo.scrollPercent) && maxScroll > 0) {
+                        targetScrollTop = Math.max(0, Math.min(maxScroll, containerInfo.scrollPercent * maxScroll));
+                    }
+                    targetScrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+                    const beforeScroll = container.scrollTop;
+                    container.scrollTop = targetScrollTop;
+                    if (typeof containerInfo.scrollLeft === 'number') {
+                        container.scrollLeft = containerInfo.scrollLeft;
+                    }
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    const waitStart = Date.now();
+                    while (Date.now() - waitStart < 32) {}
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+                    resultLogs.push('Virtual container scrollTop ' + beforeScroll.toFixed(1) + ' -> ' + container.scrollTop.toFixed(1));
+
+                    const focusElement = findVirtualFocusElement(container, info);
+                    if (!focusElement) {
+                        resultLogs.push('Virtual focus element not found after scroll');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    return {
+                        element: focusElement,
+                        logs: resultLogs,
+                        containerPath: containerInfo.domPath || null,
+                        method: 'virtual_scroller',
+                        confidence: Math.min(90, Math.max(60, info.confidence || 60))
+                    };
+                }
+
                 const targetPercentX = parseFloat('\(targetPercentX)');
                 const targetPercentY = parseFloat('\(targetPercentY)');
                 
@@ -714,6 +1157,259 @@ struct BFCacheSnapshot: Codable {
                 \(generateCommonUtilityScript())
                 
                 const logs = [];
+
+                function cssEscapeCompat(value) {
+                    if (value === null || value === undefined) return '';
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                }
+
+                function datasetKeyToAttr(key) {
+                    return 'data-' + String(key || '').replace(/([A-Z])/g, '-$1').toLowerCase();
+                }
+
+                function locateVirtualContainer(containerInfo) {
+                    const resultLogs = [];
+                    if (!containerInfo) {
+                        resultLogs.push('Virtual container info missing');
+                        return { element: null, logs: resultLogs };
+                    }
+
+                    let container = null;
+                    if (containerInfo.domPath) {
+                        try {
+                            container = document.querySelector(containerInfo.domPath);
+                            if (container) {
+                                resultLogs.push('Matched container by domPath');
+                                return { element: container, logs: resultLogs };
+                            } else {
+                                resultLogs.push('DomPath not found: ' + containerInfo.domPath);
+                            }
+                        } catch(e) {
+                            resultLogs.push('DomPath lookup error: ' + e.message);
+                        }
+                    }
+
+                    if (!container && containerInfo.id) {
+                        container = document.getElementById(containerInfo.id);
+                        if (container) {
+                            resultLogs.push('Matched container by id #' + containerInfo.id);
+                            return { element: container, logs: resultLogs };
+                        } else {
+                            resultLogs.push('ID not found: #' + containerInfo.id);
+                        }
+                    }
+
+                    if (!container && containerInfo.classList && containerInfo.classList.length) {
+                        for (let i = 0; i < containerInfo.classList.length; i++) {
+                            const cls = containerInfo.classList[i];
+                            try {
+                                const candidate = document.querySelector('.' + cssEscapeCompat(cls));
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by class .' + cls);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container && containerInfo.dataset) {
+                        const keys = Object.keys(containerInfo.dataset);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attrName = datasetKeyToAttr(keys[i]);
+                            const value = containerInfo.dataset[keys[i]];
+                            if (!value) continue;
+                            try {
+                                const selector = '[' + attrName + '="' + cssEscapeCompat(value) + '"]';
+                                const candidate = document.querySelector(selector);
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by dataset ' + selector);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container) {
+                        const fallbackCandidates = Array.from(document.querySelectorAll('[class*="virtual"], [data-virtualized], [data-virtual], [data-virtual-scroll], [data-windowed]')).filter(function(el) {
+                            if (!el || !el.getBoundingClientRect) return false;
+                            const rect = el.getBoundingClientRect();
+                            return rect.height >= 60 && Math.abs((el.scrollHeight || 0) - (el.clientHeight || 0)) > 20;
+                        });
+                        if (fallbackCandidates.length > 0) {
+                            container = fallbackCandidates[0];
+                            resultLogs.push('Fallback virtual container selected by heuristics');
+                        } else {
+                            resultLogs.push('Virtual container fallback search failed');
+                        }
+                    }
+
+                    return { element: container, logs: resultLogs };
+                }
+
+                function trySelectorsInContainer(container, selectors, triedSelectors) {
+                    if (!container || !selectors) return null;
+                    triedSelectors = triedSelectors || new Set();
+                    for (let i = 0; i < selectors.length; i++) {
+                        const selector = selectors[i];
+                        if (!selector || triedSelectors.has(selector)) continue;
+                        triedSelectors.add(selector);
+                        try {
+                            const found = container.querySelector(selector);
+                            if (found) {
+                                return found;
+                            }
+                        } catch(e) {}
+                    }
+                    return null;
+                }
+
+                function buildSelectorsFromDescriptor(descriptor) {
+                    const selectors = [];
+                    if (!descriptor) return selectors;
+                    if (descriptor.attributes) {
+                        const keys = Object.keys(descriptor.attributes);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.attributes[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    if (descriptor.aria) {
+                        const keys = Object.keys(descriptor.aria);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.aria[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    return selectors;
+                }
+
+                function findVirtualFocusElement(container, anchorInfo) {
+                    if (!container || !anchorInfo) return null;
+                    const triedSelectors = new Set();
+                    const tryQueue = [];
+                    if (anchorInfo.focusItem) {
+                        tryQueue.push(anchorInfo.focusItem);
+                    }
+                    if (anchorInfo.visibleItems && anchorInfo.visibleItems.length) {
+                        for (let i = 0; i < Math.min(anchorInfo.visibleItems.length, 6); i++) {
+                            tryQueue.push(anchorInfo.visibleItems[i]);
+                        }
+                    }
+
+                    for (let i = 0; i < tryQueue.length; i++) {
+                        const descriptor = tryQueue[i];
+                        if (!descriptor) continue;
+
+                        if (descriptor.domPath) {
+                            try {
+                                const absoluteMatch = document.querySelector(descriptor.domPath);
+                                if (absoluteMatch && container.contains(absoluteMatch)) {
+                                    return absoluteMatch;
+                                }
+                            } catch(e) {}
+                        }
+
+                        const selectors = buildSelectorsFromDescriptor(descriptor);
+                        const found = trySelectorsInContainer(container, selectors, triedSelectors);
+                        if (found) {
+                            return found;
+                        }
+
+                        if (descriptor.text) {
+                            const snippet = descriptor.text.trim().toLowerCase().slice(0, 40);
+                            if (snippet.length >= 3) {
+                                const nodes = Array.from(container.querySelectorAll(descriptor.tagName || '[data-index],[data-key],div,li'));
+                                let bestMatch = null;
+                                let bestScore = Infinity;
+                                for (let j = 0; j < nodes.length && j < 80; j++) {
+                                    const node = nodes[j];
+                                    const nodeText = (node.textContent || '').trim().toLowerCase();
+                                    if (!nodeText) continue;
+                                    const index = nodeText.indexOf(snippet);
+                                    if (index !== -1 && index < bestScore) {
+                                        bestScore = index;
+                                        bestMatch = node;
+                                    } else if (!bestMatch && nodeText.startsWith(snippet.split(' ')[0])) {
+                                        bestMatch = node;
+                                    }
+                                }
+                                if (bestMatch) {
+                                    return bestMatch;
+                                }
+                            }
+                        }
+                    }
+
+                    return null;
+                }
+
+                
+
+                    const info = anchor.virtualScroller;
+                    const containerInfo = info.container || {};
+                    const located = locateVirtualContainer(containerInfo);
+                    if (located.logs && located.logs.length) {
+                        for (let i = 0; i < located.logs.length; i++) {
+                            resultLogs.push(located.logs[i]);
+                        }
+                    }
+                    const container = located.element;
+                    if (!container) {
+                        resultLogs.push('Virtual container element not found');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+                    let targetScrollTop = typeof containerInfo.scrollTop === 'number' ? containerInfo.scrollTop : container.scrollTop;
+                    if (typeof containerInfo.scrollPercent === 'number' && isFinite(containerInfo.scrollPercent) && maxScroll > 0) {
+                        targetScrollTop = Math.max(0, Math.min(maxScroll, containerInfo.scrollPercent * maxScroll));
+                    }
+                    targetScrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+                    const beforeScroll = container.scrollTop;
+                    container.scrollTop = targetScrollTop;
+                    if (typeof containerInfo.scrollLeft === 'number') {
+                        container.scrollLeft = containerInfo.scrollLeft;
+                    }
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    const waitStart = Date.now();
+                    while (Date.now() - waitStart < 32) {}
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+                    resultLogs.push('Virtual container scrollTop ' + beforeScroll.toFixed(1) + ' -> ' + container.scrollTop.toFixed(1));
+
+                    const focusElement = findVirtualFocusElement(container, info);
+                    if (!focusElement) {
+                        resultLogs.push('Virtual focus element not found after scroll');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    return {
+                        element: focusElement,
+                        logs: resultLogs,
+                        containerPath: containerInfo.domPath || null,
+                        method: 'virtual_scroller',
+                        confidence: Math.min(90, Math.max(60, info.confidence || 60))
+                    };
+                }
+
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
@@ -744,16 +1440,43 @@ struct BFCacheSnapshot: Codable {
                 const virtualIndexAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
                 });
+                const virtualScrollerAnchors = anchors.filter(function(anchor) {
+                    return anchor.anchorType === 'virtualScroller' && anchor.virtualScroller;
+                });
                 
                 logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
                 logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
                 logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
+                logs.push('Virtual Scroller 앵커: ' + virtualScrollerAnchors.length + '개');
                 
                 let foundElement = null;
                 let matchedAnchor = null;
                 let matchMethod = '';
                 let confidence = 0;
-                
+
+                if (!foundElement && virtualScrollerAnchors.length > 0) {
+                    for (let i = 0; i < virtualScrollerAnchors.length && !foundElement; i++) {
+                        const anchor = virtualScrollerAnchors[i];
+                        const restoreResult = restoreVirtualScrollerAnchor(anchor);
+                        if (restoreResult.logs && restoreResult.logs.length) {
+                            for (let j = 0; j < restoreResult.logs.length; j++) {
+                                logs.push('[Virtual] ' + restoreResult.logs[j]);
+                            }
+                        }
+                        if (restoreResult.element) {
+                            foundElement = restoreResult.element;
+                            matchedAnchor = anchor;
+                            matchMethod = restoreResult.method || 'virtual_scroller';
+                            confidence = restoreResult.confidence || Math.min(90, Math.max(60, (anchor.virtualScroller && anchor.virtualScroller.confidence) || 60));
+                            if (restoreResult.containerPath) {
+                                logs.push('[Virtual] Container: ' + restoreResult.containerPath);
+                            }
+                            logs.push('Virtual Scroller 앵커 매칭 성공');
+                            break;
+                        }
+                    }
+                }
+
                 // 우선순위 1: Vue Component 앵커 매칭
                 if (!foundElement && vueComponentAnchors.length > 0) {
                     for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
@@ -954,6 +1677,259 @@ struct BFCacheSnapshot: Codable {
                 \(generateCommonUtilityScript())
                 
                 const logs = [];
+
+                function cssEscapeCompat(value) {
+                    if (value === null || value === undefined) return '';
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                }
+
+                function datasetKeyToAttr(key) {
+                    return 'data-' + String(key || '').replace(/([A-Z])/g, '-$1').toLowerCase();
+                }
+
+                function locateVirtualContainer(containerInfo) {
+                    const resultLogs = [];
+                    if (!containerInfo) {
+                        resultLogs.push('Virtual container info missing');
+                        return { element: null, logs: resultLogs };
+                    }
+
+                    let container = null;
+                    if (containerInfo.domPath) {
+                        try {
+                            container = document.querySelector(containerInfo.domPath);
+                            if (container) {
+                                resultLogs.push('Matched container by domPath');
+                                return { element: container, logs: resultLogs };
+                            } else {
+                                resultLogs.push('DomPath not found: ' + containerInfo.domPath);
+                            }
+                        } catch(e) {
+                            resultLogs.push('DomPath lookup error: ' + e.message);
+                        }
+                    }
+
+                    if (!container && containerInfo.id) {
+                        container = document.getElementById(containerInfo.id);
+                        if (container) {
+                            resultLogs.push('Matched container by id #' + containerInfo.id);
+                            return { element: container, logs: resultLogs };
+                        } else {
+                            resultLogs.push('ID not found: #' + containerInfo.id);
+                        }
+                    }
+
+                    if (!container && containerInfo.classList && containerInfo.classList.length) {
+                        for (let i = 0; i < containerInfo.classList.length; i++) {
+                            const cls = containerInfo.classList[i];
+                            try {
+                                const candidate = document.querySelector('.' + cssEscapeCompat(cls));
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by class .' + cls);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container && containerInfo.dataset) {
+                        const keys = Object.keys(containerInfo.dataset);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attrName = datasetKeyToAttr(keys[i]);
+                            const value = containerInfo.dataset[keys[i]];
+                            if (!value) continue;
+                            try {
+                                const selector = '[' + attrName + '="' + cssEscapeCompat(value) + '"]';
+                                const candidate = document.querySelector(selector);
+                                if (candidate) {
+                                    container = candidate;
+                                    resultLogs.push('Matched container by dataset ' + selector);
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    if (!container) {
+                        const fallbackCandidates = Array.from(document.querySelectorAll('[class*="virtual"], [data-virtualized], [data-virtual], [data-virtual-scroll], [data-windowed]')).filter(function(el) {
+                            if (!el || !el.getBoundingClientRect) return false;
+                            const rect = el.getBoundingClientRect();
+                            return rect.height >= 60 && Math.abs((el.scrollHeight || 0) - (el.clientHeight || 0)) > 20;
+                        });
+                        if (fallbackCandidates.length > 0) {
+                            container = fallbackCandidates[0];
+                            resultLogs.push('Fallback virtual container selected by heuristics');
+                        } else {
+                            resultLogs.push('Virtual container fallback search failed');
+                        }
+                    }
+
+                    return { element: container, logs: resultLogs };
+                }
+
+                function trySelectorsInContainer(container, selectors, triedSelectors) {
+                    if (!container || !selectors) return null;
+                    triedSelectors = triedSelectors || new Set();
+                    for (let i = 0; i < selectors.length; i++) {
+                        const selector = selectors[i];
+                        if (!selector || triedSelectors.has(selector)) continue;
+                        triedSelectors.add(selector);
+                        try {
+                            const found = container.querySelector(selector);
+                            if (found) {
+                                return found;
+                            }
+                        } catch(e) {}
+                    }
+                    return null;
+                }
+
+                function buildSelectorsFromDescriptor(descriptor) {
+                    const selectors = [];
+                    if (!descriptor) return selectors;
+                    if (descriptor.attributes) {
+                        const keys = Object.keys(descriptor.attributes);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.attributes[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    if (descriptor.aria) {
+                        const keys = Object.keys(descriptor.aria);
+                        for (let i = 0; i < keys.length; i++) {
+                            const attr = keys[i];
+                            const value = descriptor.aria[attr];
+                            if (value === undefined || value === null || value === '') continue;
+                            const base = '[' + attr + '="' + cssEscapeCompat(value) + '"]';
+                            selectors.push(base);
+                            if (descriptor.tagName) {
+                                selectors.push(descriptor.tagName + base);
+                            }
+                        }
+                    }
+                    return selectors;
+                }
+
+                function findVirtualFocusElement(container, anchorInfo) {
+                    if (!container || !anchorInfo) return null;
+                    const triedSelectors = new Set();
+                    const tryQueue = [];
+                    if (anchorInfo.focusItem) {
+                        tryQueue.push(anchorInfo.focusItem);
+                    }
+                    if (anchorInfo.visibleItems && anchorInfo.visibleItems.length) {
+                        for (let i = 0; i < Math.min(anchorInfo.visibleItems.length, 6); i++) {
+                            tryQueue.push(anchorInfo.visibleItems[i]);
+                        }
+                    }
+
+                    for (let i = 0; i < tryQueue.length; i++) {
+                        const descriptor = tryQueue[i];
+                        if (!descriptor) continue;
+
+                        if (descriptor.domPath) {
+                            try {
+                                const absoluteMatch = document.querySelector(descriptor.domPath);
+                                if (absoluteMatch && container.contains(absoluteMatch)) {
+                                    return absoluteMatch;
+                                }
+                            } catch(e) {}
+                        }
+
+                        const selectors = buildSelectorsFromDescriptor(descriptor);
+                        const found = trySelectorsInContainer(container, selectors, triedSelectors);
+                        if (found) {
+                            return found;
+                        }
+
+                        if (descriptor.text) {
+                            const snippet = descriptor.text.trim().toLowerCase().slice(0, 40);
+                            if (snippet.length >= 3) {
+                                const nodes = Array.from(container.querySelectorAll(descriptor.tagName || '[data-index],[data-key],div,li'));
+                                let bestMatch = null;
+                                let bestScore = Infinity;
+                                for (let j = 0; j < nodes.length && j < 80; j++) {
+                                    const node = nodes[j];
+                                    const nodeText = (node.textContent || '').trim().toLowerCase();
+                                    if (!nodeText) continue;
+                                    const index = nodeText.indexOf(snippet);
+                                    if (index !== -1 && index < bestScore) {
+                                        bestScore = index;
+                                        bestMatch = node;
+                                    } else if (!bestMatch && nodeText.startsWith(snippet.split(' ')[0])) {
+                                        bestMatch = node;
+                                    }
+                                }
+                                if (bestMatch) {
+                                    return bestMatch;
+                                }
+                            }
+                        }
+                    }
+
+                    return null;
+                }
+
+                
+
+                    const info = anchor.virtualScroller;
+                    const containerInfo = info.container || {};
+                    const located = locateVirtualContainer(containerInfo);
+                    if (located.logs && located.logs.length) {
+                        for (let i = 0; i < located.logs.length; i++) {
+                            resultLogs.push(located.logs[i]);
+                        }
+                    }
+                    const container = located.element;
+                    if (!container) {
+                        resultLogs.push('Virtual container element not found');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+                    let targetScrollTop = typeof containerInfo.scrollTop === 'number' ? containerInfo.scrollTop : container.scrollTop;
+                    if (typeof containerInfo.scrollPercent === 'number' && isFinite(containerInfo.scrollPercent) && maxScroll > 0) {
+                        targetScrollTop = Math.max(0, Math.min(maxScroll, containerInfo.scrollPercent * maxScroll));
+                    }
+                    targetScrollTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+                    const beforeScroll = container.scrollTop;
+                    container.scrollTop = targetScrollTop;
+                    if (typeof containerInfo.scrollLeft === 'number') {
+                        container.scrollLeft = containerInfo.scrollLeft;
+                    }
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    const waitStart = Date.now();
+                    while (Date.now() - waitStart < 32) {}
+                    container.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+                    resultLogs.push('Virtual container scrollTop ' + beforeScroll.toFixed(1) + ' -> ' + container.scrollTop.toFixed(1));
+
+                    const focusElement = findVirtualFocusElement(container, info);
+                    if (!focusElement) {
+                        resultLogs.push('Virtual focus element not found after scroll');
+                        return { element: null, logs: resultLogs, containerPath: containerInfo.domPath || null };
+                    }
+
+                    return {
+                        element: focusElement,
+                        logs: resultLogs,
+                        containerPath: containerInfo.domPath || null,
+                        method: 'virtual_scroller',
+                        confidence: Math.min(90, Math.max(60, info.confidence || 60))
+                    };
+                }
+
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const tolerance = 30;
@@ -1582,6 +2558,320 @@ extension BFCacheTransitionSystem {
                     return vueElements;
                 }
                 
+                // -- Common util: CSS escape for virtual scroller detection
+                function cssEscapeCompat(value) {
+                    if (value === null || value === undefined) return '';
+                    if (window.CSS && CSS.escape) {
+                        return CSS.escape(value);
+                    }
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, '\$1');
+                }
+
+                // -- DOM path builder (lightweight)
+                function buildDomPath(element, maxDepth) {
+                    if (!element) return '';
+                    maxDepth = maxDepth || 8;
+                    const segments = [];
+                    let current = element;
+                    let depth = 0;
+
+                    while (current && current.nodeType === 1 && depth < maxDepth) {
+                        let selector = current.tagName ? current.tagName.toLowerCase() : 'unknown';
+
+                        if (current.id) {
+                            selector += '#' + cssEscapeCompat(current.id);
+                            segments.unshift(selector);
+                            break;
+                        }
+
+                        if (current.classList && current.classList.length > 0) {
+                            selector += '.' + cssEscapeCompat(Array.from(current.classList)[0]);
+                        } else {
+                            const attrCandidates = ['data-key', 'data-index', 'data-item-index', 'data-id'];
+                            for (let i = 0; i < attrCandidates.length; i++) {
+                                const attrName = attrCandidates[i];
+                                if (current.hasAttribute && current.hasAttribute(attrName)) {
+                                    selector += '[' + attrName + "=" + '"' + cssEscapeCompat(current.getAttribute(attrName)) + '"' + ']';
+                                    break;
+                                }
+                            }
+                        }
+
+                        const parent = current.parentElement;
+                        if (parent) {
+                            const siblings = Array.from(parent.children).filter(function(child) {
+                                return child.tagName === current.tagName;
+                            });
+                            if (siblings.length > 1) {
+                                const position = siblings.indexOf(current) + 1;
+                                selector += ':nth-of-type(' + position + ')';
+                            }
+                        }
+
+                        segments.unshift(selector);
+                        current = parent;
+                        depth++;
+                    }
+
+                    return segments.join(' > ');
+                }
+
+                // -- Simplified attribute extractor
+                function extractAttributeMap(element, attributes) {
+                    const result = {};
+                    if (!element || !attributes) return result;
+                    for (let i = 0; i < attributes.length; i++) {
+                        const attr = attributes[i];
+                        if (element.hasAttribute && element.hasAttribute(attr)) {
+                            result[attr] = element.getAttribute(attr);
+                        }
+                    }
+                    return result;
+                }
+
+                // -- Virtual scroller detection and metadata capture
+                function detectVirtualScrollContainers() {
+                    const detectionLogs = [];
+                    const containers = [];
+                    const anchors = [];
+
+                    const indexAttributes = ['data-index', 'data-key', 'data-id', 'data-item-index', 'data-item-id', 'data-rowindex', 'data-row-index', 'data-virtual-index', 'data-virtual-key', 'data-offset-index', 'data-pos', 'data-idx'];
+                    const ariaAttributes = ['aria-rowindex', 'aria-posinset'];
+                    const containerAttrHints = ['data-virtualized', 'data-virtual', 'data-virtual-scroll', 'data-virtual-scroller', 'data-recycle-scroller', 'data-windowed'];
+                    const containerClassHints = ['virtual', 'Virtual', 'virtualized', 'virtual-scroll', 'virtual-scroller', 'ReactVirtualized', 'ReactWindow', 'react-window', 'RecycleList', 'RecycleScroller', 'cdk-virtual-scroll-viewport', 'MuiDataGrid-virtualScroller', 'ms-List-scrollableContainer'];
+                    const itemSelector = indexAttributes.map(function(attr) { return '[' + attr + ']'; }).join(',') + ',[aria-rowindex],[aria-posinset],[role="row"],[role="option"],[data-testid*="virtual"],[data-testid*="Virtual"]';
+
+                    const candidateSet = new Set();
+
+                    for (let i = 0; i < containerAttrHints.length; i++) {
+                        const attr = containerAttrHints[i];
+                        document.querySelectorAll('[' + attr + ']').forEach(function(el) {
+                            candidateSet.add(el);
+                        });
+                    }
+                    for (let i = 0; i < containerClassHints.length; i++) {
+                        const cls = containerClassHints[i];
+                        document.querySelectorAll('[class*="' + cls + '"]').forEach(function(el) {
+                            candidateSet.add(el);
+                        });
+                    }
+
+                    const candidateItems = Array.from(document.querySelectorAll(itemSelector)).slice(0, 400);
+                    for (let i = 0; i < candidateItems.length; i++) {
+                        let parent = candidateItems[i].parentElement;
+                        let depth = 0;
+                        while (parent && depth < 6) {
+                            const style = window.getComputedStyle(parent);
+                            const overflowY = style.overflowY || style.overflow;
+                            if (overflowY === 'auto' || overflowY === 'scroll') {
+                                candidateSet.add(parent);
+                                break;
+                            }
+                            parent = parent.parentElement;
+                            depth++;
+                        }
+                    }
+
+                    const candidates = Array.from(candidateSet).filter(function(el) {
+                        if (!el || el === document.body || el === document.documentElement) return false;
+                        const rect = el.getBoundingClientRect();
+                        return rect.height >= 80 && rect.width >= 80;
+                    }).slice(0, 20);
+
+                    detectionLogs.push('[Virtual Scroll] candidates=' + candidates.length);
+
+                    const MAX_VISIBLE_ITEMS = 24;
+
+                    for (let i = 0; i < candidates.length; i++) {
+                        const container = candidates[i];
+                        const style = window.getComputedStyle(container);
+                        const rect = container.getBoundingClientRect();
+                        const items = Array.from(container.querySelectorAll(itemSelector)).slice(0, 120);
+                        if (items.length === 0) continue;
+
+                        let hintScore = 0;
+                        for (let j = 0; j < containerAttrHints.length; j++) {
+                            if (container.hasAttribute && container.hasAttribute(containerAttrHints[j])) {
+                                hintScore += 20;
+                            }
+                        }
+                        for (let j = 0; j < containerClassHints.length; j++) {
+                            if ((container.className || '').includes(containerClassHints[j])) {
+                                hintScore += 12;
+                            }
+                        }
+                        if (container.dataset) {
+                            const keys = Object.keys(container.dataset);
+                            if (keys.some(function(key) { return key.toLowerCase().includes('virtual'); })) {
+                                hintScore += 20;
+                            }
+                        }
+
+                        const visibleItems = [];
+                        let minIndex = Number.POSITIVE_INFINITY;
+                        let maxIndex = Number.NEGATIVE_INFINITY;
+                        const distinctIndices = new Set();
+                        let hasIndexGap = false;
+
+                        for (let j = 0; j < items.length; j++) {
+                            const item = items[j];
+                            const itemRect = item.getBoundingClientRect();
+                            const visible = itemRect.bottom > rect.top && itemRect.top < rect.bottom;
+                            if (!visible) continue;
+
+                            const attributeMap = extractAttributeMap(item, indexAttributes);
+                            let itemHasIndex = false;
+                            Object.keys(attributeMap).forEach(function(attr) {
+                                const rawValue = attributeMap[attr];
+                                if (rawValue !== null && rawValue !== undefined) {
+                                    const num = parseInt(rawValue, 10);
+                                    if (!isNaN(num)) {
+                                        itemHasIndex = true;
+                                        minIndex = Math.min(minIndex, num);
+                                        maxIndex = Math.max(maxIndex, num);
+                                        distinctIndices.add(num);
+                                    }
+                                }
+                            });
+
+                            const ariaMap = {};
+                            for (let k = 0; k < ariaAttributes.length; k++) {
+                                const ariaAttr = ariaAttributes[k];
+                                if (item.hasAttribute && item.hasAttribute(ariaAttr)) {
+                                    const value = item.getAttribute(ariaAttr);
+                                    ariaMap[ariaAttr] = value;
+                                    const num = parseInt(value, 10);
+                                    if (!isNaN(num)) {
+                                        itemHasIndex = true;
+                                        minIndex = Math.min(minIndex, num);
+                                        maxIndex = Math.max(maxIndex, num);
+                                        distinctIndices.add(num);
+                                    }
+                                }
+                            }
+
+                            if (itemHasIndex) {
+                                hasIndexGap = true;
+                            }
+
+                            const text = (item.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 120);
+                            const relativeTop = container.scrollTop + (itemRect.top - rect.top);
+                            const transform = item.style.transform || window.getComputedStyle(item).transform || '';
+
+                            visibleItems.push({
+                                tagName: item.tagName ? item.tagName.toLowerCase() : 'div',
+                                domPath: buildDomPath(item, 6),
+                                attributes: attributeMap,
+                                aria: ariaMap,
+                                text: text,
+                                relativeTop: relativeTop,
+                                height: itemRect.height,
+                                transform: transform
+                            });
+
+                            if (visibleItems.length >= MAX_VISIBLE_ITEMS) break;
+                        }
+
+                        if (visibleItems.length === 0) continue;
+
+                        const indexSpan = (maxIndex < Number.POSITIVE_INFINITY && minIndex > Number.NEGATIVE_INFINITY) ? (maxIndex - minIndex) : 0;
+                        let indexScore = 0;
+                        if (distinctIndices.size >= Math.max(3, Math.floor(visibleItems.length * 0.6))) {
+                            indexScore += 25;
+                        }
+                        if (indexSpan >= visibleItems.length) {
+                            indexScore += 15;
+                        }
+                        if (hasIndexGap) {
+                            indexScore += 10;
+                        }
+
+                        let scrollScore = 0;
+                        if (container.scrollHeight > container.clientHeight * 1.2) {
+                            scrollScore += 10;
+                        }
+                        if (container.scrollHeight > container.clientHeight * 2.5) {
+                            scrollScore += 10;
+                        }
+                        if ((container.style.transform || '').includes('translate')) {
+                            scrollScore += 5;
+                        }
+
+                        const confidence = Math.min(100, hintScore + indexScore + scrollScore);
+                        detectionLogs.push('[Virtual Scroll] candidate #' + (i + 1) + ' score=' + confidence + ' (hint=' + hintScore + ', index=' + indexScore + ', scroll=' + scrollScore + ')');
+
+                        if (confidence < 45) continue;
+
+                        const focusCenter = container.scrollTop + (container.clientHeight / 2);
+                        let focusItem = visibleItems[0];
+                        let focusDistance = Infinity;
+                        for (let j = 0; j < visibleItems.length; j++) {
+                            const item = visibleItems[j];
+                            const center = item.relativeTop + (item.height / 2);
+                            const distance = Math.abs(center - focusCenter);
+                            if (distance < focusDistance) {
+                                focusDistance = distance;
+                                focusItem = item;
+                            }
+                        }
+
+                        const containerDataset = {};
+                        if (container.dataset) {
+                            Object.keys(container.dataset).slice(0, 10).forEach(function(key) {
+                                containerDataset[key] = container.dataset[key];
+                            });
+                        }
+
+                        const containerMeta = {
+                            domPath: buildDomPath(container, 6),
+                            id: container.id || null,
+                            classList: Array.from(container.classList || []).slice(0, 8),
+                            dataset: containerDataset,
+                            confidence: confidence,
+                            scrollTop: container.scrollTop,
+                            scrollLeft: container.scrollLeft,
+                            scrollHeight: container.scrollHeight,
+                            scrollWidth: container.scrollWidth,
+                            clientHeight: container.clientHeight,
+                            clientWidth: container.clientWidth,
+                            scrollPercent: container.scrollHeight > container.clientHeight ? (container.scrollTop / Math.max(1, container.scrollHeight - container.clientHeight)) : 0,
+                            paddingTop: parseFloat(style.paddingTop) || 0,
+                            paddingBottom: parseFloat(style.paddingBottom) || 0
+                        };
+
+                        containers.push(containerMeta);
+
+                        const anchorIndex = anchors.length;
+                        anchors.push({
+                            anchorType: 'virtualScroller',
+                            virtualScroller: {
+                                version: 1,
+                                confidence: confidence,
+                                container: containerMeta,
+                                focusItem: focusItem,
+                                visibleItems: visibleItems.slice(0, 8),
+                                stats: {
+                                    totalItemsScanned: items.length,
+                                    visibleItems: visibleItems.length,
+                                    distinctIndexCount: distinctIndices.size,
+                                    indexSpan: indexSpan
+                                }
+                            },
+                            absolutePosition: { top: scrollY + rect.top, left: scrollX + rect.left },
+                            viewportPosition: { top: rect.top, left: rect.left },
+                            offsetFromTop: 0,
+                            size: { width: rect.width, height: rect.height },
+                            qualityScore: Math.min(95, Math.max(60, confidence)),
+                            anchorIndex: anchorIndex,
+                            captureTimestamp: Date.now(),
+                            isVisible: true,
+                            visibilityReason: 'virtual_scroller_detected'
+                        });
+                    }
+
+                    return { containers: containers, anchors: anchors, logs: detectionLogs };
+                }
+
                 // 🚀 **핵심: 무한스크롤 전용 앵커 수집**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
@@ -1592,9 +2882,11 @@ extension BFCacheTransitionSystem {
                         vueComponentAnchors: 0,
                         contentHashAnchors: 0,
                         virtualIndexAnchors: 0,
+                        virtualScrollerAnchors: 0,
                         structuralPathAnchors: 0,
                         intersectionAnchors: 0,
-                        finalAnchors: 0
+                        finalAnchors: 0,
+                        virtualScrollersDetected: 0
                     };
                     
                     detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작');
@@ -1730,6 +3022,24 @@ extension BFCacheTransitionSystem {
                         }
                     }
                     
+                    const virtualDetection = detectVirtualScrollContainers();
+                    if (virtualDetection.logs && virtualDetection.logs.length) {
+                        for (let i = 0; i < virtualDetection.logs.length; i++) {
+                            detailedLogs.push(virtualDetection.logs[i]);
+                        }
+                    }
+                    if (virtualDetection.containers) {
+                        anchorStats.virtualScrollersDetected = virtualDetection.containers.length;
+                    }
+                    if (virtualDetection.anchors && virtualDetection.anchors.length) {
+                        for (let i = 0; i < virtualDetection.anchors.length; i++) {
+                            const virtualAnchor = virtualDetection.anchors[i];
+                            virtualAnchor.anchorIndex = anchors.length;
+                            anchors.push(virtualAnchor);
+                            anchorStats.virtualScrollerAnchors++;
+                        }
+                    }
+
                     anchorStats.finalAnchors = anchors.length;
                     
                     detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
@@ -1738,7 +3048,8 @@ extension BFCacheTransitionSystem {
                     // 🔧 **수정: stats를 별도 객체로 반환**
                     return {
                         anchors: anchors,
-                        stats: anchorStats
+                        stats: anchorStats,
+                        virtualScrollers: virtualDetection ? virtualDetection.containers : []
                     };
                 }
                 
