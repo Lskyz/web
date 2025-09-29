@@ -257,9 +257,15 @@ struct BFCacheSnapshot: Codable {
                 // WKError 세부 정보
                 if let wkError = error as? WKError {
                     TabPersistenceManager.debugMessages.append("  WKError 코드: \(wkError.code.rawValue)")
-                    TabPersistenceManager.debugMessages.append("  WKError 도메인: \(wkError.domain)")
-                    if let userInfo = wkError.userInfo as? [String: Any] {
-                        TabPersistenceManager.debugMessages.append("  WKError userInfo: \(userInfo)")
+                    TabPersistenceManager.debugMessages.append("  WKError 에러코드: \(wkError.errorCode)")
+                    if !wkError.userInfo.isEmpty {
+                        TabPersistenceManager.debugMessages.append("  WKError userInfo: \(wkError.userInfo)")
+                    }
+                } else if let nsError = error as NSError? {
+                    TabPersistenceManager.debugMessages.append("  NSError 도메인: \(nsError.domain)")
+                    TabPersistenceManager.debugMessages.append("  NSError 코드: \(nsError.code)")
+                    if !nsError.userInfo.isEmpty {
+                        TabPersistenceManager.debugMessages.append("  NSError userInfo: \(nsError.userInfo)")
                     }
                 }
                 
