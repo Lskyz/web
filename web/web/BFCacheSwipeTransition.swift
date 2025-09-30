@@ -264,7 +264,6 @@ struct BFCacheSnapshot: Codable {
                         for entry in logs {
                             TabPersistenceManager.debugMessages.append("   \(String(describing: entry))")
                         }
-                    }
                 }
 
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
@@ -404,6 +403,7 @@ struct BFCacheSnapshot: Codable {
             }
         }
     
+    }
     // MARK: - Step 4: 최종 검증 및 미세 보정
     private func executeStep4_FinalVerification(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
@@ -448,8 +448,8 @@ struct BFCacheSnapshot: Codable {
                 context.completion(context.overallSuccess || step4Success)
             }
         }
-            }
     
+    }
     // MARK: - 🎯 단일 스크롤러 JavaScript 생성 메서드들
     
     // 🎯 **공통 유틸리티 스크립트 생성**
