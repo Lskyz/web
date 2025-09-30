@@ -649,11 +649,16 @@ struct BFCacheSnapshot: Codable {
                 
                 const ROOT = getROOT();
                 
-                // 🎯 **가상 스크롤 컨테이너 후보 찾기 (명시적인 것만)**
+                // 🎯 **가상 스크롤 컨테이너 후보 찾기**
                 const candidates = [
                     ...document.querySelectorAll('[class*="virtual"]'),
+                    ...document.querySelectorAll('[class*="infinite"]'),
+                    ...document.querySelectorAll('[class*="scroll"]'),
                     ...document.querySelectorAll('[data-virtual]'),
-                    ...document.querySelectorAll('[data-index]')
+                    ...document.querySelectorAll('[data-index]'),
+                    ...document.querySelectorAll('[data-key]'),
+                    ...document.querySelectorAll('.list-container'),
+                    ...document.querySelectorAll('[role="list"]')
                 ];
                 
                 logs.push('가상스크롤 후보: ' + candidates.length + '개');
