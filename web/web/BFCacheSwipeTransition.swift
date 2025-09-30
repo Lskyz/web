@@ -2,7 +2,7 @@
 //  📸 **순차적 4단계 BFCache 복원 시스템**
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
-//  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원 OR 가상스크롤 복원
+//  🔍 **Step 3**: 무한스크롤 전용 앵커 정밀 복원
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
@@ -315,9 +315,9 @@ struct BFCacheSnapshot: Codable {
         }
     }
     
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원 OR 가상스크롤 복원
+    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
     private func executeStep3_AnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 앵커 복원 시작 (가상스크롤 감지 포함)")
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
         
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
@@ -326,87 +326,6 @@ struct BFCacheSnapshot: Codable {
             }
             return
         }
-        
-        // 🚀 **1단계: 가상 스크롤 감지 스크립트 실행**
-        let detectionScript = generateVirtualScrollDetectionScript()
-        
-        context.webView?.evaluateJavaScript(detectionScript) { result, error in
-            var isVirtualScroll = false
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] 가상스크롤 감지 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                isVirtualScroll = (resultDict["isVirtualScroll"] as? Bool) ?? false
-                
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            // 🚀 **2단계: 가상스크롤 여부에 따라 분기**
-            if isVirtualScroll {
-                TabPersistenceManager.debugMessages.append("🎯 [Step 3] 가상스크롤 감지됨 → 가상스크롤 복원 실행")
-                self.executeVirtualScrollRestore(context: context)
-            } else {
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] 일반 사이트 → 무한스크롤 앵커 복원 실행")
-                self.executeInfiniteScrollAnchorRestore(context: context)
-            }
-        }
-    }
-    
-    // MARK: - 🎯 가상 스크롤 전용 복원
-    private func executeVirtualScrollRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 복원 시작")
-        
-        let js = generateVirtualScrollRestoreScript()
-        
-        context.webView?.evaluateJavaScript(js) { result, error in
-            var virtualScrollSuccess = false
-            
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
-                virtualScrollSuccess = (resultDict["success"] as? Bool) ?? false
-                
-                if let containerInfo = resultDict["containerInfo"] as? [String: Any] {
-                    if let height = containerInfo["scrollHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 컨테이너 높이: \(String(format: "%.0f", height))px")
-                    }
-                    if let childCount = containerInfo["childCount"] as? Int {
-                        TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 자식 요소: \(childCount)개")
-                    }
-                }
-                
-                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
-                }
-                
-                if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
-                }
-                
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            }
-            
-            TabPersistenceManager.debugMessages.append("🎯 [가상스크롤] 완료: \(virtualScrollSuccess ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
-            
-            // 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
-            }
-        }
-    }
-    
-    // MARK: - 🔍 기존 무한스크롤 앵커 복원
-    private func executeInfiniteScrollAnchorRestore(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 정밀 복원 시작")
         
         // 무한스크롤 앵커 데이터 확인
         var infiniteScrollAnchorDataJSON = "null"
@@ -422,29 +341,29 @@ struct BFCacheSnapshot: Codable {
             var step3Success = false
             
             if let error = error {
-                TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
                 step3Success = (resultDict["success"] as? Bool) ?? false
                 
                 if let anchorCount = resultDict["anchorCount"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 사용 가능한 앵커: \(anchorCount)개")
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
                 }
                 if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
                     if let anchorType = matchedAnchor["anchorType"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 매칭된 앵커 타입: \(anchorType)")
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
                     }
                     if let method = matchedAnchor["matchMethod"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 매칭 방법: \(method)")
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
                     }
                     if let confidence = matchedAnchor["confidence"] as? Double {
-                        TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
                     }
                 }
                 if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
                 }
                 if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                    TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
                     for log in logs.prefix(10) {
@@ -453,7 +372,7 @@ struct BFCacheSnapshot: Codable {
                 }
             }
             
-            TabPersistenceManager.debugMessages.append("🔍 [무한스크롤 앵커] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
             TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
             
             // 성공/실패 관계없이 다음 단계 진행
@@ -637,207 +556,6 @@ struct BFCacheSnapshot: Codable {
         """
     }
     
-    // 🚀 **가상 스크롤 감지 스크립트**
-    private func generateVirtualScrollDetectionScript() -> String {
-        return """
-        (function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                logs.push('[가상스크롤 감지] 시작');
-                
-                const ROOT = getROOT();
-                
-                // 🎯 **가상 스크롤 컨테이너 후보 찾기**
-                const candidates = [
-                    ...document.querySelectorAll('[class*="virtual"]'),
-                    ...document.querySelectorAll('[class*="infinite"]'),
-                    ...document.querySelectorAll('[class*="scroll"]'),
-                    ...document.querySelectorAll('[data-virtual]'),
-                    ...document.querySelectorAll('[data-index]'),
-                    ...document.querySelectorAll('[data-key]'),
-                    ...document.querySelectorAll('.list-container'),
-                    ...document.querySelectorAll('[role="list"]')
-                ];
-                
-                logs.push('가상스크롤 후보: ' + candidates.length + '개');
-                
-                // 🚀 **후보가 1개라도 있으면 무조건 가상스크롤**
-                let isVirtualScroll = candidates.length > 0;
-                
-                if (isVirtualScroll) {
-                    logs.push('✅ 가상스크롤 감지됨! (후보 ' + candidates.length + '개 발견)');
-                    
-                    // 첫 번째 후보 정보 로깅
-                    if (candidates.length > 0) {
-                        const firstCandidate = candidates[0];
-                        const rect = firstCandidate.getBoundingClientRect();
-                        logs.push('첫 번째 후보: ' + firstCandidate.className + ', height=' + rect.height.toFixed(0));
-                    }
-                } else {
-                    logs.push('❌ 가상스크롤 아님 - 일반 사이트');
-                }
-                
-                return {
-                    isVirtualScroll: isVirtualScroll,
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    isVirtualScroll: false,
-                    error: e.message,
-                    logs: ['[가상스크롤 감지] 오류: ' + e.message]
-                };
-            }
-        })()
-        """
-    }
-    
-    // 🚀 **가상 스크롤 복원 스크립트**
-    private func generateVirtualScrollRestoreScript() -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        
-        return """
-        (function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                
-                logs.push('[가상스크롤 복원] 시작');
-                logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                
-                // 🎯 **가상 스크롤 컨테이너 찾기**
-                const candidates = [
-                    ...document.querySelectorAll('[class*="virtual"]'),
-                    ...document.querySelectorAll('[class*="infinite"]'),
-                    ...document.querySelectorAll('[class*="scroll"]'),
-                    ...document.querySelectorAll('[data-virtual]'),
-                    ...document.querySelectorAll('[data-index]')
-                ];
-                
-                let virtualContainer = null;
-                for (let i = 0; i < candidates.length; i++) {
-                    const container = candidates[i];
-                    if (container.scrollHeight > container.clientHeight) {
-                        virtualContainer = container;
-                        break;
-                    }
-                }
-                
-                if (!virtualContainer) {
-                    logs.push('❌ 가상스크롤 컨테이너를 찾을 수 없음');
-                    // Fallback: 단일 스크롤러로 복원
-                    const ROOT = getROOT();
-                    ROOT.scrollTop = targetY;
-                    
-                    return {
-                        success: false,
-                        fallback: true,
-                        restoredPosition: { x: ROOT.scrollLeft || 0, y: ROOT.scrollTop || 0 },
-                        targetDifference: { x: 0, y: Math.abs((ROOT.scrollTop || 0) - targetY) },
-                        logs: logs
-                    };
-                }
-                
-                logs.push('✅ 가상스크롤 컨테이너 발견');
-                
-                // 🎯 **컨테이너 정보 수집**
-                const containerInfo = {
-                    scrollHeight: virtualContainer.scrollHeight,
-                    clientHeight: virtualContainer.clientHeight,
-                    childCount: virtualContainer.children.length
-                };
-                
-                logs.push('컨테이너: scrollH=' + containerInfo.scrollHeight.toFixed(0) + ', clientH=' + containerInfo.clientHeight.toFixed(0) + ', children=' + containerInfo.childCount);
-                
-                // 🎯 **1. 직접 scrollTop 설정 시도**
-                virtualContainer.scrollTop = targetY;
-                
-                // 대기
-                const waitStart = Date.now();
-                while (Date.now() - waitStart < 50) { /* 50ms 대기 */ }
-                
-                let actualY = virtualContainer.scrollTop || 0;
-                logs.push('직접 scrollTop 설정: ' + actualY.toFixed(1) + 'px');
-                
-                // 🎯 **2. data-index 기반 복원 시도**
-                if (Math.abs(actualY - targetY) > 100) {
-                    logs.push('scrollTop으로 부족 - data-index 기반 복원 시도');
-                    
-                    const indexedElements = virtualContainer.querySelectorAll('[data-index]');
-                    if (indexedElements.length > 0) {
-                        logs.push('data-index 요소: ' + indexedElements.length + '개');
-                        
-                        // 목표 Y 위치에 가장 가까운 data-index 찾기
-                        let closestElement = null;
-                        let minDistance = Infinity;
-                        
-                        for (let i = 0; i < indexedElements.length; i++) {
-                            const element = indexedElements[i];
-                            const rect = element.getBoundingClientRect();
-                            const elementY = virtualContainer.scrollTop + rect.top;
-                            const distance = Math.abs(elementY - targetY);
-                            
-                            if (distance < minDistance) {
-                                minDistance = distance;
-                                closestElement = element;
-                            }
-                        }
-                        
-                        if (closestElement) {
-                            const dataIndex = closestElement.getAttribute('data-index');
-                            logs.push('가장 가까운 data-index: ' + dataIndex + ' (거리: ' + minDistance.toFixed(0) + 'px)');
-                            
-                            // scrollIntoView 시도
-                            try {
-                                closestElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-                                actualY = virtualContainer.scrollTop || 0;
-                                logs.push('scrollIntoView 후: ' + actualY.toFixed(1) + 'px');
-                            } catch(e) {
-                                logs.push('scrollIntoView 실패: ' + e.message);
-                            }
-                        }
-                    }
-                }
-                
-                // 🎯 **3. 최종 위치 확인**
-                const actualX = virtualContainer.scrollLeft || 0;
-                actualY = virtualContainer.scrollTop || 0;
-                
-                const diffX = Math.abs(actualX - targetX);
-                const diffY = Math.abs(actualY - targetY);
-                
-                logs.push('최종 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                // 허용 오차 100px
-                const success = diffY <= 100;
-                
-                return {
-                    success: success,
-                    containerInfo: containerInfo,
-                    restoredPosition: { x: actualX, y: actualY },
-                    targetDifference: { x: diffX, y: diffY },
-                    logs: logs
-                };
-                
-            } catch(e) {
-                return {
-                    success: false,
-                    error: e.message,
-                    logs: ['[가상스크롤 복원] 오류: ' + e.message]
-                };
-            }
-        })()
-        """
-    }
-    
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
         
@@ -1001,7 +719,7 @@ struct BFCacheSnapshot: Codable {
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
                 
-                logs.push('[무한스크롤 앵커] 복원');
+                logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 
                 // 앵커 데이터 확인
@@ -1220,7 +938,7 @@ struct BFCacheSnapshot: Codable {
                 return {
                     success: false,
                     error: e.message,
-                    logs: ['[무한스크롤 앵커] 오류: ' + e.message]
+                    logs: ['[Step 3] 오류: ' + e.message]
                 };
             }
         })()
