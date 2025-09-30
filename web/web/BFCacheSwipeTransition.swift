@@ -1486,7 +1486,6 @@ extension BFCacheTransitionSystem {
     // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 제목/목록 태그 위주 수집**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
-        \(generateCommonUtilityScript())
         return (async function() {
             try {
                 console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (제목/목록 태그 위주)');
