@@ -202,7 +202,7 @@ struct BFCacheSnapshot: Codable {
         executeStep1_RestoreContentHeight(context: context)
     }
     
-    private func runRestorationScript(
+    fileprivate static func runRestorationScript(
         _ script: String,
         in webView: WKWebView?,
         completion: @escaping (Any?, Error?) -> Void
@@ -222,9 +222,10 @@ struct BFCacheSnapshot: Codable {
                 script,
                 arguments: [:],
                 in: nil,
-                contentWorld: .page,
-                completionHandler: completion
-            )
+                in: .page
+            ) { result, error in
+                completion(result, error)
+            }
         } else {
             let error = NSError(
                 domain: "BFCacheSnapshot",
@@ -250,7 +251,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep1_ContentRestoreScript()
         
-        runRestorationScript(js, in: context.webView) { result, error in
+        Self.runRestorationScript(js, in: context.webView) { result, error in
             var step1Success = false
             
             if let error = error {
@@ -304,7 +305,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep2_PercentScrollScript()
         
-        runRestorationScript(js, in: context.webView) { result, error in
+        Self.runRestorationScript(js, in: context.webView) { result, error in
             var step2Success = false
             var updatedContext = context
             
@@ -370,7 +371,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
         
-        runRestorationScript(js, in: context.webView) { result, error in
+        Self.runRestorationScript(js, in: context.webView) { result, error in
             var step3Success = false
             
             if let error = error {
@@ -427,7 +428,7 @@ struct BFCacheSnapshot: Codable {
         
         let js = generateStep4_FinalVerificationScript()
         
-        runRestorationScript(js, in: context.webView) { result, error in
+        Self.runRestorationScript(js, in: context.webView) { result, error in
             var step4Success = false
             
             if let error = error {
@@ -1360,7 +1361,7 @@ extension BFCacheTransitionSystem {
             })()
             """
             
-            runRestorationScript(domScript, in: webView) { result, error in
+            BFCacheSnapshot.runRestorationScript(domScript, in: webView) { result, error in
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 실패: \(error.localizedDescription)")
                 } else if let dom = result as? String {
@@ -1379,7 +1380,7 @@ extension BFCacheTransitionSystem {
         DispatchQueue.main.sync {
             let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
             
-            runRestorationScript(jsScript, in: webView) { result, error in
+            BFCacheSnapshot.runRestorationScript(jsScript, in: webView) { result, error in
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
                 } else if let data = result as? [String: Any] {
