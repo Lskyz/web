@@ -978,9 +978,11 @@ struct BFCacheSnapshot: Codable {
                                 // 컴포넌트 이름과 인덱스 매칭
                                 if (vueComp.name && classNameStr.indexOf(vueComp.name) !== -1) {
                                     // 가상 인덱스 기반 매칭
-                                    if (vueComp.index !== undefined) {
-                                        const elementIndex = Array.from(element.parentElement.children).indexOf(element);
-                                        if (Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
+                                    if (typeof vueComp.index === 'number') {
+                                        const elementIndex = element.parentElement
+                                            ? Array.from(element.parentElement.children).indexOf(element)
+                                            : -1;
+                                        if (elementIndex !== -1 && Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
                                             foundElement = element;
                                             matchedAnchor = anchor;
                                             matchMethod = 'vue_component_with_index';
@@ -1100,29 +1102,25 @@ struct BFCacheSnapshot: Codable {
                     const ROOT = getROOT();
                     const rect = foundElement.getBoundingClientRect();
                     const absY = ROOT.scrollTop + rect.top;
-                    const headerHeight = fixedHeaderHeight();
-                    const finalY = Math.max(0, absY - headerHeight);
+                    let headerHeightPx = fixedHeaderHeight();
+                    const finalY = Math.max(0, absY - headerHeightPx);
                     
-                    // 오프셋 보정
-                    let adjustedY = finalY;
-                    if (matchedAnchor.offsetFromTop) {
-                        adjustedY = Math.max(0, finalY - matchedAnchor.offsetFromTop);
-                    }
-                    
-                    const visibility = await ensureElementVisibleAsync(foundElement, { marginPx: matchedAnchor.offsetFromTop || 0 });
+                    const offsetTop = (typeof matchedAnchor.offsetFromTop === 'number') ? matchedAnchor.offsetFromTop : 0;
+                    let adjustedY = Math.max(0, finalY - Math.max(0, offsetTop));
+
+                    const visibility = await ensureElementVisibleAsync(foundElement, { marginPx: Math.max(0, offsetTop) });
                     await waitForStableLayoutAsync({ frames: 3, timeout: 900 });
 
                     let container = visibility && visibility.container ? visibility.container : getScrollableParent(foundElement);
-                    let headerHeight = visibility && visibility.header !== undefined ? visibility.header : fixedHeaderHeight();
+                    headerHeightPx = (visibility && visibility.header !== undefined) ? visibility.header : fixedHeaderHeight();
                     let actualContainerY = container ? (container.scrollTop || 0) : 0;
 
                     if (!visibility) {
                         const rootFallback = getROOT();
                         if (rootFallback) {
-                            const rect = foundElement.getBoundingClientRect();
-                            const absY = (rootFallback.scrollTop || 0) + rect.top;
-                            const offsetTop = matchedAnchor.offsetFromTop || 0;
-                            const targetOffset = Math.max(0, absY - headerHeight - offsetTop);
+                            const rect2 = foundElement.getBoundingClientRect();
+                            const absY2 = (rootFallback.scrollTop || 0) + rect2.top;
+                            const targetOffset = Math.max(0, absY2 - headerHeightPx - Math.max(0, offsetTop));
                             await scrollStepAsync(rootFallback, targetOffset, 'y');
                             await waitForStableLayoutAsync({ frames: 2, timeout: 600 });
                             container = rootFallback;
@@ -1139,7 +1137,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('앵커 복원 후 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
                     logs.push('목표와의 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                     logs.push('매칭 신뢰도: ' + confidence + '%');
-                    logs.push('헤더 보정: ' + headerHeight.toFixed(0) + 'px');
+                    logs.push('헤더 보정: ' + headerHeightPx.toFixed(0) + 'px');
 
                     return {
                         success: diffY <= 100,
