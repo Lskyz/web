@@ -208,34 +208,14 @@ struct BFCacheSnapshot: Codable {
             completion(nil, error)
             return
         }
-        if #available(iOS 15.0, *) {
-            if #available(iOS 16.4, *) {
-                webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page, completionHandler: { result in
-                    switch result {
-                    case .success(let value):
-                        completion(value, nil)
-                    case .failure(let error):
-                        completion(nil, error)
-                    }
-                })
-            } else {
-                webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page, completionHandler: { result in
-                    switch result {
-                    case .success(let value):
-                        completion(value, nil)
-                    case .failure(let error):
-                        completion(nil, error)
-                    }
-                })
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page, completionHandler: { result in
+            switch result {
+            case .success(let value):
+                completion(value, nil)
+            case .failure(let error):
+                completion(nil, error)
             }
-        } else {
-            let error = NSError(
-                domain: "BFCacheSwipeTransition",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "Requires iOS 15 or later"]
-            )
-            completion(nil, error)
-        }
+        })
     }
 
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
