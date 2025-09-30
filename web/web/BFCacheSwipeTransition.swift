@@ -261,7 +261,7 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                 }
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
+                    for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
@@ -313,7 +313,7 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(5) {
+                    for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
@@ -386,7 +386,7 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
-                    for log in logs.prefix(10) {
+                    for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
