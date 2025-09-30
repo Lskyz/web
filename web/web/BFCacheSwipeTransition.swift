@@ -649,63 +649,28 @@ struct BFCacheSnapshot: Codable {
                 
                 const ROOT = getROOT();
                 
-                // 🎯 **가상 스크롤 컨테이너 후보 찾기**
+                // 🎯 **가상 스크롤 컨테이너 후보 찾기 (명시적인 것만)**
                 const candidates = [
                     ...document.querySelectorAll('[class*="virtual"]'),
-                    ...document.querySelectorAll('[class*="infinite"]'),
-                    ...document.querySelectorAll('[class*="scroll"]'),
                     ...document.querySelectorAll('[data-virtual]'),
-                    ...document.querySelectorAll('[data-index]'),
-                    ...document.querySelectorAll('.list-container'),
-                    ...document.querySelectorAll('[role="list"]')
+                    ...document.querySelectorAll('[data-index]')
                 ];
                 
                 logs.push('가상스크롤 후보: ' + candidates.length + '개');
                 
-                let isVirtualScroll = false;
-                let detectedContainer = null;
+                // 🚀 **후보가 1개라도 있으면 무조건 가상스크롤**
+                let isVirtualScroll = candidates.length > 0;
                 
-                // 🎯 **각 후보 검사**
-                for (let i = 0; i < candidates.length; i++) {
-                    const container = candidates[i];
-                    const rect = container.getBoundingClientRect();
+                if (isVirtualScroll) {
+                    logs.push('✅ 가상스크롤 감지됨! (후보 ' + candidates.length + '개 발견)');
                     
-                    if (rect.height === 0) continue;
-                    
-                    const scrollHeight = container.scrollHeight || 0;
-                    const clientHeight = container.clientHeight || 0;
-                    
-                    // 자식 요소들의 실제 높이 계산
-                    const children = container.children;
-                    let totalChildHeight = 0;
-                    for (let j = 0; j < children.length; j++) {
-                        totalChildHeight += children[j].getBoundingClientRect().height;
+                    // 첫 번째 후보 정보 로깅
+                    if (candidates.length > 0) {
+                        const firstCandidate = candidates[0];
+                        const rect = firstCandidate.getBoundingClientRect();
+                        logs.push('첫 번째 후보: ' + firstCandidate.className + ', height=' + rect.height.toFixed(0));
                     }
-                    
-                    // 🚀 **가상 스크롤 특징 감지**
-                    const hasDataIndex = container.querySelector('[data-index]') !== null;
-                    const hasDataKey = container.querySelector('[data-key]') !== null;
-                    const hasTransform = Array.from(children).some(child => {
-                        const style = window.getComputedStyle(child);
-                        return style.transform && style.transform !== 'none';
-                    });
-                    
-                    // scrollHeight가 실제 자식 높이보다 훨씬 크면 가상 스크롤
-                    const heightRatio = scrollHeight > 0 ? totalChildHeight / scrollHeight : 1;
-                    const isVirtualByHeight = heightRatio < 0.7 && scrollHeight > clientHeight * 2;
-                    
-                    logs.push('후보[' + i + ']: scrollH=' + scrollHeight.toFixed(0) + ', childH=' + totalChildHeight.toFixed(0) + ', ratio=' + heightRatio.toFixed(2));
-                    
-                    if (isVirtualByHeight || hasDataIndex || hasDataKey || hasTransform) {
-                        isVirtualScroll = true;
-                        detectedContainer = container;
-                        logs.push('✅ 가상스크롤 감지됨!');
-                        logs.push('감지 이유: height=' + isVirtualByHeight + ', dataIndex=' + hasDataIndex + ', dataKey=' + hasDataKey + ', transform=' + hasTransform);
-                        break;
-                    }
-                }
-                
-                if (!isVirtualScroll) {
+                } else {
                     logs.push('❌ 가상스크롤 아님 - 일반 사이트');
                 }
                 
