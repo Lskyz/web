@@ -223,8 +223,13 @@ struct BFCacheSnapshot: Codable {
                 arguments: [:],
                 in: nil,
                 in: .page
-            ) { result, error in
-                completion(result, error)
+            ) { result in
+                switch result {
+                case .success(let value):
+                    completion(value, nil)
+                case .failure(let error):
+                    completion(nil, error)
+                }
             }
         } else {
             let error = NSError(
