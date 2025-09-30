@@ -755,6 +755,16 @@ struct BFCacheSnapshot: Codable {
                 let matchMethod = '';
                 let confidence = 0;
                 
+                // 🎯 **수정: className 처리 함수**
+                function getClassNameString(element) {
+                    if (typeof element.className === 'string') {
+                        return element.className;
+                    } else if (element.className && typeof element.className.toString === 'function') {
+                        return element.className.toString();
+                    }
+                    return '';
+                }
+                
                 // 우선순위 1: Vue Component 앵커 매칭
                 if (!foundElement && vueComponentAnchors.length > 0) {
                     for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
@@ -766,8 +776,10 @@ struct BFCacheSnapshot: Codable {
                             const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
                             for (let j = 0; j < vueElements.length; j++) {
                                 const element = vueElements[j];
+                                const classNameStr = getClassNameString(element);
+                                
                                 // 컴포넌트 이름과 인덱스 매칭
-                                if (vueComp.name && element.className.includes(vueComp.name)) {
+                                if (vueComp.name && classNameStr.indexOf(vueComp.name) !== -1) {
                                     // 가상 인덱스 기반 매칭
                                     if (vueComp.index !== undefined) {
                                         const elementIndex = Array.from(element.parentElement.children).indexOf(element);
@@ -807,7 +819,7 @@ struct BFCacheSnapshot: Codable {
                             for (let j = 0; j < allElements.length; j++) {
                                 const element = allElements[j];
                                 const elementText = (element.textContent || '').trim();
-                                if (elementText.includes(searchText)) {
+                                if (elementText.indexOf(searchText) !== -1) {
                                     foundElement = element;
                                     matchedAnchor = anchor;
                                     matchMethod = 'content_hash';
@@ -1404,12 +1416,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 뷰포트 영역별 수집 (상/중/하 + 밖)**
+    // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 제목/목록 태그 위주 수집**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (뷰포트 영역별 수집)');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (제목/목록 태그 위주)');
                 
                 // 🎯 **단일 스크롤러 유틸리티 함수들**
                 function getROOT() { 
@@ -1469,45 +1481,80 @@ extension BFCacheTransitionSystem {
                     return null;
                 }
                 
-                // 🚀 **핵심 수정: DOM 트리 분석으로 반복 패턴 자동 탐지**
-                function findRepeatingPatterns() {
-                    const patterns = [];
+                // 🚀 **새로운: 태그 타입별 품질 점수 계산**
+                function calculateTagQualityScore(element) {
+                    const tagName = element.tagName.toLowerCase();
+                    const textLength = (element.textContent || '').trim().length;
                     
-                    // 1. 공통 부모를 가진 반복 요소 찾기
-                    const allElements = document.querySelectorAll('*');
-                    const parentCounts = new Map();
+                    // 기본 점수 (태그 타입별)
+                    let baseScore = 50;
                     
-                    for (let i = 0; i < allElements.length; i++) {
-                        const element = allElements[i];
-                        if (!element.parentElement) continue;
-                        
-                        const parent = element.parentElement;
-                        const tagName = element.tagName;
-                        const key = parent.tagName + '>' + tagName;
-                        
-                        if (!parentCounts.has(key)) {
-                            parentCounts.set(key, { parent: parent, tagName: tagName, elements: [] });
-                        }
-                        parentCounts.get(key).elements.push(element);
+                    // 제목 태그 (최고 점수)
+                    if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].indexOf(tagName) !== -1) {
+                        baseScore = 95;
+                    }
+                    // 목록 항목 (높은 점수)
+                    else if (['li', 'article', 'section'].indexOf(tagName) !== -1) {
+                        baseScore = 85;
+                    }
+                    // 단락 (중간 점수)
+                    else if (tagName === 'p') {
+                        baseScore = 75;
+                    }
+                    // 링크 (중간 점수)
+                    else if (tagName === 'a') {
+                        baseScore = 70;
+                    }
+                    // 스팬/div (낮은 점수)
+                    else if (['span', 'div'].indexOf(tagName) !== -1) {
+                        baseScore = 60;
                     }
                     
-                    // 2. 5개 이상 반복되는 패턴만 선택
-                    parentCounts.forEach((value, key) => {
-                        if (value.elements.length >= 5) {
-                            patterns.push({
-                                parent: value.parent,
-                                tagName: value.tagName,
-                                elements: value.elements,
-                                count: value.elements.length
-                            });
+                    // 텍스트 길이 보너스 (최대 +30점)
+                    const lengthBonus = Math.min(30, Math.floor(textLength / 10));
+                    
+                    return Math.min(100, baseScore + lengthBonus);
+                }
+                
+                // 🚀 **핵심 수정: 제목/목록 태그 위주로 수집**
+                function collectSemanticElements() {
+                    const semanticElements = [];
+                    
+                    // 1. 제목 태그 우선 수집
+                    const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+                    for (let i = 0; i < headings.length; i++) {
+                        semanticElements.push(headings[i]);
+                    }
+                    
+                    // 2. 목록 항목 수집
+                    const listItems = document.querySelectorAll('li, article, section');
+                    for (let i = 0; i < listItems.length; i++) {
+                        const text = (listItems[i].textContent || '').trim();
+                        if (text.length >= 10) { // 최소 10자
+                            semanticElements.push(listItems[i]);
                         }
-                    });
+                    }
                     
-                    // 3. 가장 많이 반복되는 순으로 정렬
-                    patterns.sort((a, b) => b.count - a.count);
+                    // 3. 단락 태그 수집 (의미있는 것만)
+                    const paragraphs = document.querySelectorAll('p');
+                    for (let i = 0; i < paragraphs.length; i++) {
+                        const text = (paragraphs[i].textContent || '').trim();
+                        if (text.length >= 20) { // 최소 20자
+                            semanticElements.push(paragraphs[i]);
+                        }
+                    }
                     
-                    detailedLogs.push('반복 패턴 발견: ' + patterns.length + '개');
-                    return patterns;
+                    // 4. 링크 태그 수집 (의미있는 것만)
+                    const links = document.querySelectorAll('a');
+                    for (let i = 0; i < links.length; i++) {
+                        const text = (links[i].textContent || '').trim();
+                        if (text.length >= 5) { // 최소 5자
+                            semanticElements.push(links[i]);
+                        }
+                    }
+                    
+                    detailedLogs.push('의미 있는 요소 수집: ' + semanticElements.length + '개');
+                    return semanticElements;
                 }
                 
                 // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (뷰포트 영역별)**
@@ -1515,7 +1562,6 @@ extension BFCacheTransitionSystem {
                     const anchors = [];
                     const anchorStats = {
                         totalCandidates: 0,
-                        repeatingPatterns: 0,
                         vueComponentAnchors: 0,
                         contentHashAnchors: 0,
                         virtualIndexAnchors: 0,
@@ -1526,23 +1572,20 @@ extension BFCacheTransitionSystem {
                             viewportMiddle: 0,
                             viewportLower: 0,
                             belowViewport: 0
+                        },
+                        tagDistribution: {
+                            headings: 0,
+                            listItems: 0,
+                            paragraphs: 0,
+                            links: 0,
+                            others: 0
                         }
                     };
                     
-                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (뷰포트 영역별)');
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (제목/목록 태그 위주)');
                     
-                    // 🚀 **1. 반복 패턴 자동 탐지**
-                    const patterns = findRepeatingPatterns();
-                    anchorStats.repeatingPatterns = patterns.length;
-                    
-                    let allCandidateElements = [];
-                    
-                    // 상위 3개 패턴에서 요소 수집
-                    for (let i = 0; i < Math.min(3, patterns.length); i++) {
-                        const pattern = patterns[i];
-                        detailedLogs.push('패턴 ' + (i + 1) + ': ' + pattern.tagName + ' (' + pattern.count + '개)');
-                        allCandidateElements = allCandidateElements.concat(pattern.elements);
-                    }
+                    // 🚀 **1. 의미 있는 요소 수집**
+                    let allCandidateElements = collectSemanticElements();
                     
                     // 🚀 **2. Vue.js 컴포넌트 요소 추가 수집 (data-v-* 속성)**
                     const vueElements = document.querySelectorAll('[data-v-], [class*="data-v-"]');
@@ -1553,7 +1596,7 @@ extension BFCacheTransitionSystem {
                     anchorStats.totalCandidates = allCandidateElements.length;
                     detailedLogs.push('후보 요소 총: ' + allCandidateElements.length + '개');
                     
-                    // 🚀 **3. 중복 제거 및 기본 필터링 (최소 텍스트만)**
+                    // 🚀 **3. 중복 제거**
                     const uniqueElements = [];
                     const processedElements = new Set();
                     
@@ -1561,12 +1604,7 @@ extension BFCacheTransitionSystem {
                         const element = allCandidateElements[i];
                         if (!processedElements.has(element)) {
                             processedElements.add(element);
-                            
-                            const elementText = (element.textContent || '').trim();
-                            // 최소 5자 이상 텍스트만
-                            if (elementText.length >= 5) {
-                                uniqueElements.push(element);
-                            }
+                            uniqueElements.push(element);
                         }
                     }
                     
@@ -1591,21 +1629,19 @@ extension BFCacheTransitionSystem {
                     const viewportMiddleBound = viewportTop + (viewportHeight * 0.66);
                     
                     const regionsCollected = {
-                        aboveViewport: [],      // 뷰포트 위쪽
-                        viewportUpper: [],      // 뷰포트 상단 (0-33%)
-                        viewportMiddle: [],     // 뷰포트 중단 (33-66%)
-                        viewportLower: [],      // 뷰포트 하단 (66-100%)
-                        belowViewport: []       // 뷰포트 아래쪽
+                        aboveViewport: [],
+                        viewportUpper: [],
+                        viewportMiddle: [],
+                        viewportLower: [],
+                        belowViewport: []
                     };
                     
                     for (let i = 0; i < uniqueElements.length; i++) {
                         const element = uniqueElements[i];
                         const rect = element.getBoundingClientRect();
                         const elementTop = scrollY + rect.top;
-                        const elementBottom = elementTop + rect.height;
                         const elementCenter = elementTop + (rect.height / 2);
                         
-                        // 요소 중심점 기준으로 영역 분류
                         if (elementCenter < viewportTop) {
                             regionsCollected.aboveViewport.push(element);
                         } else if (elementCenter >= viewportTop && elementCenter < viewportUpperBound) {
@@ -1627,25 +1663,20 @@ extension BFCacheTransitionSystem {
                     
                     // 🎯 **각 영역에서 골고루 선택 (총 60개 목표)**
                     const selectedElements = [];
-                    const perRegion = 12; // 각 영역당 12개
+                    const perRegion = 12;
                     
-                    // 뷰포트 위쪽에서 하위 12개 (스크롤 위치에 가까운 것부터)
                     const aboveSelected = regionsCollected.aboveViewport.slice(-perRegion);
                     selectedElements.push(...aboveSelected);
                     
-                    // 뷰포트 상단에서 12개
                     const upperSelected = regionsCollected.viewportUpper.slice(0, perRegion);
                     selectedElements.push(...upperSelected);
                     
-                    // 뷰포트 중단에서 12개
                     const middleSelected = regionsCollected.viewportMiddle.slice(0, perRegion);
                     selectedElements.push(...middleSelected);
                     
-                    // 뷰포트 하단에서 12개
                     const lowerSelected = regionsCollected.viewportLower.slice(0, perRegion);
                     selectedElements.push(...lowerSelected);
                     
-                    // 뷰포트 아래쪽에서 상위 12개
                     const belowSelected = regionsCollected.belowViewport.slice(0, perRegion);
                     selectedElements.push(...belowSelected);
                     
@@ -1665,6 +1696,20 @@ extension BFCacheTransitionSystem {
                             const absoluteLeft = scrollX + rect.left;
                             const offsetFromTop = scrollY - absoluteTop;
                             const textContent = (element.textContent || '').trim();
+                            const tagName = element.tagName.toLowerCase();
+                            
+                            // 태그 타입 통계
+                            if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].indexOf(tagName) !== -1) {
+                                anchorStats.tagDistribution.headings++;
+                            } else if (['li', 'article', 'section'].indexOf(tagName) !== -1) {
+                                anchorStats.tagDistribution.listItems++;
+                            } else if (tagName === 'p') {
+                                anchorStats.tagDistribution.paragraphs++;
+                            } else if (tagName === 'a') {
+                                anchorStats.tagDistribution.links++;
+                            } else {
+                                anchorStats.tagDistribution.others++;
+                            }
                             
                             // 영역 판정
                             const elementCenter = absoluteTop + (rect.height / 2);
@@ -1686,6 +1731,9 @@ extension BFCacheTransitionSystem {
                                 anchorStats.regionDistribution.belowViewport++;
                             }
                             
+                            // 품질 점수 계산
+                            const qualityScore = calculateTagQualityScore(element);
+                            
                             // Vue Component 앵커
                             const dataVAttr = findDataVAttribute(element);
                             if (dataVAttr) {
@@ -1696,7 +1744,6 @@ extension BFCacheTransitionSystem {
                                     index: i
                                 };
                                 
-                                // 클래스명에서 컴포넌트 이름 추출
                                 const classList = Array.from(element.classList);
                                 for (let j = 0; j < classList.length; j++) {
                                     const className = classList[j];
@@ -1706,7 +1753,6 @@ extension BFCacheTransitionSystem {
                                     }
                                 }
                                 
-                                // 부모 요소에서 인덱스 정보
                                 if (element.parentElement) {
                                     const siblingIndex = Array.from(element.parentElement.children).indexOf(element);
                                     vueComponent.index = siblingIndex;
@@ -1720,9 +1766,10 @@ extension BFCacheTransitionSystem {
                                     offsetFromTop: offsetFromTop,
                                     size: { width: rect.width, height: rect.height },
                                     textContent: textContent.substring(0, 100),
-                                    qualityScore: 85,
+                                    qualityScore: qualityScore,
                                     anchorIndex: i,
                                     region: region,
+                                    tagName: tagName,
                                     captureTimestamp: Date.now()
                                 });
                                 anchorStats.vueComponentAnchors++;
@@ -1745,9 +1792,10 @@ extension BFCacheTransitionSystem {
                                 offsetFromTop: offsetFromTop,
                                 size: { width: rect.width, height: rect.height },
                                 textContent: textContent.substring(0, 100),
-                                qualityScore: Math.min(95, 60 + Math.min(35, Math.floor(textContent.length / 10))),
+                                qualityScore: qualityScore,
                                 anchorIndex: i,
                                 region: region,
+                                tagName: tagName,
                                 captureTimestamp: Date.now()
                             });
                             anchorStats.contentHashAnchors++;
@@ -1766,9 +1814,10 @@ extension BFCacheTransitionSystem {
                                 offsetFromTop: offsetFromTop,
                                 size: { width: rect.width, height: rect.height },
                                 textContent: textContent.substring(0, 100),
-                                qualityScore: 70,
+                                qualityScore: qualityScore,
                                 anchorIndex: i,
                                 region: region,
+                                tagName: tagName,
                                 captureTimestamp: Date.now()
                             });
                             anchorStats.virtualIndexAnchors++;
@@ -1781,11 +1830,11 @@ extension BFCacheTransitionSystem {
                     anchorStats.finalAnchors = anchors.length;
                     
                     detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
-                    detailedLogs.push('영역별 앵커 분포: 위=' + anchorStats.regionDistribution.aboveViewport + 
-                                    ', 상=' + anchorStats.regionDistribution.viewportUpper + 
-                                    ', 중=' + anchorStats.regionDistribution.viewportMiddle + 
-                                    ', 하=' + anchorStats.regionDistribution.viewportLower + 
-                                    ', 아래=' + anchorStats.regionDistribution.belowViewport);
+                    detailedLogs.push('태그별 앵커 분포: 제목=' + anchorStats.tagDistribution.headings + 
+                                    ', 목록=' + anchorStats.tagDistribution.listItems + 
+                                    ', 단락=' + anchorStats.tagDistribution.paragraphs + 
+                                    ', 링크=' + anchorStats.tagDistribution.links + 
+                                    ', 기타=' + anchorStats.tagDistribution.others);
                     console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
                     
                     return {
@@ -1794,7 +1843,7 @@ extension BFCacheTransitionSystem {
                     };
                 }
                 
-                // 🚀 **메인 실행 - 무한스크롤 전용 앵커 데이터 수집**
+                // 🚀 **메인 실행**
                 const startTime = Date.now();
                 const infiniteScrollAnchorsData = collectInfiniteScrollAnchors();
                 const endTime = Date.now();
@@ -1807,36 +1856,22 @@ extension BFCacheTransitionSystem {
                 
                 detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
                 detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
-                detailedLogs.push('처리 성능: ' + pageAnalysis.capturePerformance.anchorsPerSecond + ' 앵커/초');
                 
                 console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
                     infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
                     stats: infiniteScrollAnchorsData.stats,
-                    scroll: [scrollX, scrollY],
-                    viewport: [viewportWidth, viewportHeight],
-                    content: [contentWidth, contentHeight],
                     captureTime: captureTime
                 });
                 
-                // ✅ **수정: 정리된 반환 구조 (단일 스크롤러 기준)**
                 return {
                     infiniteScrollAnchors: infiniteScrollAnchorsData,
-                    scroll: { 
-                        x: scrollX, 
-                        y: scrollY
-                    },
+                    scroll: { x: scrollX, y: scrollY },
                     href: window.location.href,
                     title: document.title,
                     timestamp: Date.now(),
                     userAgent: navigator.userAgent,
-                    viewport: {
-                        width: viewportWidth,
-                        height: viewportHeight
-                    },
-                    content: {
-                        width: contentWidth,
-                        height: contentHeight
-                    },
+                    viewport: { width: viewportWidth, height: viewportHeight },
+                    content: { width: contentWidth, height: contentHeight },
                     actualScrollable: { 
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
