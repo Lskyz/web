@@ -1404,12 +1404,12 @@ extension BFCacheTransitionSystem {
         return (snapshot, visualSnapshot)
     }
     
-    // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 가시성 무관 전체 수집**
+    // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 뷰포트 영역별 수집 (상/중/하 + 밖)**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
         (function() {
             try {
-                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (뷰포트 무관 전체 수집)');
+                console.log('🚀 무한스크롤 전용 앵커 캡처 시작 (뷰포트 영역별 수집)');
                 
                 // 🎯 **단일 스크롤러 유틸리티 함수들**
                 function getROOT() { 
@@ -1510,7 +1510,7 @@ extension BFCacheTransitionSystem {
                     return patterns;
                 }
                 
-                // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (가시성 무관)**
+                // 🚀 **핵심: 무한스크롤 전용 앵커 수집 (뷰포트 영역별)**
                 function collectInfiniteScrollAnchors() {
                     const anchors = [];
                     const anchorStats = {
@@ -1519,10 +1519,17 @@ extension BFCacheTransitionSystem {
                         vueComponentAnchors: 0,
                         contentHashAnchors: 0,
                         virtualIndexAnchors: 0,
-                        finalAnchors: 0
+                        finalAnchors: 0,
+                        regionDistribution: {
+                            aboveViewport: 0,
+                            viewportUpper: 0,
+                            viewportMiddle: 0,
+                            viewportLower: 0,
+                            belowViewport: 0
+                        }
                     };
                     
-                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (가시성 무관)');
+                    detailedLogs.push('🚀 무한스크롤 전용 앵커 수집 시작 (뷰포트 영역별)');
                     
                     // 🚀 **1. 반복 패턴 자동 탐지**
                     const patterns = findRepeatingPatterns();
@@ -1565,23 +1572,89 @@ extension BFCacheTransitionSystem {
                     
                     detailedLogs.push('유효 요소: ' + uniqueElements.length + '개');
                     
-                    // 🚀 **4. 스크롤 위치 중심으로 정렬**
-                    const viewportCenterY = scrollY + (viewportHeight / 2);
+                    // 🚀 **4. 뷰포트 영역별 + 뷰포트 밖 요소 수집**
+                    detailedLogs.push('🎯 뷰포트 영역별 앵커 수집 시작 (상/중/하 + 밖)');
                     
+                    // Y축 기준 절대 위치로 정렬 (위에서 아래로)
                     uniqueElements.sort(function(a, b) {
                         const aRect = a.getBoundingClientRect();
                         const bRect = b.getBoundingClientRect();
                         const aTop = scrollY + aRect.top;
                         const bTop = scrollY + bRect.top;
-                        const aDistance = Math.abs(aTop + (aRect.height / 2) - viewportCenterY);
-                        const bDistance = Math.abs(bTop + (bRect.height / 2) - viewportCenterY);
-                        return aDistance - bDistance;
+                        return aTop - bTop;
                     });
                     
-                    // 상위 30개 선택
-                    const selectedElements = uniqueElements.slice(0, 30);
+                    // 🎯 **영역별 분류 및 수집**
+                    const viewportTop = scrollY;
+                    const viewportBottom = scrollY + viewportHeight;
+                    const viewportUpperBound = viewportTop + (viewportHeight * 0.33);
+                    const viewportMiddleBound = viewportTop + (viewportHeight * 0.66);
                     
-                    detailedLogs.push('스크롤 중심 기준 선택: ' + selectedElements.length + '개');
+                    const regionsCollected = {
+                        aboveViewport: [],      // 뷰포트 위쪽
+                        viewportUpper: [],      // 뷰포트 상단 (0-33%)
+                        viewportMiddle: [],     // 뷰포트 중단 (33-66%)
+                        viewportLower: [],      // 뷰포트 하단 (66-100%)
+                        belowViewport: []       // 뷰포트 아래쪽
+                    };
+                    
+                    for (let i = 0; i < uniqueElements.length; i++) {
+                        const element = uniqueElements[i];
+                        const rect = element.getBoundingClientRect();
+                        const elementTop = scrollY + rect.top;
+                        const elementBottom = elementTop + rect.height;
+                        const elementCenter = elementTop + (rect.height / 2);
+                        
+                        // 요소 중심점 기준으로 영역 분류
+                        if (elementCenter < viewportTop) {
+                            regionsCollected.aboveViewport.push(element);
+                        } else if (elementCenter >= viewportTop && elementCenter < viewportUpperBound) {
+                            regionsCollected.viewportUpper.push(element);
+                        } else if (elementCenter >= viewportUpperBound && elementCenter < viewportMiddleBound) {
+                            regionsCollected.viewportMiddle.push(element);
+                        } else if (elementCenter >= viewportMiddleBound && elementCenter < viewportBottom) {
+                            regionsCollected.viewportLower.push(element);
+                        } else {
+                            regionsCollected.belowViewport.push(element);
+                        }
+                    }
+                    
+                    detailedLogs.push('영역별 요소 수: 위=' + regionsCollected.aboveViewport.length + 
+                                    ', 상=' + regionsCollected.viewportUpper.length + 
+                                    ', 중=' + regionsCollected.viewportMiddle.length + 
+                                    ', 하=' + regionsCollected.viewportLower.length + 
+                                    ', 아래=' + regionsCollected.belowViewport.length);
+                    
+                    // 🎯 **각 영역에서 골고루 선택 (총 60개 목표)**
+                    const selectedElements = [];
+                    const perRegion = 12; // 각 영역당 12개
+                    
+                    // 뷰포트 위쪽에서 하위 12개 (스크롤 위치에 가까운 것부터)
+                    const aboveSelected = regionsCollected.aboveViewport.slice(-perRegion);
+                    selectedElements.push(...aboveSelected);
+                    
+                    // 뷰포트 상단에서 12개
+                    const upperSelected = regionsCollected.viewportUpper.slice(0, perRegion);
+                    selectedElements.push(...upperSelected);
+                    
+                    // 뷰포트 중단에서 12개
+                    const middleSelected = regionsCollected.viewportMiddle.slice(0, perRegion);
+                    selectedElements.push(...middleSelected);
+                    
+                    // 뷰포트 하단에서 12개
+                    const lowerSelected = regionsCollected.viewportLower.slice(0, perRegion);
+                    selectedElements.push(...lowerSelected);
+                    
+                    // 뷰포트 아래쪽에서 상위 12개
+                    const belowSelected = regionsCollected.belowViewport.slice(0, perRegion);
+                    selectedElements.push(...belowSelected);
+                    
+                    detailedLogs.push('영역별 선택: 위=' + aboveSelected.length + 
+                                    ', 상=' + upperSelected.length + 
+                                    ', 중=' + middleSelected.length + 
+                                    ', 하=' + lowerSelected.length + 
+                                    ', 아래=' + belowSelected.length);
+                    detailedLogs.push('총 선택: ' + selectedElements.length + '개');
                     
                     // 🚀 **5. 앵커 생성**
                     for (let i = 0; i < selectedElements.length; i++) {
@@ -1592,6 +1665,26 @@ extension BFCacheTransitionSystem {
                             const absoluteLeft = scrollX + rect.left;
                             const offsetFromTop = scrollY - absoluteTop;
                             const textContent = (element.textContent || '').trim();
+                            
+                            // 영역 판정
+                            const elementCenter = absoluteTop + (rect.height / 2);
+                            let region = 'unknown';
+                            if (elementCenter < viewportTop) {
+                                region = 'above';
+                                anchorStats.regionDistribution.aboveViewport++;
+                            } else if (elementCenter < viewportUpperBound) {
+                                region = 'upper';
+                                anchorStats.regionDistribution.viewportUpper++;
+                            } else if (elementCenter < viewportMiddleBound) {
+                                region = 'middle';
+                                anchorStats.regionDistribution.viewportMiddle++;
+                            } else if (elementCenter < viewportBottom) {
+                                region = 'lower';
+                                anchorStats.regionDistribution.viewportLower++;
+                            } else {
+                                region = 'below';
+                                anchorStats.regionDistribution.belowViewport++;
+                            }
                             
                             // Vue Component 앵커
                             const dataVAttr = findDataVAttribute(element);
@@ -1629,6 +1722,7 @@ extension BFCacheTransitionSystem {
                                     textContent: textContent.substring(0, 100),
                                     qualityScore: 85,
                                     anchorIndex: i,
+                                    region: region,
                                     captureTimestamp: Date.now()
                                 });
                                 anchorStats.vueComponentAnchors++;
@@ -1653,6 +1747,7 @@ extension BFCacheTransitionSystem {
                                 textContent: textContent.substring(0, 100),
                                 qualityScore: Math.min(95, 60 + Math.min(35, Math.floor(textContent.length / 10))),
                                 anchorIndex: i,
+                                region: region,
                                 captureTimestamp: Date.now()
                             });
                             anchorStats.contentHashAnchors++;
@@ -1662,7 +1757,7 @@ extension BFCacheTransitionSystem {
                                 anchorType: 'virtualIndex',
                                 virtualIndex: {
                                     listIndex: i,
-                                    pageIndex: Math.floor(i / 10),
+                                    pageIndex: Math.floor(i / 12),
                                     offsetInPage: absoluteTop,
                                     estimatedTotal: selectedElements.length
                                 },
@@ -1673,6 +1768,7 @@ extension BFCacheTransitionSystem {
                                 textContent: textContent.substring(0, 100),
                                 qualityScore: 70,
                                 anchorIndex: i,
+                                region: region,
                                 captureTimestamp: Date.now()
                             });
                             anchorStats.virtualIndexAnchors++;
@@ -1685,6 +1781,11 @@ extension BFCacheTransitionSystem {
                     anchorStats.finalAnchors = anchors.length;
                     
                     detailedLogs.push('무한스크롤 앵커 생성 완료: ' + anchors.length + '개');
+                    detailedLogs.push('영역별 앵커 분포: 위=' + anchorStats.regionDistribution.aboveViewport + 
+                                    ', 상=' + anchorStats.regionDistribution.viewportUpper + 
+                                    ', 중=' + anchorStats.regionDistribution.viewportMiddle + 
+                                    ', 하=' + anchorStats.regionDistribution.viewportLower + 
+                                    ', 아래=' + anchorStats.regionDistribution.belowViewport);
                     console.log('🚀 무한스크롤 앵커 수집 완료:', anchors.length, '개');
                     
                     return {
