@@ -570,7 +570,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
                 }
 
                 function datasetKeyToAttr(key) {
@@ -848,7 +848,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
+                   return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
                 }
 
                 function datasetKeyToAttr(key) {
@@ -1163,7 +1163,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
                 }
 
                 function datasetKeyToAttr(key) {
@@ -1683,7 +1683,7 @@ struct BFCacheSnapshot: Codable {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
+                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
                 }
 
                 function datasetKeyToAttr(key) {
@@ -2564,7 +2564,7 @@ extension BFCacheTransitionSystem {
                     if (window.CSS && CSS.escape) {
                         return CSS.escape(value);
                     }
-                    return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
+                   return String(value).replace(/([ !"#$%&'()*+,./:;<=>?@[\\]^`{|}~])/g, function(match) { return String.fromCharCode(92) + match; });
                 }
 
                 // -- DOM path builder (lightweight)
