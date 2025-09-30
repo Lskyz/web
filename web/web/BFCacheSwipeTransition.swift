@@ -209,14 +209,14 @@ struct BFCacheSnapshot: Codable {
             return
         }
         if #available(iOS 15.0, *) {
-            webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page) { result in
+            webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page, completionHandler: { result in
                 switch result {
                 case .success(let value):
                     completion(value, nil)
                 case .failure(let error):
                     completion(nil, error)
                 }
-            }
+            })
         } else {
             let error = NSError(
                 domain: "BFCacheSwipeTransition",
