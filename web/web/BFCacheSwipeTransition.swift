@@ -335,6 +335,12 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
+            } else if let rawDict = result as? [AnyHashable: Any] {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
+            } else if let rawValue = result {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] result nil")
             }
             
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
@@ -410,6 +416,12 @@ struct BFCacheSnapshot: Codable {
                     updatedContext.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                 }
+            } else if let rawDict = result as? [AnyHashable: Any] {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
+            } else if let rawValue = result {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] result nil")
             }
             
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
@@ -488,6 +500,12 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
+            } else if let rawDict = result as? [AnyHashable: Any] {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
+            } else if let rawValue = result {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] result nil")
             }
             
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
@@ -554,6 +572,12 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
+            } else if let rawDict = result as? [AnyHashable: Any] {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
+            } else if let rawValue = result {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] result nil")
             }
             
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
@@ -756,6 +780,27 @@ struct BFCacheSnapshot: Codable {
             return { container, rect, header, finalY };
         }
 
+        function sanitizeForJSON(value) {
+            const replacer = (key, val) => {
+                if (typeof val === 'number' && !Number.isFinite(val)) return null;
+                if (typeof val === 'bigint' || typeof val === 'function' || typeof val === 'symbol') return null;
+                if (val && typeof val === 'object') {
+                    if (typeof Element !== 'undefined' && val instanceof Element) {
+                        return { tag: val.tagName };
+                    }
+                    if (typeof Node !== 'undefined' && val instanceof Node) {
+                        return { node: val.nodeName };
+                    }
+                }
+                return val;
+            };
+            try {
+                return JSON.parse(JSON.stringify(value, replacer));
+            } catch (error) {
+                return { error: 'sanitize_failed', message: error.message };
+            }
+        }
+
         function ensureOverflowAnchorState(disabled) {
             window.__bfcacheOverflowAnchor = window.__bfcacheOverflowAnchor || {
                 disabled: false,
@@ -832,7 +877,7 @@ struct BFCacheSnapshot: Codable {
                 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return {
+                    return sanitizeForJSON({
                         success: true,
                         isStaticSite: true,
                         currentHeight: currentHeight,
@@ -841,7 +886,7 @@ struct BFCacheSnapshot: Codable {
                         percentage: percentage,
                         triggeredInfiniteScroll: false,
                         logs: logs
-                    };
+                    });
                 }
                 
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
@@ -916,7 +961,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
                 
-                return {
+                return sanitizeForJSON({
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
@@ -925,14 +970,14 @@ struct BFCacheSnapshot: Codable {
                     percentage: finalPercentage,
                     triggeredInfiniteScroll: grew,
                     logs: logs
-                };
+                });
                 
             } catch(e) {
-                return {
+                return sanitizeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 1] 오류: ' + e.message]
-                };
+                });
             }
         })()
         """
@@ -958,14 +1003,14 @@ struct BFCacheSnapshot: Codable {
                 const root = getROOT();
                 if (!root) {
                     logs.push('스크롤 루트를 찾을 수 없음');
-                    return {
+                    return sanitizeForJSON({
                         success: false,
                         targetPercent: { x: targetPercentX, y: targetPercentY },
                         calculatedPosition: { x: 0, y: 0 },
                         actualPosition: { x: 0, y: 0 },
                         difference: { x: 0, y: 0 },
                         logs: logs
-                    };
+                    });
                 }
                 
                 const max = getMaxScroll();
@@ -992,21 +1037,21 @@ struct BFCacheSnapshot: Codable {
                 
                 const success = diffY <= 50;
                 
-                return {
+                return sanitizeForJSON({
                     success: success,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
                     calculatedPosition: { x: targetX, y: targetY },
                     actualPosition: { x: actualX, y: actualY },
                     difference: { x: diffX, y: diffY },
                     logs: logs
-                };
+                });
                 
             } catch(e) {
-                return {
+                return sanitizeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 2] 오류: ' + e.message]
-                };
+                });
             }
         })()
         """
@@ -1034,11 +1079,11 @@ struct BFCacheSnapshot: Codable {
                 // 앵커 데이터 확인
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
                     logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
-                    return {
+                    return sanitizeForJSON({
                         success: false,
                         anchorCount: 0,
                         logs: logs
-                    };
+                    });
                 }
                 
                 const anchors = infiniteScrollAnchorData.anchors;
@@ -1251,7 +1296,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('매칭 신뢰도: ' + confidence + '%');
                     logs.push('헤더 보정: ' + headerHeightPx.toFixed(0) + 'px');
 
-                    return {
+                    return sanitizeForJSON({
                         success: diffY <= 100,
                         anchorCount: anchors.length,
                         matchedAnchor: {
@@ -1263,22 +1308,22 @@ struct BFCacheSnapshot: Codable {
                         containerScroll: { y: actualContainerY },
                         targetDifference: { x: diffX, y: diffY },
                         logs: logs
-                    };
+                    });
                 }
 
                 logs.push('무한스크롤 앵커 매칭 실패');
-                return {
+                return sanitizeForJSON({
                     success: false,
                     anchorCount: anchors.length,
                     logs: logs
-                };
+                });
                 
             } catch(e) {
-                return {
+                return sanitizeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 3] 오류: ' + e.message]
-                };
+                });
             }
         })()
         """
@@ -1307,7 +1352,7 @@ struct BFCacheSnapshot: Codable {
                 if (!root) {
                     logs.push('스크롤 루트를 찾을 수 없음');
                     ensureOverflowAnchorState(false);
-                    return {
+                    return sanitizeForJSON({
                         success: false,
                         targetPosition: { x: targetX, y: targetY },
                         finalPosition: { x: 0, y: 0 },
@@ -1315,7 +1360,7 @@ struct BFCacheSnapshot: Codable {
                         withinTolerance: false,
                         correctionApplied: false,
                         logs: logs
-                    };
+                    });
                 }
                 
                 let currentX = root.scrollLeft || 0;
@@ -1362,7 +1407,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('최종 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
                 logs.push('최종 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
-                return {
+                return sanitizeForJSON({
                     success: diffY <= 50,
                     targetPosition: { x: targetX, y: targetY },
                     finalPosition: { x: currentX, y: currentY },
@@ -1370,15 +1415,15 @@ struct BFCacheSnapshot: Codable {
                     withinTolerance: diffX <= tolerance && diffY <= tolerance,
                     correctionApplied: correctionApplied,
                     logs: logs
-                };
+                });
                 
             } catch(e) {
                 ensureOverflowAnchorState(false);
-                return {
+                return sanitizeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 4] 오류: ' + e.message]
-                };
+                });
             }
         })()
         """
