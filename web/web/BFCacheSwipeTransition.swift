@@ -237,6 +237,18 @@ struct BFCacheSnapshot: Codable {
         return value as? Double
     }
 
+    private func describeJSONValue(_ value: Any?) -> String {
+        guard let value = value else { return "nil" }
+        if let dict = value as? [AnyHashable: Any] {
+            let keys = dict.keys.compactMap { $0 as? String }
+            return "dict(keys: \(keys))"
+        }
+        if let array = value as? [Any] {
+            return "array(count: \(array.count))"
+        }
+        return "\(type(of: value)): \(String(describing: value))"
+    }
+
     private func doubleDictionary(from value: Any?) -> [String: Double]? {
         func convert(from dictionary: [AnyHashable: Any]) -> [String: Double] {
             var result: [String: Double] = [:]
@@ -357,6 +369,11 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
                 step2Success = (resultDict["success"] as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("?? [Step 2] raw keys: \(Array(resultDict.keys))")
+                TabPersistenceManager.debugMessages.append("?? [Step 2] raw targetPercent: \(describeJSONValue(resultDict["targetPercent"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 2] raw calculatedPosition: \(describeJSONValue(resultDict["calculatedPosition"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 2] raw actualPosition: \(describeJSONValue(resultDict["actualPosition"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 2] raw difference: \(describeJSONValue(resultDict["difference"]))")
                 
                 let targetPercentDict = doubleDictionary(from: resultDict["targetPercent"])
                 if let targetPercent = targetPercentDict {
@@ -434,6 +451,11 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
                 step3Success = (resultDict["success"] as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("?? [Step 3] raw keys: \(Array(resultDict.keys))")
+                TabPersistenceManager.debugMessages.append("?? [Step 3] raw matchedAnchor: \(describeJSONValue(resultDict["matchedAnchor"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 3] raw restoredPosition: \(describeJSONValue(resultDict["restoredPosition"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 3] raw targetDifference: \(describeJSONValue(resultDict["targetDifference"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 3] raw logs: \(describeJSONValue(resultDict["logs"]))")
                 
                 if let anchorCount = resultDict["anchorCount"] as? Int {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
@@ -497,6 +519,11 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
             } else if let resultDict = result as? [String: Any] {
                 step4Success = (resultDict["success"] as? Bool) ?? false
+                TabPersistenceManager.debugMessages.append("?? [Step 4] raw keys: \(Array(resultDict.keys))")
+                TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalPosition: \(describeJSONValue(resultDict["finalPosition"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 4] raw targetPosition: \(describeJSONValue(resultDict["targetPosition"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalDifference: \(describeJSONValue(resultDict["finalDifference"]))")
+                TabPersistenceManager.debugMessages.append("?? [Step 4] raw logs: \(describeJSONValue(resultDict["logs"]))")
                 
                 let finalPositionDict = doubleDictionary(from: resultDict["finalPosition"])
                 if let finalPosition = finalPositionDict {
