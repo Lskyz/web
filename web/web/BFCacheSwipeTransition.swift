@@ -205,17 +205,49 @@ struct BFCacheSnapshot: Codable {
     private func runRestorationScript(_ script: String, on webView: WKWebView?, completion: @escaping (Any?, Error?) -> Void) {
         guard let webView = webView else {
             let error = NSError(domain: "BFCacheSwipeTransition", code: -1, userInfo: [NSLocalizedDescriptionKey: "WebView unavailable"])
-            completion(nil, error)
+            // Ensure completions and logging always occur on main to avoid races
+            if Thread.isMainThread {
+                completion(nil, error)
+            } else {
+                DispatchQueue.main.async { completion(nil, error) }
+            }
             return
         }
         webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page, completionHandler: { result in
-            switch result {
-            case .success(let value):
-                completion(value, nil)
-            case .failure(let error):
-                completion(nil, error)
+            let deliver = {
+                switch result {
+                case .success(let value):
+                    completion(value, nil)
+                case .failure(let error):
+                    completion(nil, error)
+                }
+            }
+            if Thread.isMainThread {
+                deliver()
+            } else {
+                DispatchQueue.main.async { deliver() }
             }
         })
+    }
+
+    private func doubleValue(from value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        return value as? Double
+    }
+
+    private func doubleDictionary(from value: Any?) -> [String: Double]? {
+        guard let dictionary = value as? [String: Any] else { return nil }
+        var result: [String: Double] = [:]
+        for (key, element) in dictionary {
+            if let number = element as? NSNumber {
+                result[key] = number.doubleValue
+            } else if let double = element as? Double {
+                result[key] = double
+            }
+        }
+        return result.isEmpty ? nil : result
     }
 
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
@@ -300,16 +332,16 @@ struct BFCacheSnapshot: Codable {
             } else if let resultDict = result as? [String: Any] {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 
-                if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
+                if let targetPercent = doubleDictionary(from: resultDict["targetPercent"]) {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
                 }
-                if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
+                if let calculatedPosition = doubleDictionary(from: resultDict["calculatedPosition"]) {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
                 }
-                if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
+                if let actualPosition = doubleDictionary(from: resultDict["actualPosition"]) {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
                 }
-                if let difference = resultDict["difference"] as? [String: Double] {
+                if let difference = doubleDictionary(from: resultDict["difference"]) {
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
@@ -375,14 +407,14 @@ struct BFCacheSnapshot: Codable {
                     if let method = matchedAnchor["matchMethod"] as? String {
                         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
                     }
-                    if let confidence = matchedAnchor["confidence"] as? Double {
+                    if let confidence = doubleValue(from: matchedAnchor["confidence"]) {
                         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
                     }
                 }
-                if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
+                if let restoredPosition = doubleDictionary(from: resultDict["restoredPosition"]) {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
                 }
-                if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
+                if let targetDifference = doubleDictionary(from: resultDict["targetDifference"]) {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
                 }
                 if let logs = resultDict["logs"] as? [String] {
@@ -422,13 +454,13 @@ struct BFCacheSnapshot: Codable {
             } else if let resultDict = result as? [String: Any] {
                 step4Success = (resultDict["success"] as? Bool) ?? false
                 
-                if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                if let finalPosition = doubleDictionary(from: resultDict["finalPosition"]) {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
                 }
-                if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
+                if let targetPosition = doubleDictionary(from: resultDict["targetPosition"]) {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
                 }
-                if let finalDifference = resultDict["finalDifference"] as? [String: Double] {
+                if let finalDifference = doubleDictionary(from: resultDict["finalDifference"]) {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
                 }
                 if let withinTolerance = resultDict["withinTolerance"] as? Bool {
