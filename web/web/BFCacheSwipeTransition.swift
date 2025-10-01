@@ -277,6 +277,28 @@ struct BFCacheSnapshot: Codable {
         }
         return nil
     }
+    private func dictionaryFromResult(_ result: Any?, stepLabel: String) -> [String: Any]? {
+        if let dict = result as? [String: Any] {
+            return dict
+        }
+        if let jsonString = result as? String {
+            if let data = jsonString.data(using: .utf8) {
+                do {
+                    if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        return dict
+                    } else {
+                        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
+                    }
+                } catch {
+                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
+                }
+            } else {
+                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON string encoding failed")
+            }
+        }
+        return nil
+    }
+
 
     private func logDictionaryParseFailure(stepLabel: String, key: String, value: Any?) {
         let description: String
@@ -308,7 +330,7 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 1]") {
                 step1Success = (resultDict["success"] as? Bool) ?? false
                 
                 if let currentHeight = resultDict["currentHeight"] as? Double {
@@ -373,7 +395,7 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 2]") {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw targetPercent: \(describeJSONValue(resultDict["targetPercent"]))")
@@ -461,7 +483,7 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 3]") {
                 step3Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw matchedAnchor: \(describeJSONValue(resultDict["matchedAnchor"]))")
@@ -535,7 +557,7 @@ struct BFCacheSnapshot: Codable {
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = result as? [String: Any] {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 4]") {
                 step4Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalPosition: \(describeJSONValue(resultDict["finalPosition"]))")
@@ -801,6 +823,15 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        function serializeForJSON(value) {
+            const safe = sanitizeForJSON(value);
+            try {
+                return JSON.stringify(safe);
+            } catch (error) {
+                return JSON.stringify({ error: 'serialize_failed', message: error.message });
+            }
+        }
+
         function ensureOverflowAnchorState(disabled) {
             window.__bfcacheOverflowAnchor = window.__bfcacheOverflowAnchor || {
                 disabled: false,
@@ -877,7 +908,7 @@ struct BFCacheSnapshot: Codable {
                 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return sanitizeForJSON({
+                    return serializeForJSON({
                         success: true,
                         isStaticSite: true,
                         currentHeight: currentHeight,
@@ -961,7 +992,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
                 
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
@@ -973,7 +1004,7 @@ struct BFCacheSnapshot: Codable {
                 });
                 
             } catch(e) {
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 1] 오류: ' + e.message]
@@ -1003,7 +1034,7 @@ struct BFCacheSnapshot: Codable {
                 const root = getROOT();
                 if (!root) {
                     logs.push('스크롤 루트를 찾을 수 없음');
-                    return sanitizeForJSON({
+                    return serializeForJSON({
                         success: false,
                         targetPercent: { x: targetPercentX, y: targetPercentY },
                         calculatedPosition: { x: 0, y: 0 },
@@ -1037,7 +1068,7 @@ struct BFCacheSnapshot: Codable {
                 
                 const success = diffY <= 50;
                 
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: success,
                     targetPercent: { x: targetPercentX, y: targetPercentY },
                     calculatedPosition: { x: targetX, y: targetY },
@@ -1047,7 +1078,7 @@ struct BFCacheSnapshot: Codable {
                 });
                 
             } catch(e) {
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 2] 오류: ' + e.message]
@@ -1079,7 +1110,7 @@ struct BFCacheSnapshot: Codable {
                 // 앵커 데이터 확인
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
                     logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
-                    return sanitizeForJSON({
+                    return serializeForJSON({
                         success: false,
                         anchorCount: 0,
                         logs: logs
@@ -1296,7 +1327,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('매칭 신뢰도: ' + confidence + '%');
                     logs.push('헤더 보정: ' + headerHeightPx.toFixed(0) + 'px');
 
-                    return sanitizeForJSON({
+                    return serializeForJSON({
                         success: diffY <= 100,
                         anchorCount: anchors.length,
                         matchedAnchor: {
@@ -1312,14 +1343,14 @@ struct BFCacheSnapshot: Codable {
                 }
 
                 logs.push('무한스크롤 앵커 매칭 실패');
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: false,
                     anchorCount: anchors.length,
                     logs: logs
                 });
                 
             } catch(e) {
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 3] 오류: ' + e.message]
@@ -1352,7 +1383,7 @@ struct BFCacheSnapshot: Codable {
                 if (!root) {
                     logs.push('스크롤 루트를 찾을 수 없음');
                     ensureOverflowAnchorState(false);
-                    return sanitizeForJSON({
+                    return serializeForJSON({
                         success: false,
                         targetPosition: { x: targetX, y: targetY },
                         finalPosition: { x: 0, y: 0 },
@@ -1407,7 +1438,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('최종 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
                 logs.push('최종 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
                 
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: diffY <= 50,
                     targetPosition: { x: targetX, y: targetY },
                     finalPosition: { x: currentX, y: currentY },
@@ -1419,7 +1450,7 @@ struct BFCacheSnapshot: Codable {
                 
             } catch(e) {
                 ensureOverflowAnchorState(false);
-                return sanitizeForJSON({
+                return serializeForJSON({
                     success: false,
                     error: e.message,
                     logs: ['[Step 4] 오류: ' + e.message]
