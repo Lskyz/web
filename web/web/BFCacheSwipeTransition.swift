@@ -381,7 +381,8 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("?? [Step 2]   ġ     : X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                 } else {
                     logDictionaryParseFailure(stepLabel: "[Step 2]", key: "difference", value: resultDict["difference"])
-                }                if let logs = resultDict["logs"] as? [String] {
+                }
+                if let logs = resultDict["logs"] as? [String] {
                     for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
@@ -459,7 +460,8 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("?? [Step 3] \\ubaa9\\ud45c\\uc640\\uc758 \\ucc28\\uc774: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
                 } else {
                     logDictionaryParseFailure(stepLabel: "[Step 3]", key: "targetDifference", value: resultDict["targetDifference"])
-                }                if let logs = resultDict["logs"] as? [String] {
+                }
+                if let logs = resultDict["logs"] as? [String] {
                     for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
@@ -513,7 +515,8 @@ struct BFCacheSnapshot: Codable {
                     TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\ucc28\\uc774: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
                 } else {
                     logDictionaryParseFailure(stepLabel: "[Step 4]", key: "finalDifference", value: resultDict["finalDifference"])
-                }                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
+                }
+                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
                 }
                 if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
