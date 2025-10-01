@@ -238,16 +238,42 @@ struct BFCacheSnapshot: Codable {
     }
 
     private func doubleDictionary(from value: Any?) -> [String: Double]? {
-        guard let dictionary = value as? [String: Any] else { return nil }
-        var result: [String: Double] = [:]
-        for (key, element) in dictionary {
-            if let number = element as? NSNumber {
-                result[key] = number.doubleValue
-            } else if let double = element as? Double {
-                result[key] = double
+        func convert(from dictionary: [AnyHashable: Any]) -> [String: Double] {
+            var result: [String: Double] = [:]
+            for (key, element) in dictionary {
+                guard let keyString = key as? String else { continue }
+                if let number = element as? NSNumber {
+                    result[keyString] = number.doubleValue
+                } else if let double = element as? Double {
+                    result[keyString] = double
+                }
             }
+            return result
         }
-        return result.isEmpty ? nil : result
+
+        if let dictionary = value as? [String: Any] {
+            let converted = convert(from: dictionary)
+            return converted.isEmpty ? nil : converted
+        }
+        if let dictionary = value as? [AnyHashable: Any] {
+            let converted = convert(from: dictionary)
+            return converted.isEmpty ? nil : converted
+        }
+        if let dictionary = value as? NSDictionary {
+            let converted = convert(from: dictionary as! [AnyHashable: Any])
+            return converted.isEmpty ? nil : converted
+        }
+        return nil
+    }
+
+    private func logDictionaryParseFailure(stepLabel: String, key: String, value: Any?) {
+        let description: String
+        if let value = value {
+            description = "type=\(String(describing: type(of: value))), value=\(String(describing: value))"
+        } else {
+            description = "value=nil"
+        }
+        TabPersistenceManager.debugMessages.append("⚠️ \(stepLabel) \(key) 파싱 실패 → \(description)")
     }
 
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
@@ -332,19 +358,30 @@ struct BFCacheSnapshot: Codable {
             } else if let resultDict = result as? [String: Any] {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 
-                if let targetPercent = doubleDictionary(from: resultDict["targetPercent"]) {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                let targetPercentDict = doubleDictionary(from: resultDict["targetPercent"])
+                if let targetPercent = targetPercentDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 2]   ǥ      : X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "targetPercent", value: resultDict["targetPercent"])
                 }
-                if let calculatedPosition = doubleDictionary(from: resultDict["calculatedPosition"]) {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                let calculatedPositionDict = doubleDictionary(from: resultDict["calculatedPosition"])
+                if let calculatedPosition = calculatedPositionDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "calculatedPosition", value: resultDict["calculatedPosition"])
                 }
-                if let actualPosition = doubleDictionary(from: resultDict["actualPosition"]) {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                let actualPositionDict = doubleDictionary(from: resultDict["actualPosition"])
+                if let actualPosition = actualPositionDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "actualPosition", value: resultDict["actualPosition"])
                 }
-                if let difference = doubleDictionary(from: resultDict["difference"]) {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
+                let differenceDict = doubleDictionary(from: resultDict["difference"])
+                if let difference = differenceDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 2]   ġ     : X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "difference", value: resultDict["difference"])
+                }                if let logs = resultDict["logs"] as? [String] {
                     for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
@@ -411,13 +448,18 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
                     }
                 }
-                if let restoredPosition = doubleDictionary(from: resultDict["restoredPosition"]) {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                let restoredPositionDict = doubleDictionary(from: resultDict["restoredPosition"])
+                if let restoredPosition = restoredPositionDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 3] \\ubcf5\\uc6d0\\ub41c \\uc704\\uce58: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 3]", key: "restoredPosition", value: resultDict["restoredPosition"])
                 }
-                if let targetDifference = doubleDictionary(from: resultDict["targetDifference"]) {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
-                }
-                if let logs = resultDict["logs"] as? [String] {
+                let targetDifferenceDict = doubleDictionary(from: resultDict["targetDifference"])
+                if let targetDifference = targetDifferenceDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 3] \\ubaa9\\ud45c\\uc640\\uc758 \\ucc28\\uc774: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 3]", key: "targetDifference", value: resultDict["targetDifference"])
+                }                if let logs = resultDict["logs"] as? [String] {
                     for log in logs {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
@@ -454,16 +496,24 @@ struct BFCacheSnapshot: Codable {
             } else if let resultDict = result as? [String: Any] {
                 step4Success = (resultDict["success"] as? Bool) ?? false
                 
-                if let finalPosition = doubleDictionary(from: resultDict["finalPosition"]) {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                let finalPositionDict = doubleDictionary(from: resultDict["finalPosition"])
+                if let finalPosition = finalPositionDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\uc704\\uce58: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "finalPosition", value: resultDict["finalPosition"])
                 }
-                if let targetPosition = doubleDictionary(from: resultDict["targetPosition"]) {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+                let targetPositionDict = doubleDictionary(from: resultDict["targetPosition"])
+                if let targetPosition = targetPositionDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ubaa9\\ud45c \\uc704\\uce58: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "targetPosition", value: resultDict["targetPosition"])
                 }
-                if let finalDifference = doubleDictionary(from: resultDict["finalDifference"]) {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
-                }
-                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
+                let finalDifferenceDict = doubleDictionary(from: resultDict["finalDifference"])
+                if let finalDifference = finalDifferenceDict {
+                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\ucc28\\uc774: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
+                } else {
+                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "finalDifference", value: resultDict["finalDifference"])
+                }                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
                     TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
                 }
                 if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
@@ -2199,3 +2249,6 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
+
+
+
