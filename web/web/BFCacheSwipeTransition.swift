@@ -368,45 +368,37 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep1_ContentRestoreScript()
 
-        runRestorationScript(js, on: context.webView) { result, error in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
 
+            switch result {
+            case .success(let value):
+                if let resultDict = value as? [String: Any] {
+                    step1Success = (resultDict["success"] as? Bool) ?? false
 
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 1]") {
-                step1Success = (resultDict["success"] as? Bool) ?? false
-
-                if let currentHeight = resultDict["currentHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
-                }
-                if let targetHeight = resultDict["targetHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
-                }
-                if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                }
-                if let triggered = resultDict["triggeredInfiniteScroll"] as? Bool {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 무한스크롤 시도: \(triggered ? "발동" : "미발동")")
-                }
-
-                if let percentage = resultDict["percentage"] as? Double {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
-                }
-                if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    if let currentHeight = resultDict["currentHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+                    }
+                    if let targetHeight = resultDict["targetHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                    }
+                    if let restoredHeight = resultDict["restoredHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+                    }
+                    if let percentage = resultDict["percentage"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
+                    }
+                    if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if result != nil {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
-            } else {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] result nil")
+            case .failure(let error):
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
             }
 
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
@@ -433,62 +425,41 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep2_PercentScrollScript()
 
-        runRestorationScript(js, on: context.webView) { result, error in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step2Success = false
             var updatedContext = context
 
+            switch result {
+            case .success(let value):
+                if let resultDict = value as? [String: Any] {
+                    step2Success = (resultDict["success"] as? Bool) ?? false
 
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 2]") {
-                step2Success = (resultDict["success"] as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("?? [Step 2] raw keys: \(Array(resultDict.keys))")
-                TabPersistenceManager.debugMessages.append("?? [Step 2] raw targetPercent: \(describeJSONValue(resultDict["targetPercent"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 2] raw calculatedPosition: \(describeJSONValue(resultDict["calculatedPosition"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 2] raw actualPosition: \(describeJSONValue(resultDict["actualPosition"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 2] raw difference: \(describeJSONValue(resultDict["difference"]))")
+                    if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                    }
+                    if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                    }
+                    if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                    }
+                    if let difference = resultDict["difference"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
 
-                let targetPercentDict = doubleDictionary(from: resultDict["targetPercent"])
-                if let targetPercent = targetPercentDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 2]   ǥ      : X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "targetPercent", value: resultDict["targetPercent"])
-                }
-                let calculatedPositionDict = doubleDictionary(from: resultDict["calculatedPosition"])
-                if let calculatedPosition = calculatedPositionDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "calculatedPosition", value: resultDict["calculatedPosition"])
-                }
-                let actualPositionDict = doubleDictionary(from: resultDict["actualPosition"])
-                if let actualPosition = actualPositionDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "actualPosition", value: resultDict["actualPosition"])
-                }
-                let differenceDict = doubleDictionary(from: resultDict["difference"])
-                if let difference = differenceDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 2]   ġ     : X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 2]", key: "difference", value: resultDict["difference"])
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    // 상대좌표 복원 성공 시 전체 성공으로 간주
+                    if step2Success {
+                        updatedContext.overallSuccess = true
+                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                     }
                 }
-
-                // 상대좌표 복원 성공 시 전체 성공으로 간주
-                if step2Success {
-                    updatedContext.overallSuccess = true
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
-                }
-            } else if let rawDict = result as? [AnyHashable: Any] {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if result != nil {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
-            } else {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] result nil")
+            case .failure(let error):
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
 
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
@@ -523,57 +494,42 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
 
-        runRestorationScript(js, on: context.webView) { result, error in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step3Success = false
 
+            switch result {
+            case .success(let value):
+                if let resultDict = value as? [String: Any] {
+                    step3Success = (resultDict["success"] as? Bool) ?? false
 
-            if let error = error {
+                    if let anchorCount = resultDict["anchorCount"] as? Int {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+                    }
+                    if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                        if let anchorType = matchedAnchor["anchorType"] as? String {
+                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
+                        }
+                        if let method = matchedAnchor["matchMethod"] as? String {
+                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
+                        }
+                        if let confidence = matchedAnchor["confidence"] as? Double {
+                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
+                        }
+                    }
+                    if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                    }
+                    if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(10) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
+                    }
+                }
+            case .failure(let error):
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 3]") {
-                step3Success = (resultDict["success"] as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("?? [Step 3] raw keys: \(Array(resultDict.keys))")
-                TabPersistenceManager.debugMessages.append("?? [Step 3] raw matchedAnchor: \(describeJSONValue(resultDict["matchedAnchor"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 3] raw restoredPosition: \(describeJSONValue(resultDict["restoredPosition"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 3] raw targetDifference: \(describeJSONValue(resultDict["targetDifference"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 3] raw logs: \(describeJSONValue(resultDict["logs"]))")
-
-                if let anchorCount = resultDict["anchorCount"] as? Int {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
-                }
-                if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                    if let anchorType = matchedAnchor["anchorType"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
-                    }
-                    if let method = matchedAnchor["matchMethod"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
-                    }
-                    if let confidence = doubleValue(from: matchedAnchor["confidence"]) {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
-                    }
-                }
-                let restoredPositionDict = doubleDictionary(from: resultDict["restoredPosition"])
-                if let restoredPosition = restoredPositionDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 3] \\ubcf5\\uc6d0\\ub41c \\uc704\\uce58: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 3]", key: "restoredPosition", value: resultDict["restoredPosition"])
-                }
-                let targetDifferenceDict = doubleDictionary(from: resultDict["targetDifference"])
-                if let targetDifference = targetDifferenceDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 3] \\ubaa9\\ud45c\\uc640\\uc758 \\ucc28\\uc774: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 3]", key: "targetDifference", value: resultDict["targetDifference"])
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
-                    }
-                }
-            } else if let rawDict = result as? [AnyHashable: Any] {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if result != nil {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
-            } else {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] result nil")
             }
 
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
@@ -598,55 +554,37 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep4_FinalVerificationScript()
 
-        runRestorationScript(js, on: context.webView) { result, error in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step4Success = false
 
+            switch result {
+            case .success(let value):
+                if let resultDict = value as? [String: Any] {
+                    step4Success = (resultDict["success"] as? Bool) ?? false
 
-            if let error = error {
-                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 4]") {
-                step4Success = (resultDict["success"] as? Bool) ?? false
-                TabPersistenceManager.debugMessages.append("?? [Step 4] raw keys: \(Array(resultDict.keys))")
-                TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalPosition: \(describeJSONValue(resultDict["finalPosition"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 4] raw targetPosition: \(describeJSONValue(resultDict["targetPosition"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalDifference: \(describeJSONValue(resultDict["finalDifference"]))")
-                TabPersistenceManager.debugMessages.append("?? [Step 4] raw logs: \(describeJSONValue(resultDict["logs"]))")
-
-                let finalPositionDict = doubleDictionary(from: resultDict["finalPosition"])
-                if let finalPosition = finalPositionDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\uc704\\uce58: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "finalPosition", value: resultDict["finalPosition"])
-                }
-                let targetPositionDict = doubleDictionary(from: resultDict["targetPosition"])
-                if let targetPosition = targetPositionDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ubaa9\\ud45c \\uc704\\uce58: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "targetPosition", value: resultDict["targetPosition"])
-                }
-                let finalDifferenceDict = doubleDictionary(from: resultDict["finalDifference"])
-                if let finalDifference = finalDifferenceDict {
-                    TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\ucc28\\uc774: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
-                } else {
-                    logDictionaryParseFailure(stepLabel: "[Step 4]", key: "finalDifference", value: resultDict["finalDifference"])
-                }
-                if let withinTolerance = resultDict["withinTolerance"] as? Bool {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
-                }
-                if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
-                    TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
-                }
-                if let logs = resultDict["logs"] as? [String] {
-                    for log in logs {
-                        TabPersistenceManager.debugMessages.append("   \(log)")
+                    if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                    }
+                    if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+                    }
+                    if let finalDifference = resultDict["finalDifference"] as? [String: Double] {
+                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
+                    }
+                    if let withinTolerance = resultDict["withinTolerance"] as? Bool {
+                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
+                    }
+                    if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
+                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
+                    }
+                    if let logs = resultDict["logs"] as? [String] {
+                        for log in logs.prefix(5) {
+                            TabPersistenceManager.debugMessages.append("   \(log)")
+                        }
                     }
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if result != nil {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
-            } else {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] result nil")
+            case .failure(let error):
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
             }
 
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
