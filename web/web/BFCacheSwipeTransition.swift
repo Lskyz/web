@@ -354,6 +354,13 @@ struct BFCacheSnapshot: Codable {
             return
         }
 
+        // 📊 **페이지 준비 상태 확인**
+        context.webView?.evaluateJavaScript("document.readyState") { readyState, error in
+            if let state = readyState as? String {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 상태: \(state)")
+            }
+        }
+
         let js = generateStep1_ContentRestoreScript()
         let jsLength = js.count
         TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
@@ -368,12 +375,6 @@ struct BFCacheSnapshot: Codable {
             switch result {
             case .success(let value):
                 var resultDict: [String: Any]?
-
-                // 📊 **디버깅: 반환된 값의 타입 확인**
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] 반환 타입: \(type(of: value))")
-                if let str = value as? String {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 문자열 길이: \(str.count)자, 첫 100자: \(String(str.prefix(100)))")
-                }
 
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
                 if let jsonString = value as? String,
@@ -939,13 +940,12 @@ struct BFCacheSnapshot: Codable {
         let savedHeight = restorationConfig.savedContentHeight
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
+        try {
+            \(generateCommonUtilityScript())
 
-                const logs = [];
-                const savedContentHeight = parseFloat('\(savedHeight)');
-                logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
+            const logs = [];
+            const savedContentHeight = parseFloat('\(savedHeight)');
+            logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
                 const root = getROOT();
                 logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
@@ -1074,20 +1074,19 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
 
-            } catch(e) {
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    errorStack: e.stack ? e.stack.split('\\n').slice(0, 3).join('\\n') : 'no stack',
-                    logs: [
-                        '[Step 1] ❌ 치명적 오류 발생',
-                        '[Step 1] 오류 메시지: ' + e.message,
-                        '[Step 1] 오류 타입: ' + e.name,
-                        '[Step 1] 스택 트레이스: ' + (e.stack ? e.stack.substring(0, 200) : 'none')
-                    ]
-                });
-            }
-        })()
+        } catch(e) {
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                errorStack: e.stack ? e.stack.split('\\n').slice(0, 3).join('\\n') : 'no stack',
+                logs: [
+                    '[Step 1] ❌ 치명적 오류 발생',
+                    '[Step 1] 오류 메시지: ' + e.message,
+                    '[Step 1] 오류 타입: ' + e.name,
+                    '[Step 1] 스택 트레이스: ' + (e.stack ? e.stack.substring(0, 200) : 'none')
+                ]
+            });
+        }
         """
     }
     private func generateStep2_PercentScrollScript() -> String {
@@ -1096,14 +1095,13 @@ struct BFCacheSnapshot: Codable {
         let savedHeight = restorationConfig.savedContentHeight
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
+        try {
+            \(generateCommonUtilityScript())
 
-                const logs = [];
-                const targetPercentX = parseFloat('\(targetPercentX)');
-                const targetPercentY = parseFloat('\(targetPercentY)');
-                const savedContentHeight = parseFloat('\(savedHeight)');
+            const logs = [];
+            const targetPercentX = parseFloat('\(targetPercentX)');
+            const targetPercentY = parseFloat('\(targetPercentY)');
+            const savedContentHeight = parseFloat('\(savedHeight)');
 
                 logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
@@ -1158,14 +1156,13 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
 
-            } catch(e) {
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 2] 오류: ' + e.message]
-                });
-            }
-        })()
+        } catch(e) {
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                logs: ['[Step 2] 오류: ' + e.message]
+            });
+        }
         """
     }
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
@@ -1174,15 +1171,14 @@ struct BFCacheSnapshot: Codable {
         let savedHeight = restorationConfig.savedContentHeight
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
+        try {
+            \(generateCommonUtilityScript())
 
             const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const savedContentHeight = parseFloat('\(savedHeight)');
-                const infiniteScrollAnchorData = \(anchorDataJSON);
+            const targetX = parseFloat('\(targetX)');
+            const targetY = parseFloat('\(targetY)');
+            const savedContentHeight = parseFloat('\(savedHeight)');
+            const infiniteScrollAnchorData = \(anchorDataJSON);
 
                 logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
@@ -1481,14 +1477,13 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
                 
-            } catch(e) {
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 3] 오류: ' + e.message]
-                });
-            }
-        })()
+        } catch(e) {
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                logs: ['[Step 3] 오류: ' + e.message]
+            });
+        }
         """
     }
 
@@ -1498,15 +1493,14 @@ struct BFCacheSnapshot: Codable {
         let savedHeight = restorationConfig.savedContentHeight
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
+        try {
+            \(generateCommonUtilityScript())
 
-                const logs = [];
-                const targetX = parseFloat('\(targetX)');
-                const targetY = parseFloat('\(targetY)');
-                const savedContentHeight = parseFloat('\(savedHeight)');
-                const tolerance = 30;
+            const logs = [];
+            const targetX = parseFloat('\(targetX)');
+            const targetY = parseFloat('\(targetY)');
+            const savedContentHeight = parseFloat('\(savedHeight)');
+            const tolerance = 30;
 
                 logs.push('[Step 4] 최종 검증 및 미세 보정');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
@@ -1583,15 +1577,14 @@ struct BFCacheSnapshot: Codable {
                     logs: logs
                 });
                 
-            } catch(e) {
-                ensureOverflowAnchorState(false);
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 4] 오류: ' + e.message]
-                });
-            }
-        })()
+        } catch(e) {
+            ensureOverflowAnchorState(false);
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                logs: ['[Step 4] 오류: ' + e.message]
+            });
+        }
         """
     }
     private func convertToJSONString(_ object: Any) -> String? {
