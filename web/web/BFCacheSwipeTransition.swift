@@ -949,7 +949,7 @@ struct BFCacheSnapshot: Codable {
             ensureOverflowAnchorState(true);
 
             const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 0;
-            const isStaticSite = percentage >= 90;
+            const isStaticSite = percentage >= 98;
 
             if (isStaticSite) {
                 logs.push('정적 사이트 - 콘텐츠 이미 충분함');
