@@ -373,10 +373,17 @@ struct BFCacheSnapshot: Codable {
 
             switch result {
             case .success(let value):
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 실행 성공, value 타입: \(type(of: value))")
+                var resultDict: [String: Any]?
 
-                if let resultDict = value as? [String: Any] {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Dictionary 캐스팅 성공, keys: \(resultDict.keys)")
+                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
+                if let jsonString = value as? String,
+                   let jsonData = jsonString.data(using: .utf8) {
+                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+                } else if let dict = value as? [String: Any] {
+                    resultDict = dict
+                }
+
+                if let resultDict = resultDict {
                     step1Success = (resultDict["success"] as? Bool) ?? false
 
                     if let currentHeight = resultDict["currentHeight"] as? Double {
@@ -400,7 +407,7 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
                 } else {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Dictionary 캐스팅 실패, value: \(String(describing: value))")
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] JSON 파싱 실패")
                 }
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
@@ -436,7 +443,17 @@ struct BFCacheSnapshot: Codable {
 
             switch result {
             case .success(let value):
-                if let resultDict = value as? [String: Any] {
+                var resultDict: [String: Any]?
+
+                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
+                if let jsonString = value as? String,
+                   let jsonData = jsonString.data(using: .utf8) {
+                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+                } else if let dict = value as? [String: Any] {
+                    resultDict = dict
+                }
+
+                if let resultDict = resultDict {
                     step2Success = (resultDict["success"] as? Bool) ?? false
 
                     if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
@@ -504,7 +521,17 @@ struct BFCacheSnapshot: Codable {
 
             switch result {
             case .success(let value):
-                if let resultDict = value as? [String: Any] {
+                var resultDict: [String: Any]?
+
+                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
+                if let jsonString = value as? String,
+                   let jsonData = jsonString.data(using: .utf8) {
+                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+                } else if let dict = value as? [String: Any] {
+                    resultDict = dict
+                }
+
+                if let resultDict = resultDict {
                     step3Success = (resultDict["success"] as? Bool) ?? false
 
                     if let anchorCount = resultDict["anchorCount"] as? Int {
@@ -564,7 +591,17 @@ struct BFCacheSnapshot: Codable {
 
             switch result {
             case .success(let value):
-                if let resultDict = value as? [String: Any] {
+                var resultDict: [String: Any]?
+
+                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
+                if let jsonString = value as? String,
+                   let jsonData = jsonString.data(using: .utf8) {
+                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+                } else if let dict = value as? [String: Any] {
+                    resultDict = dict
+                }
+
+                if let resultDict = resultDict {
                     step4Success = (resultDict["success"] as? Bool) ?? false
 
                     if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
