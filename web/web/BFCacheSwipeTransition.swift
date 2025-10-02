@@ -185,6 +185,9 @@ struct BFCacheSnapshot: Codable {
     }
 
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        // 🔒 **복원 시작 - 캡처 방지 플래그 설정**
+        BFCacheTransitionSystem.shared.setRestoring(true)
+
         TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
@@ -635,6 +638,22 @@ struct BFCacheSnapshot: Codable {
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
                 TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+
+                // 🔒 **복원 완료 - 캡처 허용**
+                BFCacheTransitionSystem.shared.setRestoring(false)
+                TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
+
+                // 📸 **복원 완료 후 최종 위치 캡처**
+                if let webView = context.webView {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        BFCacheTransitionSystem.shared.captureSnapshot(
+                            pageRecord: self.pageRecord,
+                            webView: webView,
+                            type: .immediate
+                        )
+                    }
+                }
+
                 context.completion(finalSuccess)
             }
         }
@@ -1586,6 +1605,12 @@ extension BFCacheTransitionSystem {
     }
 
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
+        // 🔒 **복원 중이면 캡처 스킵**
+        if BFCacheTransitionSystem.shared.isRestoring {
+            TabPersistenceManager.debugMessages.append("🔒 복원 중 - 캡처 스킵: \(pageRecord.title)")
+            return
+        }
+
         guard let webView = webView else {
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
@@ -2059,21 +2084,25 @@ extension BFCacheTransitionSystem {
                 function collectSemanticElements() {
                     const semanticElements = [];
 
-                    // 1. ID 속성이 있는 요소 우선 수집
+                    // 1. ID 속성이 있는 요소 우선 수집 (텍스트 있는 것만)
                     const elementsWithId = document.querySelectorAll('[id]');
                     for (let i = 0; i < elementsWithId.length; i++) {
                         const elem = elementsWithId[i];
                         const idValue = elem.id;
-                        // 의미있는 ID만 (랜덤 ID 제외)
-                        if (idValue && idValue.length > 2 && idValue.length < 100) {
+                        const text = (elem.textContent || '').trim();
+                        // 의미있는 ID + 텍스트 20자 이상
+                        if (idValue && idValue.length > 2 && idValue.length < 100 && text.length >= 20) {
                             semanticElements.push(elem);
                         }
                     }
 
-                    // 2. data-* 속성이 있는 요소 수집
+                    // 2. data-* 속성이 있는 요소 수집 (텍스트 있는 것만)
                     const dataElements = document.querySelectorAll('[data-id], [data-item-id], [data-article-id], [data-post-id], [data-index], [data-key]');
                     for (let i = 0; i < dataElements.length; i++) {
-                        semanticElements.push(dataElements[i]);
+                        const text = (dataElements[i].textContent || '').trim();
+                        if (text.length >= 15) {
+                            semanticElements.push(dataElements[i]);
+                        }
                     }
 
                     // 3. 특정 class 패턴 요소 수집 (item, post, article, card 등)
@@ -2153,7 +2182,20 @@ extension BFCacheTransitionSystem {
                     let allCandidateElements = collectSemanticElements();
                     
                     // 🚀 **2. Vue.js 컴포넌트 요소 추가 수집 (data-v-* 속성)**
-                    const vueElements = document.querySelectorAll('[data-v-], [class*="data-v-"]');
+                    const allElements = document.querySelectorAll('*');
+                    const vueElements = [];
+                    for (let i = 0; i < allElements.length; i++) {
+                        const elem = allElements[i];
+                        // data-v-로 시작하는 속성 찾기
+                        if (elem.attributes) {
+                            for (let j = 0; j < elem.attributes.length; j++) {
+                                if (elem.attributes[j].name.startsWith('data-v-')) {
+                                    vueElements.push(elem);
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     for (let i = 0; i < vueElements.length; i++) {
                         allCandidateElements.push(vueElements[i]);
                     }
