@@ -109,7 +109,18 @@ final class BFCacheTransitionSystem: NSObject {
     internal var _memoryCache: [UUID: BFCacheSnapshot] = [:]
     private var _diskCacheIndex: [UUID: String] = [:]
     internal var _cacheVersion: [UUID: Int] = [:]
-    
+
+    // MARK: - 🔒 복원 중 캡처 방지 플래그
+    private var _isRestoring: Bool = false
+    internal var isRestoring: Bool {
+        get { cacheAccessQueue.sync { _isRestoring } }
+    }
+    internal func setRestoring(_ value: Bool) {
+        cacheAccessQueue.async(flags: .barrier) {
+            self._isRestoring = value
+        }
+    }
+
     // 스레드 안전 액세서
     private var memoryCache: [UUID: BFCacheSnapshot] {
         get { cacheAccessQueue.sync { _memoryCache } }
@@ -1043,3 +1054,4 @@ extension BFCacheTransitionSystem {
         }
     }
 }
+
