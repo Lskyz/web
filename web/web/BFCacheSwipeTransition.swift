@@ -991,6 +991,23 @@ struct BFCacheSnapshot: Codable {
                     });
                 }
 
+                // 🛡️ **과도한 복원 방지: 현재 높이의 300% 이상은 시도 안함**
+                const maxReasonableHeight = currentHeight * 3;
+                if (savedContentHeight > maxReasonableHeight) {
+                    logs.push('⚠️ 목표 높이가 현재의 3배 초과 (' + savedContentHeight.toFixed(0) + ' > ' + maxReasonableHeight.toFixed(0) + ')');
+                    logs.push('⚠️ Step 1 스킵 - Step 2/3로 위임');
+                    return serializeForJSON({
+                        success: false,
+                        reason: 'excessive_height',
+                        currentHeight: currentHeight,
+                        savedContentHeight: savedContentHeight,
+                        restoredHeight: currentHeight,
+                        percentage: percentage,
+                        triggeredInfiniteScroll: false,
+                        logs: logs
+                    });
+                }
+
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
 
                 const loadMoreButtons = document.querySelectorAll(
@@ -1038,6 +1055,15 @@ struct BFCacheSnapshot: Codable {
                         // 🛡️ **DOM 유효성 재검증**
                         if (!isElementValid(scrollRoot)) {
                             logs.push('[Step 1] ⚠️ Batch ' + i + ' - 스크롤 루트 detached, 중단');
+                            break;
+                        }
+
+                        // 🛡️ **과도한 성장 방지: 목표 높이의 120% 도달 시 중단**
+                        const currentScrollHeight = scrollRoot.scrollHeight;
+                        if (currentScrollHeight > savedContentHeight * 1.2) {
+                            logs.push('[Step 1] ⚠️ 목표 높이 120% 초과 (' + currentScrollHeight.toFixed(0) + ' > ' + (savedContentHeight * 1.2).toFixed(0) + ')');
+                            logs.push('[Step 1] ✋ 과도한 트리거 방지 - 중단');
+                            grew = true;
                             break;
                         }
 
