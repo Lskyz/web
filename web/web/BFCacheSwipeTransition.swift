@@ -354,12 +354,6 @@ struct BFCacheSnapshot: Codable {
             return
         }
 
-        // 📊 **페이지 준비 상태 확인**
-        context.webView?.evaluateJavaScript("document.readyState") { readyState, error in
-            if let state = readyState as? String {
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 상태: \(state)")
-            }
-        }
 
         let js = generateStep1_ContentRestoreScript()
         let jsLength = js.count
@@ -957,14 +951,11 @@ struct BFCacheSnapshot: Codable {
             \(generateCommonUtilityScript())
 
             const logs = [];
-            logs.push('[Step 1] 🟢 스크립트 시작');
-
             const savedContentHeight = parseFloat('\(savedHeight)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
             const root = getROOT();
-            logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
-            logs.push('[Step 1] 스크롤 루트 타입: ' + (root ? root.tagName : 'null'));
+            logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
 
                 const currentHeight = root ? root.scrollHeight : 0;
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
@@ -1025,16 +1016,12 @@ struct BFCacheSnapshot: Codable {
 
                 if (clicked > 0) {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                    logs.push('[Step 1] 🔄 await nextFrame() 시작');
                     await nextFrame();
-                    logs.push('[Step 1] 🔄 await delay(160) 시작');
                     await delay(160);
-                    logs.push('[Step 1] 🔄 버튼 클릭 후 대기 완료');
                 }
 
-                logs.push('[Step 1] 🔍 findScrollContainers() 호출');
                 const containers = findScrollContainers();
-                logs.push('[Step 1] 스크롤 컨테이너 발견: ' + containers.length + '개');
+                logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
                 let grew = false;
                 const maxBatches = 6;
@@ -1042,80 +1029,50 @@ struct BFCacheSnapshot: Codable {
                 const batchDelayMs = 180;
 
                 for (const scrollRoot of containers) {
-                    if (!scrollRoot || !isElementValid(scrollRoot)) {
-                        logs.push('[Step 1] ⚠️ 스크롤 루트 무효화 - 스킵');
-                        continue;
-                    }
+                    if (!scrollRoot || !isElementValid(scrollRoot)) continue;
+
                     let lastHeight = scrollRoot.scrollHeight;
-                    logs.push('[Step 1] 컨테이너 시작 높이: ' + lastHeight.toFixed(0) + 'px');
+                    logs.push('[Step 1] 시작: ' + lastHeight.toFixed(0) + 'px');
 
                     for (let i = 0; i < maxBatches; i++) {
-                        logs.push('[Step 1] 🔄 Batch ' + i + ' 시작');
-
-                        // 🛡️ **DOM 유효성 재검증**
-                        if (!isElementValid(scrollRoot)) {
-                            logs.push('[Step 1] ⚠️ Batch ' + i + ' - 스크롤 루트 detached, 중단');
-                            break;
-                        }
+                        if (!isElementValid(scrollRoot)) break;
 
                         // 🛡️ **과도한 성장 방지: 목표 높이의 120% 도달 시 중단**
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         if (currentScrollHeight > savedContentHeight * 1.2) {
-                            logs.push('[Step 1] ⚠️ 목표 높이 120% 초과 (' + currentScrollHeight.toFixed(0) + ' > ' + (savedContentHeight * 1.2).toFixed(0) + ')');
-                            logs.push('[Step 1] ✋ 과도한 트리거 방지 - 중단');
+                            logs.push('[Step 1] 120% 초과 중단');
                             grew = true;
                             break;
                         }
 
                         const sentinel = findSentinel(scrollRoot);
                         if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                            logs.push('[Step 1] 📍 A-1: scrollIntoView 시작');
                             try {
                                 sentinel.scrollIntoView({ block: 'end' });
-                                logs.push('[Step 1] 📍 A-2: scrollIntoView 완료');
-                            } catch(e) {
-                                logs.push('[Step 1] ⚠️ A-3: scrollIntoView 실패: ' + e.message);
-                            }
-                            logs.push('[Step 1] 📍 A-4: nextFrame 시작');
+                            } catch(e) {}
                             await nextFrame();
-                            logs.push('[Step 1] 📍 A-5: nextFrame 완료');
                         } else {
-                            logs.push('[Step 1] 📍 B-1: scrollNearBottomAsync 시작');
                             await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
-                            logs.push('[Step 1] 📍 B-2: scrollNearBottomAsync 완료');
                         }
 
-                        logs.push('[Step 1] 📍 C-1: settleFrames 루프 시작 (' + settleFrames + '회)');
                         for (let f = 0; f < settleFrames; f++) {
                             await nextFrame();
-                            if (f === 0 || f === settleFrames - 1) {
-                                logs.push('[Step 1] 📍 C-2: settleFrame ' + f + ' 완료');
-                            }
                         }
-                        logs.push('[Step 1] 📍 D-1: delay(' + batchDelayMs + ') 시작');
                         await delay(batchDelayMs);
-                        logs.push('[Step 1] 📍 D-2: delay 완료');
 
-                        // 🛡️ **scrollHeight 접근 전 재검증**
-                        logs.push('[Step 1] 📍 E-1: scrollHeight 접근 시작');
-                        if (!isElementValid(scrollRoot)) {
-                            logs.push('[Step 1] ⚠️ E-2: scrollRoot 무효 - 중단');
-                            break;
-                        }
+                        if (!isElementValid(scrollRoot)) break;
+
                         const heightNow = scrollRoot.scrollHeight;
-                        logs.push('[Step 1] 📍 E-3: scrollHeight 읽기 완료 (' + heightNow.toFixed(0) + 'px)');
                         const growth = heightNow - lastHeight;
 
                         if (i === 0 || growth >= 64) {
-                            logs.push('[Step 1] Batch ' + i + ': ' + lastHeight.toFixed(0) + 'px → ' + heightNow.toFixed(0) + 'px (성장: ' + growth.toFixed(0) + 'px)');
+                            logs.push('[Step 1] Batch ' + i + ': ' + growth.toFixed(0) + 'px 성장');
                         }
 
                         if (growth >= 64) {
                             grew = true;
                             lastHeight = heightNow;
-                            logs.push('[Step 1] 📍 E-4: 성장 감지 - 계속');
                         } else {
-                            logs.push('[Step 1] 📍 E-5: 성장 중단 (Batch ' + i + ')');
                             break;
                         }
                     }
@@ -1128,18 +1085,14 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                logs.push('[Step 1] 🔄 await waitForStableLayoutAsync()');
                 await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
-                logs.push('[Step 1] 🔄 waitForStableLayoutAsync() 완료');
 
                 const refreshedRoot = getROOT();
                 const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
                 const finalPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
                 const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
 
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                logs.push('[Step 1] 🟢 스크립트 정상 완료');
+                logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
 
                 return serializeForJSON({
                     success: success,
