@@ -368,12 +368,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         let js = generateStep1_ContentRestoreScript()
-        let jsLength = js.count
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
-
-        // JavaScript 코드 일부 출력 (처음 200자)
-        let preview = String(js.prefix(200))
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Preview: \(preview)...")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 실행 시작...")
 
         context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
