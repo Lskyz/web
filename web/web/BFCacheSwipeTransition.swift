@@ -13,19 +13,6 @@ import WebKit
 import SwiftUI
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 // MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
@@ -416,8 +403,8 @@ struct BFCacheSnapshot: Codable {
                 }
             } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else if result != nil {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] result nil")
             }
@@ -498,8 +485,8 @@ struct BFCacheSnapshot: Codable {
                 }
             } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else if result != nil {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] result nil")
             }
@@ -583,8 +570,8 @@ struct BFCacheSnapshot: Codable {
                 }
             } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else if result != nil {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] result nil")
             }
@@ -656,8 +643,8 @@ struct BFCacheSnapshot: Codable {
                 }
             } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
-                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
+            } else if result != nil {
+                TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(type(of: result)) value: \(String(describing: result))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] result nil")
             }
