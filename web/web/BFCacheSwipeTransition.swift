@@ -315,6 +315,27 @@ struct BFCacheSnapshot: Codable {
 
                 TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON string encoding failed")
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             }
 
         }
@@ -857,129 +878,127 @@ struct BFCacheSnapshot: Codable {
         let targetHeight = restorationConfig.savedContentHeight
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                const targetHeight = parseFloat('\(targetHeight)');
-                const root = getROOT();
-                const currentHeight = root ? root.scrollHeight : 0;
-                
-                logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-                logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-                logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
-                
-                ensureOverflowAnchorState(true);
-                
-                const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 0;
-                const isStaticSite = percentage >= 90;
-                
-                if (isStaticSite) {
-                    logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    return serializeForJSON({
-                        success: true,
-                        isStaticSite: true,
-                        currentHeight: currentHeight,
-                        targetHeight: targetHeight,
-                        restoredHeight: currentHeight,
-                        percentage: percentage,
-                        triggeredInfiniteScroll: false,
-                        logs: logs
-                    });
-                }
-                
-                logs.push('동적 사이트 - 콘텐츠 로드 시도');
-                
-                const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
-                );
-                
-                let clicked = 0;
-                loadMoreButtons.forEach(btn => {
-                    if (clicked < 5 && btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked += 1;
-                    }
-                });
-                
-                if (clicked > 0) {
-                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
-                    await nextFrame();
-                    await delay(160);
-                }
-                
-                const containers = findScrollContainers();
-                let grew = false;
-                const maxBatches = 6;
-                const settleFrames = 6;
-                const batchDelayMs = 180;
-                
-                for (const scrollRoot of containers) {
-                    if (!scrollRoot) continue;
-                    let lastHeight = scrollRoot.scrollHeight;
-                    for (let i = 0; i < maxBatches; i++) {
-                        const sentinel = findSentinel(scrollRoot);
-                        if (sentinel && typeof sentinel.scrollIntoView === 'function') {
-                            sentinel.scrollIntoView({ block: 'end' });
-                            if (i === 0) {
-                                logs.push('sentinel.scrollIntoView 호출');
-                            }
-                            await nextFrame();
-                        } else {
-                            await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
-                            if (i === 0) {
-                                logs.push('바닥 근처까지 실제 스크롤 시도');
-                            }
-                        }
-                        
-                        for (let f = 0; f < settleFrames; f++) {
-                            await nextFrame();
-                        }
-                        await delay(batchDelayMs);
-                        
-                        const heightNow = scrollRoot.scrollHeight;
-                        if (heightNow - lastHeight >= 64) {
-                            grew = true;
-                            lastHeight = heightNow;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    if (grew) break;
-                }
-                
-                await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
-                
-                const refreshedRoot = getROOT();
-                const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
-                const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 0;
-                const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
-                
-                logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
-                logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
-                
+        try {
+            \(generateCommonUtilityScript())
+
+            const logs = [];
+            const targetHeight = parseFloat('\(targetHeight)');
+            const root = getROOT();
+            const currentHeight = root ? root.scrollHeight : 0;
+
+            logs.push('[Step 1] 콘텐츠 높이 복원 시작');
+            logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
+            logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+
+            ensureOverflowAnchorState(true);
+
+            const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 0;
+            const isStaticSite = percentage >= 90;
+
+            if (isStaticSite) {
+                logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                 return serializeForJSON({
-                    success: success,
-                    isStaticSite: false,
+                    success: true,
+                    isStaticSite: true,
                     currentHeight: currentHeight,
                     targetHeight: targetHeight,
-                    restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
-                    triggeredInfiniteScroll: grew,
+                    restoredHeight: currentHeight,
+                    percentage: percentage,
+                    triggeredInfiniteScroll: false,
                     logs: logs
                 });
-                
-            } catch(e) {
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    logs: ['[Step 1] 오류: ' + e.message]
-                });
             }
-        })()
+
+            logs.push('동적 사이트 - 콘텐츠 로드 시도');
+
+            const loadMoreButtons = document.querySelectorAll(
+                '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                'button[class*="more"], .load-more, .show-more'
+            );
+
+            let clicked = 0;
+            loadMoreButtons.forEach(btn => {
+                if (clicked < 5 && btn && typeof btn.click === 'function') {
+                    btn.click();
+                    clicked += 1;
+                }
+            });
+
+            if (clicked > 0) {
+                logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                await nextFrame();
+                await delay(160);
+            }
+
+            const containers = findScrollContainers();
+            let grew = false;
+            const maxBatches = 6;
+            const settleFrames = 6;
+            const batchDelayMs = 180;
+
+            for (const scrollRoot of containers) {
+                if (!scrollRoot) continue;
+                let lastHeight = scrollRoot.scrollHeight;
+                for (let i = 0; i < maxBatches; i++) {
+                    const sentinel = findSentinel(scrollRoot);
+                    if (sentinel && typeof sentinel.scrollIntoView === 'function') {
+                        sentinel.scrollIntoView({ block: 'end' });
+                        if (i === 0) {
+                            logs.push('sentinel.scrollIntoView 호출');
+                        }
+                        await nextFrame();
+                    } else {
+                        await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
+                        if (i === 0) {
+                            logs.push('바닥 근처까지 실제 스크롤 시도');
+                        }
+                    }
+
+                    for (let f = 0; f < settleFrames; f++) {
+                        await nextFrame();
+                    }
+                    await delay(batchDelayMs);
+
+                    const heightNow = scrollRoot.scrollHeight;
+                    if (heightNow - lastHeight >= 64) {
+                        grew = true;
+                        lastHeight = heightNow;
+                    } else {
+                        break;
+                    }
+                }
+
+                if (grew) break;
+            }
+
+            await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
+
+            const refreshedRoot = getROOT();
+            const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
+            const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 0;
+            const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
+
+            logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
+            logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+
+            return serializeForJSON({
+                success: success,
+                isStaticSite: false,
+                currentHeight: currentHeight,
+                targetHeight: targetHeight,
+                restoredHeight: restoredHeight,
+                percentage: finalPercentage,
+                triggeredInfiniteScroll: grew,
+                logs: logs
+            });
+
+        } catch(e) {
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                logs: ['[Step 1] 오류: ' + e.message]
+            });
+        }
         """
     }
     private func generateStep2_PercentScrollScript() -> String {
@@ -987,73 +1006,71 @@ struct BFCacheSnapshot: Codable {
         let targetPercentY = scrollPositionPercent.y
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
-                const targetPercentX = parseFloat('\(targetPercentX)');
-                const targetPercentY = parseFloat('\(targetPercentY)');
-                
-                logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
-                logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
-                
-                await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
-                
-                const root = getROOT();
-                if (!root) {
-                    logs.push('스크롤 루트를 찾을 수 없음');
-                    return serializeForJSON({
-                        success: false,
-                        targetPercent: { x: targetPercentX, y: targetPercentY },
-                        calculatedPosition: { x: 0, y: 0 },
-                        actualPosition: { x: 0, y: 0 },
-                        difference: { x: 0, y: 0 },
-                        logs: logs
-                    });
-                }
-                
-                const max = getMaxScroll();
-                logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
-                
-                const targetX = (targetPercentX / 100) * max.x;
-                const targetY = (targetPercentY / 100) * max.y;
-                
-                logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-                
-                const preciseResult = await preciseScrollToAsync(targetX, targetY);
-                
-                await waitForStableLayoutAsync({ frames: 3, timeout: 800 });
-                
-                const updatedRoot = getROOT();
-                const actualX = updatedRoot ? (updatedRoot.scrollLeft || preciseResult.x || 0) : preciseResult.x || 0;
-                const actualY = updatedRoot ? (updatedRoot.scrollTop || preciseResult.y || 0) : preciseResult.y || 0;
-                
-                const diffX = Math.abs(actualX - targetX);
-                const diffY = Math.abs(actualY - targetY);
-                
-                logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-                
-                const success = diffY <= 50;
-                
-                return serializeForJSON({
-                    success: success,
-                    targetPercent: { x: targetPercentX, y: targetPercentY },
-                    calculatedPosition: { x: targetX, y: targetY },
-                    actualPosition: { x: actualX, y: actualY },
-                    difference: { x: diffX, y: diffY },
-                    logs: logs
-                });
-                
-            } catch(e) {
+        try {
+            \(generateCommonUtilityScript())
+
+            const logs = [];
+            const targetPercentX = parseFloat('\(targetPercentX)');
+            const targetPercentY = parseFloat('\(targetPercentY)');
+
+            logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
+            logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+
+            await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
+
+            const root = getROOT();
+            if (!root) {
+                logs.push('스크롤 루트를 찾을 수 없음');
                 return serializeForJSON({
                     success: false,
-                    error: e.message,
-                    logs: ['[Step 2] 오류: ' + e.message]
+                    targetPercent: { x: targetPercentX, y: targetPercentY },
+                    calculatedPosition: { x: 0, y: 0 },
+                    actualPosition: { x: 0, y: 0 },
+                    difference: { x: 0, y: 0 },
+                    logs: logs
                 });
             }
-        })()
+
+            const max = getMaxScroll();
+            logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+
+            const targetX = (targetPercentX / 100) * max.x;
+            const targetY = (targetPercentY / 100) * max.y;
+
+            logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+
+            const preciseResult = await preciseScrollToAsync(targetX, targetY);
+
+            await waitForStableLayoutAsync({ frames: 3, timeout: 800 });
+
+            const updatedRoot = getROOT();
+            const actualX = updatedRoot ? (updatedRoot.scrollLeft || preciseResult.x || 0) : preciseResult.x || 0;
+            const actualY = updatedRoot ? (updatedRoot.scrollTop || preciseResult.y || 0) : preciseResult.y || 0;
+
+            const diffX = Math.abs(actualX - targetX);
+            const diffY = Math.abs(actualY - targetY);
+
+            logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+
+            const success = diffY <= 50;
+
+            return serializeForJSON({
+                success: success,
+                targetPercent: { x: targetPercentX, y: targetPercentY },
+                calculatedPosition: { x: targetX, y: targetY },
+                actualPosition: { x: actualX, y: actualY },
+                difference: { x: diffX, y: diffY },
+                logs: logs
+            });
+
+        } catch(e) {
+            return serializeForJSON({
+                success: false,
+                error: e.message,
+                logs: ['[Step 2] 오류: ' + e.message]
+            });
+        }
         """
     }
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
@@ -1061,11 +1078,10 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
+        try {
+            \(generateCommonUtilityScript())
+
+            const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
@@ -1324,8 +1340,7 @@ struct BFCacheSnapshot: Codable {
                     error: e.message,
                     logs: ['[Step 3] 오류: ' + e.message]
                 });
-            }
-        })()
+        }
         """
     }
 
@@ -1334,11 +1349,10 @@ struct BFCacheSnapshot: Codable {
         let targetY = scrollPosition.y
 
         return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
-                
-                const logs = [];
+        try {
+            \(generateCommonUtilityScript())
+
+            const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
                 const tolerance = 30;
@@ -1424,8 +1438,7 @@ struct BFCacheSnapshot: Codable {
                     error: e.message,
                     logs: ['[Step 4] 오류: ' + e.message]
                 });
-            }
-        })()
+        }
         """
     }
     private func convertToJSONString(_ object: Any) -> String? {
