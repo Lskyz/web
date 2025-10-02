@@ -388,8 +388,8 @@ struct BFCacheSnapshot: Codable {
                     if let currentHeight = resultDict["currentHeight"] as? Double {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                     }
-                    if let targetHeight = resultDict["targetHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                    if let savedHeight = resultDict["savedContentHeight"] as? Double {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 시점 높이: \(String(format: "%.0f", savedHeight))px")
                     }
                     if let restoredHeight = resultDict["restoredHeight"] as? Double {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
@@ -911,15 +911,15 @@ struct BFCacheSnapshot: Codable {
         """
     }
     private func generateStep1_ContentRestoreScript() -> String {
-        let targetHeight = restorationConfig.savedContentHeight
+        let savedHeight = restorationConfig.savedContentHeight
 
         return """
         try {
             \(generateCommonUtilityScript())
 
             const logs = [];
-            const targetHeight = parseFloat('\(targetHeight)');
-            logs.push('[Step 1] 목표 높이: ' + targetHeight.toFixed(0) + 'px');
+            const savedContentHeight = parseFloat('\(savedHeight)');
+            logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
@@ -927,12 +927,12 @@ struct BFCacheSnapshot: Codable {
             const currentHeight = root ? root.scrollHeight : 0;
             logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
 
-            const heightDiff = targetHeight - currentHeight;
+            const heightDiff = savedContentHeight - currentHeight;
             logs.push('[Step 1] 높이 차이: ' + heightDiff.toFixed(0) + 'px (' + (heightDiff > 0 ? '부족' : '충분') + ')');
 
             ensureOverflowAnchorState(true);
 
-            const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 0;
+            const percentage = savedContentHeight > 0 ? (currentHeight / savedContentHeight) * 100 : 0;
             const isStaticSite = percentage >= 98;
 
             if (isStaticSite) {
@@ -941,7 +941,7 @@ struct BFCacheSnapshot: Codable {
                     success: true,
                     isStaticSite: true,
                     currentHeight: currentHeight,
-                    targetHeight: targetHeight,
+                    savedContentHeight: savedContentHeight,
                     restoredHeight: currentHeight,
                     percentage: percentage,
                     triggeredInfiniteScroll: false,
@@ -1031,7 +1031,7 @@ struct BFCacheSnapshot: Codable {
 
             const refreshedRoot = getROOT();
             const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
-            const finalPercentage = targetHeight > 0 ? (restoredHeight / targetHeight) * 100 : 0;
+            const finalPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
             const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
 
             logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
@@ -1041,7 +1041,7 @@ struct BFCacheSnapshot: Codable {
                 success: success,
                 isStaticSite: false,
                 currentHeight: currentHeight,
-                targetHeight: targetHeight,
+                savedContentHeight: savedContentHeight,
                 restoredHeight: restoredHeight,
                 percentage: finalPercentage,
                 triggeredInfiniteScroll: grew,
@@ -1066,6 +1066,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
+        let savedHeight = restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1074,9 +1075,11 @@ struct BFCacheSnapshot: Codable {
             const logs = [];
             const targetPercentX = parseFloat('\(targetPercentX)');
             const targetPercentY = parseFloat('\(targetPercentY)');
+            const savedContentHeight = parseFloat('\(savedHeight)');
 
             logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
             logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+            logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
             await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
 
@@ -1093,11 +1096,12 @@ struct BFCacheSnapshot: Codable {
                 });
             }
 
-            const max = getMaxScroll();
-            logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+            const maxScrollY = Math.max(0, savedContentHeight - window.innerHeight);
+            const maxScrollX = Math.max(0, root.scrollWidth - window.innerWidth);
+            logs.push('최대 스크롤 (저장 기준): X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
 
-            const targetX = (targetPercentX / 100) * max.x;
-            const targetY = (targetPercentY / 100) * max.y;
+            const targetX = (targetPercentX / 100) * maxScrollX;
+            const targetY = (targetPercentY / 100) * maxScrollY;
 
             logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
 
@@ -1138,6 +1142,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
+        let savedHeight = restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1146,10 +1151,12 @@ struct BFCacheSnapshot: Codable {
             const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
+                const savedContentHeight = parseFloat('\(savedHeight)');
                 const infiniteScrollAnchorData = \(anchorDataJSON);
-                
+
                 logs.push('[Step 3] 무한스크롤 전용 앵커 복원');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 1600 });
 
@@ -1306,21 +1313,21 @@ struct BFCacheSnapshot: Codable {
                             const allElements = document.querySelectorAll('*');
                             let closestElement = null;
                             let minDistance = Infinity;
-                            
+
                             for (let j = 0; j < allElements.length; j++) {
                                 const element = allElements[j];
                                 const rect = element.getBoundingClientRect();
                                 const ROOT = getROOT();
                                 const elementY = ROOT.scrollTop + rect.top;
                                 const distance = Math.abs(elementY - estimatedY);
-                                
+
                                 if (distance < minDistance && rect.height > 20) {
                                     minDistance = distance;
                                     closestElement = element;
                                 }
                             }
-                            
-                            if (closestElement && minDistance < 200) {
+
+                            if (closestElement && minDistance < 250) {
                                 foundElement = closestElement;
                                 matchedAnchor = anchor;
                                 matchMethod = 'page_offset';
@@ -1409,6 +1416,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep4_FinalVerificationScript() -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
+        let savedHeight = restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1417,10 +1425,12 @@ struct BFCacheSnapshot: Codable {
             const logs = [];
                 const targetX = parseFloat('\(targetX)');
                 const targetY = parseFloat('\(targetY)');
+                const savedContentHeight = parseFloat('\(savedHeight)');
                 const tolerance = 30;
-                
+
                 logs.push('[Step 4] 최종 검증 및 미세 보정');
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+                logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
                 
                 await waitForStableLayoutAsync({ frames: 3, timeout: 900 });
                 
