@@ -368,7 +368,12 @@ struct BFCacheSnapshot: Codable {
         }
 
         let js = generateStep1_ContentRestoreScript()
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 실행 시작...")
+        let jsLength = js.count
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
+
+        // JavaScript 코드 일부 출력 (처음 200자)
+        let preview = String(js.prefix(200))
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Preview: \(preview)...")
 
         context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
@@ -463,33 +468,52 @@ struct BFCacheSnapshot: Codable {
                     resultDict = dict
                 }
 
-                if let resultDict = resultDict {
-                    step2Success = (resultDict["success"] as? Bool) ?? false
 
-                    if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
-                    }
-                    if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
-                    }
-                    if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
-                    }
-                    if let difference = resultDict["difference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                    }
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
+if let resultDict = resultDict {
+    step2Success = (resultDict["success"] as? Bool) ?? false
 
-                    // 상대좌표 복원 성공 시 전체 성공으로 간주
-                    if step2Success {
-                        updatedContext.overallSuccess = true
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
-                    }
-                }
+    if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]   ǥ      : X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+    }
+    if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+    }
+    if let percentDifference = resultDict["percentDifference"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]  ʱ      : X=\(String(format: "%.1f", percentDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", percentDifference["y"] ?? 0))px")
+    }
+    if let underRestored = resultDict["underRestored"] as? Bool, underRestored {
+        let savedMax = (resultDict["capturedMaxScrollY"] as? Double) ?? 0
+        let currentMax = (resultDict["currentMaxScrollY"] as? Double) ?? 0
+        TabPersistenceManager.debugMessages.append("?? [Step 2]               : savedMaxY=\(String(format: "%.0f", savedMax))px, currentMaxY=\(String(format: "%.0f", currentMax))px")
+    }
+    if let finalTarget = resultDict["finalTarget"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]        ǥ: X=\(String(format: "%.1f", finalTarget["x"] ?? 0))px, Y=\(String(format: "%.1f", finalTarget["y"] ?? 0))px")
+    }
+    if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]        ġ: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+    }
+    if let difference = resultDict["difference"] as? [String: Double] {
+        TabPersistenceManager.debugMessages.append("?? [Step 2]   ġ     : X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+    }
+    if let fallbackApplied = resultDict["fallbackApplied"] as? Bool, fallbackApplied {
+        TabPersistenceManager.debugMessages.append("?? [Step 2] fallback            ")
+        if let fallbackInfo = resultDict["fallbackInfo"] as? [String: Any] {
+            if let fallbackDiff = fallbackInfo["difference"] as? [String: Double] {
+                TabPersistenceManager.debugMessages.append("?? [Step 2] fallback     : X=\(String(format: "%.1f", fallbackDiff["x"] ?? 0))px, Y=\(String(format: "%.1f", fallbackDiff["y"] ?? 0))px")
+            }
+        }
+    }
+    if let logs = resultDict["logs"] as? [String] {
+        for log in logs.prefix(5) {
+            TabPersistenceManager.debugMessages.append("   \(log)")
+        }
+    }
+
+    if step2Success {
+        updatedContext.overallSuccess = true
+        TabPersistenceManager.debugMessages.append("?? [Step 2] ?      ǥ           -   ü                   ")
+    }
+}
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
@@ -944,7 +968,7 @@ struct BFCacheSnapshot: Codable {
             ensureOverflowAnchorState(true);
 
             const percentage = targetHeight > 0 ? (currentHeight / targetHeight) * 100 : 0;
-            const isStaticSite = percentage >= 90;
+            const isStaticSite = percentage >= 98;  // 98% 이상만 정적 사이트로 판단
 
             if (isStaticSite) {
                 logs.push('정적 사이트 - 콘텐츠 이미 충분함');
@@ -1074,78 +1098,148 @@ struct BFCacheSnapshot: Codable {
         }
         """
     }
-    private func generateStep2_PercentScrollScript() -> String {
-        let targetPercentX = scrollPositionPercent.x
-        let targetPercentY = scrollPositionPercent.y
 
-        return """
-        try {
-            \(generateCommonUtilityScript())
+private func generateStep2_PercentScrollScript() -> String {
+    let targetPercentX = scrollPositionPercent.x
+    let targetPercentY = scrollPositionPercent.y
 
-            const logs = [];
-            const targetPercentX = parseFloat('\(targetPercentX)');
-            const targetPercentY = parseFloat('\(targetPercentY)');
+    let fallbackContentHeight: CGFloat
+    if restorationConfig.savedContentHeight > 0 {
+        fallbackContentHeight = restorationConfig.savedContentHeight
+    } else if actualScrollableSize.height > 0 {
+        fallbackContentHeight = actualScrollableSize.height
+    } else if contentSize.height > 0 {
+        fallbackContentHeight = contentSize.height
+    } else {
+        fallbackContentHeight = 0
+    }
 
-            logs.push('[Step 2] 상대좌표 기반 스크롤 복원');
-            logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
+    let capturedMaxScrollY = max(0, fallbackContentHeight - viewportSize.height)
+    let targetAbsoluteX = scrollPosition.x
+    let targetAbsoluteY = scrollPosition.y
+    let viewportHeight = viewportSize.height
 
-            await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
+    return """
+    try {
+        \(generateCommonUtilityScript())
 
-            const root = getROOT();
-            if (!root) {
-                logs.push('스크롤 루트를 찾을 수 없음');
-                return serializeForJSON({
-                    success: false,
-                    targetPercent: { x: targetPercentX, y: targetPercentY },
-                    calculatedPosition: { x: 0, y: 0 },
-                    actualPosition: { x: 0, y: 0 },
-                    difference: { x: 0, y: 0 },
-                    logs: logs
-                });
-            }
+        const logs = [];
+        const targetPercentX = parseFloat('\(targetPercentX)');
+        const targetPercentY = parseFloat('\(targetPercentY)');
+        const targetAbsoluteX = parseFloat('\(targetAbsoluteX)');
+        const targetAbsoluteY = parseFloat('\(targetAbsoluteY)');
+        const capturedMaxScrollY = parseFloat('\(capturedMaxScrollY)');
+        const savedContentHeight = parseFloat('\(fallbackContentHeight)');
+        const viewportHeight = parseFloat('\(viewportHeight)');
 
-            const max = getMaxScroll();
-            logs.push('최대 스크롤: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+        logs.push('[Step 2] relative scroll restoration');
+        logs.push('target percent: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
 
-            const targetX = (targetPercentX / 100) * max.x;
-            const targetY = (targetPercentY / 100) * max.y;
+        await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
 
-            logs.push('계산된 목표: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
-
-            const preciseResult = await preciseScrollToAsync(targetX, targetY);
-
-            await waitForStableLayoutAsync({ frames: 3, timeout: 800 });
-
-            const updatedRoot = getROOT();
-            const actualX = updatedRoot ? (updatedRoot.scrollLeft || preciseResult.x || 0) : preciseResult.x || 0;
-            const actualY = updatedRoot ? (updatedRoot.scrollTop || preciseResult.y || 0) : preciseResult.y || 0;
-
-            const diffX = Math.abs(actualX - targetX);
-            const diffY = Math.abs(actualY - targetY);
-
-            logs.push('실제 위치: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
-            logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-
-            const success = diffY <= 50;
-
-            return serializeForJSON({
-                success: success,
-                targetPercent: { x: targetPercentX, y: targetPercentY },
-                calculatedPosition: { x: targetX, y: targetY },
-                actualPosition: { x: actualX, y: actualY },
-                difference: { x: diffX, y: diffY },
-                logs: logs
-            });
-
-        } catch(e) {
+        const root = getROOT();
+        if (!root) {
+            logs.push('scroll root not found');
             return serializeForJSON({
                 success: false,
-                error: e.message,
-                logs: ['[Step 2] 오류: ' + e.message]
+                targetPercent: { x: targetPercentX, y: targetPercentY },
+                calculatedPosition: { x: 0, y: 0 },
+                actualPosition: { x: 0, y: 0 },
+                difference: { x: 0, y: 0 },
+                logs: logs
             });
         }
-        """
+
+        const max = getMaxScroll();
+        logs.push('current max scroll: X=' + max.x.toFixed(0) + 'px, Y=' + max.y.toFixed(0) + 'px');
+
+        const targetX = (targetPercentX / 100) * max.x;
+        const targetY = (targetPercentY / 100) * max.y;
+
+        logs.push('initial target: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
+
+        const preciseResult = await preciseScrollToAsync(targetX, targetY);
+
+        await waitForStableLayoutAsync({ frames: 3, timeout: 800 });
+
+        const updatedRoot = getROOT();
+        let actualX = updatedRoot ? (updatedRoot.scrollLeft || preciseResult.x || 0) : (preciseResult.x || 0);
+        let actualY = updatedRoot ? (updatedRoot.scrollTop || preciseResult.y || 0) : (preciseResult.y || 0);
+
+        const diffXPercent = Math.abs(actualX - targetX);
+        const diffYPercent = Math.abs(actualY - targetY);
+
+        logs.push('initial actual position: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+        logs.push('initial difference: X=' + diffXPercent.toFixed(1) + 'px, Y=' + diffYPercent.toFixed(1) + 'px');
+
+        const savedMaxScrollY = Math.max(0, savedContentHeight > 0 ? (savedContentHeight - viewportHeight) : 0);
+        const underRestored = savedMaxScrollY > 0 && max.y < savedMaxScrollY * 0.9;
+
+        let finalTargetX = targetX;
+        let finalTargetY = targetY;
+        let diffX = diffXPercent;
+        let diffY = diffYPercent;
+        let fallbackApplied = false;
+        let fallbackInfo = null;
+
+        if (underRestored) {
+            logs.push('content under-restored detected: savedMaxY=' + savedMaxScrollY.toFixed(0) + 'px, currentMaxY=' + max.y.toFixed(0) + 'px');
+        }
+
+        if (underRestored || diffYPercent > 50) {
+            const fallbackTargetY = targetAbsoluteY;
+            const fallbackTargetX = Number.isFinite(targetAbsoluteX) ? targetAbsoluteX : targetX;
+            logs.push('fallback: absolute coordinate attempt X=' + fallbackTargetX.toFixed(1) + 'px, Y=' + fallbackTargetY.toFixed(1) + 'px');
+
+            const fallbackResult = await preciseScrollToAsync(fallbackTargetX, fallbackTargetY);
+            await waitForStableLayoutAsync({ frames: 2, timeout: 600 });
+
+            const fallbackRoot = getROOT();
+            actualX = fallbackRoot ? (fallbackRoot.scrollLeft || fallbackResult.x || 0) : (fallbackResult.x || 0);
+            actualY = fallbackRoot ? (fallbackRoot.scrollTop || fallbackResult.y || 0) : (fallbackResult.y || 0);
+
+            finalTargetX = fallbackTargetX;
+            finalTargetY = fallbackTargetY;
+            diffX = Math.abs(actualX - fallbackTargetX);
+            diffY = Math.abs(actualY - fallbackTargetY);
+            fallbackApplied = true;
+            fallbackInfo = {
+                target: { x: fallbackTargetX, y: fallbackTargetY },
+                actual: { x: actualX, y: actualY },
+                difference: { x: diffX, y: diffY }
+            };
+
+            logs.push('fallback actual position: X=' + actualX.toFixed(1) + 'px, Y=' + actualY.toFixed(1) + 'px');
+            logs.push('fallback difference: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+        }
+
+        const success = diffY <= 50;
+
+        return serializeForJSON({
+            success: success,
+            fallbackApplied: fallbackApplied,
+            underRestored: underRestored,
+            targetPercent: { x: targetPercentX, y: targetPercentY },
+            calculatedPosition: { x: targetX, y: targetY },
+            percentDifference: { x: diffXPercent, y: diffYPercent },
+            finalTarget: { x: finalTargetX, y: finalTargetY },
+            actualPosition: { x: actualX, y: actualY },
+            difference: { x: diffX, y: diffY },
+            fallbackInfo: fallbackInfo,
+            capturedMaxScrollY: capturedMaxScrollY,
+            currentMaxScrollY: max.y,
+            logs: logs
+        });
+
+    } catch(e) {
+        return serializeForJSON({
+            success: false,
+            error: e.message,
+            logs: ['[Step 2] error: ' + e.message]
+        });
     }
+    """
+}
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
