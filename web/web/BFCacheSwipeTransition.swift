@@ -673,7 +673,20 @@ struct BFCacheSnapshot: Codable {
         return """
         // 공통 BFCache 유틸리티 (비동기 기반)
         function getROOT() {
-            return document.scrollingElement || document.documentElement || document.body;
+            try {
+                if (!document || !document.documentElement) return null;
+                return document.scrollingElement || document.documentElement || document.body;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function isElementValid(element) {
+            try {
+                return element && element.isConnected && element.ownerDocument === document;
+            } catch(e) {
+                return false;
+            }
         }
 
         function nextFrame() {
@@ -1012,17 +1025,31 @@ struct BFCacheSnapshot: Codable {
                 const batchDelayMs = 180;
 
                 for (const scrollRoot of containers) {
-                    if (!scrollRoot) continue;
+                    if (!scrollRoot || !isElementValid(scrollRoot)) {
+                        logs.push('[Step 1] ⚠️ 스크롤 루트 무효화 - 스킵');
+                        continue;
+                    }
                     let lastHeight = scrollRoot.scrollHeight;
                     logs.push('[Step 1] 컨테이너 시작 높이: ' + lastHeight.toFixed(0) + 'px');
 
                     for (let i = 0; i < maxBatches; i++) {
                         logs.push('[Step 1] 🔄 Batch ' + i + ' 시작');
+
+                        // 🛡️ **DOM 유효성 재검증**
+                        if (!isElementValid(scrollRoot)) {
+                            logs.push('[Step 1] ⚠️ Batch ' + i + ' - 스크롤 루트 detached, 중단');
+                            break;
+                        }
+
                         const sentinel = findSentinel(scrollRoot);
-                        if (sentinel && typeof sentinel.scrollIntoView === 'function') {
-                            sentinel.scrollIntoView({ block: 'end' });
-                            if (i === 0) {
-                                logs.push('[Step 1] sentinel.scrollIntoView 호출');
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                            try {
+                                sentinel.scrollIntoView({ block: 'end' });
+                                if (i === 0) {
+                                    logs.push('[Step 1] sentinel.scrollIntoView 호출');
+                                }
+                            } catch(e) {
+                                logs.push('[Step 1] ⚠️ scrollIntoView 실패: ' + e.message);
                             }
                             logs.push('[Step 1] 🔄 await nextFrame() (sentinel)');
                             await nextFrame();
@@ -1041,6 +1068,11 @@ struct BFCacheSnapshot: Codable {
                         logs.push('[Step 1] 🔄 await delay(' + batchDelayMs + ')');
                         await delay(batchDelayMs);
 
+                        // 🛡️ **scrollHeight 접근 전 재검증**
+                        if (!isElementValid(scrollRoot)) {
+                            logs.push('[Step 1] ⚠️ Batch ' + i + ' - scrollHeight 접근 불가, 중단');
+                            break;
+                        }
                         const heightNow = scrollRoot.scrollHeight;
                         const growth = heightNow - lastHeight;
 
