@@ -1173,7 +1173,7 @@ struct BFCacheSnapshot: Codable {
                 
                 const anchors = infiniteScrollAnchorData.anchors;
                 logs.push('사용 가능한 앵커: ' + anchors.length + '개');
-                
+
                 // 무한스크롤 앵커 타입별 필터링
                 const vueComponentAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
@@ -1184,17 +1184,15 @@ struct BFCacheSnapshot: Codable {
                 const virtualIndexAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'virtualIndex' && anchor.virtualIndex;
                 });
-                
+
                 logs.push('Vue Component 앵커: ' + vueComponentAnchors.length + '개');
                 logs.push('Content Hash 앵커: ' + contentHashAnchors.length + '개');
                 logs.push('Virtual Index 앵커: ' + virtualIndexAnchors.length + '개');
-                
-                let foundElement = null;
-                let matchedAnchor = null;
-                let matchMethod = '';
-                let confidence = 0;
-                
-                // 🎯 **수정: className 처리 함수**
+
+                // 🎯 **새 방식: 모든 앵커 매칭 → 목표 위치와 거리 계산 → 가장 가까운 것 선택**
+                const allMatchedCandidates = [];
+
+                // className 처리 함수
                 function getClassNameString(element) {
                     if (typeof element.className === 'string') {
                         return element.className;
@@ -1203,142 +1201,192 @@ struct BFCacheSnapshot: Codable {
                     }
                     return '';
                 }
-                
-                // 우선순위 1: Vue Component 앵커 매칭
-                if (!foundElement && vueComponentAnchors.length > 0) {
-                    for (let i = 0; i < vueComponentAnchors.length && !foundElement; i++) {
-                        const anchor = vueComponentAnchors[i];
-                        const vueComp = anchor.vueComponent;
-                        
-                        // data-v-* 속성으로 찾기
-                        if (vueComp.dataV) {
-                            const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
-                            for (let j = 0; j < vueElements.length; j++) {
-                                const element = vueElements[j];
-                                const classNameStr = getClassNameString(element);
-                                
-                                // 컴포넌트 이름과 인덱스 매칭
-                                if (vueComp.name && classNameStr.indexOf(vueComp.name) !== -1) {
-                                    // 가상 인덱스 기반 매칭
-                                    if (typeof vueComp.index === 'number') {
-                                        const elementIndex = element.parentElement
-                                            ? Array.from(element.parentElement.children).indexOf(element)
-                                            : -1;
-                                        if (elementIndex !== -1 && Math.abs(elementIndex - vueComp.index) <= 2) { // 허용 오차 2
-                                            foundElement = element;
-                                            matchedAnchor = anchor;
-                                            matchMethod = 'vue_component_with_index';
-                                            confidence = 95;
-                                            logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name + '[' + vueComp.index + ']');
-                                            break;
-                                        }
-                                    } else {
-                                        foundElement = element;
-                                        matchedAnchor = anchor;
-                                        matchMethod = 'vue_component';
-                                        confidence = 85;
-                                        logs.push('Vue 컴포넌트로 매칭: ' + vueComp.name);
-                                        break;
-                                    }
-                                }
-                            }
-                            if (foundElement) break;
+
+                logs.push('🔍 거리 기반 매칭 시작 (목표: Y=' + targetY.toFixed(0) + 'px)');
+
+                // 1. ID 기반 매칭 시도
+                for (let i = 0; i < anchors.length; i++) {
+                    const anchor = anchors[i];
+                    if (anchor.elementId) {
+                        const element = document.getElementById(anchor.elementId);
+                        if (element) {
+                            const ROOT = getROOT();
+                            const rect = element.getBoundingClientRect();
+                            const elementY = ROOT.scrollTop + rect.top;
+                            const distance = Math.abs(elementY - targetY);
+                            allMatchedCandidates.push({
+                                element: element,
+                                anchor: anchor,
+                                method: 'element_id',
+                                distance: distance,
+                                confidence: 100
+                            });
                         }
                     }
                 }
-                
-                // 우선순위 2: Content Hash 앵커 매칭
-                if (!foundElement && contentHashAnchors.length > 0) {
-                    for (let i = 0; i < contentHashAnchors.length && !foundElement; i++) {
-                        const anchor = contentHashAnchors[i];
-                        const contentHash = anchor.contentHash;
-                        
-                        // 텍스트 내용으로 매칭
-                        if (contentHash.text && contentHash.text.length > 20) {
-                            const searchText = contentHash.text.substring(0, 50);
-                            const allElements = document.querySelectorAll('*');
-                            for (let j = 0; j < allElements.length; j++) {
-                                const element = allElements[j];
-                                const elementText = (element.textContent || '').trim();
-                                if (elementText.indexOf(searchText) !== -1) {
-                                    foundElement = element;
-                                    matchedAnchor = anchor;
-                                    matchMethod = 'content_hash';
-                                    confidence = 80;
-                                    logs.push('콘텐츠 해시로 매칭: "' + searchText + '"');
+
+                // 2. data-* 속성 매칭 시도
+                for (let i = 0; i < anchors.length; i++) {
+                    const anchor = anchors[i];
+                    if (anchor.dataAttributes) {
+                        const keys = Object.keys(anchor.dataAttributes);
+                        for (let j = 0; j < keys.length; j++) {
+                            const key = keys[j];
+                            const value = anchor.dataAttributes[key];
+                            const selector = '[' + key + '="' + value + '"]';
+                            try {
+                                const elements = document.querySelectorAll(selector);
+                                if (elements.length > 0) {
+                                    const ROOT = getROOT();
+                                    const rect = elements[0].getBoundingClientRect();
+                                    const elementY = ROOT.scrollTop + rect.top;
+                                    const distance = Math.abs(elementY - targetY);
+                                    allMatchedCandidates.push({
+                                        element: elements[0],
+                                        anchor: anchor,
+                                        method: 'data_attribute',
+                                        distance: distance,
+                                        confidence: 95
+                                    });
                                     break;
                                 }
-                            }
-                            if (foundElement) break;
-                        }
-                        
-                        // 짧은 해시로 매칭
-                        if (!foundElement && contentHash.shortHash) {
-                            const hashElements = document.querySelectorAll('[data-hash*="' + contentHash.shortHash + '"]');
-                            if (hashElements.length > 0) {
-                                foundElement = hashElements[0];
-                                matchedAnchor = anchor;
-                                matchMethod = 'short_hash';
-                                confidence = 75;
-                                logs.push('짧은 해시로 매칭: ' + contentHash.shortHash);
-                                break;
-                            }
+                            } catch(e) {}
                         }
                     }
                 }
-                
-                // 우선순위 3: Virtual Index 앵커 매칭 (추정 위치)
-                if (!foundElement && virtualIndexAnchors.length > 0) {
-                    for (let i = 0; i < virtualIndexAnchors.length && !foundElement; i++) {
-                        const anchor = virtualIndexAnchors[i];
-                        const virtualIndex = anchor.virtualIndex;
-                        
-                        // 리스트 인덱스 기반 추정
-                        if (virtualIndex.listIndex !== undefined) {
-                            const listElements = document.querySelectorAll('li, .item, .list-item, [class*="item"]');
-                            const targetIndex = virtualIndex.listIndex;
-                            if (targetIndex >= 0 && targetIndex < listElements.length) {
-                                foundElement = listElements[targetIndex];
-                                matchedAnchor = anchor;
-                                matchMethod = 'virtual_index';
-                                confidence = 60;
-                                logs.push('가상 인덱스로 매칭: [' + targetIndex + ']');
-                                break;
-                            }
-                        }
-                        
-                        // 페이지 오프셋 기반 추정
-                        if (!foundElement && virtualIndex.offsetInPage !== undefined) {
-                            const estimatedY = virtualIndex.offsetInPage;
-                            const allElements = document.querySelectorAll('*');
-                            let closestElement = null;
-                            let minDistance = Infinity;
 
-                            for (let j = 0; j < allElements.length; j++) {
-                                const element = allElements[j];
-                                const rect = element.getBoundingClientRect();
-                                const ROOT = getROOT();
-                                const elementY = ROOT.scrollTop + rect.top;
-                                const distance = Math.abs(elementY - estimatedY);
+                // 3. Vue Component 앵커 매칭
+                for (let i = 0; i < vueComponentAnchors.length; i++) {
+                    const anchor = vueComponentAnchors[i];
+                    const vueComp = anchor.vueComponent;
 
-                                if (distance < minDistance && rect.height > 20) {
-                                    minDistance = distance;
-                                    closestElement = element;
+                    if (vueComp.dataV) {
+                        const vueElements = document.querySelectorAll('[' + vueComp.dataV + ']');
+                        for (let j = 0; j < vueElements.length; j++) {
+                            const element = vueElements[j];
+                            const classNameStr = getClassNameString(element);
+
+                            if (vueComp.name && classNameStr.indexOf(vueComp.name) !== -1) {
+                                if (typeof vueComp.index === 'number') {
+                                    const elementIndex = element.parentElement
+                                        ? Array.from(element.parentElement.children).indexOf(element)
+                                        : -1;
+                                    if (elementIndex !== -1 && Math.abs(elementIndex - vueComp.index) <= 2) {
+                                        const ROOT = getROOT();
+                                        const rect = element.getBoundingClientRect();
+                                        const elementY = ROOT.scrollTop + rect.top;
+                                        const distance = Math.abs(elementY - targetY);
+                                        allMatchedCandidates.push({
+                                            element: element,
+                                            anchor: anchor,
+                                            method: 'vue_component_with_index',
+                                            distance: distance,
+                                            confidence: 90
+                                        });
+                                    }
+                                } else {
+                                    const ROOT = getROOT();
+                                    const rect = element.getBoundingClientRect();
+                                    const elementY = ROOT.scrollTop + rect.top;
+                                    const distance = Math.abs(elementY - targetY);
+                                    allMatchedCandidates.push({
+                                        element: element,
+                                        anchor: anchor,
+                                        method: 'vue_component',
+                                        distance: distance,
+                                        confidence: 85
+                                    });
                                 }
                             }
+                        }
+                    }
+                }
 
-                            if (closestElement && minDistance < 250) {
-                                foundElement = closestElement;
-                                matchedAnchor = anchor;
-                                matchMethod = 'page_offset';
-                                confidence = 50;
-                                logs.push('페이지 오프셋으로 매칭: ' + estimatedY.toFixed(0) + 'px (오차: ' + minDistance.toFixed(0) + 'px)');
+                // 4. Content Hash 앵커 매칭
+                for (let i = 0; i < contentHashAnchors.length; i++) {
+                    const anchor = contentHashAnchors[i];
+                    const contentHash = anchor.contentHash;
+
+                    if (contentHash.text && contentHash.text.length > 20) {
+                        const searchText = contentHash.text.substring(0, 50);
+                        const selector = anchor.tagName || '*';
+                        const candidateElements = document.querySelectorAll(selector);
+                        for (let j = 0; j < candidateElements.length; j++) {
+                            const element = candidateElements[j];
+                            const elementText = (element.textContent || '').trim();
+                            if (elementText.indexOf(searchText) !== -1) {
+                                const ROOT = getROOT();
+                                const rect = element.getBoundingClientRect();
+                                const elementY = ROOT.scrollTop + rect.top;
+                                const distance = Math.abs(elementY - targetY);
+                                allMatchedCandidates.push({
+                                    element: element,
+                                    anchor: anchor,
+                                    method: 'content_hash',
+                                    distance: distance,
+                                    confidence: 80
+                                });
                                 break;
                             }
                         }
                     }
                 }
-                
+
+                // 5. Virtual Index 앵커 매칭 (페이지 오프셋 기반)
+                for (let i = 0; i < virtualIndexAnchors.length; i++) {
+                    const anchor = virtualIndexAnchors[i];
+                    const virtualIndex = anchor.virtualIndex;
+
+                    if (virtualIndex.offsetInPage !== undefined) {
+                        const estimatedY = virtualIndex.offsetInPage;
+                        // 저장된 위치와 목표 위치가 가까우면 후보로 추가
+                        if (Math.abs(estimatedY - targetY) < 500) {
+                            const selector = anchor.tagName || '*';
+                            const candidateElements = document.querySelectorAll(selector);
+                            for (let j = 0; j < candidateElements.length; j++) {
+                                const element = candidateElements[j];
+                                const ROOT = getROOT();
+                                const rect = element.getBoundingClientRect();
+                                const elementY = ROOT.scrollTop + rect.top;
+                                const distance = Math.abs(elementY - targetY);
+                                if (distance < 500) {
+                                    allMatchedCandidates.push({
+                                        element: element,
+                                        anchor: anchor,
+                                        method: 'virtual_index',
+                                        distance: distance,
+                                        confidence: 70
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                logs.push('매칭된 후보 수: ' + allMatchedCandidates.length + '개');
+
+                // 🎯 **거리 기반 정렬: 가장 가까운 것 선택**
+                let foundElement = null;
+                let matchedAnchor = null;
+                let matchMethod = '';
+                let confidence = 0;
+
+                if (allMatchedCandidates.length > 0) {
+                    allMatchedCandidates.sort(function(a, b) {
+                        return a.distance - b.distance;
+                    });
+
+                    const best = allMatchedCandidates[0];
+                    foundElement = best.element;
+                    matchedAnchor = best.anchor;
+                    matchMethod = best.method;
+                    confidence = best.confidence;
+
+                    logs.push('최적 매칭 선택: ' + matchMethod + ' (거리: ' + best.distance.toFixed(0) + 'px, 신뢰도: ' + confidence + '%)');
+                } else {
+                    logs.push('매칭된 앵커 없음');
+                }
+
                 if (foundElement && matchedAnchor) {
                     // 🎯 **수정: scrollIntoView 대신 직접 계산 + 헤더 보정**
                     const ROOT = getROOT();
@@ -2007,43 +2055,69 @@ extension BFCacheTransitionSystem {
                     return Math.min(100, baseScore + lengthBonus);
                 }
                 
-                // 🚀 **핵심 수정: 제목/목록 태그 위주로 수집**
+                // 🚀 **핵심 수정: 제목/목록 태그 + ID/Class 속성 위주로 수집**
                 function collectSemanticElements() {
                     const semanticElements = [];
-                    
-                    // 1. 제목 태그 우선 수집
+
+                    // 1. ID 속성이 있는 요소 우선 수집
+                    const elementsWithId = document.querySelectorAll('[id]');
+                    for (let i = 0; i < elementsWithId.length; i++) {
+                        const elem = elementsWithId[i];
+                        const idValue = elem.id;
+                        // 의미있는 ID만 (랜덤 ID 제외)
+                        if (idValue && idValue.length > 2 && idValue.length < 100) {
+                            semanticElements.push(elem);
+                        }
+                    }
+
+                    // 2. data-* 속성이 있는 요소 수집
+                    const dataElements = document.querySelectorAll('[data-id], [data-item-id], [data-article-id], [data-post-id], [data-index], [data-key]');
+                    for (let i = 0; i < dataElements.length; i++) {
+                        semanticElements.push(dataElements[i]);
+                    }
+
+                    // 3. 특정 class 패턴 요소 수집 (item, post, article, card 등)
+                    const classPatterns = document.querySelectorAll('[class*="item"], [class*="post"], [class*="article"], [class*="card"], [class*="list"], [class*="entry"]');
+                    for (let i = 0; i < classPatterns.length; i++) {
+                        const text = (classPatterns[i].textContent || '').trim();
+                        if (text.length >= 10) {
+                            semanticElements.push(classPatterns[i]);
+                        }
+                    }
+
+                    // 4. 제목 태그 수집
                     const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
                     for (let i = 0; i < headings.length; i++) {
                         semanticElements.push(headings[i]);
                     }
-                    
-                    // 2. 목록 항목 수집
+
+                    // 5. 목록 항목 수집
                     const listItems = document.querySelectorAll('li, article, section');
                     for (let i = 0; i < listItems.length; i++) {
                         const text = (listItems[i].textContent || '').trim();
-                        if (text.length >= 10) { // 최소 10자
+                        if (text.length >= 10) {
                             semanticElements.push(listItems[i]);
                         }
                     }
-                    
-                    // 3. 단락 태그 수집 (의미있는 것만)
+
+                    // 6. 단락 태그 수집 (의미있는 것만)
                     const paragraphs = document.querySelectorAll('p');
                     for (let i = 0; i < paragraphs.length; i++) {
                         const text = (paragraphs[i].textContent || '').trim();
-                        if (text.length >= 20) { // 최소 20자
+                        if (text.length >= 20) {
                             semanticElements.push(paragraphs[i]);
                         }
                     }
-                    
-                    // 4. 링크 태그 수집 (의미있는 것만)
+
+                    // 7. 링크 태그 수집 (의미있는 것만)
                     const links = document.querySelectorAll('a');
                     for (let i = 0; i < links.length; i++) {
                         const text = (links[i].textContent || '').trim();
-                        if (text.length >= 5) { // 최소 5자
+                        if (text.length >= 5) {
                             semanticElements.push(links[i]);
                         }
                     }
-                    
+
                     detailedLogs.push('의미 있는 요소 수집: ' + semanticElements.length + '개');
                     return semanticElements;
                 }
@@ -2188,7 +2262,20 @@ extension BFCacheTransitionSystem {
                             const offsetFromTop = scrollY - absoluteTop;
                             const textContent = (element.textContent || '').trim();
                             const tagName = element.tagName.toLowerCase();
-                            
+
+                            // ID/Class/data-* 속성 수집
+                            const elementId = element.id || null;
+                            const elementClasses = element.className ? Array.from(element.classList) : [];
+                            const dataAttributes = {};
+                            if (element.attributes) {
+                                for (let j = 0; j < element.attributes.length; j++) {
+                                    const attr = element.attributes[j];
+                                    if (attr.name.startsWith('data-')) {
+                                        dataAttributes[attr.name] = attr.value;
+                                    }
+                                }
+                            }
+
                             // 태그 타입 통계
                             if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].indexOf(tagName) !== -1) {
                                 anchorStats.tagDistribution.headings++;
@@ -2201,7 +2288,7 @@ extension BFCacheTransitionSystem {
                             } else {
                                 anchorStats.tagDistribution.others++;
                             }
-                            
+
                             // 영역 판정
                             const elementCenter = absoluteTop + (rect.height / 2);
                             let region = 'unknown';
@@ -2221,10 +2308,27 @@ extension BFCacheTransitionSystem {
                                 region = 'below';
                                 anchorStats.regionDistribution.belowViewport++;
                             }
-                            
+
                             // 품질 점수 계산
                             const qualityScore = calculateTagQualityScore(element);
                             
+                            // 공통 앵커 데이터 (모든 타입에 ID/Class 포함)
+                            const commonAnchorData = {
+                                absolutePosition: { top: absoluteTop, left: absoluteLeft },
+                                viewportPosition: { top: rect.top, left: rect.left },
+                                offsetFromTop: offsetFromTop,
+                                size: { width: rect.width, height: rect.height },
+                                textContent: textContent.substring(0, 100),
+                                qualityScore: qualityScore,
+                                anchorIndex: i,
+                                region: region,
+                                tagName: tagName,
+                                elementId: elementId,
+                                elementClasses: elementClasses,
+                                dataAttributes: dataAttributes,
+                                captureTimestamp: Date.now()
+                            };
+
                             // Vue Component 앵커
                             const dataVAttr = findDataVAttribute(element);
                             if (dataVAttr) {
@@ -2234,7 +2338,7 @@ extension BFCacheTransitionSystem {
                                     props: {},
                                     index: i
                                 };
-                                
+
                                 const classList = Array.from(element.classList);
                                 for (let j = 0; j < classList.length; j++) {
                                     const className = classList[j];
@@ -2243,74 +2347,44 @@ extension BFCacheTransitionSystem {
                                         break;
                                     }
                                 }
-                                
+
                                 if (element.parentElement) {
                                     const siblingIndex = Array.from(element.parentElement.children).indexOf(element);
                                     vueComponent.index = siblingIndex;
                                 }
-                                
-                                anchors.push({
+
+                                anchors.push(Object.assign({}, commonAnchorData, {
                                     anchorType: 'vueComponent',
-                                    vueComponent: vueComponent,
-                                    absolutePosition: { top: absoluteTop, left: absoluteLeft },
-                                    viewportPosition: { top: rect.top, left: rect.left },
-                                    offsetFromTop: offsetFromTop,
-                                    size: { width: rect.width, height: rect.height },
-                                    textContent: textContent.substring(0, 100),
-                                    qualityScore: qualityScore,
-                                    anchorIndex: i,
-                                    region: region,
-                                    tagName: tagName,
-                                    captureTimestamp: Date.now()
-                                });
+                                    vueComponent: vueComponent
+                                }));
                                 anchorStats.vueComponentAnchors++;
                             }
-                            
+
                             // Content Hash 앵커
                             const fullHash = simpleHash(textContent);
                             const shortHash = fullHash.substring(0, 8);
-                            
-                            anchors.push({
+
+                            anchors.push(Object.assign({}, commonAnchorData, {
                                 anchorType: 'contentHash',
                                 contentHash: {
                                     fullHash: fullHash,
                                     shortHash: shortHash,
                                     text: textContent.substring(0, 100),
                                     length: textContent.length
-                                },
-                                absolutePosition: { top: absoluteTop, left: absoluteLeft },
-                                viewportPosition: { top: rect.top, left: rect.left },
-                                offsetFromTop: offsetFromTop,
-                                size: { width: rect.width, height: rect.height },
-                                textContent: textContent.substring(0, 100),
-                                qualityScore: qualityScore,
-                                anchorIndex: i,
-                                region: region,
-                                tagName: tagName,
-                                captureTimestamp: Date.now()
-                            });
+                                }
+                            }));
                             anchorStats.contentHashAnchors++;
-                            
+
                             // Virtual Index 앵커
-                            anchors.push({
+                            anchors.push(Object.assign({}, commonAnchorData, {
                                 anchorType: 'virtualIndex',
                                 virtualIndex: {
                                     listIndex: i,
                                     pageIndex: Math.floor(i / 12),
                                     offsetInPage: absoluteTop,
                                     estimatedTotal: selectedElements.length
-                                },
-                                absolutePosition: { top: absoluteTop, left: absoluteLeft },
-                                viewportPosition: { top: rect.top, left: rect.left },
-                                offsetFromTop: offsetFromTop,
-                                size: { width: rect.width, height: rect.height },
-                                textContent: textContent.substring(0, 100),
-                                qualityScore: qualityScore,
-                                anchorIndex: i,
-                                region: region,
-                                tagName: tagName,
-                                captureTimestamp: Date.now()
-                            });
+                                }
+                            }));
                             anchorStats.virtualIndexAnchors++;
                             
                         } catch(e) {
