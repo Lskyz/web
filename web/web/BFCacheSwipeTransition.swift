@@ -930,9 +930,9 @@ struct BFCacheSnapshot: Codable {
         }
 
         (function hardenEnv() {
-            if (window._bfcacheEnvHardened) return;
-            window._bfcacheEnvHardened = true;
             try {
+                if (window._bfcacheEnvHardened) return;
+                window._bfcacheEnvHardened = true;
                 if (history && typeof history.scrollRestoration === 'string') {
                     history.scrollRestoration = 'manual';
                 }
