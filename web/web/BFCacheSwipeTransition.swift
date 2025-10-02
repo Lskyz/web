@@ -1069,37 +1069,41 @@ struct BFCacheSnapshot: Codable {
 
                         const sentinel = findSentinel(scrollRoot);
                         if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                            logs.push('[Step 1] 📍 A-1: scrollIntoView 시작');
                             try {
                                 sentinel.scrollIntoView({ block: 'end' });
-                                if (i === 0) {
-                                    logs.push('[Step 1] sentinel.scrollIntoView 호출');
-                                }
+                                logs.push('[Step 1] 📍 A-2: scrollIntoView 완료');
                             } catch(e) {
-                                logs.push('[Step 1] ⚠️ scrollIntoView 실패: ' + e.message);
+                                logs.push('[Step 1] ⚠️ A-3: scrollIntoView 실패: ' + e.message);
                             }
-                            logs.push('[Step 1] 🔄 await nextFrame() (sentinel)');
+                            logs.push('[Step 1] 📍 A-4: nextFrame 시작');
                             await nextFrame();
+                            logs.push('[Step 1] 📍 A-5: nextFrame 완료');
                         } else {
-                            logs.push('[Step 1] 🔄 await scrollNearBottomAsync()');
+                            logs.push('[Step 1] 📍 B-1: scrollNearBottomAsync 시작');
                             await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
-                            if (i === 0) {
-                                logs.push('[Step 1] 바닥 근처까지 실제 스크롤 시도');
-                            }
+                            logs.push('[Step 1] 📍 B-2: scrollNearBottomAsync 완료');
                         }
 
-                        logs.push('[Step 1] 🔄 settleFrames 루프 시작');
+                        logs.push('[Step 1] 📍 C-1: settleFrames 루프 시작 (' + settleFrames + '회)');
                         for (let f = 0; f < settleFrames; f++) {
                             await nextFrame();
+                            if (f === 0 || f === settleFrames - 1) {
+                                logs.push('[Step 1] 📍 C-2: settleFrame ' + f + ' 완료');
+                            }
                         }
-                        logs.push('[Step 1] 🔄 await delay(' + batchDelayMs + ')');
+                        logs.push('[Step 1] 📍 D-1: delay(' + batchDelayMs + ') 시작');
                         await delay(batchDelayMs);
+                        logs.push('[Step 1] 📍 D-2: delay 완료');
 
                         // 🛡️ **scrollHeight 접근 전 재검증**
+                        logs.push('[Step 1] 📍 E-1: scrollHeight 접근 시작');
                         if (!isElementValid(scrollRoot)) {
-                            logs.push('[Step 1] ⚠️ Batch ' + i + ' - scrollHeight 접근 불가, 중단');
+                            logs.push('[Step 1] ⚠️ E-2: scrollRoot 무효 - 중단');
                             break;
                         }
                         const heightNow = scrollRoot.scrollHeight;
+                        logs.push('[Step 1] 📍 E-3: scrollHeight 읽기 완료 (' + heightNow.toFixed(0) + 'px)');
                         const growth = heightNow - lastHeight;
 
                         if (i === 0 || growth >= 64) {
@@ -1109,8 +1113,9 @@ struct BFCacheSnapshot: Codable {
                         if (growth >= 64) {
                             grew = true;
                             lastHeight = heightNow;
+                            logs.push('[Step 1] 📍 E-4: 성장 감지 - 계속');
                         } else {
-                            logs.push('[Step 1] 성장 중단 (Batch ' + i + ')');
+                            logs.push('[Step 1] 📍 E-5: 성장 중단 (Batch ' + i + ')');
                             break;
                         }
                     }
