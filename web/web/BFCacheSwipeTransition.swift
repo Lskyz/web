@@ -944,11 +944,14 @@ struct BFCacheSnapshot: Codable {
             \(generateCommonUtilityScript())
 
             const logs = [];
+            logs.push('[Step 1] 🟢 스크립트 시작');
+
             const savedContentHeight = parseFloat('\(savedHeight)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
-                const root = getROOT();
-                logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
+            const root = getROOT();
+            logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
+            logs.push('[Step 1] 스크롤 루트 타입: ' + (root ? root.tagName : 'null'));
 
                 const currentHeight = root ? root.scrollHeight : 0;
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
@@ -992,10 +995,14 @@ struct BFCacheSnapshot: Codable {
 
                 if (clicked > 0) {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                    logs.push('[Step 1] 🔄 await nextFrame() 시작');
                     await nextFrame();
+                    logs.push('[Step 1] 🔄 await delay(160) 시작');
                     await delay(160);
+                    logs.push('[Step 1] 🔄 버튼 클릭 후 대기 완료');
                 }
 
+                logs.push('[Step 1] 🔍 findScrollContainers() 호출');
                 const containers = findScrollContainers();
                 logs.push('[Step 1] 스크롤 컨테이너 발견: ' + containers.length + '개');
 
@@ -1010,23 +1017,28 @@ struct BFCacheSnapshot: Codable {
                     logs.push('[Step 1] 컨테이너 시작 높이: ' + lastHeight.toFixed(0) + 'px');
 
                     for (let i = 0; i < maxBatches; i++) {
+                        logs.push('[Step 1] 🔄 Batch ' + i + ' 시작');
                         const sentinel = findSentinel(scrollRoot);
                         if (sentinel && typeof sentinel.scrollIntoView === 'function') {
                             sentinel.scrollIntoView({ block: 'end' });
                             if (i === 0) {
                                 logs.push('[Step 1] sentinel.scrollIntoView 호출');
                             }
+                            logs.push('[Step 1] 🔄 await nextFrame() (sentinel)');
                             await nextFrame();
                         } else {
+                            logs.push('[Step 1] 🔄 await scrollNearBottomAsync()');
                             await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
                             if (i === 0) {
                                 logs.push('[Step 1] 바닥 근처까지 실제 스크롤 시도');
                             }
                         }
 
+                        logs.push('[Step 1] 🔄 settleFrames 루프 시작');
                         for (let f = 0; f < settleFrames; f++) {
                             await nextFrame();
                         }
+                        logs.push('[Step 1] 🔄 await delay(' + batchDelayMs + ')');
                         await delay(batchDelayMs);
 
                         const heightNow = scrollRoot.scrollHeight;
@@ -1053,7 +1065,9 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
+                logs.push('[Step 1] 🔄 await waitForStableLayoutAsync()');
                 await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
+                logs.push('[Step 1] 🔄 waitForStableLayoutAsync() 완료');
 
                 const refreshedRoot = getROOT();
                 const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
@@ -1062,6 +1076,7 @@ struct BFCacheSnapshot: Codable {
 
                 logs.push('복원된 높이: ' + restoredHeight.toFixed(0) + 'px');
                 logs.push('복원률: ' + finalPercentage.toFixed(1) + '%');
+                logs.push('[Step 1] 🟢 스크립트 정상 완료');
 
                 return serializeForJSON({
                     success: success,
