@@ -946,6 +946,14 @@ struct BFCacheSnapshot: Codable {
     private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = restorationConfig.savedContentHeight
 
+        // 🛡️ **값 검증**
+        guard savedHeight.isFinite && savedHeight >= 0 else {
+            TabPersistenceManager.debugMessages.append("⚠️ [Step 1] savedHeight 비정상: \(savedHeight)")
+            return """
+            return JSON.stringify({ success: false, error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight 값이 비정상입니다'] });
+            """
+        }
+
         return """
         try {
             \(generateCommonUtilityScript())
