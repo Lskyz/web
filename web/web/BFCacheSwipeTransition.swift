@@ -414,6 +414,31 @@ struct BFCacheSnapshot: Codable {
                 }
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
+
+                // 🔍 **상세 에러 정보 추출**
+                if let nsError = error as NSError? {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Domain: \(nsError.domain)")
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Code: \(nsError.code)")
+
+                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Message: \(message)")
+                    }
+                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Line: \(lineNumber)")
+                    }
+                    if let columnNumber = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] as? Int {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Column: \(columnNumber)")
+                    }
+                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Stack Trace: \(stackTrace)")
+                    }
+                    if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Source URL: \(sourceURL)")
+                    }
+
+                    // 전체 userInfo 출력
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Full userInfo: \(nsError.userInfo)")
+                }
             }
 
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
