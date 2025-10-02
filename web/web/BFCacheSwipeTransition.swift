@@ -12,19 +12,19 @@ import UIKit
 import WebKit
 import SwiftUI
 
-fileprivate func unwrapJavaScriptResultValue(_ value: Any?) -> Any? {
-    guard let value else { return nil }
-    if value is NSNull { return nil }
-    let mirror = Mirror(reflecting: value)
-    if mirror.displayStyle == .optional {
-        if let child = mirror.children.first {
-            return unwrapJavaScriptResultValue(child.value)
-        } else {
-            return nil
-        }
-    }
-    return value
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
@@ -40,10 +40,10 @@ struct BFCacheSnapshot: Codable {
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
     let version: Int
-    
+
     // 🔄 **순차 실행 설정**
     let restorationConfig: RestorationConfig
-    
+
     struct RestorationConfig: Codable {
         let enableContentRestore: Bool      // Step 1 활성화
         let enablePercentRestore: Bool      // Step 2 활성화
@@ -54,7 +54,7 @@ struct BFCacheSnapshot: Codable {
         let step2RenderDelay: Double        // Step 2 후 렌더링 대기
         let step3RenderDelay: Double        // Step 3 후 렌더링 대기
         let step4RenderDelay: Double        // Step 4 후 렌더링 대기
-        
+
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
@@ -67,14 +67,14 @@ struct BFCacheSnapshot: Codable {
             step4RenderDelay: 0.4
         )
     }
-    
+
     enum CaptureStatus: String, Codable {
         case complete       // 모든 데이터 캡처 성공
         case partial        // 일부만 캡처 성공
         case visualOnly     // 이미지만 캡처 성공
         case failed         // 캡처 실패
     }
-    
+
     // Codable을 위한 CodingKeys
     enum CodingKeys: String, CodingKey {
         case pageRecord
@@ -91,7 +91,7 @@ struct BFCacheSnapshot: Codable {
         case version
         case restorationConfig
     }
-    
+
     // Custom encoding/decoding for [String: Any]
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -103,18 +103,18 @@ struct BFCacheSnapshot: Codable {
         viewportSize = try container.decodeIfPresent(CGSize.self, forKey: .viewportSize) ?? CGSize.zero
         actualScrollableSize = try container.decodeIfPresent(CGSize.self, forKey: .actualScrollableSize) ?? CGSize.zero
         restorationConfig = try container.decodeIfPresent(RestorationConfig.self, forKey: .restorationConfig) ?? RestorationConfig.default
-        
+
         // JSON decode for [String: Any]
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
             jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
         }
-        
+
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
         captureStatus = try container.decode(CaptureStatus.self, forKey: .captureStatus)
         version = try container.decode(Int.self, forKey: .version)
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(pageRecord, forKey: .pageRecord)
@@ -125,19 +125,19 @@ struct BFCacheSnapshot: Codable {
         try container.encode(viewportSize, forKey: .viewportSize)
         try container.encode(actualScrollableSize, forKey: .actualScrollableSize)
         try container.encode(restorationConfig, forKey: .restorationConfig)
-        
+
         // JSON encode for [String: Any]
         if let js = jsState {
             let jsData = try JSONSerialization.data(withJSONObject: js)
             try container.encode(jsData, forKey: .jsState)
         }
-        
+
         try container.encode(timestamp, forKey: .timestamp)
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
         try container.encode(captureStatus, forKey: .captureStatus)
         try container.encode(version, forKey: .version)
     }
-    
+
     // 직접 초기화용 init (정밀 스크롤 지원)
     init(
         pageRecord: PageRecord, 
@@ -178,7 +178,7 @@ struct BFCacheSnapshot: Codable {
             step4RenderDelay: restorationConfig.step4RenderDelay
         )
     }
-    
+
     // 이미지 로드 메서드
     func loadImage() -> UIImage? {
         guard let path = webViewSnapshotPath else { return nil }
@@ -186,9 +186,9 @@ struct BFCacheSnapshot: Codable {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return UIImage(contentsOfFile: url.path)
     }
-    
+
     // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
-    
+
     // 복원 컨텍스트 구조체
     private struct RestorationContext {
         let snapshot: BFCacheSnapshot
@@ -196,7 +196,7 @@ struct BFCacheSnapshot: Codable {
         let completion: (Bool) -> Void
         var overallSuccess: Bool = false
     }
-    
+
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
         TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
@@ -204,18 +204,18 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
         TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
-        
+
         // 복원 컨텍스트 생성
         let context = RestorationContext(
             snapshot: self,
             webView: webView,
             completion: completion
         )
-        
+
         // Step 1 시작
         executeStep1_RestoreContentHeight(context: context)
     }
-    
+
     private func runRestorationScript(_ script: String, on webView: WKWebView?, completion: @escaping (Any?, Error?) -> Void) {
         guard let webView = webView else {
             let error = NSError(domain: "BFCacheSwipeTransition", code: -1, userInfo: [NSLocalizedDescriptionKey: "WebView unavailable"])
@@ -244,23 +244,23 @@ struct BFCacheSnapshot: Codable {
         })
     }
 
-    private func unwrapJavaScriptResult(_ value: Any?) -> Any? {
-        return unwrapJavaScriptResultValue(value)
-    }
+
+
+
 
     private func doubleValue(from value: Any?) -> Double? {
-        guard let unwrapped = unwrapJavaScriptResult(value) else { return nil }
-        if let number = unwrapped as? NSNumber {
+        if let number = value as? NSNumber {
+
             return number.doubleValue
         }
-        if let double = unwrapped as? Double {
-            return double
-        }
-        return nil
+        return value as? Double
+
+
+
     }
 
     private func describeJSONValue(_ value: Any?) -> String {
-        guard let value = unwrapJavaScriptResult(value) else { return "nil" }
+        guard let value = value else { return "nil" }
         if let dict = value as? [AnyHashable: Any] {
             let keys = dict.keys.compactMap { $0 as? String }
             return "dict(keys: \(keys))"
@@ -272,73 +272,85 @@ struct BFCacheSnapshot: Codable {
     }
 
     private func doubleDictionary(from value: Any?) -> [String: Double]? {
-        guard let unwrapped = unwrapJavaScriptResult(value) else { return nil }
-        let anyHashableDict: [AnyHashable: Any]
-        if let dict = unwrapped as? [AnyHashable: Any] {
-            anyHashableDict = dict
-        } else if let dict = unwrapped as? NSDictionary {
-            anyHashableDict = dict as? [AnyHashable: Any] ?? [:]
-        } else {
-            return nil
-        }
-        var result: [String: Double] = [:]
-        for (key, element) in anyHashableDict {
-            guard let keyString = key as? String else { continue }
-            guard let normalized = unwrapJavaScriptResult(element) else { continue }
-            if let number = normalized as? NSNumber {
-                result[keyString] = number.doubleValue
-            } else if let double = normalized as? Double {
-                result[keyString] = double
+        func convert(from dictionary: [AnyHashable: Any]) -> [String: Double] {
+            var result: [String: Double] = [:]
+            for (key, element) in dictionary {
+                guard let keyString = key as? String else { continue }
+                if let number = element as? NSNumber {
+                    result[keyString] = number.doubleValue
+                } else if let double = element as? Double {
+                    result[keyString] = double
+                }
             }
+            return result
         }
-        return result.isEmpty ? nil : result
+
+        if let dictionary = value as? [String: Any] {
+            let converted = convert(from: dictionary)
+            return converted.isEmpty ? nil : converted
+        }
+        if let dictionary = value as? [AnyHashable: Any] {
+            let converted = convert(from: dictionary)
+            return converted.isEmpty ? nil : converted
+        }
+        if let dictionary = value as? NSDictionary {
+            let converted = convert(from: dictionary as! [AnyHashable: Any])
+            return converted.isEmpty ? nil : converted
+
+
+
+
+
+
+        }
+        return nil
     }
     private func dictionaryFromResult(_ result: Any?, stepLabel: String) -> [String: Any]? {
-        guard let normalized = unwrapJavaScriptResult(result) else { return nil }
-        if let dict = normalized as? [String: Any] {
+        if let dict = result as? [String: Any] {
+
             return dict
         }
-        if let dict = normalized as? NSDictionary, let swiftDict = dict as? [String: Any] {
-            return swiftDict
-        }
-        if let anyHashableDict = normalized as? [AnyHashable: Any] {
-            var swiftDict: [String: Any] = [:]
-            for (key, value) in anyHashableDict {
-                guard let keyString = key as? String else { continue }
-                guard let sanitizedValue = unwrapJavaScriptResult(value) else { continue }
-                swiftDict[keyString] = sanitizedValue
-            }
-            if !swiftDict.isEmpty {
-                return swiftDict
-            }
-        }
-        if let jsonString = normalized as? String {
-            guard let data = jsonString.data(using: .utf8) else {
+        if let jsonString = result as? String {
+            if let data = jsonString.data(using: .utf8) {
+                do {
+                    if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        return dict
+                    } else {
+                        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
+                    }
+                } catch {
+                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
+                }
+            } else {
+
+
+
+
                 TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON string encoding failed")
-                return nil
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             }
-            do {
-                if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    return dict
-                } else {
-                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
-                }
-            } catch {
-                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
-            }
-            return nil
-        }
-        if let data = normalized as? Data {
-            do {
-                if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    return dict
-                } else {
-                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure (data)")
-                }
-            } catch {
-                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed (data): \(error.localizedDescription)")
-            }
-            return nil
+
         }
         return nil
     }
@@ -357,7 +369,7 @@ struct BFCacheSnapshot: Codable {
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
-        
+
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
             // 렌더링 대기 후 다음 단계
@@ -366,18 +378,18 @@ struct BFCacheSnapshot: Codable {
             }
             return
         }
-        
+
         let js = generateStep1_ContentRestoreScript()
-        
+
         runRestorationScript(js, on: context.webView) { result, error in
             var step1Success = false
-            let normalizedResult = self.unwrapJavaScriptResult(result)
-            
+
+
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 1]") {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 1]") {
                 step1Success = (resultDict["success"] as? Bool) ?? false
-                
+
                 if let currentHeight = resultDict["currentHeight"] as? Double {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                 }
@@ -402,28 +414,28 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
+            } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = normalizedResult {
+            } else if let rawValue = result {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] result nil")
             }
-            
+
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
             TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
-            
+
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
                 self.executeStep2_PercentScroll(context: context)
             }
         }
     }
-    
+
     // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
-        
+
         guard restorationConfig.enablePercentRestore else {
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
@@ -431,24 +443,24 @@ struct BFCacheSnapshot: Codable {
             }
             return
         }
-        
+
         let js = generateStep2_PercentScrollScript()
-        
+
         runRestorationScript(js, on: context.webView) { result, error in
             var step2Success = false
             var updatedContext = context
-            let normalizedResult = self.unwrapJavaScriptResult(result)
-            
+
+
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 2]") {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 2]") {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw targetPercent: \(describeJSONValue(resultDict["targetPercent"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw calculatedPosition: \(describeJSONValue(resultDict["calculatedPosition"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw actualPosition: \(describeJSONValue(resultDict["actualPosition"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw difference: \(describeJSONValue(resultDict["difference"]))")
-                
+
                 let targetPercentDict = doubleDictionary(from: resultDict["targetPercent"])
                 if let targetPercent = targetPercentDict {
                     TabPersistenceManager.debugMessages.append("?? [Step 2]   ǥ      : X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
@@ -478,34 +490,34 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-                
+
                 // 상대좌표 복원 성공 시 전체 성공으로 간주
                 if step2Success {
                     updatedContext.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                 }
-            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
+            } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = normalizedResult {
+            } else if let rawValue = result {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] result nil")
             }
-            
+
             TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
             TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
-            
+
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
                 self.executeStep3_AnchorRestore(context: updatedContext)
             }
         }
     }
-    
+
     // MARK: - Step 3: 무한스크롤 전용 앵커 복원
     private func executeStep3_AnchorRestore(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
-        
+
         guard restorationConfig.enableAnchorRestore else {
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
             DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
@@ -513,7 +525,7 @@ struct BFCacheSnapshot: Codable {
             }
             return
         }
-        
+
         // 무한스크롤 앵커 데이터 확인
         var infiniteScrollAnchorDataJSON = "null"
         if let jsState = self.jsState,
@@ -521,23 +533,23 @@ struct BFCacheSnapshot: Codable {
            let dataJSON = convertToJSONString(infiniteScrollAnchorData) {
             infiniteScrollAnchorDataJSON = dataJSON
         }
-        
+
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
-        
+
         runRestorationScript(js, on: context.webView) { result, error in
             var step3Success = false
-            let normalizedResult = self.unwrapJavaScriptResult(result)
-            
+
+
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 3]") {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 3]") {
                 step3Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw matchedAnchor: \(describeJSONValue(resultDict["matchedAnchor"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw restoredPosition: \(describeJSONValue(resultDict["restoredPosition"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw targetDifference: \(describeJSONValue(resultDict["targetDifference"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw logs: \(describeJSONValue(resultDict["logs"]))")
-                
+
                 if let anchorCount = resultDict["anchorCount"] as? Int {
                     TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
                 }
@@ -569,50 +581,50 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
+            } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = normalizedResult {
+            } else if let rawValue = result {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] result nil")
             }
-            
+
             TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
             TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
-            
+
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
                 self.executeStep4_FinalVerification(context: context)
             }
         }
     }
-    
+
     // MARK: - Step 4: 최종 검증 및 미세 보정
     private func executeStep4_FinalVerification(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
-        
+
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
             context.completion(context.overallSuccess)
             return
         }
-        
+
         let js = generateStep4_FinalVerificationScript()
-        
+
         runRestorationScript(js, on: context.webView) { result, error in
             var step4Success = false
-            let normalizedResult = self.unwrapJavaScriptResult(result)
-            
+
+
             if let error = error {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 4]") {
+            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 4]") {
                 step4Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalPosition: \(describeJSONValue(resultDict["finalPosition"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw targetPosition: \(describeJSONValue(resultDict["targetPosition"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalDifference: \(describeJSONValue(resultDict["finalDifference"]))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw logs: \(describeJSONValue(resultDict["logs"]))")
-                
+
                 let finalPositionDict = doubleDictionary(from: resultDict["finalPosition"])
                 if let finalPosition = finalPositionDict {
                     TabPersistenceManager.debugMessages.append("?? [Step 4] \\ucd5c\\uc885 \\uc704\\uce58: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
@@ -642,17 +654,17 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
+            } else if let rawDict = result as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = normalizedResult {
+            } else if let rawValue = result {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] result nil")
             }
-            
+
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
             TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
-            
+
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
                 let finalSuccess = context.overallSuccess || step4Success
@@ -661,9 +673,9 @@ struct BFCacheSnapshot: Codable {
             }
         }
     }
-    
+
     // MARK: - 🎯 단일 스크롤러 JavaScript 생성 메서드들
-    
+
     // 🎯 **공통 유틸리티 스크립트 생성**
     private func generateCommonUtilityScript() -> String {
         return """
@@ -934,7 +946,7 @@ struct BFCacheSnapshot: Codable {
     }
     private func generateStep1_ContentRestoreScript() -> String {
         let targetHeight = restorationConfig.savedContentHeight
-        
+
         return """
         (async function() {
             try {
@@ -1064,7 +1076,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = scrollPositionPercent.x
         let targetPercentY = scrollPositionPercent.y
-        
+
         return """
         (async function() {
             try {
@@ -1138,7 +1150,7 @@ struct BFCacheSnapshot: Codable {
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
-        
+
         return """
         (async function() {
             try {
@@ -1407,11 +1419,11 @@ struct BFCacheSnapshot: Codable {
         })()
         """
     }
-    
+
     private func generateStep4_FinalVerificationScript() -> String {
         let targetX = scrollPosition.x
         let targetY = scrollPosition.y
-        
+
         return """
         (async function() {
             try {
@@ -1520,9 +1532,9 @@ struct BFCacheSnapshot: Codable {
 
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
-    
+
     // MARK: - 🔧 **핵심 개선: 원자적 캡처 작업 (🚀 무한스크롤 전용 앵커 캡처)**
-    
+
     private struct CaptureTask {
         let pageRecord: PageRecord
         let tabID: UUID?
@@ -1530,42 +1542,42 @@ extension BFCacheTransitionSystem {
         weak var webView: WKWebView?
         let requestedAt: Date = Date()
     }
-    
+
     func captureSnapshot(pageRecord: PageRecord, webView: WKWebView?, type: CaptureType = .immediate, tabID: UUID? = nil) {
         guard let webView = webView else {
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패: 웹뷰 없음 - \(pageRecord.title)")
             return
         }
-        
+
         let task = CaptureTask(pageRecord: pageRecord, tabID: tabID, type: type, webView: webView)
-        
+
         // 🌐 캡처 대상 사이트 로그
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 캡처 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
-        
+
         // 🔧 **직렬화 큐로 모든 캡처 작업 순서 보장**
         serialQueue.async { [weak self] in
             self?.performAtomicCapture(task)
         }
     }
-    
+
     private func performAtomicCapture(_ task: CaptureTask) {
         let pageID = task.pageRecord.id
-        
+
         guard let webView = task.webView else {
             TabPersistenceManager.debugMessages.append("❌ 웹뷰 해제됨 - 캡처 취소: \(task.pageRecord.title)")
             return
         }
-        
+
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
-        
+
         // 메인 스레드에서 웹뷰 상태 확인
-        let captureData =         DispatchQueue.main.sync { () -> CaptureData? in
+        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
                 TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
                 return nil
             }
-            
+
             // 🎯 **수정: 단일 스크롤러 기준으로 캡처**
             return CaptureData(
                 scrollPosition: webView.scrollView.contentOffset,
@@ -1579,11 +1591,11 @@ extension BFCacheTransitionSystem {
                 isLoading: webView.isLoading
             )
         }
-        
+
         guard let data = captureData else {
             return
         }
-        
+
         // 🔧 **개선된 캡처 로직 - 실패 시 재시도 (기존 타이밍 유지)**
         let captureResult = performRobustCapture(
             pageRecord: task.pageRecord,
@@ -1591,14 +1603,14 @@ extension BFCacheTransitionSystem {
             captureData: data,
             retryCount: task.type == .immediate ? 2 : 0  // immediate는 재시도
         )
-        
+
         // 🔥 **캡처된 jsState 상세 로깅**
         if let jsState = captureResult.snapshot.jsState {
             TabPersistenceManager.debugMessages.append("🔥 캡처된 jsState 키: \(Array(jsState.keys))")
-            
+
             if let infiniteScrollAnchors = jsState["infiniteScrollAnchors"] as? [String: Any] {
                 TabPersistenceManager.debugMessages.append("🚀 캡처된 무한스크롤 앵커 데이터 키: \(Array(infiniteScrollAnchors.keys))")
-                
+
                 if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
                     // 앵커 타입별 카운트
                     let vueComponentCount = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }.count
@@ -1606,17 +1618,17 @@ extension BFCacheTransitionSystem {
                     let virtualIndexCount = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }.count
                     let structuralPathCount = anchors.filter { ($0["anchorType"] as? String) == "structuralPath" }.count
                     let intersectionCount = anchors.filter { ($0["anchorType"] as? String) == "intersectionInfo" }.count
-                    
+
                     TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 타입별: Vue=\(vueComponentCount), Hash=\(contentHashCount), Index=\(virtualIndexCount), Path=\(structuralPathCount), Intersection=\(intersectionCount)")
-                    
+
                     if anchors.count > 0 {
                         let firstAnchor = anchors[0]
                         TabPersistenceManager.debugMessages.append("🚀 첫 번째 앵커 키: \(Array(firstAnchor.keys))")
-                        
+
                         // 📊 **첫 번째 앵커 상세 정보 로깅**
                         if let anchorType = firstAnchor["anchorType"] as? String {
                             TabPersistenceManager.debugMessages.append("📊 첫 앵커 타입: \(anchorType)")
-                            
+
                             switch anchorType {
                             case "vueComponent":
                                 if let vueComp = firstAnchor["vueComponent"] as? [String: Any] {
@@ -1641,7 +1653,7 @@ extension BFCacheTransitionSystem {
                                 break
                             }
                         }
-                        
+
                         if let absolutePos = firstAnchor["absolutePosition"] as? [String: Any] {
                             let top = (absolutePos["top"] as? Double) ?? 0
                             let left = (absolutePos["left"] as? Double) ?? 0
@@ -1654,7 +1666,7 @@ extension BFCacheTransitionSystem {
                 } else {
                     TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 데이터 캡처 실패")
                 }
-                
+
                 if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
                     TabPersistenceManager.debugMessages.append("📊 무한스크롤 앵커 수집 통계: \(stats)")
                 }
@@ -1664,17 +1676,17 @@ extension BFCacheTransitionSystem {
         } else {
             TabPersistenceManager.debugMessages.append("🔥 jsState 캡처 완전 실패 - nil")
         }
-        
+
         // 캡처 완료 후 저장
         if let tabID = task.tabID {
             saveToDisk(snapshot: captureResult, tabID: tabID)
         } else {
             storeInMemory(captureResult.snapshot, for: pageID)
         }
-        
+
         TabPersistenceManager.debugMessages.append("✅ 무한스크롤 앵커 직렬 캡처 완료: \(task.pageRecord.title)")
     }
-    
+
     private struct CaptureData {
         let scrollPosition: CGPoint
         let contentSize: CGSize      // ⚡ 콘텐츠 크기 추가
@@ -1683,13 +1695,13 @@ extension BFCacheTransitionSystem {
         let bounds: CGRect
         let isLoading: Bool
     }
-    
+
     // 🔧 **실패 복구 기능 추가된 캡처 - 기존 재시도 대기시간 유지**
     private func performRobustCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData, retryCount: Int = 0) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
-        
+
         for attempt in 0...retryCount {
             let result = attemptCapture(pageRecord: pageRecord, webView: webView, captureData: captureData)
-            
+
             // 성공하거나 마지막 시도면 결과 반환
             if result.snapshot.captureStatus != .failed || attempt == retryCount {
                 if attempt > 0 {
@@ -1697,52 +1709,61 @@ extension BFCacheTransitionSystem {
                 }
                 return result
             }
-            
+
             // 재시도 전 잠시 대기 - 🔧 기존 80ms 유지
             TabPersistenceManager.debugMessages.append("⏳ 캡처 실패 - 재시도 (\(attempt + 1)/\(retryCount + 1)): \(pageRecord.title)")
             Thread.sleep(forTimeInterval: 0.08) // 🔧 기존 80ms 유지
         }
-        
+
         // 여기까지 오면 모든 시도 실패
         return (BFCacheSnapshot(pageRecord: pageRecord, scrollPosition: captureData.scrollPosition, actualScrollableSize: captureData.actualScrollableSize, timestamp: Date(), captureStatus: .failed, version: 1), nil)
     }
-    
+
     private func attemptCapture(pageRecord: PageRecord, webView: WKWebView, captureData: CaptureData) -> (snapshot: BFCacheSnapshot, image: UIImage?) {
         var visualSnapshot: UIImage? = nil
         var domSnapshot: String? = nil
         var jsState: [String: Any]? = nil
         let semaphore = DispatchSemaphore(value: 0)
-        
+
         TabPersistenceManager.debugMessages.append("📸 스냅샷 캡처 시도: \(pageRecord.title)")
-        
+
         // 1. 비주얼 스냅샷 (메인 스레드) - 🔧 기존 캡처 타임아웃 유지 (3초)
         DispatchQueue.main.sync {
             let config = WKSnapshotConfiguration()
             config.rect = captureData.bounds
             config.afterScreenUpdates = false
-            
+
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("🖼️ 스냅샷 실패, fallback 실행: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
                     // Fallback: layer 렌더링
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
-                    TabPersistenceManager.debugMessages.append("🖼️ 스냅샷 성공")
+                    TabPersistenceManager.debugMessages.append("📸 스냅샷 성공")
                 }
                 semaphore.signal()
             }
-        // 2. DOM 캡처 - 최대 타임아웃 5초
+        }
+        
+        // ⚡ 캡처 타임아웃 유지 (3초)
+        let result = semaphore.wait(timeout: .now() + 3.0)
+        if result == .timedOut {
+            TabPersistenceManager.debugMessages.append("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
+            visualSnapshot = renderWebViewToImage(webView)
+        }
+        
+        // 2. DOM 캡처 - 🔧 기존 캡처 타임아웃 유지 (1초)
         let domSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 시작")
-
+        
         DispatchQueue.main.sync {
             let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
-
-                    // 🔧 상태/포커스 정리
+                    
+                    // 🚫 **눌린 상태/활성 상태 모두 제거**
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
                         var classList = Array.from(el.classList);
                         var classesToRemove = classList.filter(function(c) {
@@ -1752,82 +1773,84 @@ extension BFCacheTransitionSystem {
                             el.classList.remove(classesToRemove[i]);
                         }
                     });
-
-                    // input focus 해제
+                    
+                    // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
                         el.blur();
                     });
-
+                    
                     var html = document.documentElement.outerHTML;
                     return html.length > 500000 ? html.substring(0, 500000) : html;
                 } catch(e) { return null; }
             })()
             """
-
+            
             webView.evaluateJavaScript(domScript) { result, error in
-                let normalizedResult = unwrapJavaScriptResultValue(result)
+
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 실패: \(error.localizedDescription)")
-                } else if let dom = normalizedResult as? String {
+                } else if let dom = result as? String {
                     domSnapshot = dom
                     TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 성공: \(dom.count)문자")
-                } else if let rawValue = normalizedResult {
-                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 예기치 않은 타입: type=\(String(describing: type(of: rawValue))) value=\(String(describing: rawValue))")
-                } else {
-                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 result nil")
+
+
+
+
                 }
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 5.0) // ⏱ DOM 캡처 타임아웃 5초
- // ⏱ DOM 캡처 타임아웃 5초
+        _ = domSemaphore.wait(timeout: .now() + 5.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
+        
         // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
-        
+
         DispatchQueue.main.sync {
             let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
-            
-            webView.evaluateJavaScript(jsScript) { result, error in
-                let normalizedResult = unwrapJavaScriptResultValue(result)
-                if let error = error {
-                    TabPersistenceManager.debugMessages.append("?? JS 상태 캡처 실패: \(error.localizedDescription)")
-                } else {
-                    var dictionaryResult: [String: Any]? = nil
-                    if let data = normalizedResult as? [String: Any] {
-                        dictionaryResult = data
-                    } else if let jsonString = normalizedResult as? String,
-                              let jsonData = jsonString.data(using: .utf8),
-                              let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                        dictionaryResult = parsed
-                        TabPersistenceManager.debugMessages.append("?? JS 상태 JSON 문자열 파싱 성공")
-                    }
-                    if let data = dictionaryResult {
-                        jsState = data
-                        TabPersistenceManager.debugMessages.append("? JS 상태 캡처 성공: \(Array(data.keys))")
 
-                        if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
-                            if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                                let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
-                                let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
-                                let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
-                                TabPersistenceManager.debugMessages.append("?? JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
-                            }
-                            if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
-                                TabPersistenceManager.debugMessages.append("?? 무한스크롤 JS 캡처 통계: \(stats)")
-                            }
+            webView.evaluateJavaScript(jsScript) { result, error in
+
+                if let error = error {
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
+                } else if let data = result as? [String: Any] {
+                    jsState = data
+                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
+                    
+                    // 📊 **상세 캡처 결과 로깅**
+                    if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
+                        if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
+                            let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
+                            let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
+                            let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
+                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
                         }
-                    } else if let rawValue = normalizedResult {
-                        TabPersistenceManager.debugMessages.append("?? JS 상태 예기치 않은 타입: type=\(String(describing: type(of: rawValue))) value=\(String(describing: rawValue))")
-                    } else {
-                        TabPersistenceManager.debugMessages.append("?? JS 상태 result nil")
+                        if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
+                            TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
+
+
+
+
+
+
+
+
+
+
+                        }
+
+
+
+
                     }
+                } else {
+                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
                 }
                 jsSemaphore.signal()
             }
         }
         _ = jsSemaphore.wait(timeout: .now() + 3.0) // 🔧 기존 캡처 타임아웃 유지 (2초)
-        
+
         // 캡처 상태 결정
         let captureStatus: BFCacheSnapshot.CaptureStatus
         if visualSnapshot != nil && domSnapshot != nil && jsState != nil {
@@ -1840,7 +1863,7 @@ extension BFCacheTransitionSystem {
             captureStatus = .failed
             TabPersistenceManager.debugMessages.append("❌ 캡처 실패")
         }
-        
+
         // 버전 증가 (스레드 안전)
         let version: Int = cacheAccessQueue.sync(flags: .barrier) { [weak self] in
             guard let self = self else { return 1 }
@@ -1849,13 +1872,13 @@ extension BFCacheTransitionSystem {
             self._cacheVersion[pageRecord.id] = newVersion
             return newVersion
         }
-        
+
         // 🔧 **수정: 백분율 계산 로직 수정 - OR 조건으로 변경**
         let scrollPercent: CGPoint
         if captureData.actualScrollableSize.height > captureData.viewportSize.height || captureData.actualScrollableSize.width > captureData.viewportSize.width {
             let maxScrollX = max(0, captureData.actualScrollableSize.width - captureData.viewportSize.width)
             let maxScrollY = max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height)
-            
+
             scrollPercent = CGPoint(
                 x: maxScrollX > 0 ? (captureData.scrollPosition.x / maxScrollX * 100.0) : 0,
                 y: maxScrollY > 0 ? (captureData.scrollPosition.y / maxScrollY * 100.0) : 0
@@ -1863,10 +1886,10 @@ extension BFCacheTransitionSystem {
         } else {
             scrollPercent = CGPoint.zero
         }
-        
+
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
-        
+
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
@@ -1879,7 +1902,7 @@ extension BFCacheTransitionSystem {
             step3RenderDelay: 0.3,
             step4RenderDelay: 0.4
         )
-        
+
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -1895,10 +1918,10 @@ extension BFCacheTransitionSystem {
             version: version,
             restorationConfig: restorationConfig
         )
-        
+
         return (snapshot, visualSnapshot)
     }
-    
+
     // 🚀 **핵심 수정: 무한스크롤 전용 앵커 캡처 - 제목/목록 태그 위주 수집**
     private func generateInfiniteScrollAnchorCaptureScript() -> String {
         return """
@@ -2384,16 +2407,16 @@ extension BFCacheTransitionSystem {
         })()
         """
     }
-    
+
     internal func renderWebViewToImage(_ webView: WKWebView) -> UIImage? {
         let renderer = UIGraphicsImageRenderer(bounds: webView.bounds)
         return renderer.image { context in
             webView.layer.render(in: context.cgContext)
         }
     }
-    
+
     // MARK: - 🌐 JavaScript 스크립트
-    
+
     static func makeBFCacheScript() -> WKUserScript {
         let scriptSource = """
         window.addEventListener('pageshow', function(event) {
@@ -2412,6 +2435,3 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
-
-
-
