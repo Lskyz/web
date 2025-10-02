@@ -377,32 +377,32 @@ struct BFCacheSnapshot: Codable {
                     step1Success = (resultDict["success"] as? Bool) ?? false
 
                     if let currentHeight = resultDict["currentHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+                        TabPersistenceManager.log("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                     }
                     if let targetHeight = resultDict["targetHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
+                        TabPersistenceManager.log("📦 [Step 1] 목표 높이: \(String(format: "%.0f", targetHeight))px")
                     }
                     if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+                        TabPersistenceManager.log("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
                     }
                     if let percentage = resultDict["percentage"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
+                        TabPersistenceManager.log("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
                     }
                     if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
+                        TabPersistenceManager.log("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                     }
                     if let logs = resultDict["logs"] as? [String] {
                         for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
+                            TabPersistenceManager.log("   \(log)")
                         }
                     }
                 }
             case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.log("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
+            TabPersistenceManager.log("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
+            TabPersistenceManager.log("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
 
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
@@ -435,35 +435,35 @@ struct BFCacheSnapshot: Codable {
                     step2Success = (resultDict["success"] as? Bool) ?? false
 
                     if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+                        TabPersistenceManager.log("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
                     }
                     if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+                        TabPersistenceManager.log("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
                     }
                     if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+                        TabPersistenceManager.log("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
                     }
                     if let difference = resultDict["difference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+                        TabPersistenceManager.log("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                     }
                     if let logs = resultDict["logs"] as? [String] {
                         for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
+                            TabPersistenceManager.log("   \(log)")
                         }
                     }
 
                     // 상대좌표 복원 성공 시 전체 성공으로 간주
                     if step2Success {
                         updatedContext.overallSuccess = true
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+                        TabPersistenceManager.log("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                     }
                 }
             case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.log("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
+            TabPersistenceManager.log("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
+            TabPersistenceManager.log("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
 
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
@@ -503,37 +503,37 @@ struct BFCacheSnapshot: Codable {
                     step3Success = (resultDict["success"] as? Bool) ?? false
 
                     if let anchorCount = resultDict["anchorCount"] as? Int {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
+                        TabPersistenceManager.log("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
                     }
                     if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
                         if let anchorType = matchedAnchor["anchorType"] as? String {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
+                            TabPersistenceManager.log("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
                         }
                         if let method = matchedAnchor["matchMethod"] as? String {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
+                            TabPersistenceManager.log("🔍 [Step 3] 매칭 방법: \(method)")
                         }
                         if let confidence = matchedAnchor["confidence"] as? Double {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
+                            TabPersistenceManager.log("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
                         }
                     }
                     if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+                        TabPersistenceManager.log("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
                     }
                     if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+                        TabPersistenceManager.log("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
                     }
                     if let logs = resultDict["logs"] as? [String] {
                         for log in logs.prefix(10) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
+                            TabPersistenceManager.log("   \(log)")
                         }
                     }
                 }
             case .failure(let error):
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.log("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
+            TabPersistenceManager.log("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
+            TabPersistenceManager.log("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
 
             // 성공/실패 관계없이 다음 단계 진행
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
@@ -563,32 +563,32 @@ struct BFCacheSnapshot: Codable {
                     step4Success = (resultDict["success"] as? Bool) ?? false
 
                     if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
+                        TabPersistenceManager.log("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
                     }
                     if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+                        TabPersistenceManager.log("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
                     }
                     if let finalDifference = resultDict["finalDifference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
+                        TabPersistenceManager.log("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
                     }
                     if let withinTolerance = resultDict["withinTolerance"] as? Bool {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
+                        TabPersistenceManager.log("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
                     }
                     if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
+                        TabPersistenceManager.log("✅ [Step 4] 미세 보정 적용됨")
                     }
                     if let logs = resultDict["logs"] as? [String] {
                         for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
+                            TabPersistenceManager.log("   \(log)")
                         }
                     }
                 }
             case .failure(let error):
-                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
+                TabPersistenceManager.log("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
+            TabPersistenceManager.log("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
+            TabPersistenceManager.log("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
 
             // 최종 대기 후 완료 콜백
             DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
