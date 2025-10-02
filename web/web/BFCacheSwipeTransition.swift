@@ -1047,9 +1047,8 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
                 let grew = false;
-                const maxBatches = 6;
-                const settleFrames = 6;
-                const batchDelayMs = 180;
+                const settleFrames = 3;  // 🔧 프레임 대기 최소화
+                const batchDelayMs = 100;  // 🔧 딜레이 최소화
 
                 for (const scrollRoot of containers) {
                     if (!scrollRoot || !isElementValid(scrollRoot)) continue;
@@ -1057,14 +1056,28 @@ struct BFCacheSnapshot: Codable {
                     let lastHeight = scrollRoot.scrollHeight;
                     logs.push('[Step 1] 시작: ' + lastHeight.toFixed(0) + 'px');
 
-                    for (let i = 0; i < maxBatches; i++) {
+                    let containerGrew = false;
+                    let batchCount = 0;
+                    const maxAttempts = 999;  // 🔧 안전장치만
+
+                    while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
 
-                        // 🛡️ **과도한 성장 방지: 목표 높이의 120% 도달 시 중단**
                         const currentScrollHeight = scrollRoot.scrollHeight;
-                        if (currentScrollHeight > savedContentHeight * 1.2) {
-                            logs.push('[Step 1] 120% 초과 중단');
+
+                        // 🛡️ **목표 높이 도달 시 중단**
+                        if (currentScrollHeight >= savedContentHeight) {
+                            logs.push('[Step 1] 목표 도달 (배치: ' + batchCount + ')');
                             grew = true;
+                            containerGrew = true;
+                            break;
+                        }
+
+                        // 🛡️ **과도한 성장 방지: 목표의 150% 초과 시 중단**
+                        if (currentScrollHeight >= savedContentHeight * 1.5) {
+                            logs.push('[Step 1] 150% 초과 (배치: ' + batchCount + ')');
+                            grew = true;
+                            containerGrew = true;
                             break;
                         }
 
@@ -1088,23 +1101,26 @@ struct BFCacheSnapshot: Codable {
                         const heightNow = scrollRoot.scrollHeight;
                         const growth = heightNow - lastHeight;
 
-                        if (i === 0 || growth >= 64) {
-                            logs.push('[Step 1] Batch ' + i + ': ' + growth.toFixed(0) + 'px 성장');
+                        if (batchCount === 0 || batchCount % 5 === 0 || growth >= 32) {  // 🔧 5배치마다 로그
+                            logs.push('[Step 1] Batch ' + batchCount + ': ' + growth.toFixed(0) + 'px 성장 (현재: ' + heightNow.toFixed(0) + 'px)');
                         }
 
-                        if (growth >= 64) {
+                        if (growth >= 32) {  // 🔧 성장 계속
                             grew = true;
+                            containerGrew = true;
                             lastHeight = heightNow;
+                            batchCount++;
                         } else {
+                            logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
                             break;
                         }
                     }
 
-                    if (grew) {
-                        logs.push('[Step 1] 무한스크롤 트리거 성공');
-                        break;
+                    if (containerGrew) {
+                        logs.push('[Step 1] 컨테이너 트리거 성공 - 계속');
+                        // break 제거! 다른 컨테이너도 시도
                     } else {
-                        logs.push('[Step 1] 무한스크롤 트리거 실패');
+                        logs.push('[Step 1] 컨테이너 트리거 실패');
                     }
                 }
 
