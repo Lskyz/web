@@ -356,6 +356,7 @@ struct BFCacheSnapshot: Codable {
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
 
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
@@ -367,6 +368,12 @@ struct BFCacheSnapshot: Codable {
         }
 
         let js = generateStep1_ContentRestoreScript()
+        let jsLength = js.count
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
+
+        // JavaScript 코드 일부 출력 (처음 200자)
+        let preview = String(js.prefix(200))
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Preview: \(preview)...")
 
         context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
