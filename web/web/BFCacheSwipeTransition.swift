@@ -369,6 +369,12 @@ struct BFCacheSnapshot: Codable {
             case .success(let value):
                 var resultDict: [String: Any]?
 
+                // 📊 **디버깅: 반환된 값의 타입 확인**
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 반환 타입: \(type(of: value))")
+                if let str = value as? String {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] 문자열 길이: \(str.count)자, 첫 100자: \(String(str.prefix(100)))")
+                }
+
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
                 if let jsonString = value as? String,
                    let jsonData = jsonString.data(using: .utf8) {
