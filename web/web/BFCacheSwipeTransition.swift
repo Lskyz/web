@@ -1747,16 +1747,7 @@ extension BFCacheTransitionSystem {
                 try {
                     if (document.readyState !== 'complete') return null;
                     
-                    // 🚫 **눌린 상태/활성 상태 모두 제거**
-                    document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
-                        var classList = Array.from(el.classList);
-                        var classesToRemove = classList.filter(function(c) {
-                            return c.includes('active') || c.includes('pressed') || c.includes('hover') || c.includes('focus');
-                        });
-                        for (var i = 0; i < classesToRemove.length; i++) {
-                            el.classList.remove(classesToRemove[i]);
-                        }
-                    });
+                    
                     
                     // input focus 제거
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
