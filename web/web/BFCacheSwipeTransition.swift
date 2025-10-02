@@ -386,6 +386,14 @@ struct BFCacheSnapshot: Codable {
                 if let resultDict = resultDict {
                     step1Success = (resultDict["success"] as? Bool) ?? false
 
+                    // 에러 정보가 있으면 먼저 출력
+                    if let errorMsg = resultDict["error"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] ❌ 에러: \(errorMsg)")
+                    }
+                    if let errorStack = resultDict["errorStack"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 스택: \(errorStack)")
+                    }
+
                     if let currentHeight = resultDict["currentHeight"] as? Double {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                     }
@@ -402,7 +410,7 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
                     }
                     if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(5) {
+                        for log in logs {
                             TabPersistenceManager.debugMessages.append("   \(log)")
                         }
                     }
@@ -920,12 +928,16 @@ struct BFCacheSnapshot: Codable {
 
             const logs = [];
             const targetHeight = parseFloat('\(targetHeight)');
-            const root = getROOT();
-            const currentHeight = root ? root.scrollHeight : 0;
+            logs.push('[Step 1] 목표 높이: ' + targetHeight.toFixed(0) + 'px');
 
-            logs.push('[Step 1] 콘텐츠 높이 복원 시작');
-            logs.push('현재 높이: ' + currentHeight.toFixed(0) + 'px');
-            logs.push('목표 높이: ' + targetHeight.toFixed(0) + 'px');
+            const root = getROOT();
+            logs.push('[Step 1] 스크롤 루트 찾기: ' + (root ? 'success' : 'fail'));
+
+            const currentHeight = root ? root.scrollHeight : 0;
+            logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
+
+            const heightDiff = targetHeight - currentHeight;
+            logs.push('[Step 1] 높이 차이: ' + heightDiff.toFixed(0) + 'px (' + (heightDiff > 0 ? '부족' : '충분') + ')');
 
             ensureOverflowAnchorState(true);
 
@@ -968,6 +980,8 @@ struct BFCacheSnapshot: Codable {
             }
 
             const containers = findScrollContainers();
+            logs.push('[Step 1] 스크롤 컨테이너 발견: ' + containers.length + '개');
+
             let grew = false;
             const maxBatches = 6;
             const settleFrames = 6;
@@ -976,18 +990,20 @@ struct BFCacheSnapshot: Codable {
             for (const scrollRoot of containers) {
                 if (!scrollRoot) continue;
                 let lastHeight = scrollRoot.scrollHeight;
+                logs.push('[Step 1] 컨테이너 시작 높이: ' + lastHeight.toFixed(0) + 'px');
+
                 for (let i = 0; i < maxBatches; i++) {
                     const sentinel = findSentinel(scrollRoot);
                     if (sentinel && typeof sentinel.scrollIntoView === 'function') {
                         sentinel.scrollIntoView({ block: 'end' });
                         if (i === 0) {
-                            logs.push('sentinel.scrollIntoView 호출');
+                            logs.push('[Step 1] sentinel.scrollIntoView 호출');
                         }
                         await nextFrame();
                     } else {
                         await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
                         if (i === 0) {
-                            logs.push('바닥 근처까지 실제 스크롤 시도');
+                            logs.push('[Step 1] 바닥 근처까지 실제 스크롤 시도');
                         }
                     }
 
@@ -997,15 +1013,27 @@ struct BFCacheSnapshot: Codable {
                     await delay(batchDelayMs);
 
                     const heightNow = scrollRoot.scrollHeight;
-                    if (heightNow - lastHeight >= 64) {
+                    const growth = heightNow - lastHeight;
+
+                    if (i === 0 || growth >= 64) {
+                        logs.push('[Step 1] Batch ' + i + ': ' + lastHeight.toFixed(0) + 'px → ' + heightNow.toFixed(0) + 'px (성장: ' + growth.toFixed(0) + 'px)');
+                    }
+
+                    if (growth >= 64) {
                         grew = true;
                         lastHeight = heightNow;
                     } else {
+                        logs.push('[Step 1] 성장 중단 (Batch ' + i + ')');
                         break;
                     }
                 }
 
-                if (grew) break;
+                if (grew) {
+                    logs.push('[Step 1] 무한스크롤 트리거 성공');
+                    break;
+                } else {
+                    logs.push('[Step 1] 무한스크롤 트리거 실패');
+                }
             }
 
             await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
@@ -1033,7 +1061,13 @@ struct BFCacheSnapshot: Codable {
             return serializeForJSON({
                 success: false,
                 error: e.message,
-                logs: ['[Step 1] 오류: ' + e.message]
+                errorStack: e.stack ? e.stack.split('\\n').slice(0, 3).join('\\n') : 'no stack',
+                logs: [
+                    '[Step 1] ❌ 치명적 오류 발생',
+                    '[Step 1] 오류 메시지: ' + e.message,
+                    '[Step 1] 오류 타입: ' + e.name,
+                    '[Step 1] 스택 트레이스: ' + (e.stack ? e.stack.substring(0, 200) : 'none')
+                ]
             });
         }
         """
