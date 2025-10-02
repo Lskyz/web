@@ -12,6 +12,20 @@ import UIKit
 import WebKit
 import SwiftUI
 
+fileprivate func unwrapJavaScriptResultValue(_ value: Any?) -> Any? {
+    guard let value else { return nil }
+    if value is NSNull { return nil }
+    let mirror = Mirror(reflecting: value)
+    if mirror.displayStyle == .optional {
+        if let child = mirror.children.first {
+            return unwrapJavaScriptResultValue(child.value)
+        } else {
+            return nil
+        }
+    }
+    return value
+}
+
 // MARK: - 📸 **무한스크롤 전용 앵커 조합 BFCache 페이지 스냅샷**
 struct BFCacheSnapshot: Codable {
     let pageRecord: PageRecord
@@ -230,15 +244,23 @@ struct BFCacheSnapshot: Codable {
         })
     }
 
+    private func unwrapJavaScriptResult(_ value: Any?) -> Any? {
+        return unwrapJavaScriptResultValue(value)
+    }
+
     private func doubleValue(from value: Any?) -> Double? {
-        if let number = value as? NSNumber {
+        guard let unwrapped = unwrapJavaScriptResult(value) else { return nil }
+        if let number = unwrapped as? NSNumber {
             return number.doubleValue
         }
-        return value as? Double
+        if let double = unwrapped as? Double {
+            return double
+        }
+        return nil
     }
 
     private func describeJSONValue(_ value: Any?) -> String {
-        guard let value = value else { return "nil" }
+        guard let value = unwrapJavaScriptResult(value) else { return "nil" }
         if let dict = value as? [AnyHashable: Any] {
             let keys = dict.keys.compactMap { $0 as? String }
             return "dict(keys: \(keys))"
@@ -250,51 +272,73 @@ struct BFCacheSnapshot: Codable {
     }
 
     private func doubleDictionary(from value: Any?) -> [String: Double]? {
-        func convert(from dictionary: [AnyHashable: Any]) -> [String: Double] {
-            var result: [String: Double] = [:]
-            for (key, element) in dictionary {
-                guard let keyString = key as? String else { continue }
-                if let number = element as? NSNumber {
-                    result[keyString] = number.doubleValue
-                } else if let double = element as? Double {
-                    result[keyString] = double
-                }
+        guard let unwrapped = unwrapJavaScriptResult(value) else { return nil }
+        let anyHashableDict: [AnyHashable: Any]
+        if let dict = unwrapped as? [AnyHashable: Any] {
+            anyHashableDict = dict
+        } else if let dict = unwrapped as? NSDictionary {
+            anyHashableDict = dict as? [AnyHashable: Any] ?? [:]
+        } else {
+            return nil
+        }
+        var result: [String: Double] = [:]
+        for (key, element) in anyHashableDict {
+            guard let keyString = key as? String else { continue }
+            guard let normalized = unwrapJavaScriptResult(element) else { continue }
+            if let number = normalized as? NSNumber {
+                result[keyString] = number.doubleValue
+            } else if let double = normalized as? Double {
+                result[keyString] = double
             }
-            return result
         }
-
-        if let dictionary = value as? [String: Any] {
-            let converted = convert(from: dictionary)
-            return converted.isEmpty ? nil : converted
-        }
-        if let dictionary = value as? [AnyHashable: Any] {
-            let converted = convert(from: dictionary)
-            return converted.isEmpty ? nil : converted
-        }
-        if let dictionary = value as? NSDictionary {
-            let converted = convert(from: dictionary as! [AnyHashable: Any])
-            return converted.isEmpty ? nil : converted
-        }
-        return nil
+        return result.isEmpty ? nil : result
     }
     private func dictionaryFromResult(_ result: Any?, stepLabel: String) -> [String: Any]? {
-        if let dict = result as? [String: Any] {
+        guard let normalized = unwrapJavaScriptResult(result) else { return nil }
+        if let dict = normalized as? [String: Any] {
             return dict
         }
-        if let jsonString = result as? String {
-            if let data = jsonString.data(using: .utf8) {
-                do {
-                    if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        return dict
-                    } else {
-                        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
-                    }
-                } catch {
-                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
-                }
-            } else {
-                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON string encoding failed")
+        if let dict = normalized as? NSDictionary, let swiftDict = dict as? [String: Any] {
+            return swiftDict
+        }
+        if let anyHashableDict = normalized as? [AnyHashable: Any] {
+            var swiftDict: [String: Any] = [:]
+            for (key, value) in anyHashableDict {
+                guard let keyString = key as? String else { continue }
+                guard let sanitizedValue = unwrapJavaScriptResult(value) else { continue }
+                swiftDict[keyString] = sanitizedValue
             }
+            if !swiftDict.isEmpty {
+                return swiftDict
+            }
+        }
+        if let jsonString = normalized as? String {
+            guard let data = jsonString.data(using: .utf8) else {
+                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON string encoding failed")
+                return nil
+            }
+            do {
+                if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    return dict
+                } else {
+                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
+                }
+            } catch {
+                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
+            }
+            return nil
+        }
+        if let data = normalized as? Data {
+            do {
+                if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    return dict
+                } else {
+                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure (data)")
+                }
+            } catch {
+                TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed (data): \(error.localizedDescription)")
+            }
+            return nil
         }
         return nil
     }
@@ -327,10 +371,11 @@ struct BFCacheSnapshot: Codable {
         
         runRestorationScript(js, on: context.webView) { result, error in
             var step1Success = false
+            let normalizedResult = self.unwrapJavaScriptResult(result)
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 1]") {
+            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 1]") {
                 step1Success = (resultDict["success"] as? Bool) ?? false
                 
                 if let currentHeight = resultDict["currentHeight"] as? Double {
@@ -357,9 +402,9 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
+            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
+            } else if let rawValue = normalizedResult {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 1] result nil")
@@ -392,10 +437,11 @@ struct BFCacheSnapshot: Codable {
         runRestorationScript(js, on: context.webView) { result, error in
             var step2Success = false
             var updatedContext = context
+            let normalizedResult = self.unwrapJavaScriptResult(result)
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 2]") {
+            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 2]") {
                 step2Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 2] raw targetPercent: \(describeJSONValue(resultDict["targetPercent"]))")
@@ -438,9 +484,9 @@ struct BFCacheSnapshot: Codable {
                     updatedContext.overallSuccess = true
                     TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
+            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
+            } else if let rawValue = normalizedResult {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 2] result nil")
@@ -480,10 +526,11 @@ struct BFCacheSnapshot: Codable {
         
         runRestorationScript(js, on: context.webView) { result, error in
             var step3Success = false
+            let normalizedResult = self.unwrapJavaScriptResult(result)
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 3]") {
+            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 3]") {
                 step3Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 3] raw matchedAnchor: \(describeJSONValue(resultDict["matchedAnchor"]))")
@@ -522,9 +569,9 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
+            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
+            } else if let rawValue = normalizedResult {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 3] result nil")
@@ -554,10 +601,11 @@ struct BFCacheSnapshot: Codable {
         
         runRestorationScript(js, on: context.webView) { result, error in
             var step4Success = false
+            let normalizedResult = self.unwrapJavaScriptResult(result)
             
             if let error = error {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
-            } else if let resultDict = dictionaryFromResult(result, stepLabel: "[Step 4]") {
+            } else if let resultDict = self.dictionaryFromResult(normalizedResult, stepLabel: "[Step 4]") {
                 step4Success = (resultDict["success"] as? Bool) ?? false
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw keys: \(Array(resultDict.keys))")
                 TabPersistenceManager.debugMessages.append("?? [Step 4] raw finalPosition: \(describeJSONValue(resultDict["finalPosition"]))")
@@ -594,9 +642,9 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("   \(log)")
                     }
                 }
-            } else if let rawDict = result as? [AnyHashable: Any] {
+            } else if let rawDict = normalizedResult as? [AnyHashable: Any] {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected keys: \(rawDict.keys.map { String(describing: $0) })")
-            } else if let rawValue = result {
+            } else if let rawValue = normalizedResult {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] unexpected result type: \(String(describing: type(of: rawValue))) value: \(String(describing: rawValue))")
             } else {
                 TabPersistenceManager.debugMessages.append("⚠️ [Step 4] result nil")
@@ -1511,7 +1559,7 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 앵커 직렬 캡처 시작: \(task.pageRecord.title) (\(task.type))")
         
         // 메인 스레드에서 웹뷰 상태 확인
-        let captureData = DispatchQueue.main.sync { () -> CaptureData? in
+        let captureData =         DispatchQueue.main.sync { () -> CaptureData? in
             // 웹뷰가 준비되었는지 확인
             guard webView.window != nil, !webView.bounds.isEmpty else {
                 TabPersistenceManager.debugMessages.append("⚠️ 웹뷰 준비 안됨 - 캡처 스킵: \(task.pageRecord.title)")
@@ -1675,35 +1723,26 @@ extension BFCacheTransitionSystem {
             
             webView.takeSnapshot(with: config) { image, error in
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("📸 스냅샷 실패, fallback 사용: \(error.localizedDescription)")
+                    TabPersistenceManager.debugMessages.append("🖼️ 스냅샷 실패, fallback 실행: \(error.localizedDescription)")
                     // Fallback: layer 렌더링
                     visualSnapshot = self.renderWebViewToImage(webView)
                 } else {
                     visualSnapshot = image
-                    TabPersistenceManager.debugMessages.append("📸 스냅샷 성공")
+                    TabPersistenceManager.debugMessages.append("🖼️ 스냅샷 성공")
                 }
                 semaphore.signal()
             }
-        }
-        
-        // ⚡ 캡처 타임아웃 유지 (3초)
-        let result = semaphore.wait(timeout: .now() + 3.0)
-        if result == .timedOut {
-            TabPersistenceManager.debugMessages.append("⏰ 스냅샷 캡처 타임아웃: \(pageRecord.title)")
-            visualSnapshot = renderWebViewToImage(webView)
-        }
-        
-        // 2. DOM 캡처 - 🔧 기존 캡처 타임아웃 유지 (1초)
+        // 2. DOM 캡처 - 최대 타임아웃 5초
         let domSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 시작")
-        
+
         DispatchQueue.main.sync {
             let domScript = """
             (function() {
                 try {
                     if (document.readyState !== 'complete') return null;
-                    
-                    // 🚫 **눌린 상태/활성 상태 모두 제거**
+
+                    // 🔧 상태/포커스 정리
                     document.querySelectorAll('[class*="active"], [class*="pressed"], [class*="hover"], [class*="focus"]').forEach(function(el) {
                         var classList = Array.from(el.classList);
                         var classesToRemove = classList.filter(function(c) {
@@ -1713,30 +1752,35 @@ extension BFCacheTransitionSystem {
                             el.classList.remove(classesToRemove[i]);
                         }
                     });
-                    
-                    // input focus 제거
+
+                    // input focus 해제
                     document.querySelectorAll('input:focus, textarea:focus, select:focus, button:focus').forEach(function(el) {
                         el.blur();
                     });
-                    
+
                     var html = document.documentElement.outerHTML;
                     return html.length > 500000 ? html.substring(0, 500000) : html;
                 } catch(e) { return null; }
             })()
             """
-            
+
             webView.evaluateJavaScript(domScript) { result, error in
+                let normalizedResult = unwrapJavaScriptResultValue(result)
                 if let error = error {
                     TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 실패: \(error.localizedDescription)")
-                } else if let dom = result as? String {
+                } else if let dom = normalizedResult as? String {
                     domSnapshot = dom
                     TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 성공: \(dom.count)문자")
+                } else if let rawValue = normalizedResult {
+                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 예기치 않은 타입: type=\(String(describing: type(of: rawValue))) value=\(String(describing: rawValue))")
+                } else {
+                    TabPersistenceManager.debugMessages.append("🌐 DOM 캡처 result nil")
                 }
                 domSemaphore.signal()
             }
         }
-        _ = domSemaphore.wait(timeout: .now() + 5.0) // 🔧 기존 캡처 타임아웃 유지 (1초)
-        
+        _ = domSemaphore.wait(timeout: .now() + 5.0) // ⏱ DOM 캡처 타임아웃 5초
+ // ⏱ DOM 캡처 타임아웃 5초
         // 3. ✅ **수정: 무한스크롤 전용 앵커 JS 상태 캡처** 
         let jsSemaphore = DispatchSemaphore(value: 0)
         TabPersistenceManager.debugMessages.append("🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작")
@@ -1745,26 +1789,39 @@ extension BFCacheTransitionSystem {
             let jsScript = generateInfiniteScrollAnchorCaptureScript() // 🚀 **수정된: 무한스크롤 전용 앵커 캡처**
             
             webView.evaluateJavaScript(jsScript) { result, error in
+                let normalizedResult = unwrapJavaScriptResultValue(result)
                 if let error = error {
-                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 오류: \(error.localizedDescription)")
-                } else if let data = result as? [String: Any] {
-                    jsState = data
-                    TabPersistenceManager.debugMessages.append("✅ JS 상태 캡처 성공: \(Array(data.keys))")
-                    
-                    // 📊 **상세 캡처 결과 로깅**
-                    if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
-                        if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-                            let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
-                            let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
-                            let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
-                            TabPersistenceManager.debugMessages.append("🚀 JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
-                        }
-                        if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
-                            TabPersistenceManager.debugMessages.append("📊 무한스크롤 JS 캡처 통계: \(stats)")
-                        }
-                    }
+                    TabPersistenceManager.debugMessages.append("?? JS 상태 캡처 실패: \(error.localizedDescription)")
                 } else {
-                    TabPersistenceManager.debugMessages.append("🔥 JS 상태 캡처 결과 타입 오류: \(type(of: result))")
+                    var dictionaryResult: [String: Any]? = nil
+                    if let data = normalizedResult as? [String: Any] {
+                        dictionaryResult = data
+                    } else if let jsonString = normalizedResult as? String,
+                              let jsonData = jsonString.data(using: .utf8),
+                              let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                        dictionaryResult = parsed
+                        TabPersistenceManager.debugMessages.append("?? JS 상태 JSON 문자열 파싱 성공")
+                    }
+                    if let data = dictionaryResult {
+                        jsState = data
+                        TabPersistenceManager.debugMessages.append("? JS 상태 캡처 성공: \(Array(data.keys))")
+
+                        if let infiniteScrollAnchors = data["infiniteScrollAnchors"] as? [String: Any] {
+                            if let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
+                                let vueComponentAnchors = anchors.filter { ($0["anchorType"] as? String) == "vueComponent" }
+                                let contentHashAnchors = anchors.filter { ($0["anchorType"] as? String) == "contentHash" }
+                                let virtualIndexAnchors = anchors.filter { ($0["anchorType"] as? String) == "virtualIndex" }
+                                TabPersistenceManager.debugMessages.append("?? JS 캡처된 앵커: 총 \(anchors.count)개 (Vue=\(vueComponentAnchors.count), Hash=\(contentHashAnchors.count), Index=\(virtualIndexAnchors.count))")
+                            }
+                            if let stats = infiniteScrollAnchors["stats"] as? [String: Any] {
+                                TabPersistenceManager.debugMessages.append("?? 무한스크롤 JS 캡처 통계: \(stats)")
+                            }
+                        }
+                    } else if let rawValue = normalizedResult {
+                        TabPersistenceManager.debugMessages.append("?? JS 상태 예기치 않은 타입: type=\(String(describing: type(of: rawValue))) value=\(String(describing: rawValue))")
+                    } else {
+                        TabPersistenceManager.debugMessages.append("?? JS 상태 result nil")
+                    }
                 }
                 jsSemaphore.signal()
             }
