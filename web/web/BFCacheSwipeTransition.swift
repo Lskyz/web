@@ -767,7 +767,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function waitForStableLayoutAsync(options = {}) {
-            const { frames = 6, timeout = 1500, threshold = 2 } = options;
+            const { frames = 6, timeout = 1000, threshold = 2 } = options;
             const root = getROOT();
             if (!root) return;
             let stableFrames = 0;
@@ -1084,7 +1084,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 1000;
+                    const maxWait = 800;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1257,7 +1257,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('목표 백분율: X=' + targetPercentX.toFixed(2) + '%, Y=' + targetPercentY.toFixed(2) + '%');
                 logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
-                await waitForStableLayoutAsync({ frames: 6, timeout: 1800 });
+                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
 
                 const root = getROOT();
                 if (!root) {
