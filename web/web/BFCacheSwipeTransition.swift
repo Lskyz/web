@@ -1201,7 +1201,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 3, timeout: 1000 });
+                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
