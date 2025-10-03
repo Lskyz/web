@@ -1059,55 +1059,21 @@ struct BFCacheSnapshot: Codable {
 
                     logs.push('[Step 1-Quick] 목표 위치로 즉시 점프: ' + savedScrollY.toFixed(0) + 'px');
 
-                    // 1. 즉시 점프
-                    try {
-                        scrollRoot.scrollTo({ top: savedScrollY, behavior: 'instant' });
-                    } catch(e) {
-                        scrollRoot.scrollTop = savedScrollY;
-                    }
+                    // 1. 즉시 점프 (스크롤 애니메이션 없이)
+                    scrollRoot.scrollTop = savedScrollY;
 
-                    // 2. 목표 주변 IntersectionObserver 트리거 대기 (500ms)
+                    // 2. 목표 주변 IntersectionObserver 트리거 대기만 (500ms)
                     await delay(500);
 
                     const currentHeight = scrollRoot.scrollHeight;
                     logs.push('[Step 1-Quick] 점프 후 높이: ' + currentHeight.toFixed(0) + 'px');
 
-                    // 3. 위쪽 2회 트리거 (빠른 복원용)
-                    const viewportHeight = window.innerHeight || 0;
-                    for (let i = 0; i < 2; i++) {
-                        const currentY = scrollRoot.scrollTop;
-                        const targetY = Math.max(0, currentY - viewportHeight);
-                        try {
-                            scrollRoot.scrollTo({ top: targetY, behavior: 'instant' });
-                        } catch(e) {
-                            scrollRoot.scrollTop = targetY;
-                        }
-                        await delay(300);
-                        if (scrollRoot.scrollTop === 0) break;
-                    }
-
-                    // 4. 목표로 복귀
-                    try {
-                        scrollRoot.scrollTo({ top: savedScrollY, behavior: 'instant' });
-                    } catch(e) {
-                        scrollRoot.scrollTop = savedScrollY;
-                    }
-
-                    // 5. 아래쪽 2회 트리거 (빠른 복원용)
-                    const beforeHeight = scrollRoot.scrollHeight;
-                    for (let i = 0; i < 2; i++) {
-                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                        await delay(300);
-                        const afterHeight = scrollRoot.scrollHeight;
-                        if (afterHeight === beforeHeight) break;
-                    }
-
                     grew = true;
-                    break; // 첫 컨테이너만 Quick Mode
+                    break; // 즉시 종료
                 }
 
                 const quickModeTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
-                logs.push('[Step 1-Quick] Quick Mode 완료: ' + quickModeTime + '초');
+                logs.push('[Step 1-Quick] Quick Mode 완료 (즉시 점프 + 500ms 대기): ' + quickModeTime + '초');
 
                 // 🔄 **Phase 2: 백그라운드 로딩 (Step 4 완료 후 자동 실행)**
                 // setTimeout으로 백그라운드 처리 예정
