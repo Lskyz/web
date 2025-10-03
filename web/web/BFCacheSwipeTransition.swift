@@ -1054,28 +1054,47 @@ struct BFCacheSnapshot: Codable {
                 let grew = false;
                 const step1StartTime = Date.now();
 
-                // 🚀 **Phase 1: 목표 위치로 즉시 점프 + 주변만 로딩 (Quick Mode)**
+                // 🚀 **Phase 1: 목표 위치 집중 로딩 (최상단 로딩처럼 빠르게)**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
                     const scrollRoot = containers[containerIndex];
                     if (!scrollRoot || !isElementValid(scrollRoot)) continue;
 
-                    logs.push('[Step 1-Quick] 목표 위치로 즉시 점프: ' + savedScrollY.toFixed(0) + 'px');
+                    const viewportHeight = window.innerHeight || 0;
+                    logs.push('[Step 1-Quick] 목표 위치 집중 로딩 시작: ' + savedScrollY.toFixed(0) + 'px');
 
-                    // 1. 즉시 점프 (스크롤 애니메이션 없이)
+                    // 1. 목표 지점으로 즉시 점프
                     scrollRoot.scrollTop = savedScrollY;
+                    await delay(300);
 
-                    // 2. 목표 주변 IntersectionObserver 트리거 대기만 (500ms)
-                    await delay(500);
+                    // 2. 목표 주변 ±2 뷰포트 집중 로딩 (위/아래 빠르게 트리거)
+                    const positions = [
+                        savedScrollY,                      // 목표 지점
+                        savedScrollY - viewportHeight,     // 위 1개
+                        savedScrollY + viewportHeight,     // 아래 1개
+                        savedScrollY - viewportHeight * 2, // 위 2개
+                        savedScrollY + viewportHeight * 2  // 아래 2개
+                    ];
+
+                    for (const pos of positions) {
+                        if (pos >= 0) {
+                            scrollRoot.scrollTop = pos;
+                            await delay(150); // 빠른 트리거
+                        }
+                    }
+
+                    // 3. 목표로 최종 복귀
+                    scrollRoot.scrollTop = savedScrollY;
+                    await delay(200);
 
                     const currentHeight = scrollRoot.scrollHeight;
-                    logs.push('[Step 1-Quick] 점프 후 높이: ' + currentHeight.toFixed(0) + 'px');
+                    logs.push('[Step 1-Quick] 목표 주변 로딩 완료: ' + currentHeight.toFixed(0) + 'px');
 
                     grew = true;
-                    break; // 즉시 종료
+                    break;
                 }
 
                 const quickModeTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
-                logs.push('[Step 1-Quick] Quick Mode 완료 (즉시 점프 + 500ms 대기): ' + quickModeTime + '초');
+                logs.push('[Step 1-Quick] 목표 지점 집중 로딩 완료: ' + quickModeTime + '초');
 
                 // 🔄 **Phase 2: 백그라운드 로딩 (Step 4 완료 후 자동 실행)**
                 // setTimeout으로 백그라운드 처리 예정
