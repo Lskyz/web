@@ -1083,8 +1083,8 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
 
-                    // 🚀 **고정 대기 시간: 300ms (1초 이내 완료 목표)**
-                    const maxWait = 300;
+                    // 🚀 **고정 대기 시간: 1500ms**
+                    const maxWait = 1500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
