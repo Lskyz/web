@@ -659,9 +659,6 @@ struct BFCacheSnapshot: Codable {
             BFCacheTransitionSystem.shared.setRestoring(false)
             TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
 
-            // 🔄 **백그라운드 로딩 시작 (비동기, 사용자는 이미 터치 가능)**
-            self.executeBackgroundPreloading(webView: context.webView)
-
             // 📸 **복원 완료 후 최종 위치 캡처**
             if let webView = context.webView {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -674,34 +671,6 @@ struct BFCacheSnapshot: Codable {
             }
 
             context.completion(finalSuccess)
-        }
-    }
-
-    // MARK: - Background Preloading (백그라운드 프리로딩)
-    private func executeBackgroundPreloading(webView: WKWebView?) {
-        guard let webView = webView else { return }
-
-        TabPersistenceManager.debugMessages.append("🔄 [Background] 백그라운드 프리로딩 시작")
-
-        let js = generateBackgroundPreloadingScript()
-
-        // 비동기 실행 (blocking 안 함)
-        webView.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
-            switch result {
-            case .success(let value):
-                if let jsonString = value as? String,
-                   let jsonData = jsonString.data(using: .utf8),
-                   let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                    if let logs = resultDict["logs"] as? [String] {
-                        TabPersistenceManager.debugMessages.append("🔄 [Background] 프리로딩 완료")
-                        for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-                }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("🔄 [Background] 오류: \(error.localizedDescription)")
-            }
         }
     }
 
@@ -990,7 +959,6 @@ struct BFCacheSnapshot: Codable {
     }
     private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
-        let savedScrollY = self.scrollPosition.y
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
@@ -1006,9 +974,7 @@ struct BFCacheSnapshot: Codable {
 
             const logs = [];
             const savedContentHeight = parseFloat('\(savedHeight)');
-            const savedScrollY = parseFloat('\(savedScrollY)');
-            logs.push('[Step 1-Quick] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
-            logs.push('[Step 1-Quick] 저장 시점 스크롤: ' + savedScrollY.toFixed(0) + 'px');
+            logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
@@ -1046,60 +1012,196 @@ struct BFCacheSnapshot: Codable {
                     });
                 }
 
-                logs.push('동적 사이트 - Quick Mode 시작');
+                logs.push('동적 사이트 - 콘텐츠 로드 시도');
+
+                const loadMoreButtons = document.querySelectorAll(
+                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
+                    'button[class*="more"], .load-more, .show-more'
+                );
+
+                let clicked = 0;
+                loadMoreButtons.forEach(btn => {
+                    if (clicked < 5 && btn && typeof btn.click === 'function') {
+                        btn.click();
+                        clicked += 1;
+                    }
+                });
+
+                if (clicked > 0) {
+                    logs.push('더보기 버튼 ' + clicked + '개 클릭');
+                    await nextFrame();
+                    await delay(160);
+                }
 
                 const containers = findScrollContainers();
-                logs.push('[Step 1-Quick] 컨테이너: ' + containers.length + '개');
+                logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
                 let grew = false;
                 const step1StartTime = Date.now();
 
-                // 🚀 **Phase 1: 목표 위치 집중 로딩 (최상단 로딩처럼 빠르게)**
+                // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
                     const scrollRoot = containers[containerIndex];
-                    if (!scrollRoot || !isElementValid(scrollRoot)) continue;
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
 
-                    const viewportHeight = window.innerHeight || 0;
-                    logs.push('[Step 1-Quick] 목표 위치 집중 로딩 시작: ' + savedScrollY.toFixed(0) + 'px');
+                    if (!scrollRoot) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' null - 스킵');
+                        continue;
+                    }
+                    if (!isElementValid(scrollRoot)) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 무효 - 스킵');
+                        continue;
+                    }
 
-                    // 1. 목표 지점으로 즉시 점프
-                    scrollRoot.scrollTop = savedScrollY;
-                    await delay(300);
+                    let lastHeight = scrollRoot.scrollHeight;
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 시작: ' + lastHeight.toFixed(0) + 'px');
 
-                    // 2. 목표 주변 ±2 뷰포트 집중 로딩 (위/아래 빠르게 트리거)
-                    const positions = [
-                        savedScrollY,                      // 목표 지점
-                        savedScrollY - viewportHeight,     // 위 1개
-                        savedScrollY + viewportHeight,     // 아래 1개
-                        savedScrollY - viewportHeight * 2, // 위 2개
-                        savedScrollY + viewportHeight * 2  // 아래 2개
-                    ];
+                    let containerGrew = false;
+                    let batchCount = 0;
+                    const maxAttempts = 999;
 
-                    for (const pos of positions) {
-                        if (pos >= 0) {
-                            scrollRoot.scrollTop = pos;
-                            await delay(150); // 빠른 트리거
+                    // 🔧 **MutationObserver로 DOM 추가 감지 (최고 성능)**
+                    let domChanged = false;
+                    let mutationObserver = null;
+
+                    if (typeof MutationObserver !== 'undefined') {
+                        try {
+                            mutationObserver = new MutationObserver((mutations) => {
+                                for (let mutation of mutations) {
+                                    if (mutation.addedNodes.length > 0) {
+                                        domChanged = true;
+                                        break;
+                                    }
+                                }
+                            });
+                            mutationObserver.observe(scrollRoot, {
+                                childList: true,
+                                subtree: true
+                            });
+                        } catch(e) {
+                            logs.push('[Step 1] MutationObserver 생성 실패');
                         }
                     }
 
-                    // 3. 목표로 최종 복귀
-                    scrollRoot.scrollTop = savedScrollY;
-                    await delay(200);
+                    // 🚀 **고정 대기 시간: 1500ms**
+                    const maxWait = 1000;
 
-                    const currentHeight = scrollRoot.scrollHeight;
-                    logs.push('[Step 1-Quick] 목표 주변 로딩 완료: ' + currentHeight.toFixed(0) + 'px');
+                    while (batchCount < maxAttempts) {
+                        if (!isElementValid(scrollRoot)) break;
 
-                    grew = true;
-                    break;
+                        const currentScrollHeight = scrollRoot.scrollHeight;
+                        const maxScrollY = currentScrollHeight - viewportHeight;
+
+                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
+                        if (isVirtualList) {
+                            if (maxScrollY >= savedContentHeight) {
+                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
+                        } else {
+                            if (currentScrollHeight >= savedContentHeight) {
+                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
+                        }
+
+                        // 🛡️ **과도한 성장 방지**
+                        if (currentScrollHeight >= savedContentHeight * 1.5) {
+                            logs.push('[Step 1] 150% 초과 (배치: ' + batchCount + ')');
+                            grew = true;
+                            containerGrew = true;
+                            break;
+                        }
+
+                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                        const beforeHeight = scrollRoot.scrollHeight;
+                        const sentinel = findSentinel(scrollRoot);
+
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                            try {
+                                sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                            } catch(e) {
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            }
+                        } else {
+                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                        }
+
+                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
+                        domChanged = false;
+                        const startWait = Date.now();
+                        let heightIncreased = false;
+
+                        while ((Date.now() - startWait) < maxWait) {
+                            await nextFrame();
+
+                            const currentHeight = scrollRoot.scrollHeight;
+                            const growth = currentHeight - beforeHeight;
+
+                            // DOM 추가되고 높이도 증가했으면 즉시 성공
+                            if (domChanged && growth >= 10) {
+                                heightIncreased = true;
+                                const waitTime = Date.now() - startWait;
+
+                                if (batchCount === 0 || batchCount % 5 === 0) {
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
+                                }
+                                lastHeight = currentHeight;
+                                grew = true;
+                                containerGrew = true;
+                                batchCount++;
+                                break;
+                            }
+
+                            // DOM 변화 없어도 높이만 증가하면 즉시 성공 (가상리스트)
+                            if (growth >= 10) {
+                                heightIncreased = true;
+                                const waitTime = Date.now() - startWait;
+
+                                if (batchCount === 0 || batchCount % 5 === 0) {
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 가상리스트)');
+                                }
+                                lastHeight = currentHeight;
+                                grew = true;
+                                containerGrew = true;
+                                batchCount++;
+                                break;
+                            }
+                        }
+
+                        if (!isElementValid(scrollRoot)) break;
+
+                        // 증가 없으면 중단
+                        if (!heightIncreased) {
+                            const finalGrowth = scrollRoot.scrollHeight - beforeHeight;
+                            if (finalGrowth > 0) {
+                                logs.push('[Step 1] 소폭 증가: +' + finalGrowth.toFixed(0) + 'px (계속)');
+                                lastHeight = scrollRoot.scrollHeight;
+                                batchCount++;
+                            } else {
+                                logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
+                                break;
+                            }
+                        }
+                    }
+
+                    // 🧹 **Observer 정리**
+                    try {
+                        if (mutationObserver) mutationObserver.disconnect();
+                    } catch(e) {}
+
+                    if (containerGrew) {
+                        logs.push('[Step 1] 컨테이너 트리거 성공 - 계속');
+                    } else {
+                        logs.push('[Step 1] 컨테이너 트리거 실패');
+                    }
                 }
 
-                const quickModeTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
-                logs.push('[Step 1-Quick] 목표 지점 집중 로딩 완료: ' + quickModeTime + '초');
-
-                // 🔄 **Phase 2: 백그라운드 로딩 (Step 4 완료 후 자동 실행)**
-                // setTimeout으로 백그라운드 처리 예정
-
-                await waitForStableLayoutAsync({ frames: 3, timeout: 500 });
+                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
@@ -1232,7 +1334,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('목표 위치: X=' + targetX.toFixed(1) + 'px, Y=' + targetY.toFixed(1) + 'px');
                 logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
-                await waitForStableLayoutAsync({ frames: 4, timeout: 1600 });
+                await waitForStableLayoutAsync({ frames: 4, timeout: 1000 });
 
                 
                 // 앵커 데이터 확인
@@ -1532,111 +1634,6 @@ struct BFCacheSnapshot: Codable {
                 logs: ['[Step 3] 오류: ' + e.message]
             });
         }
-        """
-    }
-
-    private func generateBackgroundPreloadingScript() -> String {
-        let savedHeight = self.restorationConfig.savedContentHeight
-        let savedScrollY = self.scrollPosition.y
-
-        return """
-        (async function() {
-            try {
-                \(generateCommonUtilityScript())
-
-                const logs = [];
-                const savedContentHeight = parseFloat('\(savedHeight)');
-                const savedScrollY = parseFloat('\(savedScrollY)');
-                const startTime = Date.now();
-
-                logs.push('[Background] 프리로딩 시작 (목표: ' + savedScrollY.toFixed(0) + 'px)');
-
-                const root = getROOT();
-                if (!root) {
-                    return serializeForJSON({ success: false, logs: ['root 없음'] });
-                }
-
-                const containers = findScrollContainers();
-                if (containers.length === 0) {
-                    return serializeForJSON({ success: false, logs: ['컨테이너 없음'] });
-                }
-
-                const scrollRoot = containers[0];
-                const viewportHeight = window.innerHeight || 0;
-                const currentScrollY = scrollRoot.scrollTop;
-
-                // 🔧 **위쪽 프리로드 (목표 → 상단)**
-                let upCount = 0;
-                const upSteps = Math.ceil(currentScrollY / viewportHeight);
-
-                for (let i = 0; i < Math.min(upSteps, 20); i++) {
-                    const targetY = currentScrollY - (viewportHeight * (i + 1));
-                    if (targetY < 0) break;
-
-                    scrollRoot.scrollTop = targetY;
-                    await delay(100); // IntersectionObserver 트리거
-                    upCount++;
-                }
-
-                logs.push('[Background] 위쪽 프리로드: ' + upCount + '회');
-
-                // 목표로 복귀
-                scrollRoot.scrollTop = savedScrollY;
-                await delay(100);
-
-                // 🔧 **아래쪽 프리로드 (목표 → 하단, 무한스크롤 트리거)**
-                let downCount = 0;
-                let lastHeight = scrollRoot.scrollHeight;
-
-                for (let i = 0; i < 50; i++) {
-                    const beforeHeight = scrollRoot.scrollHeight;
-
-                    // 바닥까지 스크롤 (무한스크롤 트리거)
-                    scrollRoot.scrollTop = scrollRoot.scrollHeight;
-                    await delay(300); // 무한스크롤 API 대기
-
-                    const afterHeight = scrollRoot.scrollHeight;
-                    const growth = afterHeight - beforeHeight;
-
-                    if (growth > 10) {
-                        downCount++;
-                        lastHeight = afterHeight;
-
-                        // 목표 높이 도달 시 중단
-                        if (afterHeight >= savedContentHeight) {
-                            logs.push('[Background] 목표 높이 도달');
-                            break;
-                        }
-                    } else {
-                        // 더 이상 성장 없음
-                        break;
-                    }
-                }
-
-                logs.push('[Background] 아래쪽 프리로드: ' + downCount + '회');
-
-                // 🎯 **최종: 목표 위치로 복귀**
-                scrollRoot.scrollTop = savedScrollY;
-
-                const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-                logs.push('[Background] 최종 높이: ' + lastHeight.toFixed(0) + 'px (' + totalTime + '초)');
-
-                return serializeForJSON({
-                    success: true,
-                    upCount: upCount,
-                    downCount: downCount,
-                    finalHeight: lastHeight,
-                    logs: logs
-                });
-
-            } catch(e) {
-                return serializeForJSON({
-                    success: false,
-                    error: e.message,
-                    logs: ['[Background] 오류: ' + e.message]
-                });
-            }
-        })();
         """
     }
 
