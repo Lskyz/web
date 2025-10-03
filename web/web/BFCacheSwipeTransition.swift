@@ -645,19 +645,18 @@ struct BFCacheSnapshot: Codable {
             BFCacheTransitionSystem.shared.setRestoring(false)
             TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
 
-                // 📸 **복원 완료 후 최종 위치 캡처**
-                if let webView = context.webView {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        BFCacheTransitionSystem.shared.captureSnapshot(
-                            pageRecord: self.pageRecord,
-                            webView: webView,
-                            type: .immediate
-                        )
-                    }
+            // 📸 **복원 완료 후 최종 위치 캡처**
+            if let webView = context.webView {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    BFCacheTransitionSystem.shared.captureSnapshot(
+                        pageRecord: self.pageRecord,
+                        webView: webView,
+                        type: .immediate
+                    )
                 }
-
-                context.completion(finalSuccess)
             }
+
+            context.completion(finalSuccess)
         }
     }
 
@@ -1705,6 +1704,16 @@ struct BFCacheSnapshot: Codable {
             });
         }
         """
+    }
+
+    private func convertToJSONString(_ object: Any) -> String? {
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: object, options: [])
+            return String(data: jsonData, encoding: .utf8)
+        } catch {
+            TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
+            return nil
+        }
     }
 }
 
