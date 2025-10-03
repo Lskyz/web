@@ -176,6 +176,8 @@ struct BFCacheSnapshot: Codable {
         // 🔒 **복원 시작 - 캡처 방지 플래그 설정**
         BFCacheTransitionSystem.shared.setRestoring(true)
 
+        let totalStartTime = Date()
+
         TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
@@ -186,7 +188,11 @@ struct BFCacheSnapshot: Codable {
         let context = RestorationContext(
             snapshot: self,
             webView: webView,
-            completion: completion
+            completion: { success in
+                let totalTime = Date().timeIntervalSince(totalStartTime)
+                TabPersistenceManager.debugMessages.append("⏱️ 전체 복원 소요 시간: \(String(format: "%.1f", totalTime))초")
+                completion(success)
+            }
         )
 
         // Step 1 시작
@@ -329,6 +335,7 @@ struct BFCacheSnapshot: Codable {
 
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
     private func executeStep1_RestoreContentHeight(context: RestorationContext) {
+        let step1StartTime = Date()
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
 
@@ -341,11 +348,11 @@ struct BFCacheSnapshot: Codable {
         // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.executeStep1_Delayed(context: context)
+            self.executeStep1_Delayed(context: context, startTime: step1StartTime)
         }
     }
 
-    private func executeStep1_Delayed(context: RestorationContext) {
+    private func executeStep1_Delayed(context: RestorationContext, startTime: Date) {
         let js = generateStep1_ContentRestoreScript()
         let jsLength = js.count
         TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
@@ -432,7 +439,8 @@ struct BFCacheSnapshot: Codable {
                 }
             }
 
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 즉시 Step 2 진행")
+            let step1Time = Date().timeIntervalSince(startTime)
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step1Time))초)")
 
             // 🚀 **비동기 실행: delay 제거**
             self.executeStep2_PercentScroll(context: context)
@@ -441,6 +449,7 @@ struct BFCacheSnapshot: Codable {
 
     // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
     private func executeStep2_PercentScroll(context: RestorationContext) {
+        let step2StartTime = Date()
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
 
         guard restorationConfig.enablePercentRestore else {
@@ -498,7 +507,8 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패") - 즉시 Step 3 진행")
+            let step2Time = Date().timeIntervalSince(step2StartTime)
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step2Time))초)")
 
             // 🚀 **비동기 실행: delay 제거**
             self.executeStep3_AnchorRestore(context: updatedContext)
@@ -507,6 +517,7 @@ struct BFCacheSnapshot: Codable {
 
     // MARK: - Step 3: 무한스크롤 전용 앵커 복원
     private func executeStep3_AnchorRestore(context: RestorationContext) {
+        let step3StartTime = Date()
         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
 
         guard restorationConfig.enableAnchorRestore else {
@@ -573,7 +584,8 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 즉시 Step 4 진행")
+            let step3Time = Date().timeIntervalSince(step3StartTime)
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step3Time))초)")
 
             // 성공/실패 관계없이 다음 단계 진행
             self.executeStep4_FinalVerification(context: context)
@@ -582,6 +594,7 @@ struct BFCacheSnapshot: Codable {
 
     // MARK: - Step 4: 최종 검증 및 미세 보정
     private func executeStep4_FinalVerification(context: RestorationContext) {
+        let step4StartTime = Date()
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
 
         guard restorationConfig.enableFinalVerification else {
@@ -635,7 +648,8 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
+            let step4Time = Date().timeIntervalSince(step4StartTime)
+            TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step4Time))초)")
 
             // 즉시 완료 처리
             let finalSuccess = context.overallSuccess || step4Success
@@ -1023,6 +1037,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
                 let grew = false;
+                const step1StartTime = Date.now();
 
                 // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
@@ -1128,8 +1143,9 @@ struct BFCacheSnapshot: Codable {
                             // DOM 추가되고 높이도 증가했으면 성공
                             if (domChanged && growth >= 10) {
                                 heightIncreased = true;
+                                const waitTime = ((Date.now() - startWait) / 1000).toFixed(2);
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (현재: ' + currentHeight.toFixed(0) + 'px)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + waitTime + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
@@ -1141,8 +1157,9 @@ struct BFCacheSnapshot: Codable {
                             // DOM 변화 없어도 높이만 증가하면 성공 (가상리스트)
                             if (growth >= 10) {
                                 heightIncreased = true;
+                                const waitTime = ((Date.now() - startWait) / 1000).toFixed(2);
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (가상리스트)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + waitTime + 's, 가상리스트)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
@@ -1181,6 +1198,9 @@ struct BFCacheSnapshot: Codable {
                 }
 
                 await waitForStableLayoutAsync({ frames: 6, timeout: 2000 });
+
+                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
+                logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
                 const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
