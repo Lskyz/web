@@ -767,7 +767,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function waitForStableLayoutAsync(options = {}) {
-            const { frames = 6, timeout = 1000, threshold = 2 } = options;
+            const { frames = 3, timeout = 800, threshold = 2 } = options;
             const root = getROOT();
             if (!root) return;
             let stableFrames = 0;
@@ -1058,7 +1058,7 @@ struct BFCacheSnapshot: Codable {
 
                     let containerGrew = false;
                     let batchCount = 0;
-                    const maxAttempts = 999;
+                    const maxAttempts = 100;
 
                     // 🔧 **MutationObserver로 DOM 추가 감지 (최고 성능)**
                     let domChanged = false;
@@ -1084,7 +1084,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 800;
+                    const maxWait = 700;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1110,8 +1110,8 @@ struct BFCacheSnapshot: Codable {
                         }
 
                         // 🛡️ **과도한 성장 방지**
-                        if (currentScrollHeight >= savedContentHeight * 1.5) {
-                            logs.push('[Step 1] 150% 초과 (배치: ' + batchCount + ')');
+                        if (currentScrollHeight >= savedContentHeight * 1.0) {
+                            logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
                             grew = true;
                             containerGrew = true;
                             break;
