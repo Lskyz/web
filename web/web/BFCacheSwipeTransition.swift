@@ -1084,10 +1084,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 700;
-
-                    // 🎯 **목표높이 +20% 까지 트리거**
-                    const targetHeight = savedContentHeight * 1.2;
+                    const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1095,44 +1092,43 @@ struct BFCacheSnapshot: Codable {
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         const maxScrollY = currentScrollHeight - viewportHeight;
 
-                        // 🛡️ **목표 높이 +20% 도달 시 중단**
+                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
                         if (isVirtualList) {
-                            if (maxScrollY >= targetHeight) {
-                                logs.push('[Step 1] 가상리스트 목표+20% 도달 (배치: ' + batchCount + ')');
+                            if (maxScrollY >= savedContentHeight) {
+                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         } else {
-                            if (currentScrollHeight >= targetHeight) {
-                                logs.push('[Step 1] 목표+20% 도달 (배치: ' + batchCount + ')');
+                            if (currentScrollHeight >= savedContentHeight) {
+                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         }
 
-                        // 🔧 **증분 거리 계산 - 큼직큼직하게 스크롤**
+                        // 🛡️ **과도한 성장 방지**
+                        if (currentScrollHeight >= savedContentHeight * 1.0) {
+                            logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
+                            grew = true;
+                            containerGrew = true;
+                            break;
+                        }
+
+                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
                         const beforeHeight = scrollRoot.scrollHeight;
-                        const remainingHeight = targetHeight - currentScrollHeight;
-
-                        // 남은 거리를 3등분하여 스크롤 (최소 3000px, 최대 15000px)
-                        const incrementalDistance = Math.max(3000, Math.min(15000, remainingHeight / 3));
-                        const targetScrollPosition = Math.min(
-                            scrollRoot.scrollHeight,
-                            scrollRoot.scrollTop + incrementalDistance
-                        );
-
                         const sentinel = findSentinel(scrollRoot);
 
                         if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                             try {
                                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                             } catch(e) {
-                                scrollRoot.scrollTo(0, targetScrollPosition);
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                             }
                         } else {
-                            scrollRoot.scrollTo(0, targetScrollPosition);
+                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                         }
 
                         // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
@@ -1205,7 +1201,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
+                await waitForStableLayoutAsync({ frames: 3, timeout: 1000 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
