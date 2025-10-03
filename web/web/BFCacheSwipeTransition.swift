@@ -1708,17 +1708,6 @@ struct BFCacheSnapshot: Codable {
     }
 }
 
-// MARK: - Helper Functions
-private func convertToJSONString(_ object: Any) -> String? {
-    do {
-        let jsonData = try JSONSerialization.data(withJSONObject: object, options: [])
-        return String(data: jsonData, encoding: .utf8)
-    } catch {
-        TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
-        return nil
-    }
-}
-
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
 
