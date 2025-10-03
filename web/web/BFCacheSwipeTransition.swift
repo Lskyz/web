@@ -37,21 +37,13 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
-        let step1RenderDelay: Double        // Step 1 후 렌더링 대기
-        let step2RenderDelay: Double        // Step 2 후 렌더링 대기
-        let step3RenderDelay: Double        // Step 3 후 렌더링 대기
-        let step4RenderDelay: Double        // Step 4 후 렌더링 대기
 
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: 0,
-            step1RenderDelay: 0.1,
-            step2RenderDelay: 0.1,
-            step3RenderDelay: 0.1,
-            step4RenderDelay: 0.1
+            savedContentHeight: 0
         )
     }
 
@@ -158,11 +150,7 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            savedContentHeight: max(actualScrollableSize.height, contentSize.height),
-            step1RenderDelay: restorationConfig.step1RenderDelay,
-            step2RenderDelay: restorationConfig.step2RenderDelay,
-            step3RenderDelay: restorationConfig.step3RenderDelay,
-            step4RenderDelay: restorationConfig.step4RenderDelay
+            savedContentHeight: max(actualScrollableSize.height, contentSize.height)
         )
     }
 
@@ -193,7 +181,6 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("⏰ 렌더링 대기시간: Step1=\(restorationConfig.step1RenderDelay)s, Step2=\(restorationConfig.step2RenderDelay)s, Step3=\(restorationConfig.step3RenderDelay)s, Step4=\(restorationConfig.step4RenderDelay)s")
 
         // 복원 컨텍스트 생성
         let context = RestorationContext(
@@ -346,11 +333,8 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
 
         guard restorationConfig.enableContentRestore else {
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 스킵")
-            // 렌더링 대기 후 다음 단계
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
-            }
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 즉시 Step 2 진행")
+            self.executeStep2_PercentScroll(context: context)
             return
         }
 
@@ -448,13 +432,10 @@ struct BFCacheSnapshot: Codable {
                 }
             }
 
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 1] 렌더링 대기: \(self.restorationConfig.step1RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") - 즉시 Step 2 진행")
 
-            // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step1RenderDelay) {
-                self.executeStep2_PercentScroll(context: context)
-            }
+            // 🚀 **비동기 실행: delay 제거**
+            self.executeStep2_PercentScroll(context: context)
         }
     }
 
@@ -463,10 +444,8 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
 
         guard restorationConfig.enablePercentRestore else {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: context)
-            }
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 즉시 Step 3 진행")
+            self.executeStep3_AnchorRestore(context: context)
             return
         }
 
@@ -519,13 +498,10 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 2] 렌더링 대기: \(self.restorationConfig.step2RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패") - 즉시 Step 3 진행")
 
-            // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step2RenderDelay) {
-                self.executeStep3_AnchorRestore(context: updatedContext)
-            }
+            // 🚀 **비동기 실행: delay 제거**
+            self.executeStep3_AnchorRestore(context: updatedContext)
         }
     }
 
@@ -534,10 +510,8 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
 
         guard restorationConfig.enableAnchorRestore else {
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 스킵")
-            DispatchQueue.main.asyncAfter(deadline: .now() + restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
-            }
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 즉시 Step 4 진행")
+            self.executeStep4_FinalVerification(context: context)
             return
         }
 
@@ -599,13 +573,10 @@ struct BFCacheSnapshot: Codable {
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             }
 
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 실패해도 계속 진행")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 3] 렌더링 대기: \(self.restorationConfig.step3RenderDelay)초")
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") - 즉시 Step 4 진행")
 
             // 성공/실패 관계없이 다음 단계 진행
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step3RenderDelay) {
-                self.executeStep4_FinalVerification(context: context)
-            }
+            self.executeStep4_FinalVerification(context: context)
         }
     }
 
@@ -665,16 +636,14 @@ struct BFCacheSnapshot: Codable {
             }
 
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패")")
-            TabPersistenceManager.debugMessages.append("⏰ [Step 4] 렌더링 대기: \(self.restorationConfig.step4RenderDelay)초")
 
-            // 최종 대기 후 완료 콜백
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.restorationConfig.step4RenderDelay) {
-                let finalSuccess = context.overallSuccess || step4Success
-                TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+            // 즉시 완료 처리
+            let finalSuccess = context.overallSuccess || step4Success
+            TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
 
-                // 🔒 **복원 완료 - 캡처 허용**
-                BFCacheTransitionSystem.shared.setRestoring(false)
-                TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
+            // 🔒 **복원 완료 - 캡처 허용**
+            BFCacheTransitionSystem.shared.setRestoring(false)
+            TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
 
                 // 📸 **복원 완료 후 최종 위치 캡처**
                 if let webView = context.webView {
@@ -998,7 +967,23 @@ struct BFCacheSnapshot: Codable {
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
 
                 const currentHeight = root ? root.scrollHeight : 0;
+                const viewportHeight = window.innerHeight || 0;
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
+                logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
+
+                // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
+                const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
+                if (isVirtualList) {
+                    logs.push('[Step 1] 가상 리스트 감지 - Step 1 스킵');
+                    return serializeForJSON({
+                        success: false,
+                        reason: 'virtual_list',
+                        currentHeight: currentHeight,
+                        viewportHeight: viewportHeight,
+                        savedContentHeight: savedContentHeight,
+                        logs: logs
+                    });
+                }
 
                 const heightDiff = savedContentHeight - currentHeight;
                 logs.push('[Step 1] 높이 차이: ' + heightDiff.toFixed(0) + 'px (' + (heightDiff > 0 ? '부족' : '충분') + ')');
@@ -1047,18 +1032,63 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
                 let grew = false;
-                const settleFrames = 3;  // 🔧 프레임 대기 최소화
-                const batchDelayMs = 100;  // 🔧 딜레이 최소화
 
-                for (const scrollRoot of containers) {
-                    if (!scrollRoot || !isElementValid(scrollRoot)) continue;
+                // 🚀 **Observer 기반 이벤트 드리븐 감지**
+                for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+                    const scrollRoot = containers[containerIndex];
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
+
+                    if (!scrollRoot) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' null - 스킵');
+                        continue;
+                    }
+                    if (!isElementValid(scrollRoot)) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 무효 - 스킵');
+                        continue;
+                    }
 
                     let lastHeight = scrollRoot.scrollHeight;
-                    logs.push('[Step 1] 시작: ' + lastHeight.toFixed(0) + 'px');
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 시작: ' + lastHeight.toFixed(0) + 'px');
 
                     let containerGrew = false;
                     let batchCount = 0;
-                    const maxAttempts = 999;  // 🔧 안전장치만
+                    const maxAttempts = 999;
+
+                    // 🔧 **ResizeObserver로 높이 변화 감지**
+                    let heightChanged = false;
+                    let resizeObserver = null;
+
+                    if (typeof ResizeObserver !== 'undefined') {
+                        try {
+                            resizeObserver = new ResizeObserver(() => {
+                                heightChanged = true;
+                            });
+                            resizeObserver.observe(scrollRoot);
+                        } catch(e) {
+                            logs.push('[Step 1] ResizeObserver 생성 실패');
+                        }
+                    }
+
+                    // 🔧 **IntersectionObserver로 sentinel 가시성 감지**
+                    const sentinels = [];
+                    let intersectionObserver = null;
+
+                    if (typeof IntersectionObserver !== 'undefined') {
+                        try {
+                            intersectionObserver = new IntersectionObserver(
+                                (entries) => {
+                                    entries.forEach(entry => {
+                                        if (entry.isIntersecting) {
+                                            logs.push('[Step 1] Sentinel 가시화 감지');
+                                        }
+                                    });
+                                },
+                                { root: scrollRoot === document.documentElement ? null : scrollRoot, threshold: 0.1 }
+                            );
+                        } catch(e) {
+                            logs.push('[Step 1] IntersectionObserver 생성 실패');
+                        }
+                    }
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1081,31 +1111,45 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
+                        // 🔧 **Sentinel 찾기 및 Observer 등록**
                         const sentinel = findSentinel(scrollRoot);
-                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                            try {
-                                sentinel.scrollIntoView({ block: 'end' });
-                            } catch(e) {}
-                            await nextFrame();
+                        if (sentinel && isElementValid(sentinel)) {
+                            if (intersectionObserver && sentinels.indexOf(sentinel) === -1) {
+                                try {
+                                    intersectionObserver.observe(sentinel);
+                                    sentinels.push(sentinel);
+                                } catch(e) {}
+                            }
+
+                            if (typeof sentinel.scrollIntoView === 'function') {
+                                try {
+                                    sentinel.scrollIntoView({ block: 'end' });
+                                } catch(e) {}
+                                await nextFrame();
+                            }
                         } else {
                             await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
                         }
 
-                        for (let f = 0; f < settleFrames; f++) {
+                        // 🚀 **이벤트 드리븐 대기: ResizeObserver 감지 시까지 대기**
+                        heightChanged = false;
+                        const startWait = Date.now();
+                        const maxWait = 300;
+
+                        while (!heightChanged && (Date.now() - startWait) < maxWait) {
                             await nextFrame();
                         }
-                        await delay(batchDelayMs);
 
                         if (!isElementValid(scrollRoot)) break;
 
                         const heightNow = scrollRoot.scrollHeight;
                         const growth = heightNow - lastHeight;
 
-                        if (batchCount === 0 || batchCount % 5 === 0 || growth >= 32) {  // 🔧 5배치마다 로그
+                        if (batchCount === 0 || batchCount % 5 === 0 || growth >= 32) {
                             logs.push('[Step 1] Batch ' + batchCount + ': ' + growth.toFixed(0) + 'px 성장 (현재: ' + heightNow.toFixed(0) + 'px)');
                         }
 
-                        if (growth >= 32) {  // 🔧 성장 계속
+                        if (growth >= 32) {
                             grew = true;
                             containerGrew = true;
                             lastHeight = heightNow;
@@ -1116,9 +1160,14 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
 
+                    // 🧹 **Observer 정리**
+                    try {
+                        if (resizeObserver) resizeObserver.disconnect();
+                        if (intersectionObserver) intersectionObserver.disconnect();
+                    } catch(e) {}
+
                     if (containerGrew) {
                         logs.push('[Step 1] 컨테이너 트리거 성공 - 계속');
-                        // break 제거! 다른 컨테이너도 시도
                     } else {
                         logs.push('[Step 1] 컨테이너 트리거 실패');
                     }
@@ -2031,11 +2080,7 @@ extension BFCacheTransitionSystem {
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
-            step1RenderDelay: 0.1,
-            step2RenderDelay: 0.1,
-            step3RenderDelay: 0.1,
-            step4RenderDelay: 0.1
+            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
         )
 
         let snapshot = BFCacheSnapshot(
