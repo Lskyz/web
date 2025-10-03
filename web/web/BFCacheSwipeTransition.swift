@@ -1083,6 +1083,10 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
 
+                    // 🚀 **적응형 대기 시간**
+                    let adaptiveMaxWait = 800; // 초기 800ms (1500ms에서 단축)
+                    let consecutiveFast = 0;
+
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
 
@@ -1128,13 +1132,12 @@ struct BFCacheSnapshot: Codable {
                             scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                         }
 
-                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기**
+                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (적응형)**
                         domChanged = false;
                         const startWait = Date.now();
-                        const maxWait = 1500; // NAVER 카페 API 응답 대기
                         let heightIncreased = false;
 
-                        while ((Date.now() - startWait) < maxWait) {
+                        while ((Date.now() - startWait) < adaptiveMaxWait) {
                             await nextFrame();
 
                             const currentHeight = scrollRoot.scrollHeight;
@@ -1143,9 +1146,22 @@ struct BFCacheSnapshot: Codable {
                             // DOM 추가되고 높이도 증가했으면 성공
                             if (domChanged && growth >= 10) {
                                 heightIncreased = true;
-                                const waitTime = ((Date.now() - startWait) / 1000).toFixed(2);
+                                const waitTime = Date.now() - startWait;
+
+                                // 🚀 적응형 최적화: 빠른 응답 감지
+                                if (waitTime < 200) {
+                                    consecutiveFast++;
+                                    if (consecutiveFast >= 2) {
+                                        adaptiveMaxWait = 400; // 초고속 모드
+                                    }
+                                } else if (waitTime < 400) {
+                                    adaptiveMaxWait = 600; // 고속 모드
+                                } else {
+                                    consecutiveFast = 0;
+                                }
+
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + waitTime + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
@@ -1157,9 +1173,16 @@ struct BFCacheSnapshot: Codable {
                             // DOM 변화 없어도 높이만 증가하면 성공 (가상리스트)
                             if (growth >= 10) {
                                 heightIncreased = true;
-                                const waitTime = ((Date.now() - startWait) / 1000).toFixed(2);
+                                const waitTime = Date.now() - startWait;
+
+                                // 가상리스트는 항상 빠름
+                                consecutiveFast++;
+                                if (consecutiveFast >= 2) {
+                                    adaptiveMaxWait = 300; // 가상리스트 초고속
+                                }
+
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + waitTime + 's, 가상리스트)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 가상리스트)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
