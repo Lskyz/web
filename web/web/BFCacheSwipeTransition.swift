@@ -659,8 +659,8 @@ struct BFCacheSnapshot: Codable {
             BFCacheTransitionSystem.shared.setRestoring(false)
             TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
 
-            // 🔄 **백그라운드 로딩 시작 (사용자는 이미 터치 가능)**
-            self.executeBackgroundLoading(context: context)
+            // 🔄 **백그라운드 로딩 시작 (비동기, 사용자는 이미 터치 가능)**
+            self.executeBackgroundPreloading(webView: context.webView)
 
             // 📸 **복원 완료 후 최종 위치 캡처**
             if let webView = context.webView {
@@ -677,22 +677,24 @@ struct BFCacheSnapshot: Codable {
         }
     }
 
-    // MARK: - Background Loading (백그라운드 로딩)
-    private func executeBackgroundLoading(context: RestorationContext) {
-        TabPersistenceManager.debugMessages.append("🔄 [Background] 백그라운드 로딩 시작")
+    // MARK: - Background Preloading (백그라운드 프리로딩)
+    private func executeBackgroundPreloading(webView: WKWebView?) {
+        guard let webView = webView else { return }
 
-        let js = generateBackgroundLoadingScript()
+        TabPersistenceManager.debugMessages.append("🔄 [Background] 백그라운드 프리로딩 시작")
 
-        // 백그라운드 실행 (결과는 로그로만 확인)
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        let js = generateBackgroundPreloadingScript()
+
+        // 비동기 실행 (blocking 안 함)
+        webView.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             switch result {
             case .success(let value):
                 if let jsonString = value as? String,
                    let jsonData = jsonString.data(using: .utf8),
                    let resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
                     if let logs = resultDict["logs"] as? [String] {
-                        TabPersistenceManager.debugMessages.append("🔄 [Background] 완료")
-                        for log in logs.prefix(3) {
+                        TabPersistenceManager.debugMessages.append("🔄 [Background] 프리로딩 완료")
+                        for log in logs.prefix(5) {
                             TabPersistenceManager.debugMessages.append("   \(log)")
                         }
                     }
@@ -1514,7 +1516,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
 
-    private func generateBackgroundLoadingScript() -> String {
+    private func generateBackgroundPreloadingScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
         let savedScrollY = self.scrollPosition.y
 
@@ -1526,7 +1528,9 @@ struct BFCacheSnapshot: Codable {
                 const logs = [];
                 const savedContentHeight = parseFloat('\(savedHeight)');
                 const savedScrollY = parseFloat('\(savedScrollY)');
-                logs.push('[Background] 전체 콘텐츠 로딩 시작');
+                const startTime = Date.now();
+
+                logs.push('[Background] 프리로딩 시작 (목표: ' + savedScrollY.toFixed(0) + 'px)');
 
                 const root = getROOT();
                 if (!root) {
@@ -1540,56 +1544,69 @@ struct BFCacheSnapshot: Codable {
 
                 const scrollRoot = containers[0];
                 const viewportHeight = window.innerHeight || 0;
-                let totalBatches = 0;
+                const currentScrollY = scrollRoot.scrollTop;
 
-                // 🔄 **위쪽 로딩: 목표 → 상단**
-                scrollRoot.scrollTo({ top: savedScrollY, behavior: 'instant' });
-                await delay(100);
+                // 🔧 **위쪽 프리로드 (목표 → 상단)**
+                let upCount = 0;
+                const upSteps = Math.ceil(currentScrollY / viewportHeight);
 
-                for (let i = 0; i < 20; i++) {
-                    const currentY = scrollRoot.scrollTop;
-                    if (currentY === 0) break;
+                for (let i = 0; i < Math.min(upSteps, 20); i++) {
+                    const targetY = currentScrollY - (viewportHeight * (i + 1));
+                    if (targetY < 0) break;
 
-                    const targetY = Math.max(0, currentY - viewportHeight);
-                    scrollRoot.scrollTo({ top: targetY, behavior: 'instant' });
-                    await delay(200);
-                    totalBatches++;
+                    scrollRoot.scrollTop = targetY;
+                    await delay(100); // IntersectionObserver 트리거
+                    upCount++;
                 }
 
-                logs.push('[Background] 위쪽 로딩 완료: ' + totalBatches + '회');
+                logs.push('[Background] 위쪽 프리로드: ' + upCount + '회');
 
-                // 🔄 **아래쪽 로딩: 목표 → 하단**
-                scrollRoot.scrollTo({ top: savedScrollY, behavior: 'instant' });
+                // 목표로 복귀
+                scrollRoot.scrollTop = savedScrollY;
                 await delay(100);
 
-                let downBatches = 0;
+                // 🔧 **아래쪽 프리로드 (목표 → 하단, 무한스크롤 트리거)**
+                let downCount = 0;
+                let lastHeight = scrollRoot.scrollHeight;
+
                 for (let i = 0; i < 50; i++) {
                     const beforeHeight = scrollRoot.scrollHeight;
-                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                    await delay(200);
+
+                    // 바닥까지 스크롤 (무한스크롤 트리거)
+                    scrollRoot.scrollTop = scrollRoot.scrollHeight;
+                    await delay(300); // 무한스크롤 API 대기
 
                     const afterHeight = scrollRoot.scrollHeight;
-                    if (afterHeight === beforeHeight) {
-                        break; // 더 이상 로딩 안 됨
-                    }
-                    downBatches++;
+                    const growth = afterHeight - beforeHeight;
 
-                    // 목표 높이 도달 시 중단
-                    if (afterHeight >= savedContentHeight) {
+                    if (growth > 10) {
+                        downCount++;
+                        lastHeight = afterHeight;
+
+                        // 목표 높이 도달 시 중단
+                        if (afterHeight >= savedContentHeight) {
+                            logs.push('[Background] 목표 높이 도달');
+                            break;
+                        }
+                    } else {
+                        // 더 이상 성장 없음
                         break;
                     }
                 }
 
-                logs.push('[Background] 아래쪽 로딩 완료: ' + downBatches + '회');
+                logs.push('[Background] 아래쪽 프리로드: ' + downCount + '회');
 
                 // 🎯 **최종: 목표 위치로 복귀**
-                scrollRoot.scrollTo({ top: savedScrollY, behavior: 'instant' });
-                logs.push('[Background] 최종 높이: ' + scrollRoot.scrollHeight.toFixed(0) + 'px');
+                scrollRoot.scrollTop = savedScrollY;
+
+                const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                logs.push('[Background] 최종 높이: ' + lastHeight.toFixed(0) + 'px (' + totalTime + '초)');
 
                 return serializeForJSON({
                     success: true,
-                    totalBatches: totalBatches + downBatches,
-                    finalHeight: scrollRoot.scrollHeight,
+                    upCount: upCount,
+                    downCount: downCount,
+                    finalHeight: lastHeight,
                     logs: logs
                 });
 
