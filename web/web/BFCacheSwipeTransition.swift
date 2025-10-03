@@ -945,7 +945,7 @@ struct BFCacheSnapshot: Codable {
         """
     }
     private func generateStep1_ContentRestoreScript() -> String {
-        let savedHeight = restorationConfig.savedContentHeight
+        let savedHeight = self.restorationConfig.savedContentHeight
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
@@ -1209,9 +1209,9 @@ struct BFCacheSnapshot: Codable {
         """
     }
     private func generateStep2_PercentScrollScript() -> String {
-        let targetPercentX = scrollPositionPercent.x
-        let targetPercentY = scrollPositionPercent.y
-        let savedHeight = restorationConfig.savedContentHeight
+        let targetPercentX = self.scrollPositionPercent.x
+        let targetPercentY = self.scrollPositionPercent.y
+        let savedHeight = self.restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1285,9 +1285,9 @@ struct BFCacheSnapshot: Codable {
         """
     }
     private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        let savedHeight = restorationConfig.savedContentHeight
+        let targetX = self.scrollPosition.x
+        let targetY = self.scrollPosition.y
+        let savedHeight = self.restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1607,9 +1607,9 @@ struct BFCacheSnapshot: Codable {
     }
 
     private func generateStep4_FinalVerificationScript() -> String {
-        let targetX = scrollPosition.x
-        let targetY = scrollPosition.y
-        let savedHeight = restorationConfig.savedContentHeight
+        let targetX = self.scrollPosition.x
+        let targetY = self.scrollPosition.y
+        let savedHeight = self.restorationConfig.savedContentHeight
 
         return """
         try {
@@ -1706,14 +1706,16 @@ struct BFCacheSnapshot: Codable {
         }
         """
     }
-    private func convertToJSONString(_ object: Any) -> String? {
-        do {
-            let jsonData = try JSONSerialization.data(withJSONObject: object, options: [])
-            return String(data: jsonData, encoding: .utf8)
-        } catch {
-            TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
-            return nil
-        }
+}
+
+// MARK: - Helper Functions
+private func convertToJSONString(_ object: Any) -> String? {
+    do {
+        let jsonData = try JSONSerialization.data(withJSONObject: object, options: [])
+        return String(data: jsonData, encoding: .utf8)
+    } catch {
+        TabPersistenceManager.debugMessages.append("JSON 변환 실패: \(error.localizedDescription)")
+        return nil
     }
 }
 
