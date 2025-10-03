@@ -1086,49 +1086,53 @@ struct BFCacheSnapshot: Codable {
                     // 🚀 **고정 대기 시간: 1500ms**
                     const maxWait = 700;
 
+                    // 🎯 **목표높이 +20% 까지 트리거**
+                    const targetHeight = savedContentHeight * 1.2;
+
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
 
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         const maxScrollY = currentScrollHeight - viewportHeight;
 
-                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
+                        // 🛡️ **목표 높이 +20% 도달 시 중단**
                         if (isVirtualList) {
-                            if (maxScrollY >= savedContentHeight) {
-                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
+                            if (maxScrollY >= targetHeight) {
+                                logs.push('[Step 1] 가상리스트 목표+20% 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         } else {
-                            if (currentScrollHeight >= savedContentHeight) {
-                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
+                            if (currentScrollHeight >= targetHeight) {
+                                logs.push('[Step 1] 목표+20% 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         }
 
-                        // 🛡️ **과도한 성장 방지**
-                        if (currentScrollHeight >= savedContentHeight * 1.0) {
-                            logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
-                            grew = true;
-                            containerGrew = true;
-                            break;
-                        }
-
-                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                        // 🔧 **증분 거리 계산 - 큼직큼직하게 스크롤**
                         const beforeHeight = scrollRoot.scrollHeight;
+                        const remainingHeight = targetHeight - currentScrollHeight;
+
+                        // 남은 거리를 3등분하여 스크롤 (최소 3000px, 최대 15000px)
+                        const incrementalDistance = Math.max(3000, Math.min(15000, remainingHeight / 3));
+                        const targetScrollPosition = Math.min(
+                            scrollRoot.scrollHeight,
+                            scrollRoot.scrollTop + incrementalDistance
+                        );
+
                         const sentinel = findSentinel(scrollRoot);
 
                         if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                             try {
                                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                             } catch(e) {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                scrollRoot.scrollTo(0, targetScrollPosition);
                             }
                         } else {
-                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            scrollRoot.scrollTo(0, targetScrollPosition);
                         }
 
                         // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
