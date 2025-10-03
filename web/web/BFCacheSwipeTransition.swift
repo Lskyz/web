@@ -973,15 +973,7 @@ struct BFCacheSnapshot: Codable {
                 // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
                 const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
                 if (isVirtualList) {
-                    logs.push('[Step 1] 가상 리스트 감지 - Step 1 스킵');
-                    return serializeForJSON({
-                        success: false,
-                        reason: 'virtual_list',
-                        currentHeight: currentHeight,
-                        viewportHeight: viewportHeight,
-                        savedContentHeight: savedContentHeight,
-                        logs: logs
-                    });
+                    logs.push('[Step 1] 가상 리스트 감지 - 목표 위치까지 트리거 필요');
                 }
 
                 const heightDiff = savedContentHeight - currentHeight;
@@ -1093,16 +1085,26 @@ struct BFCacheSnapshot: Codable {
                         if (!isElementValid(scrollRoot)) break;
 
                         const currentScrollHeight = scrollRoot.scrollHeight;
+                        const maxScrollY = currentScrollHeight - viewportHeight;
 
-                        // 🛡️ **목표 높이 도달 시 중단**
-                        if (currentScrollHeight >= savedContentHeight) {
-                            logs.push('[Step 1] 목표 도달 (배치: ' + batchCount + ')');
-                            grew = true;
-                            containerGrew = true;
-                            break;
+                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
+                        if (isVirtualList) {
+                            if (maxScrollY >= savedContentHeight) {
+                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
+                        } else {
+                            if (currentScrollHeight >= savedContentHeight) {
+                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
                         }
 
-                        // 🛡️ **과도한 성장 방지: 목표의 150% 초과 시 중단**
+                        // 🛡️ **과도한 성장 방지**
                         if (currentScrollHeight >= savedContentHeight * 1.5) {
                             logs.push('[Step 1] 150% 초과 (배치: ' + batchCount + ')');
                             grew = true;
@@ -1110,9 +1112,10 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **Sentinel 찾기 및 Observer 등록**
+                        // 🔧 **Sentinel 찾기 및 IntersectionObserver 트리거**
                         const sentinel = findSentinel(scrollRoot);
                         if (sentinel && isElementValid(sentinel)) {
+                            // IntersectionObserver 등록
                             if (intersectionObserver && sentinels.indexOf(sentinel) === -1) {
                                 try {
                                     intersectionObserver.observe(sentinel);
@@ -1120,17 +1123,17 @@ struct BFCacheSnapshot: Codable {
                                 } catch(e) {}
                             }
 
+                            // scrollIntoView로 sentinel 노출 -> IntersectionObserver 자동 트리거
                             if (typeof sentinel.scrollIntoView === 'function') {
                                 try {
-                                    sentinel.scrollIntoView({ block: 'end' });
+                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                                 } catch(e) {}
-                                await nextFrame();
                             }
                         } else {
                             await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
                         }
 
-                        // 🚀 **이벤트 드리븐 대기: ResizeObserver 감지 시까지 대기**
+                        // 🚀 **ResizeObserver로 높이 증가 감지 (이벤트 기반)**
                         heightChanged = false;
                         const startWait = Date.now();
                         const maxWait = 300;
