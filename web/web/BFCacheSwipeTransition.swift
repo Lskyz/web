@@ -1045,39 +1045,26 @@ struct BFCacheSnapshot: Codable {
                     let batchCount = 0;
                     const maxAttempts = 999;
 
-                    // 🔧 **ResizeObserver로 높이 변화 감지**
-                    let heightChanged = false;
-                    let resizeObserver = null;
+                    // 🔧 **MutationObserver로 DOM 추가 감지 (최고 성능)**
+                    let domChanged = false;
+                    let mutationObserver = null;
 
-                    if (typeof ResizeObserver !== 'undefined') {
+                    if (typeof MutationObserver !== 'undefined') {
                         try {
-                            resizeObserver = new ResizeObserver(() => {
-                                heightChanged = true;
+                            mutationObserver = new MutationObserver((mutations) => {
+                                for (let mutation of mutations) {
+                                    if (mutation.addedNodes.length > 0) {
+                                        domChanged = true;
+                                        break;
+                                    }
+                                }
                             });
-                            resizeObserver.observe(scrollRoot);
+                            mutationObserver.observe(scrollRoot, {
+                                childList: true,
+                                subtree: true
+                            });
                         } catch(e) {
-                            logs.push('[Step 1] ResizeObserver 생성 실패');
-                        }
-                    }
-
-                    // 🔧 **IntersectionObserver로 sentinel 가시성 감지**
-                    const sentinels = [];
-                    let intersectionObserver = null;
-
-                    if (typeof IntersectionObserver !== 'undefined') {
-                        try {
-                            intersectionObserver = new IntersectionObserver(
-                                (entries) => {
-                                    entries.forEach(entry => {
-                                        if (entry.isIntersecting) {
-                                            logs.push('[Step 1] Sentinel 가시화 감지');
-                                        }
-                                    });
-                                },
-                                { root: scrollRoot === document.documentElement ? null : scrollRoot, threshold: 0.1 }
-                            );
-                        } catch(e) {
-                            logs.push('[Step 1] IntersectionObserver 생성 실패');
+                            logs.push('[Step 1] MutationObserver 생성 실패');
                         }
                     }
 
@@ -1112,60 +1099,78 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **Sentinel 찾기 및 IntersectionObserver 트리거**
+                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                        const beforeHeight = scrollRoot.scrollHeight;
                         const sentinel = findSentinel(scrollRoot);
-                        if (sentinel && isElementValid(sentinel)) {
-                            // IntersectionObserver 등록
-                            if (intersectionObserver && sentinels.indexOf(sentinel) === -1) {
-                                try {
-                                    intersectionObserver.observe(sentinel);
-                                    sentinels.push(sentinel);
-                                } catch(e) {}
-                            }
 
-                            // scrollIntoView로 sentinel 노출 -> IntersectionObserver 자동 트리거
-                            if (typeof sentinel.scrollIntoView === 'function') {
-                                try {
-                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                                } catch(e) {}
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                            try {
+                                sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                            } catch(e) {
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                             }
                         } else {
-                            await scrollNearBottomAsync(scrollRoot, { ratio: 0.9, marginPx: 4 });
+                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                         }
 
-                        // 🚀 **ResizeObserver로 높이 증가 감지 (이벤트 기반)**
-                        heightChanged = false;
+                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기**
+                        domChanged = false;
                         const startWait = Date.now();
-                        const maxWait = 300;
+                        const maxWait = 1500; // NAVER 카페 API 응답 대기
+                        let heightIncreased = false;
 
-                        while (!heightChanged && (Date.now() - startWait) < maxWait) {
+                        while ((Date.now() - startWait) < maxWait) {
                             await nextFrame();
+
+                            const currentHeight = scrollRoot.scrollHeight;
+                            const growth = currentHeight - beforeHeight;
+
+                            // DOM 추가되고 높이도 증가했으면 성공
+                            if (domChanged && growth >= 10) {
+                                heightIncreased = true;
+                                if (batchCount === 0 || batchCount % 5 === 0) {
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (현재: ' + currentHeight.toFixed(0) + 'px)');
+                                }
+                                lastHeight = currentHeight;
+                                grew = true;
+                                containerGrew = true;
+                                batchCount++;
+                                break;
+                            }
+
+                            // DOM 변화 없어도 높이만 증가하면 성공 (가상리스트)
+                            if (growth >= 10) {
+                                heightIncreased = true;
+                                if (batchCount === 0 || batchCount % 5 === 0) {
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (가상리스트)');
+                                }
+                                lastHeight = currentHeight;
+                                grew = true;
+                                containerGrew = true;
+                                batchCount++;
+                                break;
+                            }
                         }
 
                         if (!isElementValid(scrollRoot)) break;
 
-                        const heightNow = scrollRoot.scrollHeight;
-                        const growth = heightNow - lastHeight;
-
-                        if (batchCount === 0 || batchCount % 5 === 0 || growth >= 32) {
-                            logs.push('[Step 1] Batch ' + batchCount + ': ' + growth.toFixed(0) + 'px 성장 (현재: ' + heightNow.toFixed(0) + 'px)');
-                        }
-
-                        if (growth >= 32) {
-                            grew = true;
-                            containerGrew = true;
-                            lastHeight = heightNow;
-                            batchCount++;
-                        } else {
-                            logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
-                            break;
+                        // 증가 없으면 중단
+                        if (!heightIncreased) {
+                            const finalGrowth = scrollRoot.scrollHeight - beforeHeight;
+                            if (finalGrowth > 0) {
+                                logs.push('[Step 1] 소폭 증가: +' + finalGrowth.toFixed(0) + 'px (계속)');
+                                lastHeight = scrollRoot.scrollHeight;
+                                batchCount++;
+                            } else {
+                                logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
+                                break;
+                            }
                         }
                     }
 
                     // 🧹 **Observer 정리**
                     try {
-                        if (resizeObserver) resizeObserver.disconnect();
-                        if (intersectionObserver) intersectionObserver.disconnect();
+                        if (mutationObserver) mutationObserver.disconnect();
                     } catch(e) {}
 
                     if (containerGrew) {
