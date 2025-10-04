@@ -984,6 +984,12 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
 
+                // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
+                const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
+                if (isVirtualList) {
+                    logs.push('[Step 1] 가상 리스트 감지 - 목표 위치까지 트리거 필요');
+                }
+
                 const heightDiff = savedContentHeight - currentHeight;
                 logs.push('[Step 1] 높이 차이: ' + heightDiff.toFixed(0) + 'px (' + (heightDiff > 0 ? '부족' : '충분') + ')');
 
@@ -1086,12 +1092,21 @@ struct BFCacheSnapshot: Codable {
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         const maxScrollY = currentScrollHeight - viewportHeight;
 
-                        // 🛡️ **목표 도달 시 중단**
-                        if (maxScrollY >= savedContentHeight) {
-                            logs.push('[Step 1] 목표 scrollY 도달 (배치: ' + batchCount + ')');
-                            grew = true;
-                            containerGrew = true;
-                            break;
+                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
+                        if (isVirtualList) {
+                            if (maxScrollY >= savedContentHeight) {
+                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
+                        } else {
+                            if (currentScrollHeight >= savedContentHeight) {
+                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
+                                grew = true;
+                                containerGrew = true;
+                                break;
+                            }
                         }
 
                         // 🛡️ **과도한 성장 방지**
