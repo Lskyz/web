@@ -347,7 +347,7 @@ struct BFCacheSnapshot: Codable {
 
         // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.executeStep1_Delayed(context: context, startTime: step1StartTime)
         }
     }
