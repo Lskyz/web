@@ -1124,9 +1124,11 @@ struct BFCacheSnapshot: Codable {
                         // 🚀 **배치 횟수에 따른 단계적 점프**
                         let targetScrollY;
                         if (batchCount === 0) {
-                            targetScrollY = savedContentHeight * 0.5;  // 첫 배치: 50%
+                            // 첫 배치: 목표 높이의 50% 또는 현재 scrollHeight, 둘 중 큰 값
+                            targetScrollY = Math.max(savedContentHeight * 0.5, scrollRoot.scrollHeight);
                         } else if (batchCount === 1) {
-                            targetScrollY = savedContentHeight * 0.8;  // 두 번째: 80%
+                            // 두 번째: 목표 높이의 80% 또는 현재 scrollHeight, 둘 중 큰 값
+                            targetScrollY = Math.max(savedContentHeight * 0.8, scrollRoot.scrollHeight);
                         } else {
                             targetScrollY = scrollRoot.scrollHeight;    // 이후: 바닥까지
                         }
