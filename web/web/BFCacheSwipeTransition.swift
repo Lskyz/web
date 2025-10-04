@@ -1143,12 +1143,12 @@ struct BFCacheSnapshot: Codable {
                             const growth = currentHeight - beforeHeight;
 
                             // DOM 추가되고 높이도 증가했으면 즉시 성공
-                            if (domChanged && growth >= 5) {
+                            if (domChanged && growth >= 10) {
                                 heightIncreased = true;
                                 const waitTime = Date.now() - startWait;
 
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 800).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 500).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
@@ -1157,7 +1157,20 @@ struct BFCacheSnapshot: Codable {
                                 break;
                             }
 
-                          
+                            // DOM 변화 없어도 높이만 증가하면 즉시 성공 (가상리스트)
+                            if (growth >= 10) {
+                                heightIncreased = true;
+                                const waitTime = Date.now() - startWait;
+
+                                if (batchCount === 0 || batchCount % 5 === 0) {
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 500).toFixed(2) + 's, 가상리스트)');
+                                }
+                                lastHeight = currentHeight;
+                                grew = true;
+                                containerGrew = true;
+                                batchCount++;
+                                break;
+                            }
                         }
 
                         if (!isElementValid(scrollRoot)) break;
