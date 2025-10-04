@@ -347,7 +347,7 @@ struct BFCacheSnapshot: Codable {
 
         // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             self.executeStep1_Delayed(context: context, startTime: step1StartTime)
         }
     }
@@ -984,12 +984,6 @@ struct BFCacheSnapshot: Codable {
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
 
-                // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
-                const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
-                if (isVirtualList) {
-                    logs.push('[Step 1] 가상 리스트 감지 - 목표 위치까지 트리거 필요');
-                }
-
                 const heightDiff = savedContentHeight - currentHeight;
                 logs.push('[Step 1] 높이 차이: ' + heightDiff.toFixed(0) + 'px (' + (heightDiff > 0 ? '부족' : '충분') + ')');
 
@@ -1084,7 +1078,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 400;
+                    const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1092,21 +1086,12 @@ struct BFCacheSnapshot: Codable {
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         const maxScrollY = currentScrollHeight - viewportHeight;
 
-                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
-                        if (isVirtualList) {
-                            if (maxScrollY >= savedContentHeight) {
-                                logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
-                                grew = true;
-                                containerGrew = true;
-                                break;
-                            }
-                        } else {
-                            if (currentScrollHeight >= savedContentHeight) {
-                                logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
-                                grew = true;
-                                containerGrew = true;
-                                break;
-                            }
+                        // 🛡️ **목표 도달 시 중단**
+                        if (maxScrollY >= savedContentHeight) {
+                            logs.push('[Step 1] 목표 scrollY 도달 (배치: ' + batchCount + ')');
+                            grew = true;
+                            containerGrew = true;
+                            break;
                         }
 
                         // 🛡️ **과도한 성장 방지**
@@ -1117,18 +1102,30 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                        // 🔧 **단계적 점프 스크롤 -> 무한스크롤 트리거**
                         const beforeHeight = scrollRoot.scrollHeight;
                         const sentinel = findSentinel(scrollRoot);
 
-                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                        // 🚀 **배치 횟수에 따른 단계적 점프**
+                        let targetScrollY;
+                        if (batchCount === 0) {
+                            // 첫 배치: 목표 높이의 50% 또는 현재 scrollHeight, 둘 중 큰 값
+                            targetScrollY = Math.max(savedContentHeight * 0.5, scrollRoot.scrollHeight);
+                        } else if (batchCount === 1) {
+                            // 두 번째: 목표 높이의 80% 또는 현재 scrollHeight, 둘 중 큰 값
+                            targetScrollY = Math.max(savedContentHeight * 0.8, scrollRoot.scrollHeight);
+                        } else {
+                            targetScrollY = scrollRoot.scrollHeight;    // 이후: 바닥까지
+                        }
+
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function' && batchCount >= 2) {
                             try {
                                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                             } catch(e) {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                scrollRoot.scrollTo(0, targetScrollY);
                             }
                         } else {
-                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            scrollRoot.scrollTo(0, targetScrollY);
                         }
 
                         // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
@@ -1201,7 +1198,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 5, timeout: 500 });
+                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
