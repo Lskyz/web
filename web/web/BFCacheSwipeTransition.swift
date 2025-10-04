@@ -1117,28 +1117,28 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거 (배치당 2번)**
-                       const beforeHeight = scrollRoot.scrollHeight;
-                      const sentinel = findSentinel(scrollRoot);
+                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거 (배치당 2번)**
+                        const beforeHeight = scrollRoot.scrollHeight;
+                        const sentinel = findSentinel(scrollRoot);
 
-// 🚀 **2번 반복 스크롤**
-for (let scrollAttempt = 0; scrollAttempt < 2; scrollAttempt++) {
-    if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-        try {
-            sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-        } catch(e) {
-            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-        }
-    } else {
-        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-    }
-    await nextFrame(); // 프레임 1개만 대기 (~16ms)
-}
-                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
+                        // 🚀 **2번 반복 스크롤**
+                        for (let scrollAttempt = 0; scrollAttempt < 2; scrollAttempt++) {
+                            if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                                try {
+                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                                } catch(e) {
+                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                }
+                            } else {
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            }
+                            await nextFrame(); // 프레임 1개만 대기 (~16ms)
+                        }
+
+                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 500ms)**
                         domChanged = false;
                         const startWait = Date.now();
                         let heightIncreased = false;
-
                         while ((Date.now() - startWait) < maxWait) {
                             await nextFrame();
 
