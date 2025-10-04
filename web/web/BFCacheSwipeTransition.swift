@@ -1117,33 +1117,28 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **증분 거리 계산 - 퍼센트 기반 지수형 성장**
+                        // 🔧 **단계적 점프 스크롤 -> 무한스크롤 트리거**
                         const beforeHeight = scrollRoot.scrollHeight;
-                        const remainingHeight = targetHeight - currentScrollHeight;
-
-                        let incrementalDistance;
-                        if (batchCount === 0) {
-                            // 첫 시도: 목표의 50% 점프
-                            incrementalDistance = targetHeight * 0.5;
-                        } else {
-                            // 이후: 남은 거리 기반 지수형 증가
-                            const baseDistance = remainingHeight * 0.3;
-                            incrementalDistance = Math.min(
-                                remainingHeight,
-                                baseDistance * Math.pow(1.5, batchCount - 1)
-                            );
-                        }
-
                         const sentinel = findSentinel(scrollRoot);
 
-                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                        // 🚀 **배치 횟수에 따른 단계적 점프**
+                        let targetScrollY;
+                        if (batchCount === 0) {
+                            targetScrollY = savedContentHeight * 0.5;  // 첫 배치: 50%
+                        } else if (batchCount === 1) {
+                            targetScrollY = savedContentHeight * 0.8;  // 두 번째: 80%
+                        } else {
+                            targetScrollY = scrollRoot.scrollHeight;    // 이후: 바닥까지
+                        }
+
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function' && batchCount >= 2) {
                             try {
                                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                             } catch(e) {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                scrollRoot.scrollTo(0, targetScrollY);
                             }
                         } else {
-                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            scrollRoot.scrollTo(0, targetScrollY);
                         }
 
                         // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
