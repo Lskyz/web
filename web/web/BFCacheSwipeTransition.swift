@@ -1084,7 +1084,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 500;
+                    const maxWait = 400;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1117,30 +1117,18 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **단계적 점프 스크롤 -> 무한스크롤 트리거**
+                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
                         const beforeHeight = scrollRoot.scrollHeight;
                         const sentinel = findSentinel(scrollRoot);
 
-                        // 🚀 **배치 횟수에 따른 단계적 점프**
-                        let targetScrollY;
-                        if (batchCount === 0) {
-                            // 첫 배치: 목표 높이의 50% 또는 현재 scrollHeight, 둘 중 큰 값
-                            targetScrollY = Math.max(savedContentHeight * 0.5, scrollRoot.scrollHeight);
-                        } else if (batchCount === 1) {
-                            // 두 번째: 목표 높이의 80% 또는 현재 scrollHeight, 둘 중 큰 값
-                            targetScrollY = Math.max(savedContentHeight * 0.8, scrollRoot.scrollHeight);
-                        } else {
-                            targetScrollY = scrollRoot.scrollHeight;    // 이후: 바닥까지
-                        }
-
-                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function' && batchCount >= 2) {
+                        if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                             try {
                                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                             } catch(e) {
-                                scrollRoot.scrollTo(0, targetScrollY);
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                             }
                         } else {
-                            scrollRoot.scrollTo(0, targetScrollY);
+                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                         }
 
                         // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
@@ -1213,7 +1201,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 6, timeout: 1000 });
+                await waitForStableLayoutAsync({ frames: 5, timeout: 800 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
