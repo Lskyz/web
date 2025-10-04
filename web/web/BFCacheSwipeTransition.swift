@@ -1117,8 +1117,23 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                        // 🔧 **증분 거리 계산 - 퍼센트 기반 지수형 성장**
                         const beforeHeight = scrollRoot.scrollHeight;
+                        const remainingHeight = targetHeight - currentScrollHeight;
+
+                        let incrementalDistance;
+                        if (batchCount === 0) {
+                            // 첫 시도: 목표의 50% 점프
+                            incrementalDistance = targetHeight * 0.5;
+                        } else {
+                            // 이후: 남은 거리 기반 지수형 증가
+                            const baseDistance = remainingHeight * 0.3;
+                            incrementalDistance = Math.min(
+                                remainingHeight,
+                                baseDistance * Math.pow(1.5, batchCount - 1)
+                            );
+                        }
+
                         const sentinel = findSentinel(scrollRoot);
 
                         if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
