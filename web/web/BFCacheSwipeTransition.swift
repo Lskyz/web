@@ -1148,7 +1148,7 @@ struct BFCacheSnapshot: Codable {
                                 const waitTime = Date.now() - startWait;
 
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 500).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
@@ -1163,7 +1163,7 @@ struct BFCacheSnapshot: Codable {
                                 const waitTime = Date.now() - startWait;
 
                                 if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 500).toFixed(2) + 's, 가상리스트)');
+                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 가상리스트)');
                                 }
                                 lastHeight = currentHeight;
                                 grew = true;
