@@ -347,7 +347,7 @@ struct BFCacheSnapshot: Codable {
 
         // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             self.executeStep1_Delayed(context: context, startTime: step1StartTime)
         }
     }
@@ -1084,7 +1084,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     // 🚀 **고정 대기 시간: 1500ms**
-                    const maxWait = 400;
+                    const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1201,7 +1201,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 5, timeout: 500 });
+                await waitForStableLayoutAsync({ frames: 5, timeout: 700 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
