@@ -1118,19 +1118,18 @@ struct BFCacheSnapshot: Codable {
                         }
 
                    // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
-const beforeHeight = scrollRoot.scrollHeight;
-const sentinel = findSentinel(scrollRoot);
+                const beforeHeight = scrollRoot.scrollHeight;
+                const sentinel = findSentinel(scrollRoot);
 
-if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-    try {
-        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-    } catch(e) {
-        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-    }
-} else {
-    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-}
-
+                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                    try {
+                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                    } catch(e) {
+                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                    }
+                } else {
+                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                }
                 // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
                 domChanged = false;
                 const startWait = Date.now();
