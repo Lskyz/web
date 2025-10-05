@@ -1122,7 +1122,7 @@ struct BFCacheSnapshot: Codable {
                         const sentinel = findSentinel(scrollRoot);
 
                         // 🚀 **2번 반복 스크롤**
-                        for (let scrollAttempt = 0; scrollAttempt < 2; scrollAttempt++) {
+                        for (let scrollAttempt = 0; scrollAttempt < 3; scrollAttempt++) {
                             if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                                 try {
                                     sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
