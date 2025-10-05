@@ -1172,7 +1172,7 @@ struct BFCacheSnapshot: Codable {
                     batchCount++;
 
                     if (batchCount === 0 || batchCount % 5 === 0) {
-                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 800).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
+                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 500).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
                     }
                 } else {
                     // 증가 없거나 타임아웃
@@ -1194,7 +1194,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 4, timeout: 300 });
+                await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
