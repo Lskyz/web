@@ -785,53 +785,41 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
-        // 🚀 **병렬 센티널 프리페치 - 여러 지점에서 동시 감시**
-        function waitForContentLoadParallel(scrollRoot, beforeHeight, timeout = 500, parallelCount = 3) {
+        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
                 const startTime = Date.now();
                 let resolved = false;
-                const sentinels = [];
-                const observers = [];
 
-                // 📍 **여러 위치에 센티널 배치 (25%, 50%, 75%, 100%)**
-                const positions = [25, 50, 75, 100];
-                const selectedPositions = positions.slice(-parallelCount);
+                // 센티널: 스크롤 끝에 배치
+                const sentinel = document.createElement('div');
+                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(sentinel);
 
-                selectedPositions.forEach((pos) => {
-                    const sentinel = document.createElement('div');
-                    sentinel.style.cssText = `position:absolute;bottom:${100 - pos}%;height:1px;pointer-events:none;`;
-                    sentinel.dataset.position = pos;
-                    scrollRoot.appendChild(sentinel);
-                    sentinels.push(sentinel);
+                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                const observer = new IntersectionObserver((entries) => {
+                    if (resolved) return;
 
-                    // IntersectionObserver: 각 센티널 감시
-                    const observer = new IntersectionObserver((entries) => {
-                        if (resolved) return;
+                    const currentHeight = scrollRoot.scrollHeight;
+                    const growth = currentHeight - beforeHeight;
 
-                        const currentHeight = scrollRoot.scrollHeight;
-                        const growth = currentHeight - beforeHeight;
-
-                        // 높이 증가 확인
-                        if (growth >= 10) {
-                            resolved = true;
-                            cleanup();
-                            resolve({
-                                success: true,
-                                height: currentHeight,
-                                growth: growth,
-                                time: Date.now() - startTime,
-                                triggeredPosition: pos
-                            });
-                        }
-                    }, {
-                        root: null,
-                        threshold: 0,
-                        rootMargin: '200px'  // 더 넓은 마진으로 조기 감지
-                    });
-
-                    observer.observe(sentinel);
-                    observers.push(observer);
+                    // 높이 증가 확인
+                    if (growth >= 10) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: true,
+                            height: currentHeight,
+                            growth: growth,
+                            time: Date.now() - startTime
+                        });
+                    }
+                }, {
+                    root: null,
+                    threshold: 0,
+                    rootMargin: '100px'
                 });
+
+                observer.observe(sentinel);
 
                 // 타임아웃
                 setTimeout(() => {
@@ -848,29 +836,10 @@ struct BFCacheSnapshot: Codable {
                 }, timeout);
 
                 function cleanup() {
-                    observers.forEach(obs => obs.disconnect());
-                    sentinels.forEach(sent => sent.remove());
+                    observer.disconnect();
+                    sentinel.remove();
                 }
             });
-        }
-
-        // 🎯 **예측적 배치 스크롤 - 목표까지 필요한 위치를 한 번에 트리거**
-        function predictiveScrollTrigger(scrollRoot, currentHeight, targetHeight, viewportHeight) {
-            const heightGap = targetHeight - currentHeight;
-            if (heightGap <= 0) return [];
-
-            const avgItemHeight = 800; // 평균 아이템 높이 추정
-            const estimatedBatches = Math.ceil(heightGap / avgItemHeight);
-            const triggerCount = Math.min(estimatedBatches, 5); // 최대 5개 위치
-
-            const scrollPositions = [];
-            for (let i = 1; i <= triggerCount; i++) {
-                const ratio = i / triggerCount;
-                const targetScroll = currentHeight + (heightGap * ratio);
-                scrollPositions.push(Math.min(targetScroll, scrollRoot.scrollHeight));
-            }
-
-            return scrollPositions;
         }
 
         function getScrollableParent(element) {
@@ -1144,23 +1113,7 @@ struct BFCacheSnapshot: Codable {
                     let containerGrew = false;
                     let batchCount = 0;
                     const maxAttempts = 50;
-
-                    // 🎯 **적응형 타임아웃 - 성능에 따라 동적 조정**
-                    let dynamicTimeout = 300;  // 초기값 300ms (기존 500ms보다 빠름)
-                    let consecutiveSuccesses = 0;
-                    let consecutiveFailures = 0;
-
-                    // 🚀 **예측적 배치 계산**
-                    const scrollPositions = predictiveScrollTrigger(
-                        scrollRoot,
-                        scrollRoot.scrollHeight,
-                        savedContentHeight,
-                        viewportHeight
-                    );
-
-                    if (scrollPositions.length > 0) {
-                        logs.push('[Step 1] 예측 배치: ' + scrollPositions.length + '개 위치 프리페치');
-                    }
+                    const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1193,31 +1146,22 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **예측 위치로 점프 또는 바닥 스크롤**
+                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
                 const beforeHeight = scrollRoot.scrollHeight;
+                const sentinel = findSentinel(scrollRoot);
 
-                if (scrollPositions.length > 0 && batchCount < scrollPositions.length) {
-                    // 예측된 위치로 스크롤
-                    const targetPos = scrollPositions[batchCount];
-                    scrollRoot.scrollTo(0, targetPos);
-                    logs.push('[Step 1] 예측 위치 ' + (batchCount + 1) + ': ' + targetPos.toFixed(0) + 'px');
-                } else {
-                    // 기존 방식: 바닥까지 스크롤
-                    const sentinel = findSentinel(scrollRoot);
-                    if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                        try {
-                            sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                        } catch(e) {
-                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                        }
-                    } else {
+                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                    try {
+                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                    } catch(e) {
                         scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                     }
+                } else {
+                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                 }
 
-                // 🚀 **병렬 센티널 기반 프리페치**
-                const parallelCount = batchCount < 3 ? 3 : 2;  // 초반에는 3개, 이후 2개
-                const result = await waitForContentLoadParallel(scrollRoot, beforeHeight, dynamicTimeout, parallelCount);
+                // 🚀 **IntersectionObserver 기반 대기**
+                const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
 
                 if (!isElementValid(scrollRoot)) break;
 
@@ -1226,28 +1170,11 @@ struct BFCacheSnapshot: Codable {
                     containerGrew = true;
                     lastHeight = result.height;
                     batchCount++;
-                    consecutiveSuccesses++;
-                    consecutiveFailures = 0;
 
-                    // ⚡ **타임아웃 동적 조정 - 성공 시 유지/감소**
-                    if (consecutiveSuccesses >= 3 && dynamicTimeout > 200) {
-                        dynamicTimeout = Math.max(200, dynamicTimeout - 50);
-                        logs.push('[Step 1] 타임아웃 최적화: ' + dynamicTimeout + 'ms');
-                    }
-
-                    if (batchCount === 1 || batchCount % 5 === 0) {
-                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 1000).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px, 위치: ' + (result.triggeredPosition || 'N/A') + '%)');
+                    if (batchCount === 0 || batchCount % 5 === 0) {
+                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 500).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
                     }
                 } else {
-                    consecutiveFailures++;
-                    consecutiveSuccesses = 0;
-
-                    // ⚡ **타임아웃 동적 조정 - 실패 시 증가**
-                    if (consecutiveFailures >= 2 && dynamicTimeout < 800) {
-                        dynamicTimeout = Math.min(800, dynamicTimeout + 100);
-                        logs.push('[Step 1] 타임아웃 증가: ' + dynamicTimeout + 'ms');
-                    }
-
                     // 증가 없거나 타임아웃
                     if (result.growth > 0) {
                         logs.push('[Step 1] 소폭 증가: +' + result.growth.toFixed(0) + 'px (계속)');
