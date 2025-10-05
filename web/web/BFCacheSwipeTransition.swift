@@ -357,9 +357,6 @@ struct BFCacheSnapshot: Codable {
         let jsLength = js.count
         TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
 
-        // JavaScript 코드 일부 출력 (처음 200자)
-        let preview = String(js.prefix(200))
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Preview: \(preview)...")
 
         context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
@@ -1197,7 +1194,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
+                await waitForStableLayoutAsync({ frames: 4, timeout: 300 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
