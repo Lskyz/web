@@ -1115,8 +1115,8 @@ struct BFCacheSnapshot: Codable {
 
                     let containerGrew = false;
                     let batchCount = 0;
-                    const maxAttempts = 100;
-                    const maxWait = 300;
+                    const maxAttempts = 50;
+                    const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1175,7 +1175,7 @@ struct BFCacheSnapshot: Codable {
                     batchCount++;
 
                     if (batchCount === 0 || batchCount % 5 === 0) {
-                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 1000).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
+                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 800).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
                     }
                 } else {
                     // 증가 없거나 타임아웃
@@ -1199,7 +1199,7 @@ struct BFCacheSnapshot: Codable {
 
                 await waitForStableLayoutAsync({ frames: 5, timeout: 700 });
 
-                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
+                const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
