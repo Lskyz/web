@@ -37,13 +37,15 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
+        let lastBatchIndex: Int             // 🚀 마지막 로드된 배치 인덱스
 
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: 0
+            savedContentHeight: 0,
+            lastBatchIndex: 0
         )
     }
 
@@ -1013,6 +1015,7 @@ struct BFCacheSnapshot: Codable {
     }
     private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
+        let savedBatchIndex = self.restorationConfig.lastBatchIndex
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
@@ -1028,7 +1031,9 @@ struct BFCacheSnapshot: Codable {
 
             const logs = [];
             const savedContentHeight = parseFloat('\(savedHeight)');
+            const savedBatchIndex = parseInt('\(savedBatchIndex)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
+            logs.push('[Step 1] 🚀 저장된 배치 인덱스: ' + savedBatchIndex);
 
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
@@ -1110,10 +1115,25 @@ struct BFCacheSnapshot: Codable {
                     let lastHeight = scrollRoot.scrollHeight;
                     logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 시작: ' + lastHeight.toFixed(0) + 'px');
 
+                    // 🚀 **배치 인덱스 기반 직접 점프**
+                    if (savedBatchIndex > 0) {
+                        const avgBatchHeight = 800; // 배치당 평균 높이
+                        const targetHeight = savedBatchIndex * avgBatchHeight;
+                        const targetScrollPos = Math.min(targetHeight * 0.85, scrollRoot.scrollHeight); // 85% 위치로 점프
+
+                        logs.push('[Step 1] 🚀 배치 인덱스 ' + savedBatchIndex + '로 직접 점프: ' + targetScrollPos.toFixed(0) + 'px');
+                        scrollRoot.scrollTo(0, targetScrollPos);
+                        await delay(100); // 짧은 대기
+                    }
+
                     let containerGrew = false;
-                    let batchCount = 0;
+                    let batchCount = savedBatchIndex > 0 ? Math.floor(savedBatchIndex * 0.85) : 0; // 85%부터 시작
                     const maxAttempts = 50;
                     const maxWait = 500;
+
+                    if (savedBatchIndex > 0) {
+                        logs.push('[Step 1] 🚀 배치 카운트를 ' + batchCount + '부터 시작 (남은 15%만 로드)');
+                    }
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -2099,13 +2119,24 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
 
+        // 🚀 **배치 인덱스 추출**
+        let lastBatchIndex: Int
+        if let jsState = jsState, let batchIndex = jsState["lastBatchIndex"] as? Int {
+            lastBatchIndex = batchIndex
+            TabPersistenceManager.debugMessages.append("🚀 캡처된 배치 인덱스: \(lastBatchIndex)")
+        } else {
+            lastBatchIndex = 0
+            TabPersistenceManager.debugMessages.append("⚠️ 배치 인덱스 없음, 기본값 사용")
+        }
+
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
+            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            lastBatchIndex: lastBatchIndex
         )
 
         let snapshot = BFCacheSnapshot(
@@ -2608,15 +2639,21 @@ extension BFCacheTransitionSystem {
                     anchorsPerSecond: infiniteScrollAnchorsData.anchors.length > 0 ? (infiniteScrollAnchorsData.anchors.length / (captureTime / 1000)).toFixed(2) : 0
                 };
                 
+                // 🚀 **배치 인덱스 계산**
+                const avgBatchHeight = 800; // 평균 배치당 높이 (픽셀)
+                const estimatedBatchIndex = Math.floor(contentHeight / avgBatchHeight);
+
                 detailedLogs.push('=== 무한스크롤 전용 앵커 캡처 완료 (' + captureTime + 'ms) ===');
                 detailedLogs.push('최종 무한스크롤 앵커: ' + infiniteScrollAnchorsData.anchors.length + '개');
-                
+                detailedLogs.push('🚀 추정 배치 인덱스: ' + estimatedBatchIndex);
+
                 console.log('🚀 무한스크롤 전용 앵커 캡처 완료:', {
                     infiniteScrollAnchorsCount: infiniteScrollAnchorsData.anchors.length,
                     stats: infiniteScrollAnchorsData.stats,
-                    captureTime: captureTime
+                    captureTime: captureTime,
+                    lastBatchIndex: estimatedBatchIndex
                 });
-                
+
                 return {
                     infiniteScrollAnchors: infiniteScrollAnchorsData,
                     scroll: { x: scrollX, y: scrollY },
@@ -2626,22 +2663,23 @@ extension BFCacheTransitionSystem {
                     userAgent: navigator.userAgent,
                     viewport: { width: viewportWidth, height: viewportHeight },
                     content: { width: contentWidth, height: contentHeight },
-                    actualScrollable: { 
+                    actualScrollable: {
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
                     },
                     detailedLogs: detailedLogs,
                     captureStats: infiniteScrollAnchorsData.stats,
                     pageAnalysis: pageAnalysis,
-                    captureTime: captureTime
+                    captureTime: captureTime,
+                    lastBatchIndex: estimatedBatchIndex
                 };
-            } catch(e) { 
+            } catch(e) {
                 console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
                     infiniteScrollAnchors: { anchors: [], stats: {} },
-                    scroll: { 
-                        x: parseFloat(document.scrollingElement?.scrollLeft || document.documentElement.scrollLeft) || 0, 
-                        y: parseFloat(document.scrollingElement?.scrollTop || document.documentElement.scrollTop) || 0 
+                    scroll: {
+                        x: parseFloat(document.scrollingElement?.scrollLeft || document.documentElement.scrollLeft) || 0,
+                        y: parseFloat(document.scrollingElement?.scrollTop || document.documentElement.scrollTop) || 0
                     },
                     href: window.location.href,
                     title: document.title,
@@ -2649,7 +2687,8 @@ extension BFCacheTransitionSystem {
                     error: e.message,
                     detailedLogs: ['무한스크롤 전용 앵커 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
-                    pageAnalysis: { error: e.message }
+                    pageAnalysis: { error: e.message },
+                    lastBatchIndex: 0
                 };
             }
         })()
