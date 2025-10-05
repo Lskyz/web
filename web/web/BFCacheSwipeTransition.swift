@@ -788,6 +788,63 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
+            return new Promise((resolve) => {
+                const startTime = Date.now();
+                let resolved = false;
+
+                // 센티널: 스크롤 끝에 배치
+                const sentinel = document.createElement('div');
+                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(sentinel);
+
+                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                const observer = new IntersectionObserver((entries) => {
+                    if (resolved) return;
+
+                    const currentHeight = scrollRoot.scrollHeight;
+                    const growth = currentHeight - beforeHeight;
+
+                    // 높이 증가 확인
+                    if (growth >= 10) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: true,
+                            height: currentHeight,
+                            growth: growth,
+                            time: Date.now() - startTime
+                        });
+                    }
+                }, {
+                    root: null,
+                    threshold: 0,
+                    rootMargin: '100px'
+                });
+
+                observer.observe(sentinel);
+
+                // 타임아웃
+                setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: false,
+                            height: scrollRoot.scrollHeight,
+                            growth: scrollRoot.scrollHeight - beforeHeight,
+                            time: timeout
+                        });
+                    }
+                }, timeout);
+
+                function cleanup() {
+                    observer.disconnect();
+                    sentinel.remove();
+                }
+            });
+        }
+
         function getScrollableParent(element) {
             let node = element ? element.parentElement : null;
             while (node && node !== document.body) {
@@ -1059,31 +1116,6 @@ struct BFCacheSnapshot: Codable {
                     let containerGrew = false;
                     let batchCount = 0;
                     const maxAttempts = 100;
-
-                    // 🔧 **MutationObserver로 DOM 추가 감지 (최고 성능)**
-                    let domChanged = false;
-                    let mutationObserver = null;
-
-                    if (typeof MutationObserver !== 'undefined') {
-                        try {
-                            mutationObserver = new MutationObserver((mutations) => {
-                                for (let mutation of mutations) {
-                                    if (mutation.addedNodes.length > 0) {
-                                        domChanged = true;
-                                        break;
-                                    }
-                                }
-                            });
-                            mutationObserver.observe(scrollRoot, {
-                                childList: true,
-                                subtree: true
-                            });
-                        } catch(e) {
-                            logs.push('[Step 1] MutationObserver 생성 실패');
-                        }
-                    }
-
-                    // 🚀 **고정 대기 시간: 1500ms**
                     const maxWait = 500;
 
                     while (batchCount < maxAttempts) {
@@ -1130,67 +1162,33 @@ struct BFCacheSnapshot: Codable {
                 } else {
                     scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                 }
-                // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
-                domChanged = false;
-                const startWait = Date.now();
-                let heightIncreased = false;
-                        while ((Date.now() - startWait) < maxWait) {
-                        await nextFrame(); 
 
-                            const currentHeight = scrollRoot.scrollHeight;
-                            const growth = currentHeight - beforeHeight;
+                // 🚀 **IntersectionObserver 기반 대기**
+                const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
 
-                            // DOM 추가되고 높이도 증가했으면 즉시 성공
-                            if (domChanged && growth >= 10) {
-                                heightIncreased = true;
-                                const waitTime = Date.now() - startWait;
+                if (!isElementValid(scrollRoot)) break;
 
-                                if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 현재: ' + currentHeight.toFixed(0) + 'px)');
-                                }
-                                lastHeight = currentHeight;
-                                grew = true;
-                                containerGrew = true;
-                                batchCount++;
-                                break;
-                            }
+                if (result.success) {
+                    grew = true;
+                    containerGrew = true;
+                    lastHeight = result.height;
+                    batchCount++;
 
-                            // DOM 변화 없어도 높이만 증가하면 즉시 성공 (가상리스트)
-                            if (growth >= 10) {
-                                heightIncreased = true;
-                                const waitTime = Date.now() - startWait;
-
-                                if (batchCount === 0 || batchCount % 5 === 0) {
-                                    logs.push('[Step 1] Batch ' + batchCount + ': +' + growth.toFixed(0) + 'px (' + (waitTime / 1000).toFixed(2) + 's, 가상리스트)');
-                                }
-                                lastHeight = currentHeight;
-                                grew = true;
-                                containerGrew = true;
-                                batchCount++;
-                                break;
-                            }
-                        }
-
-                        if (!isElementValid(scrollRoot)) break;
-
-                        // 증가 없으면 중단
-                        if (!heightIncreased) {
-                            const finalGrowth = scrollRoot.scrollHeight - beforeHeight;
-                            if (finalGrowth > 0) {
-                                logs.push('[Step 1] 소폭 증가: +' + finalGrowth.toFixed(0) + 'px (계속)');
-                                lastHeight = scrollRoot.scrollHeight;
-                                batchCount++;
-                            } else {
-                                logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
-                                break;
-                            }
-                        }
+                    if (batchCount === 0 || batchCount % 5 === 0) {
+                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 1000).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
                     }
-
-                    // 🧹 **Observer 정리**
-                    try {
-                        if (mutationObserver) mutationObserver.disconnect();
-                    } catch(e) {}
+                } else {
+                    // 증가 없거나 타임아웃
+                    if (result.growth > 0) {
+                        logs.push('[Step 1] 소폭 증가: +' + result.growth.toFixed(0) + 'px (계속)');
+                        lastHeight = result.height;
+                        batchCount++;
+                    } else {
+                        logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
+                        break;
+                    }
+                }
+                    }
 
                     if (containerGrew) {
                         logs.push('[Step 1] 컨테이너 트리거 성공 - 계속');
