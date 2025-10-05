@@ -1135,7 +1135,7 @@ struct BFCacheSnapshot: Codable {
                 const startWait = Date.now();
                 let heightIncreased = false;
                         while ((Date.now() - startWait) < maxWait) {
-                            await nextFrame();
+                            
 
                             const currentHeight = scrollRoot.scrollHeight;
                             const growth = currentHeight - beforeHeight;
