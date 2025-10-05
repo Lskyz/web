@@ -152,7 +152,8 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            savedContentHeight: max(actualScrollableSize.height, contentSize.height)
+            savedContentHeight: max(actualScrollableSize.height, contentSize.height),
+            lastBatchIndex: restorationConfig.lastBatchIndex
         )
     }
 
@@ -1119,7 +1120,7 @@ struct BFCacheSnapshot: Codable {
                     if (savedBatchIndex > 0) {
                         const avgBatchHeight = 800; // 배치당 평균 높이
                         const targetHeight = savedBatchIndex * avgBatchHeight;
-                        const targetScrollPos = Math.min(targetHeight * 0.85, scrollRoot.scrollHeight); // 85% 위치로 점프
+                        const targetScrollPos = Math.min(targetHeight * 0.9, scrollRoot.scrollHeight); // 90% 위치로 점프
 
                         logs.push('[Step 1] 🚀 배치 인덱스 ' + savedBatchIndex + '로 직접 점프: ' + targetScrollPos.toFixed(0) + 'px');
                         scrollRoot.scrollTo(0, targetScrollPos);
@@ -1127,12 +1128,12 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     let containerGrew = false;
-                    let batchCount = savedBatchIndex > 0 ? Math.floor(savedBatchIndex * 0.85) : 0; // 85%부터 시작
+                    let batchCount = savedBatchIndex > 0 ? Math.floor(savedBatchIndex * 0.9) : 0; // 90%부터 시작
                     const maxAttempts = 50;
                     const maxWait = 500;
 
                     if (savedBatchIndex > 0) {
-                        logs.push('[Step 1] 🚀 배치 카운트를 ' + batchCount + '부터 시작 (남은 15%만 로드)');
+                        logs.push('[Step 1] 🚀 배치 카운트를 ' + batchCount + '부터 시작 (남은 10%만 로드)');
                     }
 
                     while (batchCount < maxAttempts) {
