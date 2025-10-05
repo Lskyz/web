@@ -1118,29 +1118,29 @@ struct BFCacheSnapshot: Codable {
                         }
 
                    // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거 (반복)**
-const beforeHeight = scrollRoot.scrollHeight;
-const sentinel = findSentinel(scrollRoot);
+                const beforeHeight = scrollRoot.scrollHeight;
+                const sentinel = findSentinel(scrollRoot);
 
-if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-    try {
-        // 🚀 **센티넬 3번 반복 트리거**
-        for (let triggerCount = 0; triggerCount < 3; triggerCount++) {
-            if (sentinel && isElementValid(sentinel)) {
-                sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                await nextFrame(); // 프레임 1개만 대기
-            }
-        }
-    } catch(e) {
-        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-    }
-} else {
-    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-}
+                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                    try {
+                        // 🚀 **센티넬 3번 반복 트리거**
+                        for (let triggerCount = 0; triggerCount < 3; triggerCount++) {
+                            if (sentinel && isElementValid(sentinel)) {
+                                sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                                await nextFrame(); // 프레임 1개만 대기
+                            }
+                        }
+                    } catch(e) {
+                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                    }
+                } else {
+                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                }
 
-// 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
-domChanged = false;
-const startWait = Date.now();
-let heightIncreased = false;
+                // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
+                domChanged = false;
+                const startWait = Date.now();
+                let heightIncreased = false;
                         while ((Date.now() - startWait) < maxWait) {
                             await nextFrame();
 
