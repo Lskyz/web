@@ -1127,7 +1127,7 @@ if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === '
         for (let triggerCount = 0; triggerCount < 3; triggerCount++) {
             if (sentinel && isElementValid(sentinel)) {
                 sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                
+                await nextFrame(); // 프레임 1개만 대기
             }
         }
     } catch(e) {
@@ -1137,10 +1137,10 @@ if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === '
     scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
 }
 
-                        // 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 500ms)**
-                        domChanged = false;
-                        const startWait = Date.now();
-                        let heightIncreased = false;
+// 🚀 **MutationObserver + scrollHeight 하이브리드 대기 (고정 300ms)**
+domChanged = false;
+const startWait = Date.now();
+let heightIncreased = false;
                         while ((Date.now() - startWait) < maxWait) {
                             await nextFrame();
 
