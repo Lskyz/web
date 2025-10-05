@@ -1146,18 +1146,29 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                   // 🚀 **프리페치: 여러 위치를 거쳐가며 무한스크롤 트리거**
                 const beforeHeight = scrollRoot.scrollHeight;
-                const sentinel = findSentinel(scrollRoot);
+                const maxScroll = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+                const prefetchSteps = [
+                    Math.floor(maxScroll * 0.6),   // 60% 지점
+                    Math.floor(maxScroll * 0.8),   // 80% 지점
+                    maxScroll                      // 100% 끝
+                ];
 
+                // 각 위치로 빠르게 이동하여 무한스크롤 로더 트리거
+                for (const targetPos of prefetchSteps) {
+                    if (targetPos > 0) {
+                        scrollRoot.scrollTo(0, targetPos);
+                        await delay(30);  // 짧은 대기로 트리거만
+                    }
+                }
+
+                // 센티널 방식도 시도
+                const sentinel = findSentinel(scrollRoot);
                 if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                     try {
                         sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                    } catch(e) {
-                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                    }
-                } else {
-                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                    } catch(e) {}
                 }
 
                 // 🚀 **IntersectionObserver 기반 대기**
