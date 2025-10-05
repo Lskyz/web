@@ -37,15 +37,13 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
-        let targetBatchIndex: Int?          // 🎯 목표 배치 인덱스 (즉시 점프용)
 
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: 0,
-            targetBatchIndex: nil
+            savedContentHeight: 0
         )
     }
 
@@ -152,8 +150,7 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            savedContentHeight: max(actualScrollableSize.height, contentSize.height),
-            targetBatchIndex: restorationConfig.targetBatchIndex
+            savedContentHeight: max(actualScrollableSize.height, contentSize.height)
         )
     }
 
@@ -1016,7 +1013,6 @@ struct BFCacheSnapshot: Codable {
     }
     private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
-        let targetBatchIndex = self.restorationConfig.targetBatchIndex
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
@@ -1026,21 +1022,13 @@ struct BFCacheSnapshot: Codable {
             """
         }
 
-        let targetBatchIndexJS = targetBatchIndex != nil ? "\(targetBatchIndex!)" : "null"
-        let targetScrollY = self.scrollPosition.y
-
         return """
         try {
             \(generateCommonUtilityScript())
 
             const logs = [];
             const savedContentHeight = parseFloat('\(savedHeight)');
-            const targetBatchIndex = \(targetBatchIndexJS);
-            const targetScrollY = parseFloat('\(targetScrollY)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
-            if (targetBatchIndex !== null) {
-                logs.push('[Step 1] 🎯 목표 배치 인덱스: ' + targetBatchIndex + ', 목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
-            }
 
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
@@ -1105,44 +1093,19 @@ struct BFCacheSnapshot: Codable {
                 let grew = false;
                 const step1StartTime = Date.now();
 
-                // 🎯 **배치 인덱스 기반 즉시 점프 (목표 스크롤 위치 사용)**
-                if (targetBatchIndex !== null && targetBatchIndex > 0 && targetScrollY > 0) {
-                    logs.push('[Step 1] 🎯 배치 ' + targetBatchIndex + ' 위치로 즉시 점프: ' + targetScrollY.toFixed(0) + 'px');
+                // 🚀 **Observer 기반 이벤트 드리븐 감지**
+                for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+                    const scrollRoot = containers[containerIndex];
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
 
-                    const jumpRoot = getROOT();
-                    if (jumpRoot) {
-                        jumpRoot.scrollTop = targetScrollY;
-                        await nextFrame();
-                        await delay(300);  // 렌더링 대기
-
-                        const afterJumpHeight = jumpRoot.scrollHeight;
-                        const afterJumpScroll = jumpRoot.scrollTop;
-                        logs.push('[Step 1] 점프 후: 높이=' + afterJumpHeight.toFixed(0) + 'px, 위치=' + afterJumpScroll.toFixed(0) + 'px');
-
-                        // 점프 후에도 높이가 부족하면 트리거 계속 진행
-                        if (afterJumpHeight < savedContentHeight) {
-                            logs.push('[Step 1] 점프 후에도 높이 부족 → 트리거 계속');
-                        } else {
-                            logs.push('[Step 1] 점프로 충분한 높이 확보 → 트리거 스킵');
-                            grew = true;
-                        }
+                    if (!scrollRoot) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' null - 스킵');
+                        continue;
                     }
-                }
-
-                // 🚀 **Observer 기반 이벤트 드리븐 감지 (grew=true면 스킵)**
-                if (!grew) {
-                    for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
-                        const scrollRoot = containers[containerIndex];
-                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
-
-                        if (!scrollRoot) {
-                            logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' null - 스킵');
-                            continue;
-                        }
-                        if (!isElementValid(scrollRoot)) {
-                            logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 무효 - 스킵');
-                            continue;
-                        }
+                    if (!isElementValid(scrollRoot)) {
+                        logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 무효 - 스킵');
+                        continue;
+                    }
 
                     let lastHeight = scrollRoot.scrollHeight;
                     logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' 시작: ' + lastHeight.toFixed(0) + 'px');
@@ -1229,9 +1192,6 @@ struct BFCacheSnapshot: Codable {
                     } else {
                         logs.push('[Step 1] 컨테이너 트리거 실패');
                     }
-                    }
-                } else {
-                    logs.push('[Step 1] 즉시 점프로 충분한 높이 확보 - 트리거 스킵');
                 }
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
@@ -2139,42 +2099,13 @@ extension BFCacheTransitionSystem {
         TabPersistenceManager.debugMessages.append("📊 캡처 완료: 위치=(\(String(format: "%.1f", captureData.scrollPosition.x)), \(String(format: "%.1f", captureData.scrollPosition.y))), 백분율=(\(String(format: "%.2f", scrollPercent.x))%, \(String(format: "%.2f", scrollPercent.y))%)")
         TabPersistenceManager.debugMessages.append("📊 스크롤 계산 정보: actualScrollableHeight=\(captureData.actualScrollableSize.height), viewportHeight=\(captureData.viewportSize.height), maxScrollY=\(max(0, captureData.actualScrollableSize.height - captureData.viewportSize.height))")
 
-        // 🎯 **배치 인덱스 계산: 목표 위치에 가장 가까운 앵커의 listIndex**
-        var targetBatchIndex: Int? = nil
-        if let jsState = jsState,
-           let infiniteScrollAnchors = jsState["infiniteScrollAnchors"] as? [String: Any],
-           let anchors = infiniteScrollAnchors["anchors"] as? [[String: Any]] {
-
-            let targetY = captureData.scrollPosition.y
-            var closestAnchor: (index: Int, distance: CGFloat)? = nil
-
-            for anchor in anchors {
-                if let virtualIndex = anchor["virtualIndex"] as? [String: Any],
-                   let listIndex = virtualIndex["listIndex"] as? Int,
-                   let offsetInPage = virtualIndex["offsetInPage"] as? CGFloat {
-
-                    let distance = abs(offsetInPage - targetY)
-
-                    if closestAnchor == nil || distance < closestAnchor!.distance {
-                        closestAnchor = (listIndex, distance)
-                    }
-                }
-            }
-
-            if let closest = closestAnchor {
-                targetBatchIndex = closest.index / 12  // 12개 아이템당 1 배치
-                TabPersistenceManager.debugMessages.append("🎯 목표 배치 인덱스: \(targetBatchIndex!) (앵커 listIndex: \(closest.index), 거리: \(String(format: "%.1f", closest.distance))px)")
-            }
-        }
-
         // 🔄 **순차 실행 설정 생성**
         let restorationConfig = BFCacheSnapshot.RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
-            targetBatchIndex: targetBatchIndex
+            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
         )
 
         let snapshot = BFCacheSnapshot(
