@@ -1117,19 +1117,31 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거 (반복)**
+                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거 (마지막 10개 요소)**
                 const beforeHeight = scrollRoot.scrollHeight;
+                
+                // 🚀 **마지막 10개 요소를 순차적으로 viewport에 진입**
+                const lastElements = Array.from(scrollRoot.children).slice(-10);
+                logs.push('[Step 1] 마지막 ' + lastElements.length + '개 요소 트리거 시작');
+                
+                for (let i = 0; i < lastElements.length; i++) {
+                    const elem = lastElements[i];
+                    if (isElementValid(elem) && typeof elem.scrollIntoView === 'function') {
+                        try {
+                            elem.scrollIntoView({ block: 'end', behavior: 'instant' });
+                            await nextFrame(); // 프레임 1개만 대기
+                        } catch(e) {
+                            // 실패해도 계속 진행
+                        }
+                    }
+                }
+                
+                // 📌 **Fallback: 센티넬도 한 번 더 트리거**
                 const sentinel = findSentinel(scrollRoot);
-
                 if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                     try {
-                        // 🚀 **센티넬 3번 반복 트리거**
-                        for (let triggerCount = 0; triggerCount < 3; triggerCount++) {
-                            if (sentinel && isElementValid(sentinel)) {
-                                sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                                await nextFrame(); // 프레임 1개만 대기
-                            }
-                        }
+                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                        await nextFrame();
                     } catch(e) {
                         scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                     }
