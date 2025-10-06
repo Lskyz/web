@@ -842,6 +842,187 @@ struct BFCacheSnapshot: Codable {
             });
         }
 
+        async function attemptOffsetPrefetch(scrollRoot, targetHeight, viewportHeight) {
+            // 🎯 offset/skip 기반 프리페치 시도
+            const beforeHeight = scrollRoot.scrollHeight;
+
+            // 1. 현재 페이지의 네트워크 요청 패턴 분석
+            const apiPattern = detectInfiniteScrollAPI();
+            if (!apiPattern) {
+                return { success: false, growth: 0, method: 'no-api-detected' };
+            }
+
+            // 2. 필요한 아이템 수 계산
+            const avgItemHeight = 200; // 평균 아이템 높이 추정
+            const currentItems = Math.floor(beforeHeight / avgItemHeight);
+            const targetItems = Math.floor(targetHeight / avgItemHeight);
+            const itemsNeeded = Math.max(0, targetItems - currentItems);
+
+            if (itemsNeeded < 10) {
+                return { success: false, growth: 0, method: 'items-not-enough' };
+            }
+
+            // 3. API 호출로 데이터 가져오기
+            try {
+                const url = buildOffsetUrl(apiPattern, itemsNeeded, currentItems);
+                const response = await fetch(url, {
+                    credentials: 'same-origin',
+                    headers: apiPattern.headers || {}
+                });
+
+                if (!response.ok) {
+                    return { success: false, growth: 0, method: 'fetch-failed' };
+                }
+
+                const contentType = response.headers.get('content-type');
+                let newItems = [];
+
+                if (contentType && contentType.includes('application/json')) {
+                    const data = await response.json();
+                    newItems = extractItemsFromJSON(data, apiPattern);
+                } else {
+                    const html = await response.text();
+                    newItems = extractItemsFromHTML(html, apiPattern);
+                }
+
+                if (newItems.length === 0) {
+                    return { success: false, growth: 0, method: 'no-items-extracted' };
+                }
+
+                // 4. DOM에 삽입
+                const container = findItemContainer(scrollRoot);
+                if (!container) {
+                    return { success: false, growth: 0, method: 'no-container' };
+                }
+
+                newItems.forEach(item => {
+                    if (typeof item === 'string') {
+                        container.insertAdjacentHTML('beforeend', item);
+                    } else {
+                        container.appendChild(item);
+                    }
+                });
+
+                await nextFrame();
+                await delay(100);
+
+                const afterHeight = scrollRoot.scrollHeight;
+                const growth = afterHeight - beforeHeight;
+
+                return {
+                    success: growth > 100,
+                    growth: growth,
+                    method: 'offset-api',
+                    itemsAdded: newItems.length
+                };
+
+            } catch (e) {
+                return { success: false, growth: 0, method: 'error: ' + e.message };
+            }
+        }
+
+        function detectInfiniteScrollAPI() {
+            // Performance API로 최근 fetch 요청 분석
+            const resources = performance.getEntriesByType('resource');
+            const apiCandidates = resources.filter(r => {
+                const url = r.name.toLowerCase();
+                return (url.includes('/api/') ||
+                        url.includes('graphql') ||
+                        url.match(/[?&](offset|skip|page|limit|cursor)=/));
+            }).slice(-5); // 최근 5개
+
+            if (apiCandidates.length === 0) return null;
+
+            const mostRecent = apiCandidates[apiCandidates.length - 1];
+            const url = new URL(mostRecent.name);
+
+            // offset/skip/page 파라미터 추출
+            let offsetParam = null, limitParam = null;
+            for (const [key, value] of url.searchParams.entries()) {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey.includes('offset') || lowerKey.includes('skip') || lowerKey.includes('start')) {
+                    offsetParam = { key, value: parseInt(value) || 0 };
+                }
+                if (lowerKey.includes('limit') || lowerKey.includes('count') || lowerKey.includes('size')) {
+                    limitParam = { key, value: parseInt(value) || 20 };
+                }
+            }
+
+            if (!offsetParam && !limitParam) return null;
+
+            return {
+                baseUrl: url.origin + url.pathname,
+                offsetParam,
+                limitParam,
+                searchParams: url.searchParams
+            };
+        }
+
+        function buildOffsetUrl(apiPattern, itemsNeeded, currentItems) {
+            const url = new URL(apiPattern.baseUrl);
+
+            // 기존 파라미터 복사
+            for (const [key, value] of apiPattern.searchParams.entries()) {
+                url.searchParams.set(key, value);
+            }
+
+            // offset/skip 업데이트
+            if (apiPattern.offsetParam) {
+                url.searchParams.set(apiPattern.offsetParam.key, currentItems.toString());
+            }
+
+            // limit 업데이트 (더 많이 가져오기)
+            if (apiPattern.limitParam) {
+                const batchSize = Math.min(itemsNeeded, 100); // 최대 100개
+                url.searchParams.set(apiPattern.limitParam.key, batchSize.toString());
+            }
+
+            return url.toString();
+        }
+
+        function extractItemsFromJSON(data, apiPattern) {
+            // JSON에서 아이템 배열 추출 (일반적인 패턴)
+            const items = data.items || data.results || data.data || data.list || [];
+            if (!Array.isArray(items)) return [];
+
+            // 템플릿이 있으면 HTML로 변환 (보통은 프레임워크가 처리)
+            return items.map(item => {
+                // 간단한 HTML 생성 (실제로는 사이트마다 다름)
+                return '<div class="prefetch-item">' + JSON.stringify(item) + '</div>';
+            });
+        }
+
+        function extractItemsFromHTML(html, apiPattern) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // 일반적인 아이템 셀렉터들 시도
+            const selectors = [
+                '[data-item]', '[data-post]', '[data-card]',
+                '.item', '.post', '.card', '.list-item',
+                'article', 'li'
+            ];
+
+            for (const selector of selectors) {
+                const items = doc.querySelectorAll(selector);
+                if (items.length > 0) {
+                    return Array.from(items);
+                }
+            }
+
+            return [];
+        }
+
+        function findItemContainer(scrollRoot) {
+            // 아이템 컨테이너 찾기
+            const candidates = scrollRoot.querySelectorAll('[data-items], [data-list], .items, .list, ul, .feed');
+            if (candidates.length > 0) {
+                // 가장 많은 자식을 가진 것 선택
+                return Array.from(candidates).sort((a, b) => b.children.length - a.children.length)[0];
+            }
+            return scrollRoot;
+        }
+
         function getScrollableParent(element) {
             let node = element ? element.parentElement : null;
             while (node && node !== document.body) {
@@ -1113,8 +1294,23 @@ struct BFCacheSnapshot: Codable {
                     let containerGrew = false;
                     let batchCount = 0;
                     const maxAttempts = 50;
-                    const maxWait = 400;
+                    const maxWait = 500;
                     const scrollsPerBatch = 3;
+
+                    // 🎯 **프리페치: offset/skip으로 목표 지점 직접 로드**
+                    try {
+                        const prefetchResult = await attemptOffsetPrefetch(scrollRoot, savedContentHeight, viewportHeight);
+                        if (prefetchResult.success) {
+                            logs.push('[Step 1] 프리페치 성공: +' + prefetchResult.growth.toFixed(0) + 'px (' + prefetchResult.method + ')');
+                            grew = true;
+                            containerGrew = true;
+                            lastHeight = scrollRoot.scrollHeight;
+                        } else {
+                            logs.push('[Step 1] 프리페치 실패 또는 미지원 - 배치 시스템 사용');
+                        }
+                    } catch (e) {
+                        logs.push('[Step 1] 프리페치 오류: ' + e.message);
+                    }
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1215,7 +1411,7 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                    await waitForStableLayoutAsync({ frames: 3, timeout: 500 });
+                await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
