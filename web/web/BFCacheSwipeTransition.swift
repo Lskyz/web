@@ -1098,11 +1098,22 @@ struct BFCacheSnapshot: Codable {
                 );
 
                 let clicked = 0;
+                const scrollHeight = root ? root.scrollHeight : 0;
+                const threshold = scrollHeight * 0.5; // 페이지 하위 50%만
+
                 loadMoreButtons.forEach(btn => {
-                    if (clicked < 5 && btn && typeof btn.click === 'function') {
-                        btn.click();
-                        clicked += 1;
-                    }
+                    if (clicked >= 5 || !btn || typeof btn.click !== 'function') return;
+
+                    // 🛡️ **필터링: 보이는 요소 + 하단 영역만**
+                    const rect = btn.getBoundingClientRect();
+                    const offsetTop = btn.offsetTop || 0;
+
+                    // 화면에 안 보이거나 상단 절반에 있으면 스킵
+                    if (rect.width === 0 || rect.height === 0) return;
+                    if (offsetTop < threshold) return;
+
+                    btn.click();
+                    clicked += 1;
                 });
 
                 if (clicked > 0) {
