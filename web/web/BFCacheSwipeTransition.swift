@@ -1114,6 +1114,7 @@ struct BFCacheSnapshot: Codable {
                     let batchCount = 0;
                     const maxAttempts = 50;
                     const maxWait = 500;
+                    const scrollsPerBatch = 3;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1146,45 +1147,65 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
-                const beforeHeight = scrollRoot.scrollHeight;
-                const sentinel = findSentinel(scrollRoot);
+                        // 🔧 **배치당 여러 번 스크롤**
+                        let batchGrowth = 0;
+                        let batchSuccess = false;
 
-                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                    try {
-                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                    } catch(e) {
-                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                    }
-                } else {
-                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                }
+                        for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
+                            const beforeHeight = scrollRoot.scrollHeight;
 
-                // 🚀 **IntersectionObserver 기반 대기**
-                const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
+                            // 목표 도달 시 중단
+                            if (beforeHeight >= savedContentHeight) {
+                                batchSuccess = true;
+                                break;
+                            }
 
-                if (!isElementValid(scrollRoot)) break;
+                            const sentinel = findSentinel(scrollRoot);
 
-                if (result.success) {
-                    grew = true;
-                    containerGrew = true;
-                    lastHeight = result.height;
-                    batchCount++;
+                            if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                                try {
+                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                                } catch(e) {
+                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                }
+                            } else {
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            }
 
-                    if (batchCount === 0 || batchCount % 5 === 0) {
-                        logs.push('[Step 1] Batch ' + batchCount + ': +' + result.growth.toFixed(0) + 'px (' + (result.time / 500).toFixed(2) + 's, 현재: ' + result.height.toFixed(0) + 'px)');
-                    }
-                } else {
-                    // 증가 없거나 타임아웃
-                    if (result.growth > 0) {
-                        logs.push('[Step 1] 소폭 증가: +' + result.growth.toFixed(0) + 'px (계속)');
-                        lastHeight = result.height;
-                        batchCount++;
-                    } else {
-                        logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
-                        break;
-                    }
-                }
+                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
+
+                            if (!isElementValid(scrollRoot)) break;
+
+                            if (result.success) {
+                                batchGrowth += result.growth;
+                                batchSuccess = true;
+                                lastHeight = result.height;
+                            } else if (result.growth > 0) {
+                                batchGrowth += result.growth;
+                                lastHeight = result.height;
+                            } else {
+                                // 더 이상 성장 안 함
+                                break;
+                            }
+                        }
+
+                        if (batchSuccess) {
+                            grew = true;
+                            containerGrew = true;
+                            batchCount++;
+
+                            if (batchCount === 0 || batchCount % 5 === 0) {
+                                logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (현재: ' + lastHeight.toFixed(0) + 'px)');
+                            }
+                        } else {
+                            if (batchGrowth > 0) {
+                                logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (계속)');
+                                batchCount++;
+                            } else {
+                                logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
+                                break;
+                            }
+                        }
                     }
 
                     if (containerGrew) {
