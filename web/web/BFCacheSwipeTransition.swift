@@ -764,7 +764,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function waitForStableLayoutAsync(options = {}) {
-            const { frames = 3, timeout = 800, threshold = 2 } = options;
+            const { frames = 2, timeout = 500, threshold = 2 } = options;
             const root = getROOT();
             if (!root) return;
             let stableFrames = 0;
