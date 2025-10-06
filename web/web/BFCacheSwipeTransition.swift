@@ -1181,19 +1181,14 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
+                   // 🔧 **목표까지만 스크롤 -> 무한스크롤 트리거**
                 const beforeHeight = scrollRoot.scrollHeight;
-                const sentinel = findSentinel(scrollRoot);
+                const maxScrollY = scrollRoot.scrollHeight - viewportHeight;
+                const targetScroll = Math.min(maxScrollY, targetScrollY);
 
-                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                    try {
-                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                    } catch(e) {
-                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                    }
-                } else {
-                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                }
+                // 목표 위치까지만 스크롤 (바닥까지 안 감)
+                scrollRoot.scrollTo(0, targetScroll);
+                logs.push('[Step 1] Batch ' + (batchCount + 1) + ' 스크롤: ' + targetScroll.toFixed(0) + 'px (목표: ' + targetScrollY.toFixed(0) + 'px)');
 
                 // 🚀 **IntersectionObserver 기반 대기**
                 const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
