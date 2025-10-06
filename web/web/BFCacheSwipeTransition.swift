@@ -1114,7 +1114,7 @@ struct BFCacheSnapshot: Codable {
                     let batchCount = 0;
                     const maxAttempts = 50;
                     const maxWait = 500;
-                    const scrollsPerBatch = 3;
+                    const scrollsPerBatch = 5;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
