@@ -1044,7 +1044,7 @@ struct BFCacheSnapshot: Codable {
 
                 // 200ms씩 5회 체크 (최대 1초)
                 for (let i = 0; i < 5; i++) {
-                    await delay(200);
+                    await delay(300);
                     const newHeight = root ? root.scrollHeight : 0;
 
                     if (newHeight > currentHeight + 100) {
