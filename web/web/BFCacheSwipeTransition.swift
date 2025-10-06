@@ -1150,6 +1150,7 @@ struct BFCacheSnapshot: Codable {
                         // 🔧 **배치당 여러 번 스크롤**
                         let batchGrowth = 0;
                         let batchSuccess = false;
+                        const batchStartTime = Date.now();
 
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
@@ -1189,17 +1190,19 @@ struct BFCacheSnapshot: Codable {
                             }
                         }
 
+                        const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
+
                         if (batchSuccess) {
                             grew = true;
                             containerGrew = true;
                             batchCount++;
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
-                                logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (현재: ' + lastHeight.toFixed(0) + 'px)');
+                                logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
                             }
                         } else {
                             if (batchGrowth > 0) {
-                                logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (계속)');
+                                logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 계속)');
                                 batchCount++;
                             } else {
                                 logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
