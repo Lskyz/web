@@ -1147,21 +1147,20 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **배치당 여러 번 스크롤 (연속)**
+                        // 🔧 **배치당 여러 번 스크롤**
                         let batchGrowth = 0;
                         let batchSuccess = false;
                         const batchStartTime = Date.now();
-                        const beforeBatchHeight = scrollRoot.scrollHeight;
 
-                        // 목표 도달 체크
-                        if (beforeBatchHeight >= savedContentHeight) {
-                            grew = true;
-                            containerGrew = true;
-                            break;
-                        }
-
-                        // 연속으로 여러 번 스크롤 트리거 (대기 없이)
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
+                            const beforeHeight = scrollRoot.scrollHeight;
+
+                            // 목표 도달 시 중단
+                            if (beforeHeight >= savedContentHeight) {
+                                batchSuccess = true;
+                                break;
+                            }
+
                             const sentinel = findSentinel(scrollRoot);
 
                             if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
@@ -1174,21 +1173,21 @@ struct BFCacheSnapshot: Codable {
                                 scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                             }
 
-                            await nextFrame(); // 최소 대기만
-                        }
+                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
 
-                        // 한 번만 대기
-                        const result = await waitForContentLoad(scrollRoot, beforeBatchHeight, maxWait);
+                            if (!isElementValid(scrollRoot)) break;
 
-                        if (!isElementValid(scrollRoot)) break;
-
-                        if (result.success) {
-                            batchGrowth = result.growth;
-                            batchSuccess = true;
-                            lastHeight = result.height;
-                        } else if (result.growth > 0) {
-                            batchGrowth = result.growth;
-                            lastHeight = result.height;
+                            if (result.success) {
+                                batchGrowth += result.growth;
+                                batchSuccess = true;
+                                lastHeight = result.height;
+                            } else if (result.growth > 0) {
+                                batchGrowth += result.growth;
+                                lastHeight = result.height;
+                            } else {
+                                // 더 이상 성장 안 함
+                                break;
+                            }
                         }
 
                         const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
