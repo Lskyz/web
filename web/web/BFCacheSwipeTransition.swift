@@ -1033,34 +1033,10 @@ struct BFCacheSnapshot: Codable {
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
 
-                // 🚀 **자연 렌더링 대기 (최대 1초)**
-                const initialHeight = root ? root.scrollHeight : 0;
+                const currentHeight = root ? root.scrollHeight : 0;
                 const viewportHeight = window.innerHeight || 0;
-                logs.push('[Step 1] 초기 높이: ' + initialHeight.toFixed(0) + 'px');
+                logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
-
-                let currentHeight = initialHeight;
-                const naturalRenderStart = Date.now();
-
-                // 200ms씩 5회 체크 (최대 1초)
-                for (let i = 0; i < 5; i++) {
-                    await delay(200);
-                    const newHeight = root ? root.scrollHeight : 0;
-
-                    if (newHeight > currentHeight + 100) {
-                        const renderTime = Date.now() - naturalRenderStart;
-                        logs.push('[Step 1] 자연 렌더링 감지: ' + newHeight.toFixed(0) + 'px (+' + (newHeight - initialHeight).toFixed(0) + 'px, ' + renderTime + 'ms)');
-                        currentHeight = newHeight;
-                        break;
-                    }
-
-                    if (i === 4) {
-                        logs.push('[Step 1] 자연 렌더링 타임아웃 (1초)');
-                        currentHeight = newHeight;
-                    }
-                }
-
-                logs.push('[Step 1] 렌더링 후 높이: ' + currentHeight.toFixed(0) + 'px');
 
                 // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
                 const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
@@ -1098,22 +1074,11 @@ struct BFCacheSnapshot: Codable {
                 );
 
                 let clicked = 0;
-                const scrollHeight = root ? root.scrollHeight : 0;
-                const threshold = scrollHeight * 0.5; // 페이지 하위 50%만
-
                 loadMoreButtons.forEach(btn => {
-                    if (clicked >= 5 || !btn || typeof btn.click !== 'function') return;
-
-                    // 🛡️ **필터링: 보이는 요소 + 하단 영역만**
-                    const rect = btn.getBoundingClientRect();
-                    const offsetTop = btn.offsetTop || 0;
-
-                    // 화면에 안 보이거나 상단 절반에 있으면 스킵
-                    if (rect.width === 0 || rect.height === 0) return;
-                    if (offsetTop < threshold) return;
-
-                    btn.click();
-                    clicked += 1;
+                    if (clicked < 5 && btn && typeof btn.click === 'function') {
+                        btn.click();
+                        clicked += 1;
+                    }
                 });
 
                 if (clicked > 0) {
@@ -1181,14 +1146,19 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                   // 🔧 **목표까지만 스크롤 -> 무한스크롤 트리거**
+                   // 🔧 **바닥까지 스크롤 -> 무한스크롤 트리거**
                 const beforeHeight = scrollRoot.scrollHeight;
-                const maxScrollY = scrollRoot.scrollHeight - viewportHeight;
-                const targetScroll = Math.min(maxScrollY, targetScrollY);
+                const sentinel = findSentinel(scrollRoot);
 
-                // 목표 위치까지만 스크롤 (바닥까지 안 감)
-                scrollRoot.scrollTo(0, targetScroll);
-                logs.push('[Step 1] Batch ' + (batchCount + 1) + ' 스크롤: ' + targetScroll.toFixed(0) + 'px (목표: ' + targetScrollY.toFixed(0) + 'px)');
+                if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                    try {
+                        sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                    } catch(e) {
+                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                    }
+                } else {
+                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                }
 
                 // 🚀 **IntersectionObserver 기반 대기**
                 const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
