@@ -868,7 +868,7 @@ struct BFCacheSnapshot: Codable {
             return height;
         }
 
-        async function scrollStepAsync(element, target, axis = 'y', ratio = 0.8, minStep = 16) {
+        async function scrollStepAsync(element, target, axis = 'y', ratio = 5.0, minStep = 200) {
             if (!element) return 0;
             const isY = axis === 'y';
             const getCurrent = () => isY ? element.scrollTop : element.scrollLeft;
@@ -883,7 +883,7 @@ struct BFCacheSnapshot: Codable {
             const goal = Math.min(limit, Math.max(0, target));
             let current = getCurrent();
             let guard = 0;
-            while (Math.abs(goal - current) > 0.5 && guard < 80) {
+            while (Math.abs(goal - current) > 0.5 && guard < 20) {
                 const distance = goal - current;
                 const step = Math.max(minStep, Math.abs((isY ? element.clientHeight : element.clientWidth) * ratio));
                 const delta = Math.sign(distance) * Math.min(step, Math.abs(distance));
