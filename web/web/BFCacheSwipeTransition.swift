@@ -785,24 +785,19 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        // MutationObserver 기반으로 DOM 변화만 감시 (스크롤/레이아웃 비용 제거)
         function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
                 const startTime = Date.now();
                 let resolved = false;
+                let mutationObserver = null;
+                let timeoutId = null;
 
-                // 센티널: 스크롤 끝에 배치
-                const sentinel = document.createElement('div');
-                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
-                scrollRoot.appendChild(sentinel);
-
-                // IntersectionObserver: 새 콘텐츠 렌더링 감지
-                const observer = new IntersectionObserver((entries) => {
+                const checkHeight = () => {
                     if (resolved) return;
-
                     const currentHeight = scrollRoot.scrollHeight;
                     const growth = currentHeight - beforeHeight;
 
-                    // 높이 증가 확인
                     if (growth >= 10) {
                         resolved = true;
                         cleanup();
@@ -813,16 +808,29 @@ struct BFCacheSnapshot: Codable {
                             time: Date.now() - startTime
                         });
                     }
-                }, {
-                    root: null,
-                    threshold: 0,
-                    rootMargin: '100px'
+                };
+
+                // MutationObserver: DOM 변경만 감시 (childList + subtree)
+                mutationObserver = new MutationObserver((mutations) => {
+                    if (resolved) return;
+
+                    // DOM 추가/삭제가 있을 때만 높이 체크
+                    const hasRelevantMutation = mutations.some(m =>
+                        m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)
+                    );
+
+                    if (hasRelevantMutation) {
+                        checkHeight();
+                    }
                 });
 
-                observer.observe(sentinel);
+                mutationObserver.observe(scrollRoot, {
+                    childList: true,
+                    subtree: true
+                });
 
                 // 타임아웃
-                setTimeout(() => {
+                timeoutId = setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
                         cleanup();
@@ -836,10 +844,132 @@ struct BFCacheSnapshot: Codable {
                 }, timeout);
 
                 function cleanup() {
-                    observer.disconnect();
-                    sentinel.remove();
+                    if (mutationObserver) {
+                        mutationObserver.disconnect();
+                        mutationObserver = null;
+                    }
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
                 }
             });
+        }
+
+        // IO 기반 무한 스크롤: 센티널을 관찰하여 자동으로 콘텐츠 로드
+        function scrollToTargetWithIO(scrollRoot, targetHeight, maxBatches = 50) {
+            return new Promise((resolve) => {
+                let currentBatch = 0;
+                let lastHeight = scrollRoot.scrollHeight;
+                let ioSentinel = null;
+                let observer = null;
+                let isProcessing = false;
+
+                const cleanup = () => {
+                    if (observer) {
+                        observer.disconnect();
+                        observer = null;
+                    }
+                    if (ioSentinel && ioSentinel.parentNode) {
+                        ioSentinel.remove();
+                    }
+                };
+
+                const checkCompletion = () => {
+                    if (scrollRoot.scrollHeight >= targetHeight || currentBatch >= maxBatches) {
+                        cleanup();
+                        resolve({
+                            success: scrollRoot.scrollHeight >= targetHeight,
+                            finalHeight: scrollRoot.scrollHeight,
+                            batches: currentBatch
+                        });
+                        return true;
+                    }
+                    return false;
+                };
+
+                const triggerLoad = async () => {
+                    if (isProcessing) return;
+                    isProcessing = true;
+
+                    const beforeHeight = scrollRoot.scrollHeight;
+
+                    // 센티널 또는 페이지 끝으로 스크롤
+                    const pageSentinel = findSentinel(scrollRoot);
+                    if (pageSentinel && isElementValid(pageSentinel)) {
+                        try {
+                            pageSentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                        } catch(e) {
+                            scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                        }
+                    } else {
+                        scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                    }
+
+                    // DOM 변화 대기
+                    const result = await waitForContentLoad(scrollRoot, beforeHeight, 500);
+
+                    if (result.success || result.growth > 0) {
+                        currentBatch++;
+                        lastHeight = result.height;
+                    }
+
+                    isProcessing = false;
+
+                    // 완료 체크
+                    if (!checkCompletion()) {
+                        // 센티널을 다시 페이지 끝에 배치하여 계속 관찰
+                        if (ioSentinel && ioSentinel.parentNode) {
+                            scrollRoot.appendChild(ioSentinel);
+                        }
+                    }
+                };
+
+                // IO 센티널 생성 및 관찰 시작
+                ioSentinel = document.createElement('div');
+                ioSentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(ioSentinel);
+
+                observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting && !isProcessing) {
+                            triggerLoad();
+                        }
+                    });
+                }, {
+                    root: null,
+                    threshold: 0,
+                    rootMargin: '200px'
+                });
+
+                observer.observe(ioSentinel);
+
+                // 초기 완료 체크
+                if (checkCompletion()) {
+                    return;
+                }
+
+                // 초기 트리거 (센티널이 이미 보이는 경우)
+                const rect = ioSentinel.getBoundingClientRect();
+                if (rect.top < window.innerHeight + 200) {
+                    triggerLoad();
+                }
+            });
+        }
+
+        // 이미지 레이지 로딩 트리거: 목표 높이까지 임시 스크롤하여 이미지 로드 유도
+        function triggerLazyLoadToTarget(scrollRoot, targetHeight) {
+            const originalScrollTop = scrollRoot.scrollTop;
+            const step = scrollRoot.clientHeight * 0.8; // 뷰포트 80%씩 스크롤
+            let currentScroll = 0;
+
+            while (currentScroll < targetHeight) {
+                scrollRoot.scrollTop = currentScroll;
+                currentScroll += step;
+            }
+
+            // 원래 위치로 복귀
+            scrollRoot.scrollTop = originalScrollTop;
         }
 
         function getScrollableParent(element) {
@@ -1147,67 +1277,39 @@ struct BFCacheSnapshot: Codable {
                             break;
                         }
 
-                        // 🔧 **배치당 여러 번 스크롤**
-                        let batchGrowth = 0;
-                        let batchSuccess = false;
+                        // 🔧 **IO 기반 스크롤: 폴링 제거, 브라우저가 자동으로 새 콘텐츠 감지**
                         const batchStartTime = Date.now();
 
-                        for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
-                            const beforeHeight = scrollRoot.scrollHeight;
+                        // 1. 이미지 레이지 로딩 트리거 (목표 높이까지 사전 스크롤)
+                        triggerLazyLoadToTarget(scrollRoot, savedContentHeight);
 
-                            // 목표 도달 시 중단
-                            if (beforeHeight >= savedContentHeight) {
-                                batchSuccess = true;
-                                break;
-                            }
+                        // 2. IO 기반 자동 스크롤
+                        const ioResult = await scrollToTargetWithIO(
+                            scrollRoot,
+                            savedContentHeight,
+                            scrollsPerBatch  // maxBatches
+                        );
 
-                            const sentinel = findSentinel(scrollRoot);
-
-                            if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                                try {
-                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                                } catch(e) {
-                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                                }
-                            } else {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                            }
-
-                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
-
-                            if (!isElementValid(scrollRoot)) break;
-
-                            if (result.success) {
-                                batchGrowth += result.growth;
-                                batchSuccess = true;
-                                lastHeight = result.height;
-                            } else if (result.growth > 0) {
-                                batchGrowth += result.growth;
-                                lastHeight = result.height;
-                            } else {
-                                // 더 이상 성장 안 함
-                                break;
-                            }
-                        }
+                        if (!isElementValid(scrollRoot)) break;
 
                         const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
+                        const batchGrowth = ioResult.finalHeight - currentScrollHeight;
+                        lastHeight = ioResult.finalHeight;
 
-                        if (batchSuccess) {
+                        if (ioResult.success) {
                             grew = true;
                             containerGrew = true;
-                            batchCount++;
-
-                            if (batchCount === 0 || batchCount % 5 === 0) {
-                                logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
-                            }
+                            batchCount += ioResult.batches;
+                            logs.push('[Step 1-IO] 목표 도달: ' + ioResult.batches + '배치 (' + batchTime + 's, 최종: ' + lastHeight.toFixed(0) + 'px)');
+                            break;  // 목표 달성 시 즉시 종료
+                        } else if (batchGrowth > 0) {
+                            grew = true;
+                            containerGrew = true;
+                            batchCount += ioResult.batches;
+                            logs.push('[Step 1-IO] 부분 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, ' + ioResult.batches + '배치)');
                         } else {
-                            if (batchGrowth > 0) {
-                                logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 계속)');
-                                batchCount++;
-                            } else {
-                                logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
-                                break;
-                            }
+                            logs.push('[Step 1-IO] 성장 중단 (배치: ' + ioResult.batches + ')');
+                            break;
                         }
                     }
 
