@@ -790,170 +790,54 @@ struct BFCacheSnapshot: Codable {
                 const startTime = Date.now();
                 let resolved = false;
 
-                // 🎯 **이벤트 드리븐 상태 추적**
-                const state = {
-                    networkIdle: false,
-                    domChanged: false,
-                    viewportEntered: false,
-                    heightGrew: false
-                };
-
-                // 🌐 **fetch/XHR 후크 - 네트워크 요청 추적**
-                let pendingRequests = 0;
-
-                const originalFetch = window.fetch;
-                window.fetch = function() {
-                    pendingRequests++;
-                    return originalFetch.apply(this, arguments).finally(() => {
-                        pendingRequests--;
-                        checkNetworkIdle();
-                    });
-                };
-
-                const originalXHRSend = XMLHttpRequest.prototype.send;
-                XMLHttpRequest.prototype.send = function() {
-                    pendingRequests++;
-                    this.addEventListener('loadend', () => {
-                        pendingRequests--;
-                        checkNetworkIdle();
-                    });
-                    return originalXHRSend.apply(this, arguments);
-                };
-
-                function checkNetworkIdle() {
-                    if (pendingRequests === 0) {
-                        state.networkIdle = true;
-                        checkCompletion();
-                    }
-                }
-
-                // 초기 네트워크 상태 확인 (100ms 후)
-                setTimeout(() => {
-                    if (pendingRequests === 0) {
-                        state.networkIdle = true;
-                        checkCompletion();
-                    }
-                }, 100);
-
-                // 📊 **MutationObserver - DOM 변화 감지**
-                const mutationObserver = new MutationObserver((mutations) => {
-                    if (resolved) return;
-
-                    // 의미있는 DOM 변화 감지
-                    const hasSignificantChange = mutations.some(m =>
-                        m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)
-                    );
-
-                    if (hasSignificantChange) {
-                        state.domChanged = true;
-                        checkCompletion();
-                    }
-                });
-
-                mutationObserver.observe(scrollRoot, {
-                    childList: true,
-                    subtree: true,
-                    attributes: false
-                });
-
                 // 센티널: 스크롤 끝에 배치
                 const sentinel = document.createElement('div');
                 sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
                 scrollRoot.appendChild(sentinel);
 
-                // 👁️ **IntersectionObserver - 뷰포트 진입 감지**
-                const intersectionObserver = new IntersectionObserver((entries) => {
+                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                const observer = new IntersectionObserver((entries) => {
                     if (resolved) return;
 
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            state.viewportEntered = true;
-                            checkCompletion();
-                        }
-                    });
+                    const currentHeight = scrollRoot.scrollHeight;
+                    const growth = currentHeight - beforeHeight;
+
+                    // 높이 증가 확인
+                    if (growth >= 10) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: true,
+                            height: currentHeight,
+                            growth: growth,
+                            time: Date.now() - startTime
+                        });
+                    }
                 }, {
                     root: null,
                     threshold: 0,
                     rootMargin: '100px'
                 });
 
-                intersectionObserver.observe(sentinel);
-
-                // 🔍 **높이 증가 체크 (주기적)**
-                const heightCheckInterval = setInterval(() => {
-                    if (resolved) return;
-
-                    const currentHeight = scrollRoot.scrollHeight;
-                    const growth = currentHeight - beforeHeight;
-
-                    if (growth >= 10) {
-                        state.heightGrew = true;
-                        checkCompletion();
-                    }
-                }, 50);
-
-                // ✅ **완료 조건 체크**
-                function checkCompletion() {
-                    if (resolved) return;
-
-                    const currentHeight = scrollRoot.scrollHeight;
-                    const growth = currentHeight - beforeHeight;
-
-                    // 🎯 모든 조건 충족 시 성공
-                    if (state.networkIdle && state.domChanged && state.heightGrew) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: true,
-                            height: currentHeight,
-                            growth: growth,
-                            time: Date.now() - startTime,
-                            state: state
-                        });
-                        return;
-                    }
-
-                    // 🚀 부분 조건 충족 시 (네트워크 + 높이증가)
-                    if (state.networkIdle && state.heightGrew && growth >= 50) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: true,
-                            height: currentHeight,
-                            growth: growth,
-                            time: Date.now() - startTime,
-                            state: state
-                        });
-                    }
-                }
+                observer.observe(sentinel);
 
                 // 타임아웃
                 setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
                         cleanup();
-                        const currentHeight = scrollRoot.scrollHeight;
-                        const growth = currentHeight - beforeHeight;
                         resolve({
-                            success: growth >= 10,
-                            height: currentHeight,
-                            growth: growth,
-                            time: timeout,
-                            state: state,
-                            timedOut: true
+                            success: false,
+                            height: scrollRoot.scrollHeight,
+                            growth: scrollRoot.scrollHeight - beforeHeight,
+                            time: timeout
                         });
                     }
                 }, timeout);
 
                 function cleanup() {
-                    clearInterval(heightCheckInterval);
-                    intersectionObserver.disconnect();
-                    mutationObserver.disconnect();
+                    observer.disconnect();
                     sentinel.remove();
-
-                    // 후크 복원
-                    window.fetch = originalFetch;
-                    XMLHttpRequest.prototype.send = originalXHRSend;
                 }
             });
         }
@@ -1293,12 +1177,6 @@ struct BFCacheSnapshot: Codable {
 
                             if (!isElementValid(scrollRoot)) break;
 
-                            // 🎯 **이벤트 드리븐 상태 로깅**
-                            if (result.state) {
-                                const s = result.state;
-                                logs.push('[Step 1] 이벤트 상태: network=' + s.networkIdle + ', dom=' + s.domChanged + ', viewport=' + s.viewportEntered + ', height=' + s.heightGrew);
-                            }
-
                             if (result.success) {
                                 batchGrowth += result.growth;
                                 batchSuccess = true;
@@ -1342,7 +1220,7 @@ struct BFCacheSnapshot: Codable {
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
 
-                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
+                const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
