@@ -785,59 +785,103 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
-        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
+        // 스크롤 이벤트 강제 발생: 무한 스크롤 핸들러 트리거
+        function triggerScrollEventOn(root) {
+            try {
+                // 안전한 대상 선택
+                const target = root || document.scrollingElement || document.documentElement || document.body;
+                // 맨 끝 위치로 설정 (시각적 스크롤 없음)
+                target.scrollTop = target.scrollHeight;
+                // 스크롤 이벤트 강제 발생 (요청한 핸들러들이 listen한 대상이 window인 경우 대비)
+                target.dispatchEvent(new Event('scroll', { bubbles: true }));
+                window.dispatchEvent(new Event('scroll', { bubbles: true }));
+            } catch (e) {
+                // 최후 보루: 강제 레이아웃 호출
+                try { root.getBoundingClientRect(); } catch (e2) {}
+            }
+        }
+
+        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500, logs = []) {
             return new Promise((resolve) => {
                 const startTime = Date.now();
                 let resolved = false;
+                let mutationObserver = null;
+                let timeoutId = null;
+                let addedNodesCount = 0;
 
-                // 센티널: 스크롤 끝에 배치
-                const sentinel = document.createElement('div');
-                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
-                scrollRoot.appendChild(sentinel);
-
-                // IntersectionObserver: 새 콘텐츠 렌더링 감지
-                const observer = new IntersectionObserver((entries) => {
+                const checkHeight = () => {
                     if (resolved) return;
-
                     const currentHeight = scrollRoot.scrollHeight;
                     const growth = currentHeight - beforeHeight;
 
-                    // 높이 증가 확인
                     if (growth >= 10) {
                         resolved = true;
                         cleanup();
+                        if (addedNodesCount > 0) {
+                            logs.push('[DOM] +' + addedNodesCount + '개 노드 추가됨, 높이 증가: +' + growth.toFixed(0) + 'px');
+                        }
                         resolve({
                             success: true,
                             height: currentHeight,
                             growth: growth,
+                            addedNodes: addedNodesCount,
                             time: Date.now() - startTime
                         });
                     }
-                }, {
-                    root: null,
-                    threshold: 0,
-                    rootMargin: '100px'
+                };
+
+                // MutationObserver: DOM 노드 추가 감지
+                mutationObserver = new MutationObserver((mutations) => {
+                    if (resolved) return;
+
+                    // 추가된 노드 카운팅
+                    mutations.forEach(m => {
+                        if (m.type === 'childList' && m.addedNodes.length > 0) {
+                            addedNodesCount += m.addedNodes.length;
+                        }
+                    });
+
+                    // 노드가 추가되었으면 높이 체크
+                    if (addedNodesCount > 0) {
+                        checkHeight();
+                    }
                 });
 
-                observer.observe(sentinel);
+                mutationObserver.observe(scrollRoot, {
+                    childList: true,
+                    subtree: true
+                });
 
                 // 타임아웃
-                setTimeout(() => {
+                timeoutId = setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
                         cleanup();
+                        const growth = scrollRoot.scrollHeight - beforeHeight;
+                        if (addedNodesCount > 0) {
+                            logs.push('[DOM] 타임아웃: +' + addedNodesCount + '개 노드 추가, 높이: +' + growth.toFixed(0) + 'px');
+                        } else {
+                            logs.push('[DOM] 타임아웃: 노드 추가 없음');
+                        }
                         resolve({
                             success: false,
                             height: scrollRoot.scrollHeight,
-                            growth: scrollRoot.scrollHeight - beforeHeight,
+                            growth: growth,
+                            addedNodes: addedNodesCount,
                             time: timeout
                         });
                     }
                 }, timeout);
 
                 function cleanup() {
-                    observer.disconnect();
-                    sentinel.remove();
+                    if (mutationObserver) {
+                        mutationObserver.disconnect();
+                        mutationObserver = null;
+                    }
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
                 }
             });
         }
@@ -1161,19 +1205,10 @@ struct BFCacheSnapshot: Codable {
                                 break;
                             }
 
-                            const sentinel = findSentinel(scrollRoot);
+                            // 🎯 스크롤 이벤트 강제 발생: 무한 스크롤 핸들러 트리거
+                            triggerScrollEventOn(scrollRoot);
 
-                            if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
-                                try {
-                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
-                                } catch(e) {
-                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                                }
-                            } else {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
-                            }
-
-                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
+                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait, logs);
 
                             if (!isElementValid(scrollRoot)) break;
 
