@@ -37,13 +37,15 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
+        let contentRestoreStrategy: String? // Step 1 strategy toggle
 
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: 0
+            savedContentHeight: 0,
+            contentRestoreStrategy: "intersection"
         )
     }
 
@@ -150,7 +152,8 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            savedContentHeight: max(actualScrollableSize.height, contentSize.height)
+            savedContentHeight: max(actualScrollableSize.height, contentSize.height),
+            contentRestoreStrategy: restorationConfig.contentRestoreStrategy ?? "intersection"
         )
     }
 
@@ -338,6 +341,7 @@ struct BFCacheSnapshot: Codable {
         let step1StartTime = Date()
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 전략: \((restorationConfig.contentRestoreStrategy ?? "intersection").lowercased())")
 
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 즉시 Step 2 진행")
@@ -376,6 +380,12 @@ struct BFCacheSnapshot: Codable {
                 if let resultDict = resultDict {
                     step1Success = (resultDict["success"] as? Bool) ?? false
 
+                    let extractInt: (Any?) -> Int? = { value in
+                        if let intValue = value as? Int { return intValue }
+                        if let doubleValue = value as? Double { return Int(doubleValue.rounded()) }
+                        return nil
+                    }
+
                     // 에러 정보가 있으면 먼저 출력
                     if let errorMsg = resultDict["error"] as? String {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] ❌ 에러: \(errorMsg)")
@@ -384,6 +394,66 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 스택: \(errorStack)")
                     }
 
+                    if let strategy = resultDict["strategy"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 전략: \(strategy)")
+                    }
+                    if let ioEnabled = resultDict["ioEnabled"] as? Bool {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] IO 활성화: \(ioEnabled ? "yes" : "no")")
+                    }
+                    if let eagerLoaded = extractInt(resultDict["eagerLoadedCount"]) {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 즉시 로드 자원: \(Int(eagerLoaded))")
+                    }
+                    if let sentinelTriggers = extractInt(resultDict["sentinelTriggers"]) {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 센티널 트리거: \(Int(sentinelTriggers))")
+                    }
+                    if let buttonClicks = extractInt(resultDict["buttonClicks"]) {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 버튼 클릭: \(Int(buttonClicks))")
+                    }
+                    if let cycles = extractInt(resultDict["cycles"]) {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 작업 사이클: \(Int(cycles))")
+                    }
+                    if let rawDuration = resultDict["durationMs"] {
+                        let durationValue: Double?
+                        if let doubleValue = rawDuration as? Double {
+                            durationValue = doubleValue
+                        } else if let intValue = rawDuration as? Int {
+                            durationValue = Double(intValue)
+                        } else {
+                            durationValue = nil
+                        }
+                        if let durationValue = durationValue {
+                            let seconds = durationValue / 1000.0
+                            TabPersistenceManager.debugMessages.append("📦 [Step 1] 실행 시간: \(String(format: "%.1f", seconds))s (\(Int(durationValue))ms)")
+                        }
+                    }
+                    if let mutations = extractInt(resultDict["mutations"]) {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] Mutation 발생: \(Int(mutations))")
+                    }
+                    if let resourceTypes = resultDict["resourceTypes"] as? [String: Any] {
+                        let summaries = resourceTypes.compactMap { (key, value) -> String? in
+                            if let number = value as? Double {
+                                return "\(key)=\(Int(number.rounded()))"
+                            } else if let number = value as? Int {
+                                return "\(key)=\(number)"
+                            }
+                            return nil
+                        }
+                        if !summaries.isEmpty {
+                            let summaryString = summaries.joined(separator: ", ")
+                            TabPersistenceManager.debugMessages.append("📦 [Step 1] 자원 유형: \(summaryString)")
+                        }
+                    }
+                    if let reportedErrors = resultDict["errors"] as? [Any] {
+                        for entry in reportedErrors.prefix(3) {
+                            if let dict = entry as? [String: Any] {
+                                let type = dict["type"] as? String ?? "unknown"
+                                let message = dict["message"] as? String ?? ""
+                                TabPersistenceManager.debugMessages.append("📦 [Step 1] 오류[\(type)]: \(message)")
+                            } else if let message = entry as? String {
+                                TabPersistenceManager.debugMessages.append("📦 [Step 1] 오류: \(message)")
+                            }
+                        }
+                    }
                     if let currentHeight = resultDict["currentHeight"] as? Double {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                     }
@@ -785,103 +855,59 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
-        // 스크롤 이벤트 강제 발생: 무한 스크롤 핸들러 트리거
-        function triggerScrollEventOn(root) {
-            try {
-                // 안전한 대상 선택
-                const target = root || document.scrollingElement || document.documentElement || document.body;
-                // 맨 끝 위치로 설정 (시각적 스크롤 없음)
-                target.scrollTop = target.scrollHeight;
-                // 스크롤 이벤트 강제 발생 (요청한 핸들러들이 listen한 대상이 window인 경우 대비)
-                target.dispatchEvent(new Event('scroll', { bubbles: true }));
-                window.dispatchEvent(new Event('scroll', { bubbles: true }));
-            } catch (e) {
-                // 최후 보루: 강제 레이아웃 호출
-                try { root.getBoundingClientRect(); } catch (e2) {}
-            }
-        }
-
-        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500, logs = []) {
+        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
                 const startTime = Date.now();
                 let resolved = false;
-                let mutationObserver = null;
-                let timeoutId = null;
-                let addedNodesCount = 0;
 
-                const checkHeight = () => {
+                // 센티널: 스크롤 끝에 배치
+                const sentinel = document.createElement('div');
+                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(sentinel);
+
+                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                const observer = new IntersectionObserver((entries) => {
                     if (resolved) return;
+
                     const currentHeight = scrollRoot.scrollHeight;
                     const growth = currentHeight - beforeHeight;
 
+                    // 높이 증가 확인
                     if (growth >= 10) {
                         resolved = true;
                         cleanup();
-                        if (addedNodesCount > 0) {
-                            logs.push('[DOM] +' + addedNodesCount + '개 노드 추가됨, 높이 증가: +' + growth.toFixed(0) + 'px');
-                        }
                         resolve({
                             success: true,
                             height: currentHeight,
                             growth: growth,
-                            addedNodes: addedNodesCount,
                             time: Date.now() - startTime
                         });
                     }
-                };
-
-                // MutationObserver: DOM 노드 추가 감지
-                mutationObserver = new MutationObserver((mutations) => {
-                    if (resolved) return;
-
-                    // 추가된 노드 카운팅
-                    mutations.forEach(m => {
-                        if (m.type === 'childList' && m.addedNodes.length > 0) {
-                            addedNodesCount += m.addedNodes.length;
-                        }
-                    });
-
-                    // 노드가 추가되었으면 높이 체크
-                    if (addedNodesCount > 0) {
-                        checkHeight();
-                    }
+                }, {
+                    root: null,
+                    threshold: 0,
+                    rootMargin: '100px'
                 });
 
-                mutationObserver.observe(scrollRoot, {
-                    childList: true,
-                    subtree: true
-                });
+                observer.observe(sentinel);
 
                 // 타임아웃
-                timeoutId = setTimeout(() => {
+                setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
                         cleanup();
-                        const growth = scrollRoot.scrollHeight - beforeHeight;
-                        if (addedNodesCount > 0) {
-                            logs.push('[DOM] 타임아웃: +' + addedNodesCount + '개 노드 추가, 높이: +' + growth.toFixed(0) + 'px');
-                        } else {
-                            logs.push('[DOM] 타임아웃: 노드 추가 없음');
-                        }
                         resolve({
                             success: false,
                             height: scrollRoot.scrollHeight,
-                            growth: growth,
-                            addedNodes: addedNodesCount,
+                            growth: scrollRoot.scrollHeight - beforeHeight,
                             time: timeout
                         });
                     }
                 }, timeout);
 
                 function cleanup() {
-                    if (mutationObserver) {
-                        mutationObserver.disconnect();
-                        mutationObserver = null;
-                    }
-                    if (timeoutId) {
-                        clearTimeout(timeoutId);
-                        timeoutId = null;
-                    }
+                    observer.disconnect();
+                    sentinel.remove();
                 }
             });
         }
@@ -1041,6 +1067,271 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        const RESOURCE_DENYLIST = [
+            /(\b|^)(ads?|sponsored|banner)(\b|$)/i,
+            /doubleclick|googlesyndication|taboola|outbrain/i
+        ];
+
+        function shouldSkipLazyResource(element) {
+            if (!element) return true;
+            try {
+                const parts = [
+                    element.id || '',
+                    typeof element.className === 'string' ? element.className : '',
+                    element.getAttribute ? element.getAttribute('data-src') || element.getAttribute('src') || '' : ''
+                ].join(' ');
+                return RESOURCE_DENYLIST.some(re => re.test(parts));
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function collectLazyResourceCandidates(root = document) {
+            if (!root || !root.querySelectorAll) return [];
+            const selectors = [
+                'img[loading="lazy"]',
+                'img[data-src]',
+                'img[data-srcset]',
+                'img[data-original]',
+                'img[data-lazy]',
+                'picture source[data-srcset]',
+                'source[data-src]',
+                'video[preload="none"]',
+                'video source[data-src]',
+                'iframe[loading="lazy"]',
+                '[data-bg]',
+                '[data-background]',
+                '[data-background-image]',
+                '[data-lazyload]'
+            ];
+            const set = new Set();
+            selectors.forEach(selector => {
+                root.querySelectorAll(selector).forEach(el => {
+                    if (el && !set.has(el)) {
+                        set.add(el);
+                    }
+                });
+            });
+            return Array.from(set);
+        }
+
+        function recordResourceStats(stats, type) {
+            if (!stats) return;
+            stats.eagerLoadedCount = (stats.eagerLoadedCount || 0) + 1;
+            if (!stats.resourceTypes) stats.resourceTypes = {};
+            stats.resourceTypes[type] = (stats.resourceTypes[type] || 0) + 1;
+        }
+
+        function eagerLoadResourceImmediate(element, stats) {
+            if (!element || element.__bfcacheEagerLoaded) return false;
+            if (shouldSkipLazyResource(element)) return false;
+            let changed = false;
+            let type = 'generic';
+            try {
+                const tag = (element.tagName || '').toUpperCase();
+                if (tag === 'IMG' || tag === 'SOURCE') {
+                    const target = element;
+                    const dataSrc = target.getAttribute('data-src') || target.dataset?.src || target.dataset?.original || target.dataset?.lazy;
+                    const dataSrcset = target.getAttribute('data-srcset') || target.dataset?.srcset;
+                    if (dataSrc && !target.src) {
+                        target.src = dataSrc;
+                        changed = true;
+                    }
+                    if (dataSrcset && !target.srcset && tag === 'IMG') {
+                        target.srcset = dataSrcset;
+                        changed = true;
+                    }
+                    if (target.loading === 'lazy') {
+                        target.loading = 'eager';
+                        changed = true;
+                    }
+                    type = 'image';
+                    if (typeof target.decode === 'function') {
+                        target.decode().catch(() => {});
+                    }
+                } else if (tag === 'IFRAME') {
+                    const dataSrc = element.getAttribute('data-src') || element.dataset?.src;
+                    if (dataSrc && !element.src) {
+                        element.src = dataSrc;
+                        changed = true;
+                    }
+                    if (element.loading === 'lazy') {
+                        element.loading = 'eager';
+                        changed = true;
+                    }
+                    type = 'iframe';
+                } else if (tag === 'VIDEO' || tag === 'AUDIO') {
+                    if (element.preload === 'none') {
+                        element.preload = 'auto';
+                        changed = true;
+                    }
+                    const dataSrc = element.getAttribute('data-src') || element.dataset?.src;
+                    if (dataSrc && !element.src) {
+                        element.src = dataSrc;
+                        changed = true;
+                    }
+                    element.querySelectorAll('source[data-src], source[data-srcset]').forEach(source => {
+                        const src = source.getAttribute('data-src');
+                        const srcset = source.getAttribute('data-srcset');
+                        if (src && !source.src) {
+                            source.src = src;
+                            changed = true;
+                        }
+                        if (srcset && !source.srcset) {
+                            source.srcset = srcset;
+                            changed = true;
+                        }
+                    });
+                    type = 'media';
+                    if (typeof element.load === 'function') {
+                        element.load();
+                    }
+                } else {
+                    const dataBg = element.getAttribute('data-bg') || element.dataset?.bg || element.dataset?.background || element.getAttribute('data-background-image');
+                    if (dataBg) {
+                        element.style.backgroundImage = "url('" + dataBg + "')";
+                        element.dataset.__bfcacheBgApplied = '1';
+                        changed = true;
+                        type = 'background';
+                    }
+                }
+            } catch (error) {
+                if (stats) {
+                    stats.errors = stats.errors || [];
+                    stats.errors.push({ type: 'resource', message: error.message || String(error) });
+                }
+            }
+            if (changed) {
+                element.__bfcacheEagerLoaded = true;
+                recordResourceStats(stats, type);
+            }
+            return changed;
+        }
+
+        function preserveInlineStyle(element) {
+            if (!element) return () => {};
+            const previous = element.getAttribute('style');
+            return () => {
+                if (!element) return;
+                try {
+                    if (previous === null) {
+                        element.removeAttribute('style');
+                    } else {
+                        element.setAttribute('style', previous);
+                    }
+                } catch (_) {}
+            };
+        }
+
+        function temporarilyPinToViewport(element, options = {}) {
+            if (!isElementValid(element)) return () => {};
+            const restore = preserveInlineStyle(element);
+            try {
+                const toPx = value => typeof value === 'number' ? value + 'px' : (value || '0px');
+                element.style.position = 'fixed';
+                if (options.top != null) {
+                    element.style.top = toPx(options.top);
+                    element.style.bottom = '';
+                } else {
+                    element.style.bottom = toPx(options.bottom);
+                    element.style.top = '';
+                }
+                element.style.left = options.left != null ? toPx(options.left) : '-9999px';
+                element.style.width = toPx(options.width ?? 1);
+                element.style.height = toPx(options.height ?? 1);
+                element.style.opacity = '0';
+                element.style.pointerEvents = 'none';
+                element.style.transform = 'translateZ(0)';
+                element.style.contain = 'layout style paint';
+                if (options.right != null) {
+                    element.style.right = toPx(options.right);
+                } else {
+                    element.style.right = '';
+                }
+            } catch (_) {}
+            return restore;
+        }
+
+        function temporarilyAnchorInsideContainer(element, container, options = {}) {
+            if (!isElementValid(element) || !isElementValid(container)) return () => {};
+            const cleanups = [];
+            cleanups.push(preserveInlineStyle(element));
+            try {
+                const computed = getComputedStyle(container);
+                const style = container.style;
+                if (computed && computed.position === 'static') {
+                    const prev = style.position;
+                    style.position = 'relative';
+                    cleanups.push(() => { style.position = prev || ''; });
+                }
+                const toPx = value => typeof value === 'number' ? value + 'px' : (value || '0px');
+                element.style.position = 'absolute';
+                element.style.bottom = toPx(options.bottom);
+                element.style.left = toPx(options.left);
+                element.style.width = toPx(options.width ?? 1);
+                element.style.height = toPx(options.height ?? 1);
+                element.style.opacity = '0';
+                element.style.pointerEvents = 'none';
+                element.style.transform = 'translateZ(0)';
+            } catch (_) {}
+            return () => {
+                while (cleanups.length) {
+                    const fn = cleanups.pop();
+                    try { fn(); } catch (_) {}
+                }
+            };
+        }
+
+        function createIntersectionTrampoline(container) {
+            if (!isElementValid(container)) return null;
+            try {
+                const trampoline = container.ownerDocument.createElement('div');
+                trampoline.className = '__bfcache_trampoline';
+                trampoline.style.cssText = 'position:absolute;width:1px;height:1px;bottom:0;left:0;opacity:0;pointer-events:none;transform:translateZ(0);contain:layout style paint;';
+                container.appendChild(trampoline);
+                return trampoline;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        async function triggerSentinelIntersectionAsync(container, sentinel, stats = {}, options = {}) {
+            if (!isElementValid(sentinel)) return false;
+            const cleanups = [];
+            let success = false;
+            try {
+                if (isElementValid(container) && container !== document.body && container !== document.documentElement) {
+                    cleanups.push(temporarilyAnchorInsideContainer(sentinel, container, options.anchor || {}));
+                }
+                const parent = isElementValid(container) ? container : (sentinel.parentElement || document.body);
+                const trampoline = createIntersectionTrampoline(parent);
+                if (trampoline) {
+                    cleanups.push(() => { if (trampoline.parentNode) trampoline.parentNode.removeChild(trampoline); });
+                    cleanups.push(temporarilyPinToViewport(trampoline, options.viewport || {}));
+                } else {
+                    cleanups.push(temporarilyPinToViewport(sentinel, options.viewport || {}));
+                }
+                await nextFrame();
+                const dwell = typeof options.dwellMs === 'number' ? options.dwellMs : 140;
+                await delay(Math.max(60, dwell));
+                success = true;
+                if (stats) {
+                    stats.sentinelTriggers = (stats.sentinelTriggers || 0) + 1;
+                }
+            } catch (error) {
+                if (stats) {
+                    stats.errors = stats.errors || [];
+                    stats.errors.push({ type: 'sentinel', message: error.message || String(error) });
+                }
+            } finally {
+                while (cleanups.length) {
+                    const cleanup = cleanups.pop();
+                    try { if (typeof cleanup === 'function') cleanup(); } catch (_) {}
+                }
+            }
+            return success;
+        }
+
         (function hardenEnv() {
             try {
                 if (window._bfcacheEnvHardened) return;
@@ -1055,14 +1346,348 @@ struct BFCacheSnapshot: Codable {
         })();
         """
     }
-    private func generateStep1_ContentRestoreScript() -> String {
+
+private func generateStep1_ContentRestoreScript() -> String {
+    let strategy = (restorationConfig.contentRestoreStrategy ?? "intersection").lowercased()
+    switch strategy {
+    case "legacy-scroll":
+        return generateStep1_LegacyContentRestoreScript()
+    default:
+        return generateStep1_IntersectionContentRestoreScript()
+    }
+}
+
+private func generateStep1_IntersectionContentRestoreScript() -> String {
+    let savedHeight = self.restorationConfig.savedContentHeight
+
+    guard savedHeight.isFinite && savedHeight >= 0 else {
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] savedHeight invalid: \(savedHeight)")
+        return """
+        return JSON.stringify({ success: false, strategy: 'intersection', error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight is not valid'] });
+        """
+    }
+
+    let savedHeightString = String(format: "%.6f", Double(savedHeight))
+
+    return """
+    let logs = [];
+    let errors = [];
+    let metrics = {
+        strategy: 'intersection',
+        ioEnabled: typeof IntersectionObserver === 'function',
+        eagerLoadedCount: 0,
+        sentinelTriggers: 0,
+        buttonClicks: 0,
+        cycles: 0,
+        durationMs: 0,
+        resourceTypes: {},
+        mutations: 0
+    };
+    const savedContentHeight = parseFloat('\(savedHeightString)');
+    let resourceObserver = null;
+    let mutationObserver = null;
+
+    try {
+        \(generateCommonUtilityScript())
+
+        logs.push('[Step 1] Saved content height: ' + savedContentHeight.toFixed(0) + 'px');
+
+        const root = getROOT();
+        logs.push('[Step 1] Scroll root: ' + (root ? root.tagName : 'null'));
+
+        if (!root) {
+            errors.push({ type: 'root', message: 'scroll root not found' });
+            return serializeForJSON({
+                success: false,
+                strategy: 'intersection',
+                error: 'root_not_found',
+                savedContentHeight: savedContentHeight,
+                logs: logs,
+                errors: errors
+            });
+        }
+
+        const viewportHeight = Math.max(0, window.innerHeight || 0);
+        const currentHeight = root.scrollHeight || 0;
+        logs.push('[Step 1] Current height: ' + currentHeight.toFixed(0) + 'px');
+        logs.push('[Step 1] Viewport height: ' + viewportHeight.toFixed(0) + 'px');
+
+        const percentage = savedContentHeight > 0 ? (currentHeight / Math.max(1, savedContentHeight)) * 100 : 0;
+        logs.push('[Step 1] Coverage: ' + percentage.toFixed(1) + '%');
+
+        ensureOverflowAnchorState(true);
+
+        if (savedContentHeight > 0 && percentage >= 98) {
+            logs.push('[Step 1] Static page detected, skip growth');
+            return serializeForJSON({
+                success: true,
+                strategy: 'intersection',
+                isStaticSite: true,
+                ioEnabled: metrics.ioEnabled,
+                eagerLoadedCount: metrics.eagerLoadedCount,
+                sentinelTriggers: metrics.sentinelTriggers,
+                buttonClicks: metrics.buttonClicks,
+                cycles: metrics.cycles,
+                durationMs: metrics.durationMs,
+                resourceTypes: metrics.resourceTypes,
+                mutations: metrics.mutations,
+                currentHeight: currentHeight,
+                savedContentHeight: savedContentHeight,
+                restoredHeight: currentHeight,
+                percentage: percentage,
+                errors: errors,
+                logs: logs
+            });
+        }
+
+        if (!metrics.ioEnabled) {
+            logs.push('[Step 1] IntersectionObserver unavailable - fallback to eager loading only');
+        }
+
+        const loadMoreSelectors = '[data-testid*="load"], [class*="load"], [class*="more"], button[class*="more"], .load-more, .show-more';
+        const loadMoreCandidates = Array.prototype.slice.call(document.querySelectorAll(loadMoreSelectors), 0);
+        let buttonClicks = 0;
+        for (let i = 0; i < loadMoreCandidates.length && buttonClicks < 5; i++) {
+            const btn = loadMoreCandidates[i];
+            if (!btn || typeof btn.click !== 'function') continue;
+            try {
+                btn.click();
+                buttonClicks += 1;
+            } catch (_) {}
+        }
+        if (buttonClicks > 0) {
+            logs.push('[Step 1] Clicked load-more buttons: ' + buttonClicks);
+            metrics.buttonClicks = buttonClicks;
+            await nextFrame();
+            await delay(160);
+        }
+
+        const containers = findScrollContainers();
+        logs.push('[Step 1] Scroll containers detected: ' + containers.length);
+
+        const sentinelOptions = { viewport: { bottom: 0, left: -9999, width: 1, height: 1 }, anchor: { bottom: 0, left: 0 }, dwellMs: 140 };
+        const sentinelAttempts = new Map();
+
+        const registry = new Set();
+        const registerResource = function(element) {
+            if (!element || registry.has(element)) return;
+            if (!isElementValid(element)) return;
+            registry.add(element);
+            if (metrics.ioEnabled && resourceObserver) {
+                try { resourceObserver.observe(element); } catch (_) {}
+            } else {
+                if (eagerLoadResourceImmediate(element, metrics)) {
+                    logs.push('[Step 1] Resource eager-loaded: ' + (element.tagName || 'node'));
+                }
+            }
+        };
+
+        try {
+            const initialResources = collectLazyResourceCandidates(document);
+            for (let i = 0; i < initialResources.length; i++) {
+                registerResource(initialResources[i]);
+            }
+        } catch (error) {
+            errors.push({ type: 'resource_scan', message: error.message || String(error) });
+        }
+
+        if (metrics.ioEnabled) {
+            try {
+                resourceObserver = new IntersectionObserver(function(entries) {
+                    for (let i = 0; i < entries.length; i++) {
+                        const entry = entries[i];
+                        if (!entry || !entry.target) continue;
+                        if (!entry.isIntersecting && entry.intersectionRatio <= 0) continue;
+                        const target = entry.target;
+                        try { resourceObserver.unobserve(target); } catch (_) {}
+                        if (eagerLoadResourceImmediate(target, metrics)) {
+                            logs.push('[Step 1] Resource eager-loaded: ' + (target.tagName || 'node'));
+                        }
+                    }
+                }, {
+                    root: null,
+                    rootMargin: '1500px 0px 2000px 0px',
+                    threshold: 0.0001
+                });
+                registry.forEach(function(element) {
+                    try { resourceObserver.observe(element); } catch (_) {}
+                });
+            } catch (error) {
+                metrics.ioEnabled = false;
+                errors.push({ type: 'observer', message: error.message || String(error) });
+            }
+        }
+
+        if (typeof MutationObserver === 'function') {
+            try {
+                mutationObserver = new MutationObserver(function(records) {
+                    if (!records) return;
+                    metrics.mutations += records.length;
+                    for (let r = 0; r < records.length; r++) {
+                        const record = records[r];
+                        if (!record || !record.addedNodes) continue;
+                        for (let n = 0; n < record.addedNodes.length; n++) {
+                            const node = record.addedNodes[n];
+                            if (!node || node.nodeType !== 1) continue;
+                            registerResource(node);
+                            try {
+                                const nested = collectLazyResourceCandidates(node);
+                                for (let x = 0; x < nested.length; x++) {
+                                    registerResource(nested[x]);
+                                }
+                            } catch (_) {}
+                        }
+                    }
+                });
+                const mutationRoot = document.documentElement || document.body;
+                if (mutationRoot) {
+                    mutationObserver.observe(mutationRoot, { childList: true, subtree: true });
+                }
+            } catch (error) {
+                errors.push({ type: 'mutation', message: error.message || String(error) });
+            }
+        } else {
+            logs.push('[Step 1] MutationObserver not available');
+        }
+
+        await waitForStableLayoutAsync({ frames: 2, timeout: 600 });
+
+        const maxDurationMs = 46000;
+        const maxCycles = 1012;
+        const stableLimit = 5;
+        const sentinelMaxPerContainer = 3;
+        const cycleDelay = 120;
+        const startTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+
+        let restoredHeight = currentHeight;
+        let stableCycles = 0;
+
+        while (true) {
+            const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+            metrics.durationMs = Math.round(now - startTime);
+            if (metrics.durationMs >= maxDurationMs) {
+                logs.push('[Step 1] Stop: duration limit');
+                break;
+            }
+            if (metrics.cycles >= maxCycles) {
+                logs.push('[Step 1] Stop: cycle limit');
+                break;
+            }
+
+            metrics.cycles += 1;
+
+            if (resourceObserver) {
+                registry.forEach(function(element) {
+                    try { resourceObserver.observe(element); } catch (_) {}
+                });
+            }
+
+            for (let idx = 0; idx < containers.length; idx++) {
+                const container = containers[idx];
+                if (!isElementValid(container)) continue;
+                const attempts = sentinelAttempts.get(container) || 0;
+                if (attempts >= sentinelMaxPerContainer) continue;
+                const sentinel = findSentinel(container);
+                sentinelAttempts.set(container, attempts + 1);
+                if (!isElementValid(sentinel)) continue;
+                try {
+                    const triggered = await triggerSentinelIntersectionAsync(container, sentinel, metrics, sentinelOptions);
+                    if (triggered) {
+                        logs.push('[Step 1] Sentinel trigger attempt #' + (attempts + 1) + ' on ' + (container.tagName || 'node'));
+                    }
+                } catch (error) {
+                    errors.push({ type: 'sentinel', message: error.message || String(error) });
+                }
+            }
+
+            await delay(cycleDelay);
+
+            const afterHeight = root.scrollHeight || 0;
+            if (afterHeight > restoredHeight + 2) {
+                logs.push('[Step 1] Height delta: +' + (afterHeight - restoredHeight).toFixed(0) + 'px (total ' + afterHeight.toFixed(0) + 'px)');
+                restoredHeight = afterHeight;
+                stableCycles = 0;
+            } else {
+                stableCycles += 1;
+            }
+
+            if (savedContentHeight > 0 && afterHeight >= savedContentHeight * 0.995) {
+                logs.push('[Step 1] Target height reached');
+                break;
+            }
+
+            if (stableCycles >= stableLimit) {
+                logs.push('[Step 1] Growth stabilized');
+                break;
+            }
+        }
+
+        if (mutationObserver) {
+            try { mutationObserver.disconnect(); } catch (_) {}
+        }
+        if (resourceObserver) {
+            try { resourceObserver.disconnect(); } catch (_) {}
+        }
+
+        metrics.durationMs = Math.round(((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - startTime);
+
+        const finalPercentage = savedContentHeight > 0 ? (restoredHeight / Math.max(1, savedContentHeight)) * 100 : 0;
+        const success = finalPercentage >= 80 || restoredHeight >= currentHeight + 128;
+
+        logs.push('[Step 1] Final height: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
+        logs.push('[Step 1] Total cycles: ' + metrics.cycles);
+        logs.push('[Step 1] Duration: ' + metrics.durationMs + 'ms');
+
+        return serializeForJSON({
+            success: success,
+            strategy: 'intersection',
+            isStaticSite: false,
+            ioEnabled: metrics.ioEnabled,
+            eagerLoadedCount: metrics.eagerLoadedCount,
+            sentinelTriggers: metrics.sentinelTriggers,
+            buttonClicks: metrics.buttonClicks,
+            cycles: metrics.cycles,
+            durationMs: metrics.durationMs,
+            resourceTypes: metrics.resourceTypes,
+            mutations: metrics.mutations,
+            currentHeight: currentHeight,
+            savedContentHeight: savedContentHeight,
+            restoredHeight: restoredHeight,
+            percentage: finalPercentage,
+            errors: errors,
+            logs: logs
+        });
+    } catch (e) {
+        if (mutationObserver) {
+            try { mutationObserver.disconnect(); } catch (_) {}
+        }
+        if (resourceObserver) {
+            try { resourceObserver.disconnect(); } catch (_) {}
+        }
+        errors.push({ type: 'exception', message: e.message || String(e) });
+        logs.push('[Step 1] Intersection strategy error: ' + (e && e.message ? e.message : 'unknown'));
+        return serializeForJSON({
+            success: false,
+            strategy: 'intersection',
+            error: e.message || String(e),
+            errorStack: e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : 'no stack',
+            ioEnabled: metrics.ioEnabled,
+            savedContentHeight: savedContentHeight,
+            logs: logs,
+            errors: errors
+        });
+    }
+    """
+}
+
+    private func generateStep1_LegacyContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
             TabPersistenceManager.debugMessages.append("⚠️ [Step 1] savedHeight 비정상: \(savedHeight)")
             return """
-            return JSON.stringify({ success: false, error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight 값이 비정상입니다'] });
+            return JSON.stringify({ success: false, strategy: 'legacy-scroll', error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight 값이 비정상입니다'] });
             """
         }
 
@@ -1100,6 +1725,7 @@ struct BFCacheSnapshot: Codable {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                     return serializeForJSON({
                         success: true,
+                        strategy: 'legacy-scroll',
                         isStaticSite: true,
                         currentHeight: currentHeight,
                         savedContentHeight: savedContentHeight,
@@ -1205,10 +1831,19 @@ struct BFCacheSnapshot: Codable {
                                 break;
                             }
 
-                            // 🎯 스크롤 이벤트 강제 발생: 무한 스크롤 핸들러 트리거
-                            triggerScrollEventOn(scrollRoot);
+                            const sentinel = findSentinel(scrollRoot);
 
-                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait, logs);
+                            if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
+                                try {
+                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                                } catch(e) {
+                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                }
+                            } else {
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                            }
+
+                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
 
                             if (!isElementValid(scrollRoot)) break;
 
@@ -1255,7 +1890,7 @@ struct BFCacheSnapshot: Codable {
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
 
-                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
+                const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
@@ -1267,6 +1902,7 @@ struct BFCacheSnapshot: Codable {
 
                 return serializeForJSON({
                     success: success,
+                    strategy: 'legacy-scroll',
                     isStaticSite: false,
                     currentHeight: currentHeight,
                     savedContentHeight: savedContentHeight,
@@ -1279,6 +1915,7 @@ struct BFCacheSnapshot: Codable {
         } catch(e) {
             return serializeForJSON({
                 success: false,
+                strategy: 'legacy-scroll',
                 error: e.message,
                 errorStack: e.stack ? e.stack.split('\\n').slice(0, 3).join('\\n') : 'no stack',
                 logs: [
@@ -2164,7 +2801,8 @@ extension BFCacheTransitionSystem {
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
+            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
+            contentRestoreStrategy: "intersection"
         )
 
         let snapshot = BFCacheSnapshot(
