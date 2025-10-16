@@ -6,7 +6,7 @@
 //  ✅ **Step 4**: 최종 검증 및 미세 보정
 //  ⏰ **렌더링 대기**: 각 단계별 필수 대기시간 적용
 //  🔒 **타입 안전성**: Swift 호환 기본 타입만 사용
-//  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작 
+//  🎯 **단일 스크롤러 최적화**: 검출된 단일 스크롤러만 조작
 
 import UIKit
 import WebKit
@@ -1068,7 +1068,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         const RESOURCE_DENYLIST = [
-            /(\b|^)(ads?|sponsored|banner)(\b|$)/i,
+            /(^|[^a-z0-9_])(ads?|sponsored|banner)([^a-z0-9_]|$)/i,
             /doubleclick|googlesyndication|taboola|outbrain/i
         ];
 
