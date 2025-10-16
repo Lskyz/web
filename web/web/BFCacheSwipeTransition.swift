@@ -790,19 +790,34 @@ struct BFCacheSnapshot: Codable {
                 const startTime = Date.now();
                 let resolved = false;
 
-                // 센티널: 스크롤 끝에 배치
-                const sentinel = document.createElement('div');
-                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
-                scrollRoot.appendChild(sentinel);
+                // 🚀 Staged Sentinel 병렬 배치: 여러 높이에 미리 배치
+                const sentinels = [];
+                const stages = [0.3, 0.5, 0.7, 0.9, 1.0]; // 30%, 50%, 70%, 90%, 100%
 
-                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                stages.forEach(ratio => {
+                    const sentinel = document.createElement('div');
+                    sentinel.style.cssText = 'position:absolute;width:1px;height:1px;pointer-events:none;';
+                    const targetY = beforeHeight * ratio;
+                    sentinel.style.top = targetY + 'px';
+                    sentinel.dataset.stage = (ratio * 100).toFixed(0);
+                    scrollRoot.appendChild(sentinel);
+                    sentinels.push(sentinel);
+                });
+
+                let maxGrowth = 0;
+
+                // IntersectionObserver: 병렬 감지로 빠른 트리거
                 const observer = new IntersectionObserver((entries) => {
                     if (resolved) return;
 
                     const currentHeight = scrollRoot.scrollHeight;
                     const growth = currentHeight - beforeHeight;
 
-                    // 높이 증가 확인
+                    if (growth > maxGrowth) {
+                        maxGrowth = growth;
+                    }
+
+                    // 높이 증가 확인 - 어느 sentinel이든 감지되면 성공
                     if (growth >= 10) {
                         resolved = true;
                         cleanup();
@@ -816,20 +831,21 @@ struct BFCacheSnapshot: Codable {
                 }, {
                     root: null,
                     threshold: 0,
-                    rootMargin: '1000px'
+                    rootMargin: '3000px'  // 🚀 범용 최적화: 매우 큰 rootMargin
                 });
 
-                observer.observe(sentinel);
+                // 모든 sentinel 관찰
+                sentinels.forEach(s => observer.observe(s));
 
-                // 타임아웃
+                // 타임아웃 (500ms 유지)
                 setTimeout(() => {
                     if (!resolved) {
                         resolved = true;
                         cleanup();
                         resolve({
-                            success: false,
+                            success: maxGrowth > 0,  // 조금이라도 성장하면 부분 성공
                             height: scrollRoot.scrollHeight,
-                            growth: scrollRoot.scrollHeight - beforeHeight,
+                            growth: maxGrowth,
                             time: timeout
                         });
                     }
@@ -837,7 +853,7 @@ struct BFCacheSnapshot: Codable {
 
                 function cleanup() {
                     observer.disconnect();
-                    sentinel.remove();
+                    sentinels.forEach(s => s.remove());
                 }
             });
         }
@@ -2847,15 +2863,112 @@ extension BFCacheTransitionSystem {
         window.addEventListener('pageshow', function(event) {
             if (event.persisted) {
                 console.log('🚫 브라우저 차단 대응 BFCache 페이지 복원');
+
+                // 🚀 범용 서드파티 스크립트 제어 시작
+                window.__BFCacheRestoring = true;
+                const startTime = Date.now();
+                const restorationDuration = 2000; // 2초 동안만 차단
+
+                // Fetch API 래핑 (분석/광고/로깅 차단)
+                const originalFetch = window.fetch;
+                window.fetch = function(url, options) {
+                    const urlStr = String(url);
+
+                    // 패턴 기반 차단: 분석/광고/로깅 도메인
+                    const blockPatterns = [
+                        /analytics/i, /telemetry/i, /tracking/i, /tracker/i,
+                        /\\/log\\//i, /\\/collect/i, /\\/beacon/i, /\\/ping/i,
+                        /doubleclick/i, /adsystem/i, /adservice/i, /ad[_-]server/i,
+                        /nelo2-col/i, /sentry\\.io/i, /bugsnag/i, /crashlytics/i,
+                        /googletagmanager/i, /google-analytics/i, /gtag/i,
+                        /facebook\\.net/i, /fbcdn\\.net/i, /pixel/i
+                    ];
+
+                    const shouldBlock = blockPatterns.some(function(p) { return p.test(urlStr); });
+
+                    if (shouldBlock && (Date.now() - startTime) < restorationDuration) {
+                        console.log('[BFCache] 차단: ' + urlStr.substring(0, 80));
+                        return Promise.resolve(new Response('{"blocked":true}', {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        }));
+                    }
+
+                    return originalFetch.apply(this, arguments);
+                };
+
+                // XMLHttpRequest 래핑
+                const originalXHROpen = window.XMLHttpRequest.prototype.open;
+                window.XMLHttpRequest.prototype.open = function(method, url) {
+                    this.__url = String(url);
+                    this.__startTime = Date.now();
+
+                    const blockPatterns = [
+                        /analytics/i, /telemetry/i, /tracking/i,
+                        /\\/log\\//i, /\\/collect/i, /\\/beacon/i,
+                        /nelo2-col/i, /sentry/i, /bugsnag/i
+                    ];
+
+                    const shouldBlock = blockPatterns.some(function(p) { return p.test(this.__url); });
+
+                    if (shouldBlock && (this.__startTime - startTime) < restorationDuration) {
+                        console.log('[BFCache] XHR 차단: ' + this.__url.substring(0, 80));
+                        this.send = function() {};
+                        this.abort = function() {};
+                        return;
+                    }
+
+                    return originalXHROpen.apply(this, arguments);
+                };
+
+                // IntersectionObserver 필터링 (광고 SDK 차단)
+                const OriginalIO = window.IntersectionObserver;
+                const observerCount = { ad: 0, content: 0 };
+
+                window.IntersectionObserver = function(callback, options) {
+                    const stack = new Error().stack || '';
+
+                    // 광고 관련 스택 감지
+                    const adPatterns = [
+                        /ad[_-]?/i, /banner/i, /sponsor/i, /promo/i,
+                        /adsense/i, /adsbygoogle/i, /dfp/i, /gpt\\.js/i
+                    ];
+
+                    const isAdRelated = adPatterns.some(function(p) { return p.test(stack); });
+
+                    if (isAdRelated && (Date.now() - startTime) < restorationDuration) {
+                        observerCount.ad++;
+                        console.log('[BFCache] 광고 Observer 차단 #' + observerCount.ad);
+                        // 광고 Observer는 무시
+                        return {
+                            observe: function() {},
+                            disconnect: function() {},
+                            unobserve: function() {},
+                            takeRecords: function() { return []; }
+                        };
+                    }
+
+                    observerCount.content++;
+                    return new OriginalIO(callback, options);
+                };
+
+                // 복원 완료 후 정상화
+                setTimeout(function() {
+                    window.__BFCacheRestoring = false;
+                    window.fetch = originalFetch;
+                    window.XMLHttpRequest.prototype.open = originalXHROpen;
+                    window.IntersectionObserver = OriginalIO;
+                    console.log('[BFCache] ✅ 서드파티 복구 완료 (차단한 광고 Observer: ' + observerCount.ad + '개)');
+                }, restorationDuration);
             }
         });
-        
+
         window.addEventListener('pagehide', function(event) {
             if (event.persisted) {
                 console.log('📸 브라우저 차단 대응 BFCache 페이지 저장');
             }
         });
-        
+
         """
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
