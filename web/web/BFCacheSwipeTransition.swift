@@ -675,7 +675,6 @@ struct BFCacheSnapshot: Codable {
 
     // 🎯 **공통 유틸리티 스크립트 생성**
     private func generateCommonUtilityScript() -> String {
-
         return """
         // 공통 BFCache 유틸리티 (비동기 기반)
         function getROOT() {
@@ -945,7 +944,7 @@ struct BFCacheSnapshot: Codable {
                 return val;
             };
             try {
-                return JSON.parse(JSON.stringify(value, replacer))();
+                return JSON.parse(JSON.stringify(value, replacer));
             } catch (error) {
                 return { error: 'sanitize_failed', message: error.message };
             }
@@ -998,6 +997,155 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        // 🔍 무한 스크롤 메커니즘 감지 (디버깅용)
+        function installInfiniteScrollDetector(logs) {
+            if (window.__infiniteScrollDetectorInstalled) return;
+            window.__infiniteScrollDetectorInstalled = true;
+
+            // 1. IntersectionObserver 감지
+            const OrigIO = window.IntersectionObserver;
+            let ioInstances = [];
+            window.IntersectionObserver = function(callback, options) {
+                const instanceId = ioInstances.length + 1;
+                const wrappedCallback = function(entries, observer) {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const target = entry.target;
+                            logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
+                            logs.push('  Tag: ' + target.tagName);
+                            logs.push('  Class: ' + (target.className || 'none'));
+                            logs.push('  ID: ' + (target.id || 'none'));
+                            try {
+                                const dataStr = JSON.stringify(target.dataset);
+                                if (dataStr && dataStr !== '{}') {
+                                    logs.push('  Data: ' + dataStr.slice(0, 100));
+                                }
+                            } catch(e) {}
+                            const text = (target.textContent || '').trim();
+                            if (text) {
+                                logs.push('  Text: ' + text.slice(0, 50));
+                            }
+                            logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
+                        }
+                    });
+                    return callback.apply(this, arguments);
+                };
+
+                logs.push('[IO-' + instanceId + '] ✨ 생성됨');
+                logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
+                logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
+
+                const instance = new OrigIO(wrappedCallback, options);
+                ioInstances.push(instance);
+
+                const origObserve = instance.observe.bind(instance);
+                instance.observe = function(target) {
+                    const selector = target.className ? '.' + target.className.split(' ')[0] :
+                                   (target.id ? '#' + target.id : target.tagName);
+                    logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
+                    logs.push('  Tag: ' + target.tagName);
+                    logs.push('  Class: ' + (target.className || 'none'));
+                    logs.push('  ID: ' + (target.id || 'none'));
+                    logs.push('  Selector: ' + selector);
+                    return origObserve(target);
+                };
+
+                return instance;
+            };
+
+            // 2. scroll 이벤트 감지
+            let scrollListeners = 0;
+            let lastScrollLog = 0;
+            const origAddEventListener = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, listener, options) {
+                if (type === 'scroll') {
+                    scrollListeners++;
+                    const targetInfo = this === window ? 'window' :
+                                      this === document ? 'document' :
+                                      (this.id || this.className || this.tagName);
+
+                    logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
+                    logs.push('  Target: ' + targetInfo);
+                    logs.push('  Passive: ' + (options?.passive || false));
+                    logs.push('  Capture: ' + (options?.capture || false));
+
+                    const wrappedListener = function(e) {
+                        const target = e.target === document ? document.documentElement : e.target;
+                        const scrollTop = target.scrollTop || 0;
+                        const scrollHeight = target.scrollHeight || 0;
+                        const clientHeight = target.clientHeight || 0;
+                        const remaining = scrollHeight - scrollTop - clientHeight;
+
+                        // 1초에 한 번만 로그 (스팸 방지)
+                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
+                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
+                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
+                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
+                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
+                            lastScrollLog = Date.now();
+                        }
+
+                        return listener.apply(this, arguments);
+                    };
+
+                    return origAddEventListener.call(this, type, wrappedListener, options);
+                }
+                return origAddEventListener.call(this, type, listener, options);
+            };
+
+            // 3. XHR/fetch 감지
+            const openOrig = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url) {
+                const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
+                logs.push('[XHR] 📡 요청 시작');
+                logs.push('  Method: ' + method);
+                logs.push('  URL: ' + url);
+                logs.push('  Stack:');
+                logs.push('  ' + stack.slice(0, 300));
+
+                const origSend = this.send.bind(this);
+                this.send = function() {
+                    this.addEventListener('load', function() {
+                        try {
+                            const json = JSON.parse(this.responseText);
+                            const keys = Object.keys(json).slice(0, 5);
+                            logs.push('[XHR] ✅ 응답 수신');
+                            logs.push('  Status: ' + this.status);
+                            logs.push('  Keys: ' + keys.join(', '));
+                            logs.push('  Length: ' + this.responseText.length);
+                        } catch(e) {
+                            logs.push('[XHR] ✅ 응답 수신');
+                            logs.push('  Status: ' + this.status);
+                            logs.push('  Length: ' + this.responseText.length);
+                        }
+                    });
+                    return origSend.apply(this, arguments);
+                };
+
+                return openOrig.apply(this, arguments);
+            };
+
+            const fetchOrig = window.fetch;
+            window.fetch = async function(url, opts) {
+                const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
+                const method = opts?.method || 'GET';
+                logs.push('[fetch] 📡 요청 시작');
+                logs.push('  Method: ' + method);
+                logs.push('  URL: ' + url);
+                logs.push('  Body: ' + (opts?.body ? 'present' : 'none'));
+                logs.push('  Stack:');
+                logs.push('  ' + stack.slice(0, 300));
+
+                const response = await fetchOrig.call(this, url, opts);
+
+                logs.push('[fetch] ✅ 응답 수신');
+                logs.push('  Status: ' + response.status);
+                logs.push('  URL: ' + url);
+
+                return response;
+            };
+        }
+
         (function hardenEnv() {
             try {
                 if (window._bfcacheEnvHardened) return;
@@ -1028,92 +1176,6 @@ struct BFCacheSnapshot: Codable {
             \(generateCommonUtilityScript())
 
             const logs = [];
-            if (!window.__bfcacheDebugHooksInstalled) {
-                window.__bfcacheDebugHooksInstalled = true;
-
-                const debugLogLimit = 12;
-                let debugIoEvents = 0;
-                let debugScrollEvents = 0;
-                let debugNetworkEvents = 0;
-
-                const pushDebugLog = function(message) {
-                    try {
-                        if (logs.length < 500) {
-                            logs.push('[Step 1][debug] ' + message);
-                        }
-                    } catch (err) {}
-                };
-
-                const describeTarget = function(target) {
-                    if (!target) return 'null';
-                    try {
-                        if (target.tagName) {
-                            const tag = target.tagName.toLowerCase();
-                            if (target.id) {
-                                return tag + '#' + target.id;
-                            }
-                            if (target.classList && target.classList.length) {
-                                return tag + '.' + Array.from(target.classList).slice(0, 2).join('.');
-                            }
-                            return tag;
-                        }
-                        if (target.nodeName) {
-                            return target.nodeName;
-                        }
-                        return String(target);
-                    } catch (err) {
-                        return 'unknown';
-                    }
-                };
-
-                if (window.IntersectionObserver && IntersectionObserver.prototype && IntersectionObserver.prototype.observe) {
-                    const originalObserve = IntersectionObserver.prototype.observe;
-                    IntersectionObserver.prototype.observe = function(target) {
-                        if (debugIoEvents < debugLogLimit) {
-                            pushDebugLog('IntersectionObserver.observe triggered: ' + describeTarget(target));
-                            debugIoEvents += 1;
-                        }
-                        return originalObserve.call(this, target);
-                    };
-                }
-
-                const debugScrollLogger = function() {
-                    if (debugScrollEvents < debugLogLimit) {
-                        try {
-                            const doc = document.documentElement || document.body;
-                            const top = doc && typeof doc.scrollTop === 'number' ? doc.scrollTop : 0;
-                            pushDebugLog('window.scroll event: scrollTop=' + Math.round(top));
-                            debugScrollEvents += 1;
-                        } catch (err) {}
-                    }
-                };
-                window.addEventListener('scroll', debugScrollLogger, { passive: true });
-
-                (function installNetworkHooks() {
-                    try {
-                        const originalOpen = XMLHttpRequest.prototype.open;
-                        XMLHttpRequest.prototype.open = function(method, url) {
-                            if (debugNetworkEvents < debugLogLimit) {
-                                pushDebugLog('XHR request: ' + method + ' ' + String(url).slice(0, 120));
-                                debugNetworkEvents += 1;
-                            }
-                            return originalOpen.apply(this, arguments);
-                        };
-                    } catch (err) {}
-                    try {
-                        const originalFetch = window.fetch;
-                        if (typeof originalFetch === 'function') {
-                            window.fetch = function(url, opts) {
-                                if (debugNetworkEvents < debugLogLimit) {
-                                    pushDebugLog('fetch call: ' + String(url).slice(0, 120));
-                                    debugNetworkEvents += 1;
-                                }
-                                return originalFetch.call(this, url, opts);
-                            };
-                        }
-                    } catch (err) {}
-                })();
-            }
             const savedContentHeight = parseFloat('\(savedHeight)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
@@ -1154,6 +1216,10 @@ struct BFCacheSnapshot: Codable {
                 }
 
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
+
+                // 🔍 무한 스크롤 메커니즘 감지 설치
+                installInfiniteScrollDetector(logs);
+                logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
@@ -2794,4 +2860,3 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
-
