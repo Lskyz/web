@@ -37,15 +37,13 @@ struct BFCacheSnapshot: Codable {
         let enableAnchorRestore: Bool       // Step 3 활성화
         let enableFinalVerification: Bool   // Step 4 활성화
         let savedContentHeight: CGFloat     // 저장 시점 콘텐츠 높이
-        let contentRestoreStrategy: String? // Step 1 strategy toggle
 
         static let `default` = RestorationConfig(
             enableContentRestore: true,
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: 0,
-            contentRestoreStrategy: "intersection"
+            savedContentHeight: 0
         )
     }
 
@@ -152,8 +150,7 @@ struct BFCacheSnapshot: Codable {
             enablePercentRestore: restorationConfig.enablePercentRestore,
             enableAnchorRestore: restorationConfig.enableAnchorRestore,
             enableFinalVerification: restorationConfig.enableFinalVerification,
-            savedContentHeight: max(actualScrollableSize.height, contentSize.height),
-            contentRestoreStrategy: restorationConfig.contentRestoreStrategy ?? "intersection"
+            savedContentHeight: max(actualScrollableSize.height, contentSize.height)
         )
     }
 
@@ -341,7 +338,6 @@ struct BFCacheSnapshot: Codable {
         let step1StartTime = Date()
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] 전략: \((restorationConfig.contentRestoreStrategy ?? "intersection").lowercased())")
 
         guard restorationConfig.enableContentRestore else {
             TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 즉시 Step 2 진행")
@@ -380,12 +376,6 @@ struct BFCacheSnapshot: Codable {
                 if let resultDict = resultDict {
                     step1Success = (resultDict["success"] as? Bool) ?? false
 
-                    let extractInt: (Any?) -> Int? = { value in
-                        if let intValue = value as? Int { return intValue }
-                        if let doubleValue = value as? Double { return Int(doubleValue.rounded()) }
-                        return nil
-                    }
-
                     // 에러 정보가 있으면 먼저 출력
                     if let errorMsg = resultDict["error"] as? String {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] ❌ 에러: \(errorMsg)")
@@ -394,66 +384,6 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 스택: \(errorStack)")
                     }
 
-                    if let strategy = resultDict["strategy"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 전략: \(strategy)")
-                    }
-                    if let ioEnabled = resultDict["ioEnabled"] as? Bool {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] IO 활성화: \(ioEnabled ? "yes" : "no")")
-                    }
-                    if let eagerLoaded = extractInt(resultDict["eagerLoadedCount"]) {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 즉시 로드 자원: \(Int(eagerLoaded))")
-                    }
-                    if let sentinelTriggers = extractInt(resultDict["sentinelTriggers"]) {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 센티널 트리거: \(Int(sentinelTriggers))")
-                    }
-                    if let buttonClicks = extractInt(resultDict["buttonClicks"]) {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 버튼 클릭: \(Int(buttonClicks))")
-                    }
-                    if let cycles = extractInt(resultDict["cycles"]) {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 작업 사이클: \(Int(cycles))")
-                    }
-                    if let rawDuration = resultDict["durationMs"] {
-                        let durationValue: Double?
-                        if let doubleValue = rawDuration as? Double {
-                            durationValue = doubleValue
-                        } else if let intValue = rawDuration as? Int {
-                            durationValue = Double(intValue)
-                        } else {
-                            durationValue = nil
-                        }
-                        if let durationValue = durationValue {
-                            let seconds = durationValue / 1000.0
-                            TabPersistenceManager.debugMessages.append("📦 [Step 1] 실행 시간: \(String(format: "%.1f", seconds))s (\(Int(durationValue))ms)")
-                        }
-                    }
-                    if let mutations = extractInt(resultDict["mutations"]) {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] Mutation 발생: \(Int(mutations))")
-                    }
-                    if let resourceTypes = resultDict["resourceTypes"] as? [String: Any] {
-                        let summaries = resourceTypes.compactMap { (key, value) -> String? in
-                            if let number = value as? Double {
-                                return "\(key)=\(Int(number.rounded()))"
-                            } else if let number = value as? Int {
-                                return "\(key)=\(number)"
-                            }
-                            return nil
-                        }
-                        if !summaries.isEmpty {
-                            let summaryString = summaries.joined(separator: ", ")
-                            TabPersistenceManager.debugMessages.append("📦 [Step 1] 자원 유형: \(summaryString)")
-                        }
-                    }
-                    if let reportedErrors = resultDict["errors"] as? [Any] {
-                        for entry in reportedErrors.prefix(3) {
-                            if let dict = entry as? [String: Any] {
-                                let type = dict["type"] as? String ?? "unknown"
-                                let message = dict["message"] as? String ?? ""
-                                TabPersistenceManager.debugMessages.append("📦 [Step 1] 오류[\(type)]: \(message)")
-                            } else if let message = entry as? String {
-                                TabPersistenceManager.debugMessages.append("📦 [Step 1] 오류: \(message)")
-                            }
-                        }
-                    }
                     if let currentHeight = resultDict["currentHeight"] as? Double {
                         TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
                     }
@@ -745,6 +675,7 @@ struct BFCacheSnapshot: Codable {
 
     // 🎯 **공통 유틸리티 스크립트 생성**
     private func generateCommonUtilityScript() -> String {
+
         return """
         // 공통 BFCache 유틸리티 (비동기 기반)
         function getROOT() {
@@ -1014,7 +945,7 @@ struct BFCacheSnapshot: Codable {
                 return val;
             };
             try {
-                return JSON.parse(JSON.stringify(value, replacer));
+                return JSON.parse(JSON.stringify(value, replacer))();
             } catch (error) {
                 return { error: 'sanitize_failed', message: error.message };
             }
@@ -1067,271 +998,6 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
-        const RESOURCE_DENYLIST = [
-            /(^|[^a-z0-9_])(ads?|sponsored|banner)([^a-z0-9_]|$)/i,
-            /doubleclick|googlesyndication|taboola|outbrain/i
-        ];
-
-        function shouldSkipLazyResource(element) {
-            if (!element) return true;
-            try {
-                const parts = [
-                    element.id || '',
-                    typeof element.className === 'string' ? element.className : '',
-                    element.getAttribute ? element.getAttribute('data-src') || element.getAttribute('src') || '' : ''
-                ].join(' ');
-                return RESOURCE_DENYLIST.some(re => re.test(parts));
-            } catch (error) {
-                return false;
-            }
-        }
-
-        function collectLazyResourceCandidates(root = document) {
-            if (!root || !root.querySelectorAll) return [];
-            const selectors = [
-                'img[loading="lazy"]',
-                'img[data-src]',
-                'img[data-srcset]',
-                'img[data-original]',
-                'img[data-lazy]',
-                'picture source[data-srcset]',
-                'source[data-src]',
-                'video[preload="none"]',
-                'video source[data-src]',
-                'iframe[loading="lazy"]',
-                '[data-bg]',
-                '[data-background]',
-                '[data-background-image]',
-                '[data-lazyload]'
-            ];
-            const set = new Set();
-            selectors.forEach(selector => {
-                root.querySelectorAll(selector).forEach(el => {
-                    if (el && !set.has(el)) {
-                        set.add(el);
-                    }
-                });
-            });
-            return Array.from(set);
-        }
-
-        function recordResourceStats(stats, type) {
-            if (!stats) return;
-            stats.eagerLoadedCount = (stats.eagerLoadedCount || 0) + 1;
-            if (!stats.resourceTypes) stats.resourceTypes = {};
-            stats.resourceTypes[type] = (stats.resourceTypes[type] || 0) + 1;
-        }
-
-        function eagerLoadResourceImmediate(element, stats) {
-            if (!element || element.__bfcacheEagerLoaded) return false;
-            if (shouldSkipLazyResource(element)) return false;
-            let changed = false;
-            let type = 'generic';
-            try {
-                const tag = (element.tagName || '').toUpperCase();
-                if (tag === 'IMG' || tag === 'SOURCE') {
-                    const target = element;
-                    const dataSrc = target.getAttribute('data-src') || target.dataset?.src || target.dataset?.original || target.dataset?.lazy;
-                    const dataSrcset = target.getAttribute('data-srcset') || target.dataset?.srcset;
-                    if (dataSrc && !target.src) {
-                        target.src = dataSrc;
-                        changed = true;
-                    }
-                    if (dataSrcset && !target.srcset && tag === 'IMG') {
-                        target.srcset = dataSrcset;
-                        changed = true;
-                    }
-                    if (target.loading === 'lazy') {
-                        target.loading = 'eager';
-                        changed = true;
-                    }
-                    type = 'image';
-                    if (typeof target.decode === 'function') {
-                        target.decode().catch(() => {});
-                    }
-                } else if (tag === 'IFRAME') {
-                    const dataSrc = element.getAttribute('data-src') || element.dataset?.src;
-                    if (dataSrc && !element.src) {
-                        element.src = dataSrc;
-                        changed = true;
-                    }
-                    if (element.loading === 'lazy') {
-                        element.loading = 'eager';
-                        changed = true;
-                    }
-                    type = 'iframe';
-                } else if (tag === 'VIDEO' || tag === 'AUDIO') {
-                    if (element.preload === 'none') {
-                        element.preload = 'auto';
-                        changed = true;
-                    }
-                    const dataSrc = element.getAttribute('data-src') || element.dataset?.src;
-                    if (dataSrc && !element.src) {
-                        element.src = dataSrc;
-                        changed = true;
-                    }
-                    element.querySelectorAll('source[data-src], source[data-srcset]').forEach(source => {
-                        const src = source.getAttribute('data-src');
-                        const srcset = source.getAttribute('data-srcset');
-                        if (src && !source.src) {
-                            source.src = src;
-                            changed = true;
-                        }
-                        if (srcset && !source.srcset) {
-                            source.srcset = srcset;
-                            changed = true;
-                        }
-                    });
-                    type = 'media';
-                    if (typeof element.load === 'function') {
-                        element.load();
-                    }
-                } else {
-                    const dataBg = element.getAttribute('data-bg') || element.dataset?.bg || element.dataset?.background || element.getAttribute('data-background-image');
-                    if (dataBg) {
-                        element.style.backgroundImage = "url('" + dataBg + "')";
-                        element.dataset.__bfcacheBgApplied = '1';
-                        changed = true;
-                        type = 'background';
-                    }
-                }
-            } catch (error) {
-                if (stats) {
-                    stats.errors = stats.errors || [];
-                    stats.errors.push({ type: 'resource', message: error.message || String(error) });
-                }
-            }
-            if (changed) {
-                element.__bfcacheEagerLoaded = true;
-                recordResourceStats(stats, type);
-            }
-            return changed;
-        }
-
-        function preserveInlineStyle(element) {
-            if (!element) return () => {};
-            const previous = element.getAttribute('style');
-            return () => {
-                if (!element) return;
-                try {
-                    if (previous === null) {
-                        element.removeAttribute('style');
-                    } else {
-                        element.setAttribute('style', previous);
-                    }
-                } catch (_) {}
-            };
-        }
-
-        function temporarilyPinToViewport(element, options = {}) {
-            if (!isElementValid(element)) return () => {};
-            const restore = preserveInlineStyle(element);
-            try {
-                const toPx = value => typeof value === 'number' ? value + 'px' : (value || '0px');
-                element.style.position = 'fixed';
-                if (options.top != null) {
-                    element.style.top = toPx(options.top);
-                    element.style.bottom = '';
-                } else {
-                    element.style.bottom = toPx(options.bottom);
-                    element.style.top = '';
-                }
-                element.style.left = options.left != null ? toPx(options.left) : '-9999px';
-                element.style.width = toPx(options.width ?? 1);
-                element.style.height = toPx(options.height ?? 1);
-                element.style.opacity = '0';
-                element.style.pointerEvents = 'none';
-                element.style.transform = 'translateZ(0)';
-                element.style.contain = 'layout style paint';
-                if (options.right != null) {
-                    element.style.right = toPx(options.right);
-                } else {
-                    element.style.right = '';
-                }
-            } catch (_) {}
-            return restore;
-        }
-
-        function temporarilyAnchorInsideContainer(element, container, options = {}) {
-            if (!isElementValid(element) || !isElementValid(container)) return () => {};
-            const cleanups = [];
-            cleanups.push(preserveInlineStyle(element));
-            try {
-                const computed = getComputedStyle(container);
-                const style = container.style;
-                if (computed && computed.position === 'static') {
-                    const prev = style.position;
-                    style.position = 'relative';
-                    cleanups.push(() => { style.position = prev || ''; });
-                }
-                const toPx = value => typeof value === 'number' ? value + 'px' : (value || '0px');
-                element.style.position = 'absolute';
-                element.style.bottom = toPx(options.bottom);
-                element.style.left = toPx(options.left);
-                element.style.width = toPx(options.width ?? 1);
-                element.style.height = toPx(options.height ?? 1);
-                element.style.opacity = '0';
-                element.style.pointerEvents = 'none';
-                element.style.transform = 'translateZ(0)';
-            } catch (_) {}
-            return () => {
-                while (cleanups.length) {
-                    const fn = cleanups.pop();
-                    try { fn(); } catch (_) {}
-                }
-            };
-        }
-
-        function createIntersectionTrampoline(container) {
-            if (!isElementValid(container)) return null;
-            try {
-                const trampoline = container.ownerDocument.createElement('div');
-                trampoline.className = '__bfcache_trampoline';
-                trampoline.style.cssText = 'position:absolute;width:1px;height:1px;bottom:0;left:0;opacity:0;pointer-events:none;transform:translateZ(0);contain:layout style paint;';
-                container.appendChild(trampoline);
-                return trampoline;
-            } catch (_) {
-                return null;
-            }
-        }
-
-        async function triggerSentinelIntersectionAsync(container, sentinel, stats = {}, options = {}) {
-            if (!isElementValid(sentinel)) return false;
-            const cleanups = [];
-            let success = false;
-            try {
-                if (isElementValid(container) && container !== document.body && container !== document.documentElement) {
-                    cleanups.push(temporarilyAnchorInsideContainer(sentinel, container, options.anchor || {}));
-                }
-                const parent = isElementValid(container) ? container : (sentinel.parentElement || document.body);
-                const trampoline = createIntersectionTrampoline(parent);
-                if (trampoline) {
-                    cleanups.push(() => { if (trampoline.parentNode) trampoline.parentNode.removeChild(trampoline); });
-                    cleanups.push(temporarilyPinToViewport(trampoline, options.viewport || {}));
-                } else {
-                    cleanups.push(temporarilyPinToViewport(sentinel, options.viewport || {}));
-                }
-                await nextFrame();
-                const dwell = typeof options.dwellMs === 'number' ? options.dwellMs : 140;
-                await delay(Math.max(60, dwell));
-                success = true;
-                if (stats) {
-                    stats.sentinelTriggers = (stats.sentinelTriggers || 0) + 1;
-                }
-            } catch (error) {
-                if (stats) {
-                    stats.errors = stats.errors || [];
-                    stats.errors.push({ type: 'sentinel', message: error.message || String(error) });
-                }
-            } finally {
-                while (cleanups.length) {
-                    const cleanup = cleanups.pop();
-                    try { if (typeof cleanup === 'function') cleanup(); } catch (_) {}
-                }
-            }
-            return success;
-        }
-
         (function hardenEnv() {
             try {
                 if (window._bfcacheEnvHardened) return;
@@ -1346,375 +1012,14 @@ struct BFCacheSnapshot: Codable {
         })();
         """
     }
-
-    private func generateStep1_IntersectionUtilityScript() -> String {
-        return """
-        function getROOT(){try{if(!document||!document.documentElement)return null;return document.scrollingElement||document.documentElement||document.body;}catch(_){return null;}}
-        function isElementValid(el){try{return !!(el&&el.isConnected&&el.ownerDocument===document);}catch(_){return false;}}
-        function nextFrame(){return new Promise(r=>requestAnimationFrame(()=>r()));}
-        function delay(ms){return new Promise(r=>setTimeout(r,ms||0));}
-        function isScrollable(el){if(!el)return false;const cs=getComputedStyle(el);if(!cs)return false;const oy=cs.overflowY||cs.overflow||"";const ox=cs.overflowX||cs.overflow||"";const y=/(auto|scroll)/i.test(oy)&&el.scrollHeight>el.clientHeight+1;const x=/(auto|scroll)/i.test(ox)&&el.scrollWidth>el.clientWidth+1;return y||x;}
-        function findScrollContainers(){const root=getROOT();const candidates=[];if(root)candidates.push(root);if(document.body&&document.body!==root)candidates.push(document.body);document.querySelectorAll('[data-scroll-container], main, .content, [class*\"scroll\"], [class*\"Scroll\"], [class*\"list\"], [class*\"List\"], [role=\"main\"]').forEach(el=>{if(isScrollable(el))candidates.push(el);});const seen=new Set();const unique=[];for(let i=0;i<candidates.length;i++){const el=candidates[i];if(el&&!seen.has(el)){seen.add(el);unique.push(el);}}unique.sort((a,b)=>(b&&b.scrollHeight?b.scrollHeight:0)-(a&&a.scrollHeight?a.scrollHeight:0));return unique.length?unique:(root?[root]:[]);}
-        function findSentinel(root){if(!root)return null;const selector=['[data-testid*\"loader\"]','[data-test*\"loader\"]','[class*\"loader\"]','[class*\"sentinel\"]','[id*\"sentinel\"]','[aria-busy=\"true\"]','.infinite-scroll-component__outerdiv','[data-infinite-scroll]','.load-more','.infinite-loader'].join(',');return root.querySelector(selector)||root.lastElementChild||root;}
-        async function waitForStableLayoutAsync(opts){const options=opts||{};const frames=options.frames!==undefined?options.frames:3;const timeout=options.timeout!==undefined?options.timeout:800;const threshold=options.threshold!==undefined?options.threshold:2;const root=getROOT();if(!root)return;let stable=0;let last=root.scrollHeight;const start=Date.now();while(Date.now()-start<timeout){await nextFrame();const current=root.scrollHeight;if(Math.abs(current-last)<=threshold){stable+=1;if(stable>=frames)break;}else{stable=0;last=current;}}}
-        function sanitizeForJSON(value){const replacer=(k,v)=>{if(typeof v==='number'&&!Number.isFinite(v))return null;if(typeof v==='bigint'||typeof v==='function'||typeof v==='symbol')return null;if(v&&typeof v==='object'){if(typeof Element!=='undefined'&&v instanceof Element)return{tag:v.tagName};if(typeof Node!=='undefined'&&v instanceof Node)return{node:v.nodeName};}return v;};try{return JSON.parse(JSON.stringify(value,replacer));}catch(err){return{error:'sanitize_failed',message:err.message};}}
-        function serializeForJSON(value){const safe=sanitizeForJSON(value);try{return JSON.stringify(safe);}catch(err){return JSON.stringify({error:'serialize_failed',message:err.message});}}
-        function ensureOverflowAnchorState(disabled){const state=window.__bfcacheOverflowAnchor||(window.__bfcacheOverflowAnchor={disabled:false,doc:null,body:null});if(disabled){if(!state.disabled){if(document.documentElement){state.doc=document.documentElement.style.overflowAnchor||"";document.documentElement.style.setProperty('overflow-anchor','none','important');}if(document.body){state.body=document.body.style.overflowAnchor||"";document.body.style.setProperty('overflow-anchor','none','important');}state.disabled=true;}}else if(state.disabled){if(document.documentElement){if(state.doc){document.documentElement.style.overflowAnchor=state.doc;}else{document.documentElement.style.removeProperty('overflow-anchor');}}if(document.body){if(state.body){document.body.style.overflowAnchor=state.body;}else{document.body.style.removeProperty('overflow-anchor');}}state.disabled=false;}}
-        const RESOURCE_DENYLIST=[/(^|[^a-z0-9_])(ads?|sponsored|banner)([^a-z0-9_]|$)/i,/doubleclick|googlesyndication|taboola|outbrain/i];
-        function shouldSkipLazyResource(el){if(!el)return true;try{const text=[el.id||'',typeof el.className==='string'?el.className:'',el.getAttribute?el.getAttribute('data-src')||el.getAttribute('src')||'':''].join(' ');return RESOURCE_DENYLIST.some(re=>re.test(text));}catch(_){return false;}}
-        function collectLazyResourceCandidates(root){const doc=root||document;if(!doc||!doc.querySelectorAll)return[];const selectors=['img[loading=\"lazy\"]','img[data-src]','img[data-srcset]','img[data-original]','img[data-lazy]','picture source[data-srcset]','source[data-src]','video[preload=\"none\"]','video source[data-src]','iframe[loading=\"lazy\"]','[data-bg]','[data-background]','[data-background-image]','[data-lazyload]'];const set=new Set();for(let i=0;i<selectors.length;i++){doc.querySelectorAll(selectors[i]).forEach(el=>{if(el&&!set.has(el))set.add(el);});}return Array.from(set);}
-        function recordResourceStats(stats,type){if(!stats)return;stats.eagerLoadedCount=(stats.eagerLoadedCount||0)+1;const map=stats.resourceTypes||(stats.resourceTypes={});map[type]=(map[type]||0)+1;}
-        function eagerLoadResourceImmediate(el,stats){if(!el||el.__bfcacheEagerLoaded||shouldSkipLazyResource(el))return false;let changed=false;let type='generic';try{const tag=(el.tagName||'').toUpperCase();if(tag==='IMG'||tag==='SOURCE'){const target=el;const dataSrc=target.getAttribute('data-src')||target.dataset&&target.dataset.src||target.dataset&&target.dataset.original||target.dataset&&target.dataset.lazy;const dataSrcset=target.getAttribute('data-srcset')||target.dataset&&target.dataset.srcset;if(dataSrc&&!target.src){target.src=dataSrc;changed=true;}if(dataSrcset&&!target.srcset&&tag==='IMG'){target.srcset=dataSrcset;changed=true;}if(target.loading==='lazy'){target.loading='eager';changed=true;}type='image';if(typeof target.decode==='function'){target.decode().catch(()=>{});}}else if(tag==='IFRAME'){const dataSrc=el.getAttribute('data-src')||el.dataset&&el.dataset.src;if(dataSrc&&!el.src){el.src=dataSrc;changed=true;}if(el.loading==='lazy'){el.loading='eager';changed=true;}type='iframe';}else if(tag==='VIDEO'||tag==='AUDIO'){if(el.preload==='none'){el.preload='auto';changed=true;}const dataSrc=el.getAttribute('data-src')||el.dataset&&el.dataset.src;if(dataSrc&&!el.src){el.src=dataSrc;changed=true;}el.querySelectorAll('source[data-src], source[data-srcset]').forEach(source=>{const src=source.getAttribute('data-src');const srcset=source.getAttribute('data-srcset');if(src&&!source.src){source.src=src;changed=true;}if(srcset&&!source.srcset){source.srcset=srcset;changed=true;}});type='media';if(typeof el.load==='function'){el.load();}}else{const dataBg=el.getAttribute('data-bg')||el.dataset&&el.dataset.bg||el.dataset&&el.dataset.background||el.getAttribute('data-background-image');if(dataBg){el.style.backgroundImage="url('"+dataBg+"')";el.dataset.__bfcacheBgApplied='1';changed=true;type='background';}}}catch(error){if(stats){const list=stats.errors||(stats.errors=[]);list.push({type:'resource',message:error.message||String(error)});}}if(changed){el.__bfcacheEagerLoaded=true;recordResourceStats(stats,type);}return changed;}
-        function preserveInlineStyle(el){if(!el)return()=>{};const prev=el.getAttribute('style');return()=>{if(!el)return;try{if(prev===null){el.removeAttribute('style');}else{el.setAttribute('style',prev);}}catch(_){}};}
-        function temporarilyPinToViewport(el,opts){if(!isElementValid(el))return()=>{};const restore=preserveInlineStyle(el);const options=opts||{};try{const px=v=>typeof v==='number'?v+'px':(v||'0px');if(options.top!==undefined&&options.top!==null){el.style.top=px(options.top);el.style.bottom='';}else{el.style.bottom=px(options.bottom);el.style.top='';}el.style.position='fixed';el.style.left=options.left!==undefined&&options.left!==null?px(options.left):'-9999px';el.style.width=px(options.width!==undefined&&options.width!==null?options.width:1);el.style.height=px(options.height!==undefined&&options.height!==null?options.height:1);el.style.opacity='0';el.style.pointerEvents='none';el.style.transform='translateZ(0)';el.style.contain='layout style paint';if(options.right!==undefined&&options.right!==null){el.style.right=px(options.right);}else{el.style.right='';}}catch(_){ }return restore;}
-        function temporarilyAnchorInsideContainer(el,container,opts){if(!isElementValid(el)||!isElementValid(container))return()=>{};const cleanups=[preserveInlineStyle(el)];const options=opts||{};try{const cs=getComputedStyle(container);const style=container.style;if(cs&&cs.position==='static'){const prev=style.position;style.position='relative';cleanups.push(()=>{style.position=prev||'';});}const px=v=>typeof v==='number'?v+'px':(v||'0px');el.style.position='absolute';el.style.bottom=px(options.bottom);el.style.left=px(options.left);el.style.width=px(options.width!==undefined&&options.width!==null?options.width:1);el.style.height=px(options.height!==undefined&&options.height!==null?options.height:1);el.style.opacity='0';el.style.pointerEvents='none';el.style.transform='translateZ(0)';}catch(_){ }return()=>{while(cleanups.length){const fn=cleanups.pop();try{if(fn)fn();}catch(_){}}};}
-        function createIntersectionTrampoline(container){if(!isElementValid(container))return null;try{const t=container.ownerDocument.createElement('div');t.className='__bfcache_trampoline';t.style.cssText='position:absolute;width:1px;height:1px;bottom:0;left:0;opacity:0;pointer-events:none;transform:translateZ(0);contain:layout style paint;';container.appendChild(t);return t;}catch(_){return null;}}
-        async function triggerSentinelIntersectionAsync(container,sentinel,stats,opts){if(!isElementValid(sentinel))return false;const options=opts||{};const cleanups=[];let success=false;try{if(isElementValid(container)&&container!==document.body&&container!==document.documentElement){cleanups.push(temporarilyAnchorInsideContainer(sentinel,container,options.anchor||{}));}const parent=isElementValid(container)?container:(sentinel.parentElement||document.body);const trampoline=createIntersectionTrampoline(parent);if(trampoline){cleanups.push(()=>{if(trampoline.parentNode)trampoline.parentNode.removeChild(trampoline);});cleanups.push(temporarilyPinToViewport(trampoline,options.viewport||{}));}else{cleanups.push(temporarilyPinToViewport(sentinel,options.viewport||{}));}await nextFrame();const dwell=typeof options.dwellMs==='number'?options.dwellMs:140;await delay(Math.max(60,dwell));success=true;if(stats){stats.sentinelTriggers=(stats.sentinelTriggers||0)+1;}}catch(error){if(stats){const list=stats.errors||(stats.errors=[]);list.push({type:'sentinel',message:error.message||String(error)});}}finally{while(cleanups.length){const fn=cleanups.pop();try{if(fn)fn();}catch(_){}}}return success;}
-        (function(){try{if(window._bfcacheEnvHardened)return;window._bfcacheEnvHardened=true;if(history&&typeof history.scrollRestoration==='string'){history.scrollRestoration='manual';}}catch(_){ }try{if(document.documentElement){document.documentElement.style.setProperty('scroll-behavior','auto','important');}}catch(_){ }} )();
-        """
-    }
-
-private func generateStep1_ContentRestoreScript() -> String {
-    let strategy = (restorationConfig.contentRestoreStrategy ?? "intersection").lowercased()
-    switch strategy {
-    case "legacy-scroll":
-        return generateStep1_LegacyContentRestoreScript()
-    default:
-        return generateStep1_IntersectionContentRestoreScript()
-    }
-}
-
-private func generateStep1_IntersectionContentRestoreScript() -> String {
-    let savedHeight = self.restorationConfig.savedContentHeight
-
-    guard savedHeight.isFinite && savedHeight >= 0 else {
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] savedHeight invalid: \(savedHeight)")
-        return """
-        return JSON.stringify({ success: false, strategy: 'intersection', error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight is not valid'] });
-        """
-    }
-
-    let savedHeightString = String(format: "%.6f", Double(savedHeight))
-
-    return """
-    let logs = [];
-    let errors = [];
-    let metrics = {
-        strategy: 'intersection',
-        ioEnabled: typeof IntersectionObserver === 'function',
-        eagerLoadedCount: 0,
-        sentinelTriggers: 0,
-        buttonClicks: 0,
-        cycles: 0,
-        durationMs: 0,
-        resourceTypes: {},
-        mutations: 0
-    };
-    const savedContentHeight = parseFloat('\(savedHeightString)');
-    let resourceObserver = null;
-    let mutationObserver = null;
-
-    try {
-        \(generateStep1_IntersectionUtilityScript())
-
-        logs.push('[Step 1] Saved content height: ' + savedContentHeight.toFixed(0) + 'px');
-
-        const root = getROOT();
-        logs.push('[Step 1] Scroll root: ' + (root ? root.tagName : 'null'));
-
-        if (!root) {
-            errors.push({ type: 'root', message: 'scroll root not found' });
-            return serializeForJSON({
-                success: false,
-                strategy: 'intersection',
-                error: 'root_not_found',
-                savedContentHeight: savedContentHeight,
-                logs: logs,
-                errors: errors
-            });
-        }
-
-        const viewportHeight = Math.max(0, window.innerHeight || 0);
-        const currentHeight = root.scrollHeight || 0;
-        logs.push('[Step 1] Current height: ' + currentHeight.toFixed(0) + 'px');
-        logs.push('[Step 1] Viewport height: ' + viewportHeight.toFixed(0) + 'px');
-
-        const percentage = savedContentHeight > 0 ? (currentHeight / Math.max(1, savedContentHeight)) * 100 : 0;
-        logs.push('[Step 1] Coverage: ' + percentage.toFixed(1) + '%');
-
-        ensureOverflowAnchorState(true);
-
-        if (savedContentHeight > 0 && percentage >= 98) {
-            logs.push('[Step 1] Static page detected, skip growth');
-            return serializeForJSON({
-                success: true,
-                strategy: 'intersection',
-                isStaticSite: true,
-                ioEnabled: metrics.ioEnabled,
-                eagerLoadedCount: metrics.eagerLoadedCount,
-                sentinelTriggers: metrics.sentinelTriggers,
-                buttonClicks: metrics.buttonClicks,
-                cycles: metrics.cycles,
-                durationMs: metrics.durationMs,
-                resourceTypes: metrics.resourceTypes,
-                mutations: metrics.mutations,
-                currentHeight: currentHeight,
-                savedContentHeight: savedContentHeight,
-                restoredHeight: currentHeight,
-                percentage: percentage,
-                errors: errors,
-                logs: logs
-            });
-        }
-
-        if (!metrics.ioEnabled) {
-            logs.push('[Step 1] IntersectionObserver unavailable - fallback to eager loading only');
-        }
-
-        const loadMoreSelectors = '[data-testid*="load"], [class*="load"], [class*="more"], button[class*="more"], .load-more, .show-more';
-        const loadMoreCandidates = Array.prototype.slice.call(document.querySelectorAll(loadMoreSelectors), 0);
-        let buttonClicks = 0;
-        for (let i = 0; i < loadMoreCandidates.length && buttonClicks < 5; i++) {
-            const btn = loadMoreCandidates[i];
-            if (!btn || typeof btn.click !== 'function') continue;
-            try {
-                btn.click();
-                buttonClicks += 1;
-            } catch (_) {}
-        }
-        if (buttonClicks > 0) {
-            logs.push('[Step 1] Clicked load-more buttons: ' + buttonClicks);
-            metrics.buttonClicks = buttonClicks;
-            await nextFrame();
-            await delay(160);
-        }
-
-        const containers = findScrollContainers();
-        logs.push('[Step 1] Scroll containers detected: ' + containers.length);
-
-        const sentinelOptions = { viewport: { bottom: 0, left: -9999, width: 1, height: 1 }, anchor: { bottom: 0, left: 0 }, dwellMs: 140 };
-        const sentinelAttempts = new Map();
-
-        const registry = new Set();
-        const registerResource = function(element) {
-            if (!element || registry.has(element)) return;
-            if (!isElementValid(element)) return;
-            registry.add(element);
-            if (metrics.ioEnabled && resourceObserver) {
-                try { resourceObserver.observe(element); } catch (_) {}
-            } else {
-                if (eagerLoadResourceImmediate(element, metrics)) {
-                    logs.push('[Step 1] Resource eager-loaded: ' + (element.tagName || 'node'));
-                }
-            }
-        };
-
-        try {
-            const initialResources = collectLazyResourceCandidates(document);
-            for (let i = 0; i < initialResources.length; i++) {
-                registerResource(initialResources[i]);
-            }
-        } catch (error) {
-            errors.push({ type: 'resource_scan', message: error.message || String(error) });
-        }
-
-        if (metrics.ioEnabled) {
-            try {
-                resourceObserver = new IntersectionObserver(function(entries) {
-                    for (let i = 0; i < entries.length; i++) {
-                        const entry = entries[i];
-                        if (!entry || !entry.target) continue;
-                        if (!entry.isIntersecting && entry.intersectionRatio <= 0) continue;
-                        const target = entry.target;
-                        try { resourceObserver.unobserve(target); } catch (_) {}
-                        if (eagerLoadResourceImmediate(target, metrics)) {
-                            logs.push('[Step 1] Resource eager-loaded: ' + (target.tagName || 'node'));
-                        }
-                    }
-                }, {
-                    root: null,
-                    rootMargin: '1500px 0px 2000px 0px',
-                    threshold: 0.0001
-                });
-                registry.forEach(function(element) {
-                    try { resourceObserver.observe(element); } catch (_) {}
-                });
-            } catch (error) {
-                metrics.ioEnabled = false;
-                errors.push({ type: 'observer', message: error.message || String(error) });
-            }
-        }
-
-        if (typeof MutationObserver === 'function') {
-            try {
-                mutationObserver = new MutationObserver(function(records) {
-                    if (!records) return;
-                    metrics.mutations += records.length;
-                    for (let r = 0; r < records.length; r++) {
-                        const record = records[r];
-                        if (!record || !record.addedNodes) continue;
-                        for (let n = 0; n < record.addedNodes.length; n++) {
-                            const node = record.addedNodes[n];
-                            if (!node || node.nodeType !== 1) continue;
-                            registerResource(node);
-                            try {
-                                const nested = collectLazyResourceCandidates(node);
-                                for (let x = 0; x < nested.length; x++) {
-                                    registerResource(nested[x]);
-                                }
-                            } catch (_) {}
-                        }
-                    }
-                });
-                const mutationRoot = document.documentElement || document.body;
-                if (mutationRoot) {
-                    mutationObserver.observe(mutationRoot, { childList: true, subtree: true });
-                }
-            } catch (error) {
-                errors.push({ type: 'mutation', message: error.message || String(error) });
-            }
-        } else {
-            logs.push('[Step 1] MutationObserver not available');
-        }
-
-        await waitForStableLayoutAsync({ frames: 2, timeout: 600 });
-
-        const maxDurationMs = 46000;
-        const maxCycles = 1012;
-        const stableLimit = 5;
-        const sentinelMaxPerContainer = 3;
-        const cycleDelay = 120;
-        const startTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-
-        let restoredHeight = currentHeight;
-        let stableCycles = 0;
-
-        while (true) {
-            const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-            metrics.durationMs = Math.round(now - startTime);
-            if (metrics.durationMs >= maxDurationMs) {
-                logs.push('[Step 1] Stop: duration limit');
-                break;
-            }
-            if (metrics.cycles >= maxCycles) {
-                logs.push('[Step 1] Stop: cycle limit');
-                break;
-            }
-
-            metrics.cycles += 1;
-
-            if (resourceObserver) {
-                registry.forEach(function(element) {
-                    try { resourceObserver.observe(element); } catch (_) {}
-                });
-            }
-
-            for (let idx = 0; idx < containers.length; idx++) {
-                const container = containers[idx];
-                if (!isElementValid(container)) continue;
-                const attempts = sentinelAttempts.get(container) || 0;
-                if (attempts >= sentinelMaxPerContainer) continue;
-                const sentinel = findSentinel(container);
-                sentinelAttempts.set(container, attempts + 1);
-                if (!isElementValid(sentinel)) continue;
-                try {
-                    const triggered = await triggerSentinelIntersectionAsync(container, sentinel, metrics, sentinelOptions);
-                    if (triggered) {
-                        logs.push('[Step 1] Sentinel trigger attempt #' + (attempts + 1) + ' on ' + (container.tagName || 'node'));
-                    }
-                } catch (error) {
-                    errors.push({ type: 'sentinel', message: error.message || String(error) });
-                }
-            }
-
-            await delay(cycleDelay);
-
-            const afterHeight = root.scrollHeight || 0;
-            if (afterHeight > restoredHeight + 2) {
-                logs.push('[Step 1] Height delta: +' + (afterHeight - restoredHeight).toFixed(0) + 'px (total ' + afterHeight.toFixed(0) + 'px)');
-                restoredHeight = afterHeight;
-                stableCycles = 0;
-            } else {
-                stableCycles += 1;
-            }
-
-            if (savedContentHeight > 0 && afterHeight >= savedContentHeight * 0.995) {
-                logs.push('[Step 1] Target height reached');
-                break;
-            }
-
-            if (stableCycles >= stableLimit) {
-                logs.push('[Step 1] Growth stabilized');
-                break;
-            }
-        }
-
-        if (mutationObserver) {
-            try { mutationObserver.disconnect(); } catch (_) {}
-        }
-        if (resourceObserver) {
-            try { resourceObserver.disconnect(); } catch (_) {}
-        }
-
-        metrics.durationMs = Math.round(((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - startTime);
-
-        const finalPercentage = savedContentHeight > 0 ? (restoredHeight / Math.max(1, savedContentHeight)) * 100 : 0;
-        const success = finalPercentage >= 80 || restoredHeight >= currentHeight + 128;
-
-        logs.push('[Step 1] Final height: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
-        logs.push('[Step 1] Total cycles: ' + metrics.cycles);
-        logs.push('[Step 1] Duration: ' + metrics.durationMs + 'ms');
-
-        return serializeForJSON({
-            success: success,
-            strategy: 'intersection',
-            isStaticSite: false,
-            ioEnabled: metrics.ioEnabled,
-            eagerLoadedCount: metrics.eagerLoadedCount,
-            sentinelTriggers: metrics.sentinelTriggers,
-            buttonClicks: metrics.buttonClicks,
-            cycles: metrics.cycles,
-            durationMs: metrics.durationMs,
-            resourceTypes: metrics.resourceTypes,
-            mutations: metrics.mutations,
-            currentHeight: currentHeight,
-            savedContentHeight: savedContentHeight,
-            restoredHeight: restoredHeight,
-            percentage: finalPercentage,
-            errors: errors,
-            logs: logs
-        });
-    } catch (e) {
-        if (mutationObserver) {
-            try { mutationObserver.disconnect(); } catch (_) {}
-        }
-        if (resourceObserver) {
-            try { resourceObserver.disconnect(); } catch (_) {}
-        }
-        errors.push({ type: 'exception', message: e.message || String(e) });
-        logs.push('[Step 1] Intersection strategy error: ' + (e && e.message ? e.message : 'unknown'));
-        return serializeForJSON({
-            success: false,
-            strategy: 'intersection',
-            error: e.message || String(e),
-            errorStack: e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : 'no stack',
-            ioEnabled: metrics.ioEnabled,
-            savedContentHeight: savedContentHeight,
-            logs: logs,
-            errors: errors
-        });
-    }
-    """
-}
-
-    private func generateStep1_LegacyContentRestoreScript() -> String {
+    private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
             TabPersistenceManager.debugMessages.append("⚠️ [Step 1] savedHeight 비정상: \(savedHeight)")
             return """
-            return JSON.stringify({ success: false, strategy: 'legacy-scroll', error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight 값이 비정상입니다'] });
+            return JSON.stringify({ success: false, error: 'invalid_height', savedContentHeight: \(savedHeight), logs: ['savedHeight 값이 비정상입니다'] });
             """
         }
 
@@ -1723,6 +1028,92 @@ private func generateStep1_IntersectionContentRestoreScript() -> String {
             \(generateCommonUtilityScript())
 
             const logs = [];
+            if (!window.__bfcacheDebugHooksInstalled) {
+                window.__bfcacheDebugHooksInstalled = true;
+
+                const debugLogLimit = 12;
+                let debugIoEvents = 0;
+                let debugScrollEvents = 0;
+                let debugNetworkEvents = 0;
+
+                const pushDebugLog = function(message) {
+                    try {
+                        if (logs.length < 500) {
+                            logs.push('[Step 1][debug] ' + message);
+                        }
+                    } catch (err) {}
+                };
+
+                const describeTarget = function(target) {
+                    if (!target) return 'null';
+                    try {
+                        if (target.tagName) {
+                            const tag = target.tagName.toLowerCase();
+                            if (target.id) {
+                                return tag + '#' + target.id;
+                            }
+                            if (target.classList && target.classList.length) {
+                                return tag + '.' + Array.from(target.classList).slice(0, 2).join('.');
+                            }
+                            return tag;
+                        }
+                        if (target.nodeName) {
+                            return target.nodeName;
+                        }
+                        return String(target);
+                    } catch (err) {
+                        return 'unknown';
+                    }
+                };
+
+                if (window.IntersectionObserver && IntersectionObserver.prototype && IntersectionObserver.prototype.observe) {
+                    const originalObserve = IntersectionObserver.prototype.observe;
+                    IntersectionObserver.prototype.observe = function(target) {
+                        if (debugIoEvents < debugLogLimit) {
+                            pushDebugLog('IntersectionObserver.observe triggered: ' + describeTarget(target));
+                            debugIoEvents += 1;
+                        }
+                        return originalObserve.call(this, target);
+                    };
+                }
+
+                const debugScrollLogger = function() {
+                    if (debugScrollEvents < debugLogLimit) {
+                        try {
+                            const doc = document.documentElement || document.body;
+                            const top = doc && typeof doc.scrollTop === 'number' ? doc.scrollTop : 0;
+                            pushDebugLog('window.scroll event: scrollTop=' + Math.round(top));
+                            debugScrollEvents += 1;
+                        } catch (err) {}
+                    }
+                };
+                window.addEventListener('scroll', debugScrollLogger, { passive: true });
+
+                (function installNetworkHooks() {
+                    try {
+                        const originalOpen = XMLHttpRequest.prototype.open;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            if (debugNetworkEvents < debugLogLimit) {
+                                pushDebugLog('XHR request: ' + method + ' ' + String(url).slice(0, 120));
+                                debugNetworkEvents += 1;
+                            }
+                            return originalOpen.apply(this, arguments);
+                        };
+                    } catch (err) {}
+                    try {
+                        const originalFetch = window.fetch;
+                        if (typeof originalFetch === 'function') {
+                            window.fetch = function(url, opts) {
+                                if (debugNetworkEvents < debugLogLimit) {
+                                    pushDebugLog('fetch call: ' + String(url).slice(0, 120));
+                                    debugNetworkEvents += 1;
+                                }
+                                return originalFetch.call(this, url, opts);
+                            };
+                        }
+                    } catch (err) {}
+                })();
+            }
             const savedContentHeight = parseFloat('\(savedHeight)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
@@ -1752,7 +1143,6 @@ private func generateStep1_IntersectionContentRestoreScript() -> String {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
                     return serializeForJSON({
                         success: true,
-                        strategy: 'legacy-scroll',
                         isStaticSite: true,
                         currentHeight: currentHeight,
                         savedContentHeight: savedContentHeight,
@@ -1929,7 +1319,6 @@ private func generateStep1_IntersectionContentRestoreScript() -> String {
 
                 return serializeForJSON({
                     success: success,
-                    strategy: 'legacy-scroll',
                     isStaticSite: false,
                     currentHeight: currentHeight,
                     savedContentHeight: savedContentHeight,
@@ -1942,7 +1331,6 @@ private func generateStep1_IntersectionContentRestoreScript() -> String {
         } catch(e) {
             return serializeForJSON({
                 success: false,
-                strategy: 'legacy-scroll',
                 error: e.message,
                 errorStack: e.stack ? e.stack.split('\\n').slice(0, 3).join('\\n') : 'no stack',
                 logs: [
@@ -2828,8 +2216,7 @@ extension BFCacheTransitionSystem {
             enablePercentRestore: true,
             enableAnchorRestore: true,
             enableFinalVerification: true,
-            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height),
-            contentRestoreStrategy: "intersection"
+            savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
         )
 
         let snapshot = BFCacheSnapshot(
@@ -3407,3 +2794,4 @@ extension BFCacheTransitionSystem {
         return WKUserScript(source: scriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 }
+
