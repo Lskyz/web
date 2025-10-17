@@ -816,7 +816,7 @@ struct BFCacheSnapshot: Codable {
                 }, {
                     root: null,
                     threshold: 0,
-                    rootMargin: '8000px'
+                    rootMargin: '5000px'
                 });
 
                 observer.observe(sentinel);
