@@ -13,8 +13,9 @@ jobs:
       - name: ✅ 코드 체크아웃
         uses: actions/checkout@v4
 
-      - name: ✅ Xcode 버전 선택
-        run: sudo xcode-select -s /Applications/Xcode_15.0.app
+      -- name: ✅ Xcode 버전 선택
+  run: sudo xcode-select -s /Applications/Xcode.app
+
 
       - name: ✅ 프로젝트 빌드 (서명 없이)
         run: |
