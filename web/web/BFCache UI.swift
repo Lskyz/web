@@ -872,6 +872,20 @@ final class BFCacheTransitionSystem: NSObject {
             removeActiveTransition(for: context.tabID)
             return
         }
+
+        let cleanupUI: (String) -> Void = { reason in
+            guard let active = self.getActiveTransition(for: context.tabID),
+                  let activePreviewContainer = active.previewContainer,
+                  activePreviewContainer === previewContainer else { return }
+            previewContainer.removeFromSuperview()
+            self.removeActiveTransition(for: context.tabID)
+            self.dbg("🎬 전환 UI 정리: \(reason)")
+        }
+
+        let uiWatchdog = DispatchWorkItem {
+            cleanupUI("watchdog_timeout")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: uiWatchdog)
         
         switch context.direction {
         case .back:
@@ -884,8 +898,8 @@ final class BFCacheTransitionSystem: NSObject {
         
         tryBrowserBlockingBFCacheRestore(stateModel: stateModel, direction: context.direction) { [weak self] success in
             DispatchQueue.main.async {
-                previewContainer.removeFromSuperview()
-                self?.removeActiveTransition(for: context.tabID)
+                uiWatchdog.cancel()
+                cleanupUI(success ? "restore_completion_success" : "restore_completion_failure")
                 self?.dbg("🎬 BFCache 복원 \(success ? "성공" : "실패")")
             }
         }

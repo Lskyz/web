@@ -177,6 +177,45 @@ struct BFCacheSnapshot: Codable {
         BFCacheTransitionSystem.shared.setRestoring(true)
 
         let totalStartTime = Date()
+        let restoreWatchdogSeconds: TimeInterval = 20.0
+        weak var weakWebView: WKWebView? = webView
+        var didFinish = false
+        var restoreWatchdog: DispatchWorkItem?
+
+        let finishOnce: (Bool, String) -> Void = { success, reason in
+            let finalize = {
+                guard !didFinish else { return }
+                didFinish = true
+                restoreWatchdog?.cancel()
+
+                let totalTime = Date().timeIntervalSince(totalStartTime)
+                TabPersistenceManager.debugMessages.append("⏱️ 전체 복원 소요 시간: \(String(format: "%.1f", totalTime))초")
+                TabPersistenceManager.debugMessages.append("🔚 복원 종료 사유: \(reason)")
+
+                // 🔒 **복원 완료 - 캡처 허용**
+                BFCacheTransitionSystem.shared.setRestoring(false)
+                TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
+
+                // 📸 **복원 완료 후 최종 위치 캡처**
+                if let restoreWebView = weakWebView {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        BFCacheTransitionSystem.shared.captureSnapshot(
+                            pageRecord: self.pageRecord,
+                            webView: restoreWebView,
+                            type: .immediate
+                        )
+                    }
+                }
+
+                completion(success)
+            }
+
+            if Thread.isMainThread {
+                finalize()
+            } else {
+                DispatchQueue.main.async(execute: finalize)
+            }
+        }
 
         TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
@@ -189,11 +228,15 @@ struct BFCacheSnapshot: Codable {
             snapshot: self,
             webView: webView,
             completion: { success in
-                let totalTime = Date().timeIntervalSince(totalStartTime)
-                TabPersistenceManager.debugMessages.append("⏱️ 전체 복원 소요 시간: \(String(format: "%.1f", totalTime))초")
-                completion(success)
+                finishOnce(success, "step_pipeline_completed")
             }
         )
+
+        let watchdog = DispatchWorkItem {
+            finishOnce(false, "restore_watchdog_timeout")
+        }
+        restoreWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreWatchdogSeconds, execute: watchdog)
 
         // Step 1 시작
         executeStep1_RestoreContentHeight(context: context)
@@ -358,11 +401,37 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
 
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        runRestorationScript(js, on: context.webView) { value, error in
             var step1Success = false
 
-            switch result {
-            case .success(let value):
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
+
+                // 🔍 **상세 에러 정보 추출**
+                if let nsError = error as NSError? {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Domain: \(nsError.domain)")
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Code: \(nsError.code)")
+
+                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Message: \(message)")
+                    }
+                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Line: \(lineNumber)")
+                    }
+                    if let columnNumber = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] as? Int {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Column: \(columnNumber)")
+                    }
+                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Stack Trace: \(stackTrace)")
+                    }
+                    if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] as? String {
+                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Source URL: \(sourceURL)")
+                    }
+
+                    // 전체 userInfo 출력
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Full userInfo: \(nsError.userInfo)")
+                }
+            } else {
                 var resultDict: [String: Any]?
 
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
@@ -407,33 +476,6 @@ struct BFCacheSnapshot: Codable {
                 } else {
                     TabPersistenceManager.debugMessages.append("📦 [Step 1] JSON 파싱 실패")
                 }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-
-                // 🔍 **상세 에러 정보 추출**
-                if let nsError = error as NSError? {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Domain: \(nsError.domain)")
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Code: \(nsError.code)")
-
-                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Message: \(message)")
-                    }
-                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Line: \(lineNumber)")
-                    }
-                    if let columnNumber = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Column: \(columnNumber)")
-                    }
-                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Stack Trace: \(stackTrace)")
-                    }
-                    if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Source URL: \(sourceURL)")
-                    }
-
-                    // 전체 userInfo 출력
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Full userInfo: \(nsError.userInfo)")
-                }
             }
 
             let step1Time = Date().timeIntervalSince(startTime)
@@ -457,12 +499,13 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep2_PercentScrollScript()
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        runRestorationScript(js, on: context.webView) { value, error in
             var step2Success = false
             var updatedContext = context
 
-            switch result {
-            case .success(let value):
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
+            } else {
                 var resultDict: [String: Any]?
 
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
@@ -500,8 +543,6 @@ struct BFCacheSnapshot: Codable {
                         TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                     }
                 }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
             }
 
             let step2Time = Date().timeIntervalSince(step2StartTime)
@@ -533,11 +574,12 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        runRestorationScript(js, on: context.webView) { value, error in
             var step3Success = false
 
-            switch result {
-            case .success(let value):
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
+            } else {
                 var resultDict: [String: Any]?
 
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
@@ -577,8 +619,6 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
                 }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
             }
 
             let step3Time = Date().timeIntervalSince(step3StartTime)
@@ -602,11 +642,12 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep4_FinalVerificationScript()
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        runRestorationScript(js, on: context.webView) { value, error in
             var step4Success = false
 
-            switch result {
-            case .success(let value):
+            if let error = error {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
+            } else {
                 var resultDict: [String: Any]?
 
                 // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
@@ -641,8 +682,6 @@ struct BFCacheSnapshot: Codable {
                         }
                     }
                 }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
             }
 
             let step4Time = Date().timeIntervalSince(step4StartTime)
@@ -651,21 +690,6 @@ struct BFCacheSnapshot: Codable {
             // 즉시 완료 처리
             let finalSuccess = context.overallSuccess || step4Success
             TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
-
-            // 🔒 **복원 완료 - 캡처 허용**
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
-
-            // 📸 **복원 완료 후 최종 위치 캡처**
-            if let webView = context.webView {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    BFCacheTransitionSystem.shared.captureSnapshot(
-                        pageRecord: self.pageRecord,
-                        webView: webView,
-                        type: .immediate
-                    )
-                }
-            }
 
             context.completion(finalSuccess)
         }
@@ -816,7 +840,7 @@ struct BFCacheSnapshot: Codable {
                 }, {
                     root: null,
                     threshold: 0,
-                    rootMargin: '5000px'
+                    rootMargin: '4000px'
                 });
 
                 observer.observe(sentinel);
@@ -1002,6 +1026,156 @@ struct BFCacheSnapshot: Codable {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
 
+            // 🚀 범용 선로딩 시스템
+            const preloadedApis = new Map();  // URL -> { timestamp, hasMore }
+
+            // 범용 페이지네이션 파라미터 패턴
+            const PAGINATION_PARAMS = [
+                { name: 'page', type: 'page' },
+                { name: 'p', type: 'page' },
+                { name: 'pageNo', type: 'page' },
+                { name: 'pageNum', type: 'page' },
+                { name: 'currentPage', type: 'page' },
+                { name: 'search.page', type: 'page' },
+                { name: 'offset', type: 'offset' },
+                { name: 'skip', type: 'offset' },
+                { name: 'start', type: 'offset' },
+                { name: 'limit', type: 'limit' },
+                { name: 'perPage', type: 'limit' },
+                { name: 'pageSize', type: 'limit' },
+                { name: 'size', type: 'limit' },
+                { name: 'count', type: 'limit' },
+                { name: 'search.perPage', type: 'limit' }
+            ];
+
+            // URL에서 페이지네이션 정보 추출
+            function extractPaginationInfo(url) {
+                try {
+                    const urlObj = new URL(url, window.location.origin);
+                    const params = new URLSearchParams(urlObj.search);
+                    let pageInfo = { type: null, param: null, value: null, limit: null };
+
+                    for (const item of PAGINATION_PARAMS) {
+                        if (params.has(item.name)) {
+                            const value = params.get(item.name);
+                            if (item.type === 'page') {
+                                pageInfo.type = 'page';
+                                pageInfo.param = item.name;
+                                pageInfo.value = parseInt(value) || 1;
+                            } else if (item.type === 'offset') {
+                                pageInfo.type = 'offset';
+                                pageInfo.param = item.name;
+                                pageInfo.value = parseInt(value) || 0;
+                            } else if (item.type === 'limit') {
+                                pageInfo.limit = parseInt(value) || 20;
+                            }
+                        }
+                    }
+
+                    return pageInfo.type ? pageInfo : null;
+                } catch(e) {
+                    return null;
+                }
+            }
+
+            // 응답 데이터가 목록인지 판별
+            function isListResponse(data) {
+                if (Array.isArray(data)) return true;
+
+                for (const key in data) {
+                    const value = data[key];
+                    if (Array.isArray(value) && value.length > 0) return true;
+
+                    if (value && typeof value === 'object') {
+                        for (const subKey in value) {
+                            if (Array.isArray(value[subKey]) && value[subKey].length > 0) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            // 배열 찾기
+            function findArrays(obj, depth) {
+                if (depth === undefined) depth = 0;
+                if (depth > 2) return [];
+                const arrays = [];
+
+                for (const key in obj) {
+                    const value = obj[key];
+                    if (Array.isArray(value)) {
+                        arrays.push(value);
+                    } else if (value && typeof value === 'object') {
+                        arrays.push.apply(arrays, findArrays(value, depth + 1));
+                    }
+                }
+
+                return arrays;
+            }
+
+            // 다음 페이지 존재 여부 판단
+            function detectHasMoreData(data, paginationInfo) {
+                if (data.hasMore !== undefined) return data.hasMore;
+                if (data.hasNext !== undefined) return data.hasNext;
+                if (data.has_more !== undefined) return data.has_more;
+
+                if (data.totalCount && data.currentCount) {
+                    return data.currentCount < data.totalCount;
+                }
+
+                const arrays = findArrays(data);
+                if (arrays.length > 0 && paginationInfo.limit) {
+                    const maxLength = Math.max.apply(Math, arrays.map(function(arr) { return arr.length; }));
+                    return maxLength >= paginationInfo.limit;
+                }
+
+                if (arrays.length > 0) {
+                    return arrays.some(function(arr) { return arr.length > 0; });
+                }
+
+                return false;
+            }
+
+            // 다음 페이지 URL 생성
+            function generateNextPageUrl(url, paginationInfo) {
+                try {
+                    const urlObj = new URL(url, window.location.origin);
+                    const params = new URLSearchParams(urlObj.search);
+
+                    if (paginationInfo.type === 'page') {
+                        const nextPage = paginationInfo.value + 1;
+                        params.set(paginationInfo.param, nextPage.toString());
+                    } else if (paginationInfo.type === 'offset') {
+                        const nextOffset = paginationInfo.value + (paginationInfo.limit || 20);
+                        params.set(paginationInfo.param, nextOffset.toString());
+                    }
+
+                    urlObj.search = params.toString();
+                    return urlObj.toString();
+                } catch(e) {
+                    return null;
+                }
+            }
+
+            // 선로딩 실행
+            function preloadNextPage(url) {
+                fetch(url, {
+                    method: 'GET',
+                    credentials: 'include'
+                }).then(function(response) {
+                    if (response.ok) {
+                        logs.push('[선로딩] ✅ 성공');
+                    } else {
+                        logs.push('[선로딩] ⚠️ 실패: ' + response.status);
+                    }
+                }).catch(function(err) {
+                    logs.push('[선로딩] ❌ 오류: ' + err.message);
+                });
+            }
+
             // 1. IntersectionObserver 감지
             const OrigIO = window.IntersectionObserver;
             let ioInstances = [];
@@ -1093,7 +1267,7 @@ struct BFCacheSnapshot: Codable {
                 return origAddEventListener.call(this, type, listener, options);
             };
 
-            // 3. XHR/fetch 감지
+            // 3. XHR/fetch 감지 + 선로딩
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
@@ -1102,6 +1276,9 @@ struct BFCacheSnapshot: Codable {
                 logs.push('  URL: ' + url);
                 logs.push('  Stack:');
                 logs.push('  ' + stack.slice(0, 300));
+
+                // 🚀 페이지네이션 정보 추출
+                const paginationInfo = extractPaginationInfo(url);
 
                 const origSend = this.send.bind(this);
                 this.send = function() {
@@ -1113,6 +1290,24 @@ struct BFCacheSnapshot: Codable {
                             logs.push('  Status: ' + this.status);
                             logs.push('  Keys: ' + keys.join(', '));
                             logs.push('  Length: ' + this.responseText.length);
+
+                            // 🚀 목록 API 감지 및 선로딩
+                            if (paginationInfo && isListResponse(json)) {
+                                const hasMore = detectHasMoreData(json, paginationInfo);
+                                logs.push('[감지] 📋 목록 API 확인');
+                                logs.push('  페이지: ' + paginationInfo.value);
+                                logs.push('  더보기: ' + (hasMore ? 'YES' : 'NO'));
+
+                                if (hasMore) {
+                                    const nextUrl = generateNextPageUrl(url, paginationInfo);
+                                    if (nextUrl && !preloadedApis.has(nextUrl)) {
+                                        preloadedApis.set(nextUrl, { timestamp: Date.now() });
+                                        preloadNextPage(nextUrl);
+                                        logs.push('[선로딩] 🚀 다음 페이지 선로딩');
+                                        logs.push('  URL: ' + nextUrl);
+                                    }
+                                }
+                            }
                         } catch(e) {
                             logs.push('[XHR] ✅ 응답 수신');
                             logs.push('  Status: ' + this.status);
