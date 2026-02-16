@@ -760,16 +760,7 @@ struct BFCacheSnapshot: Codable {
                 '.load-more',
                 '.infinite-loader'
             ].join(',');
-            const detected = root.querySelector(selector);
-            if (detected && !(detected.dataset && detected.dataset.bfcacheHelperSentinel === '1')) {
-                return detected;
-            }
-
-            let candidate = root.lastElementChild;
-            while (candidate && candidate.dataset && candidate.dataset.bfcacheHelperSentinel === '1') {
-                candidate = candidate.previousElementSibling;
-            }
-            return candidate || root;
+            return root.querySelector(selector) || root.lastElementChild || root;
         }
 
         async function waitForStableLayoutAsync(options = {}) {
@@ -794,156 +785,60 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
-        function getContainerLoadWatcher(scrollRoot) {
-            if (!scrollRoot || !isElementValid(scrollRoot)) return null;
-
-            if (!window.__bfcacheLoadWatcherMap) {
-                window.__bfcacheLoadWatcherMap = new WeakMap();
-            }
-
-            let watcher = window.__bfcacheLoadWatcherMap.get(scrollRoot);
-            if (watcher && watcher.sentinel && isElementValid(watcher.sentinel)) {
-                return watcher;
-            }
-
-            if (watcher && typeof watcher.dispose === 'function') {
-                watcher.dispose();
-            }
-
-            const sentinel = document.createElement('div');
-            sentinel.dataset.bfcacheHelperSentinel = '1';
-            sentinel.setAttribute('aria-hidden', 'true');
-            sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;opacity:0;z-index:-1;';
-            scrollRoot.appendChild(sentinel);
-
-            watcher = {
-                sentinel: sentinel,
-                observer: null,
-                resolve: null,
-                timer: null,
-                beforeHeight: 0,
-                timeout: 0,
-                startTime: 0,
-                waiting: false,
-                settled: false,
-                settle: null,
-                dispose: null
-            };
-
-            watcher.settle = function(forceSuccess) {
-                if (!watcher.waiting || watcher.settled) return;
-
-                watcher.waiting = false;
-                watcher.settled = true;
-
-                if (watcher.timer) {
-                    clearTimeout(watcher.timer);
-                    watcher.timer = null;
-                }
-
-                const currentHeight = scrollRoot.scrollHeight || 0;
-                const growth = currentHeight - watcher.beforeHeight;
-                const elapsed = Math.max(0, Date.now() - watcher.startTime);
-                const success = forceSuccess === true || growth >= 10;
-                const resolver = watcher.resolve;
-                watcher.resolve = null;
-
-                if (typeof resolver === 'function') {
-                    resolver({
-                        success: success,
-                        height: currentHeight,
-                        growth: growth,
-                        time: success ? elapsed : watcher.timeout
-                    });
-                }
-            };
-
-            watcher.observer = new IntersectionObserver(() => {
-                if (!watcher.waiting || watcher.settled) return;
-                const currentHeight = scrollRoot.scrollHeight || 0;
-                if (currentHeight - watcher.beforeHeight >= 10) {
-                    watcher.settle(true);
-                }
-            }, {
-                root: null,
-                threshold: 0,
-                rootMargin: '5000px'
-            });
-
-            watcher.observer.observe(sentinel);
-
-            watcher.dispose = function() {
-                if (watcher.timer) {
-                    clearTimeout(watcher.timer);
-                    watcher.timer = null;
-                }
-                if (watcher.observer) {
-                    watcher.observer.disconnect();
-                    watcher.observer = null;
-                }
-                if (watcher.sentinel && watcher.sentinel.parentNode) {
-                    watcher.sentinel.parentNode.removeChild(watcher.sentinel);
-                }
-                watcher.resolve = null;
-                watcher.waiting = false;
-                watcher.settled = true;
-            };
-
-            window.__bfcacheLoadWatcherMap.set(scrollRoot, watcher);
-            return watcher;
-        }
-
         function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
-                if (!scrollRoot || !isElementValid(scrollRoot)) {
-                    resolve({
-                        success: false,
-                        height: 0,
-                        growth: 0,
-                        time: 0
-                    });
-                    return;
-                }
+                const startTime = Date.now();
+                let resolved = false;
 
-                const watcher = getContainerLoadWatcher(scrollRoot);
-                if (!watcher) {
-                    const currentHeight = scrollRoot.scrollHeight || 0;
-                    resolve({
-                        success: false,
-                        height: currentHeight,
-                        growth: currentHeight - beforeHeight,
-                        time: timeout
-                    });
-                    return;
-                }
+                // 센티널: 스크롤 끝에 배치
+                const sentinel = document.createElement('div');
+                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(sentinel);
 
-                // 동일 컨테이너에서 직전 대기가 남아 있으면 정리 후 재시작
-                if (watcher.waiting && typeof watcher.settle === 'function') {
-                    watcher.settle(false);
-                }
+                // IntersectionObserver: 새 콘텐츠 렌더링 감지
+                const observer = new IntersectionObserver((entries) => {
+                    if (resolved) return;
 
-                watcher.beforeHeight = beforeHeight;
-                watcher.timeout = timeout;
-                watcher.startTime = Date.now();
-                watcher.resolve = resolve;
-                watcher.waiting = true;
-                watcher.settled = false;
+                    const currentHeight = scrollRoot.scrollHeight;
+                    const growth = currentHeight - beforeHeight;
 
-                if (watcher.timer) {
-                    clearTimeout(watcher.timer);
-                }
+                    // 높이 증가 확인
+                    if (growth >= 10) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: true,
+                            height: currentHeight,
+                            growth: growth,
+                            time: Date.now() - startTime
+                        });
+                    }
+                }, {
+                    root: null,
+                    threshold: 0,
+                    rootMargin: '5000px'
+                });
 
-                watcher.timer = setTimeout(() => {
-                    watcher.settle(false);
+                observer.observe(sentinel);
+
+                // 타임아웃
+                setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        cleanup();
+                        resolve({
+                            success: false,
+                            height: scrollRoot.scrollHeight,
+                            growth: scrollRoot.scrollHeight - beforeHeight,
+                            time: timeout
+                        });
+                    }
                 }, timeout);
 
-                requestAnimationFrame(() => {
-                    if (!watcher.waiting || watcher.settled) return;
-                    const currentHeight = scrollRoot.scrollHeight || 0;
-                    if (currentHeight - beforeHeight >= 10) {
-                        watcher.settle(true);
-                    }
-                });
+                function cleanup() {
+                    observer.disconnect();
+                    sentinel.remove();
+                }
             });
         }
 
@@ -1103,110 +998,65 @@ struct BFCacheSnapshot: Codable {
         }
 
         // 🔍 무한 스크롤 메커니즘 감지 (디버깅용)
-        // 주의: 감지 정확도는 유지하되, 페이지 동작을 깨지 않도록 원본 API를 복구할 수 있게 구성
         function installInfiniteScrollDetector(logs) {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
 
-            // 원본 API 백업 (Step 1 종료 시 복구)
-            const originalApis = {
-                IntersectionObserver: window.IntersectionObserver,
-                addEventListener: EventTarget.prototype.addEventListener,
-                xhrOpen: XMLHttpRequest.prototype.open,
-                fetch: window.fetch
-            };
-
-            // 페이지 런타임 오류를 분리 수집 (배치 성장 문제와 데이터/스크립트 오류 분리 진단 목적)
-            const runtimeErrorHandler = function(event) {
-                const message = event?.message || (event?.error && event.error.message) || 'unknown error';
-                const source = event?.filename || 'unknown';
-                const line = event?.lineno || 0;
-                const column = event?.colno || 0;
-                logs.push('[RuntimeError] ' + message + ' @ ' + source + ':' + line + ':' + column);
-            };
-            const rejectionHandler = function(event) {
-                const reason = event?.reason;
-                const reasonText = typeof reason === 'string'
-                    ? reason
-                    : (reason && reason.message ? reason.message : JSON.stringify(reason || 'unknown'));
-                logs.push('[UnhandledRejection] ' + reasonText);
-            };
-            window.addEventListener('error', runtimeErrorHandler);
-            window.addEventListener('unhandledrejection', rejectionHandler);
-
-            // 후킹 복구 함수 등록
-            window.__cleanupInfiniteScrollDetector = function() {
-                try { window.IntersectionObserver = originalApis.IntersectionObserver; } catch (e) {}
-                try { EventTarget.prototype.addEventListener = originalApis.addEventListener; } catch (e) {}
-                try { XMLHttpRequest.prototype.open = originalApis.xhrOpen; } catch (e) {}
-                try { window.fetch = originalApis.fetch; } catch (e) {}
-                try { window.removeEventListener('error', runtimeErrorHandler); } catch (e) {}
-                try { window.removeEventListener('unhandledrejection', rejectionHandler); } catch (e) {}
-                window.__infiniteScrollDetectorInstalled = false;
-                delete window.__cleanupInfiniteScrollDetector;
-            };
-
             // 1. IntersectionObserver 감지
-            const OrigIO = originalApis.IntersectionObserver;
+            const OrigIO = window.IntersectionObserver;
             let ioInstances = [];
-            if (typeof OrigIO === 'function') {
-                const WrappedIO = function(callback, options) {
-                    const instanceId = ioInstances.length + 1;
-                    const wrappedCallback = function(entries, observer) {
-                        entries.forEach(entry => {
-                            if (entry.isIntersecting) {
-                                const target = entry.target;
-                                logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
-                                logs.push('  Tag: ' + target.tagName);
-                                logs.push('  Class: ' + (target.className || 'none'));
-                                logs.push('  ID: ' + (target.id || 'none'));
-                                try {
-                                    const dataStr = JSON.stringify(target.dataset);
-                                    if (dataStr && dataStr !== '{}') {
-                                        logs.push('  Data: ' + dataStr.slice(0, 100));
-                                    }
-                                } catch(e) {}
-                                const text = (target.textContent || '').trim();
-                                if (text) {
-                                    logs.push('  Text: ' + text.slice(0, 50));
+            window.IntersectionObserver = function(callback, options) {
+                const instanceId = ioInstances.length + 1;
+                const wrappedCallback = function(entries, observer) {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const target = entry.target;
+                            logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
+                            logs.push('  Tag: ' + target.tagName);
+                            logs.push('  Class: ' + (target.className || 'none'));
+                            logs.push('  ID: ' + (target.id || 'none'));
+                            try {
+                                const dataStr = JSON.stringify(target.dataset);
+                                if (dataStr && dataStr !== '{}') {
+                                    logs.push('  Data: ' + dataStr.slice(0, 100));
                                 }
-                                logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
+                            } catch(e) {}
+                            const text = (target.textContent || '').trim();
+                            if (text) {
+                                logs.push('  Text: ' + text.slice(0, 50));
                             }
-                        });
-                        return callback.apply(this, arguments);
-                    };
-
-                    logs.push('[IO-' + instanceId + '] ✨ 생성됨');
-                    logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
-                    logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
-
-                    const instance = new OrigIO(wrappedCallback, options);
-                    ioInstances.push(instance);
-
-                    const origObserve = instance.observe.bind(instance);
-                    instance.observe = function(target) {
-                        const selector = target.className ? '.' + target.className.split(' ')[0] :
-                                       (target.id ? '#' + target.id : target.tagName);
-                        logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
-                        logs.push('  Tag: ' + target.tagName);
-                        logs.push('  Class: ' + (target.className || 'none'));
-                        logs.push('  ID: ' + (target.id || 'none'));
-                        logs.push('  Selector: ' + selector);
-                        return origObserve(target);
-                    };
-
-                    return instance;
+                            logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
+                        }
+                    });
+                    return callback.apply(this, arguments);
                 };
 
-                // 기존 코드와의 호환성을 위해 prototype/constructor 체인을 유지
-                WrappedIO.prototype = OrigIO.prototype;
-                try { Object.setPrototypeOf(WrappedIO, OrigIO); } catch (e) {}
-                window.IntersectionObserver = WrappedIO;
-            }
+                logs.push('[IO-' + instanceId + '] ✨ 생성됨');
+                logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
+                logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
+
+                const instance = new OrigIO(wrappedCallback, options);
+                ioInstances.push(instance);
+
+                const origObserve = instance.observe.bind(instance);
+                instance.observe = function(target) {
+                    const selector = target.className ? '.' + target.className.split(' ')[0] :
+                                   (target.id ? '#' + target.id : target.tagName);
+                    logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
+                    logs.push('  Tag: ' + target.tagName);
+                    logs.push('  Class: ' + (target.className || 'none'));
+                    logs.push('  ID: ' + (target.id || 'none'));
+                    logs.push('  Selector: ' + selector);
+                    return origObserve(target);
+                };
+
+                return instance;
+            };
 
             // 2. scroll 이벤트 감지
             let scrollListeners = 0;
-            const origAddEventListener = originalApis.addEventListener;
+            let lastScrollLog = 0;
+            const origAddEventListener = EventTarget.prototype.addEventListener;
             EventTarget.prototype.addEventListener = function(type, listener, options) {
                 if (type === 'scroll') {
                     scrollListeners++;
@@ -1214,17 +1064,37 @@ struct BFCacheSnapshot: Codable {
                                       this === document ? 'document' :
                                       (this.id || this.className || this.tagName);
 
-                    // 중요: listener 자체는 래핑하지 않아 removeEventListener 호환을 유지
                     logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
                     logs.push('  Target: ' + targetInfo);
                     logs.push('  Passive: ' + (options?.passive || false));
                     logs.push('  Capture: ' + (options?.capture || false));
+
+                    const wrappedListener = function(e) {
+                        const target = e.target === document ? document.documentElement : e.target;
+                        const scrollTop = target.scrollTop || 0;
+                        const scrollHeight = target.scrollHeight || 0;
+                        const clientHeight = target.clientHeight || 0;
+                        const remaining = scrollHeight - scrollTop - clientHeight;
+
+                        // 1초에 한 번만 로그 (스팸 방지)
+                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
+                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
+                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
+                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
+                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
+                            lastScrollLog = Date.now();
+                        }
+
+                        return listener.apply(this, arguments);
+                    };
+
+                    return origAddEventListener.call(this, type, wrappedListener, options);
                 }
                 return origAddEventListener.call(this, type, listener, options);
             };
 
             // 3. XHR/fetch 감지
-            const openOrig = originalApis.xhrOpen;
+            const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
                 logs.push('[XHR] 📡 요청 시작');
@@ -1248,14 +1118,14 @@ struct BFCacheSnapshot: Codable {
                             logs.push('  Status: ' + this.status);
                             logs.push('  Length: ' + this.responseText.length);
                         }
-                    }, { once: true });
+                    });
                     return origSend.apply(this, arguments);
                 };
 
                 return openOrig.apply(this, arguments);
             };
 
-            const fetchOrig = originalApis.fetch;
+            const fetchOrig = window.fetch;
             window.fetch = async function(url, opts) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
                 const method = opts?.method || 'GET';
@@ -1274,15 +1144,6 @@ struct BFCacheSnapshot: Codable {
 
                 return response;
             };
-        }
-
-        // Step 1 종료 시 후킹 원복
-        function uninstallInfiniteScrollDetector() {
-            try {
-                if (typeof window.__cleanupInfiniteScrollDetector === 'function') {
-                    window.__cleanupInfiniteScrollDetector();
-                }
-            } catch (e) {}
         }
 
         (function hardenEnv() {
@@ -1342,8 +1203,6 @@ struct BFCacheSnapshot: Codable {
 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
-                    // Step 1 조기 종료 시 후킹 복구
-                    uninstallInfiniteScrollDetector();
                     return serializeForJSON({
                         success: true,
                         isStaticSite: true,
@@ -1359,12 +1218,8 @@ struct BFCacheSnapshot: Codable {
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
 
                 // 🔍 무한 스크롤 메커니즘 감지 설치
-                try {
-                    installInfiniteScrollDetector(logs);
-                    logs.push('🔍 무한 스크롤 감지기 설치 완료');
-                } catch (detectorError) {
-                    logs.push('🔍 무한 스크롤 감지기 설치 실패: ' + (detectorError?.message || 'unknown'));
-                }
+                installInfiniteScrollDetector(logs);
+                logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
@@ -1528,8 +1383,6 @@ struct BFCacheSnapshot: Codable {
 
                 logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
 
-                // Step 1 정상 종료 시 후킹 복구
-                uninstallInfiniteScrollDetector();
                 return serializeForJSON({
                     success: success,
                     isStaticSite: false,
@@ -1542,8 +1395,6 @@ struct BFCacheSnapshot: Codable {
                 });
 
         } catch(e) {
-            // Step 1 예외 종료 시에도 후킹 복구
-            uninstallInfiniteScrollDetector();
             return serializeForJSON({
                 success: false,
                 error: e.message,
