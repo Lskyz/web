@@ -760,7 +760,16 @@ struct BFCacheSnapshot: Codable {
                 '.load-more',
                 '.infinite-loader'
             ].join(',');
-            return root.querySelector(selector) || root.lastElementChild || root;
+            const detected = root.querySelector(selector);
+            if (detected && !(detected.dataset && detected.dataset.bfcacheHelperSentinel === '1')) {
+                return detected;
+            }
+
+            let candidate = root.lastElementChild;
+            while (candidate && candidate.dataset && candidate.dataset.bfcacheHelperSentinel === '1') {
+                candidate = candidate.previousElementSibling;
+            }
+            return candidate || root;
         }
 
         async function waitForStableLayoutAsync(options = {}) {
@@ -785,60 +794,156 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        function getContainerLoadWatcher(scrollRoot) {
+            if (!scrollRoot || !isElementValid(scrollRoot)) return null;
+
+            if (!window.__bfcacheLoadWatcherMap) {
+                window.__bfcacheLoadWatcherMap = new WeakMap();
+            }
+
+            let watcher = window.__bfcacheLoadWatcherMap.get(scrollRoot);
+            if (watcher && watcher.sentinel && isElementValid(watcher.sentinel)) {
+                return watcher;
+            }
+
+            if (watcher && typeof watcher.dispose === 'function') {
+                watcher.dispose();
+            }
+
+            const sentinel = document.createElement('div');
+            sentinel.dataset.bfcacheHelperSentinel = '1';
+            sentinel.setAttribute('aria-hidden', 'true');
+            sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;opacity:0;z-index:-1;';
+            scrollRoot.appendChild(sentinel);
+
+            watcher = {
+                sentinel: sentinel,
+                observer: null,
+                resolve: null,
+                timer: null,
+                beforeHeight: 0,
+                timeout: 0,
+                startTime: 0,
+                waiting: false,
+                settled: false,
+                settle: null,
+                dispose: null
+            };
+
+            watcher.settle = function(forceSuccess) {
+                if (!watcher.waiting || watcher.settled) return;
+
+                watcher.waiting = false;
+                watcher.settled = true;
+
+                if (watcher.timer) {
+                    clearTimeout(watcher.timer);
+                    watcher.timer = null;
+                }
+
+                const currentHeight = scrollRoot.scrollHeight || 0;
+                const growth = currentHeight - watcher.beforeHeight;
+                const elapsed = Math.max(0, Date.now() - watcher.startTime);
+                const success = forceSuccess === true || growth >= 10;
+                const resolver = watcher.resolve;
+                watcher.resolve = null;
+
+                if (typeof resolver === 'function') {
+                    resolver({
+                        success: success,
+                        height: currentHeight,
+                        growth: growth,
+                        time: success ? elapsed : watcher.timeout
+                    });
+                }
+            };
+
+            watcher.observer = new IntersectionObserver(() => {
+                if (!watcher.waiting || watcher.settled) return;
+                const currentHeight = scrollRoot.scrollHeight || 0;
+                if (currentHeight - watcher.beforeHeight >= 10) {
+                    watcher.settle(true);
+                }
+            }, {
+                root: null,
+                threshold: 0,
+                rootMargin: '5000px'
+            });
+
+            watcher.observer.observe(sentinel);
+
+            watcher.dispose = function() {
+                if (watcher.timer) {
+                    clearTimeout(watcher.timer);
+                    watcher.timer = null;
+                }
+                if (watcher.observer) {
+                    watcher.observer.disconnect();
+                    watcher.observer = null;
+                }
+                if (watcher.sentinel && watcher.sentinel.parentNode) {
+                    watcher.sentinel.parentNode.removeChild(watcher.sentinel);
+                }
+                watcher.resolve = null;
+                watcher.waiting = false;
+                watcher.settled = true;
+            };
+
+            window.__bfcacheLoadWatcherMap.set(scrollRoot, watcher);
+            return watcher;
+        }
+
         function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
-                const startTime = Date.now();
-                let resolved = false;
+                if (!scrollRoot || !isElementValid(scrollRoot)) {
+                    resolve({
+                        success: false,
+                        height: 0,
+                        growth: 0,
+                        time: 0
+                    });
+                    return;
+                }
 
-                // 센티널: 스크롤 끝에 배치
-                const sentinel = document.createElement('div');
-                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
-                scrollRoot.appendChild(sentinel);
+                const watcher = getContainerLoadWatcher(scrollRoot);
+                if (!watcher) {
+                    const currentHeight = scrollRoot.scrollHeight || 0;
+                    resolve({
+                        success: false,
+                        height: currentHeight,
+                        growth: currentHeight - beforeHeight,
+                        time: timeout
+                    });
+                    return;
+                }
 
-                // IntersectionObserver: 새 콘텐츠 렌더링 감지
-                const observer = new IntersectionObserver((entries) => {
-                    if (resolved) return;
+                // 동일 컨테이너에서 직전 대기가 남아 있으면 정리 후 재시작
+                if (watcher.waiting && typeof watcher.settle === 'function') {
+                    watcher.settle(false);
+                }
 
-                    const currentHeight = scrollRoot.scrollHeight;
-                    const growth = currentHeight - beforeHeight;
+                watcher.beforeHeight = beforeHeight;
+                watcher.timeout = timeout;
+                watcher.startTime = Date.now();
+                watcher.resolve = resolve;
+                watcher.waiting = true;
+                watcher.settled = false;
 
-                    // 높이 증가 확인
-                    if (growth >= 10) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: true,
-                            height: currentHeight,
-                            growth: growth,
-                            time: Date.now() - startTime
-                        });
-                    }
-                }, {
-                    root: null,
-                    threshold: 0,
-                    rootMargin: '5000px'
-                });
+                if (watcher.timer) {
+                    clearTimeout(watcher.timer);
+                }
 
-                observer.observe(sentinel);
-
-                // 타임아웃
-                setTimeout(() => {
-                    if (!resolved) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: false,
-                            height: scrollRoot.scrollHeight,
-                            growth: scrollRoot.scrollHeight - beforeHeight,
-                            time: timeout
-                        });
-                    }
+                watcher.timer = setTimeout(() => {
+                    watcher.settle(false);
                 }, timeout);
 
-                function cleanup() {
-                    observer.disconnect();
-                    sentinel.remove();
-                }
+                requestAnimationFrame(() => {
+                    if (!watcher.waiting || watcher.settled) return;
+                    const currentHeight = scrollRoot.scrollHeight || 0;
+                    if (currentHeight - beforeHeight >= 10) {
+                        watcher.settle(true);
+                    }
+                });
             });
         }
 
