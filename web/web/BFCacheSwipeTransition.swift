@@ -1103,65 +1103,110 @@ struct BFCacheSnapshot: Codable {
         }
 
         // 🔍 무한 스크롤 메커니즘 감지 (디버깅용)
+        // 주의: 감지 정확도는 유지하되, 페이지 동작을 깨지 않도록 원본 API를 복구할 수 있게 구성
         function installInfiniteScrollDetector(logs) {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
 
-            // 1. IntersectionObserver 감지
-            const OrigIO = window.IntersectionObserver;
-            let ioInstances = [];
-            window.IntersectionObserver = function(callback, options) {
-                const instanceId = ioInstances.length + 1;
-                const wrappedCallback = function(entries, observer) {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            const target = entry.target;
-                            logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
-                            logs.push('  Tag: ' + target.tagName);
-                            logs.push('  Class: ' + (target.className || 'none'));
-                            logs.push('  ID: ' + (target.id || 'none'));
-                            try {
-                                const dataStr = JSON.stringify(target.dataset);
-                                if (dataStr && dataStr !== '{}') {
-                                    logs.push('  Data: ' + dataStr.slice(0, 100));
-                                }
-                            } catch(e) {}
-                            const text = (target.textContent || '').trim();
-                            if (text) {
-                                logs.push('  Text: ' + text.slice(0, 50));
-                            }
-                            logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
-                        }
-                    });
-                    return callback.apply(this, arguments);
-                };
-
-                logs.push('[IO-' + instanceId + '] ✨ 생성됨');
-                logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
-                logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
-
-                const instance = new OrigIO(wrappedCallback, options);
-                ioInstances.push(instance);
-
-                const origObserve = instance.observe.bind(instance);
-                instance.observe = function(target) {
-                    const selector = target.className ? '.' + target.className.split(' ')[0] :
-                                   (target.id ? '#' + target.id : target.tagName);
-                    logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
-                    logs.push('  Tag: ' + target.tagName);
-                    logs.push('  Class: ' + (target.className || 'none'));
-                    logs.push('  ID: ' + (target.id || 'none'));
-                    logs.push('  Selector: ' + selector);
-                    return origObserve(target);
-                };
-
-                return instance;
+            // 원본 API 백업 (Step 1 종료 시 복구)
+            const originalApis = {
+                IntersectionObserver: window.IntersectionObserver,
+                addEventListener: EventTarget.prototype.addEventListener,
+                xhrOpen: XMLHttpRequest.prototype.open,
+                fetch: window.fetch
             };
+
+            // 페이지 런타임 오류를 분리 수집 (배치 성장 문제와 데이터/스크립트 오류 분리 진단 목적)
+            const runtimeErrorHandler = function(event) {
+                const message = event?.message || (event?.error && event.error.message) || 'unknown error';
+                const source = event?.filename || 'unknown';
+                const line = event?.lineno || 0;
+                const column = event?.colno || 0;
+                logs.push('[RuntimeError] ' + message + ' @ ' + source + ':' + line + ':' + column);
+            };
+            const rejectionHandler = function(event) {
+                const reason = event?.reason;
+                const reasonText = typeof reason === 'string'
+                    ? reason
+                    : (reason && reason.message ? reason.message : JSON.stringify(reason || 'unknown'));
+                logs.push('[UnhandledRejection] ' + reasonText);
+            };
+            window.addEventListener('error', runtimeErrorHandler);
+            window.addEventListener('unhandledrejection', rejectionHandler);
+
+            // 후킹 복구 함수 등록
+            window.__cleanupInfiniteScrollDetector = function() {
+                try { window.IntersectionObserver = originalApis.IntersectionObserver; } catch (e) {}
+                try { EventTarget.prototype.addEventListener = originalApis.addEventListener; } catch (e) {}
+                try { XMLHttpRequest.prototype.open = originalApis.xhrOpen; } catch (e) {}
+                try { window.fetch = originalApis.fetch; } catch (e) {}
+                try { window.removeEventListener('error', runtimeErrorHandler); } catch (e) {}
+                try { window.removeEventListener('unhandledrejection', rejectionHandler); } catch (e) {}
+                window.__infiniteScrollDetectorInstalled = false;
+                delete window.__cleanupInfiniteScrollDetector;
+            };
+
+            // 1. IntersectionObserver 감지
+            const OrigIO = originalApis.IntersectionObserver;
+            let ioInstances = [];
+            if (typeof OrigIO === 'function') {
+                const WrappedIO = function(callback, options) {
+                    const instanceId = ioInstances.length + 1;
+                    const wrappedCallback = function(entries, observer) {
+                        entries.forEach(entry => {
+                            if (entry.isIntersecting) {
+                                const target = entry.target;
+                                logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
+                                logs.push('  Tag: ' + target.tagName);
+                                logs.push('  Class: ' + (target.className || 'none'));
+                                logs.push('  ID: ' + (target.id || 'none'));
+                                try {
+                                    const dataStr = JSON.stringify(target.dataset);
+                                    if (dataStr && dataStr !== '{}') {
+                                        logs.push('  Data: ' + dataStr.slice(0, 100));
+                                    }
+                                } catch(e) {}
+                                const text = (target.textContent || '').trim();
+                                if (text) {
+                                    logs.push('  Text: ' + text.slice(0, 50));
+                                }
+                                logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
+                            }
+                        });
+                        return callback.apply(this, arguments);
+                    };
+
+                    logs.push('[IO-' + instanceId + '] ✨ 생성됨');
+                    logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
+                    logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
+
+                    const instance = new OrigIO(wrappedCallback, options);
+                    ioInstances.push(instance);
+
+                    const origObserve = instance.observe.bind(instance);
+                    instance.observe = function(target) {
+                        const selector = target.className ? '.' + target.className.split(' ')[0] :
+                                       (target.id ? '#' + target.id : target.tagName);
+                        logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
+                        logs.push('  Tag: ' + target.tagName);
+                        logs.push('  Class: ' + (target.className || 'none'));
+                        logs.push('  ID: ' + (target.id || 'none'));
+                        logs.push('  Selector: ' + selector);
+                        return origObserve(target);
+                    };
+
+                    return instance;
+                };
+
+                // 기존 코드와의 호환성을 위해 prototype/constructor 체인을 유지
+                WrappedIO.prototype = OrigIO.prototype;
+                try { Object.setPrototypeOf(WrappedIO, OrigIO); } catch (e) {}
+                window.IntersectionObserver = WrappedIO;
+            }
 
             // 2. scroll 이벤트 감지
             let scrollListeners = 0;
-            let lastScrollLog = 0;
-            const origAddEventListener = EventTarget.prototype.addEventListener;
+            const origAddEventListener = originalApis.addEventListener;
             EventTarget.prototype.addEventListener = function(type, listener, options) {
                 if (type === 'scroll') {
                     scrollListeners++;
@@ -1169,37 +1214,17 @@ struct BFCacheSnapshot: Codable {
                                       this === document ? 'document' :
                                       (this.id || this.className || this.tagName);
 
+                    // 중요: listener 자체는 래핑하지 않아 removeEventListener 호환을 유지
                     logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
                     logs.push('  Target: ' + targetInfo);
                     logs.push('  Passive: ' + (options?.passive || false));
                     logs.push('  Capture: ' + (options?.capture || false));
-
-                    const wrappedListener = function(e) {
-                        const target = e.target === document ? document.documentElement : e.target;
-                        const scrollTop = target.scrollTop || 0;
-                        const scrollHeight = target.scrollHeight || 0;
-                        const clientHeight = target.clientHeight || 0;
-                        const remaining = scrollHeight - scrollTop - clientHeight;
-
-                        // 1초에 한 번만 로그 (스팸 방지)
-                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
-                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
-                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
-                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
-                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
-                            lastScrollLog = Date.now();
-                        }
-
-                        return listener.apply(this, arguments);
-                    };
-
-                    return origAddEventListener.call(this, type, wrappedListener, options);
                 }
                 return origAddEventListener.call(this, type, listener, options);
             };
 
             // 3. XHR/fetch 감지
-            const openOrig = XMLHttpRequest.prototype.open;
+            const openOrig = originalApis.xhrOpen;
             XMLHttpRequest.prototype.open = function(method, url) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
                 logs.push('[XHR] 📡 요청 시작');
@@ -1223,14 +1248,14 @@ struct BFCacheSnapshot: Codable {
                             logs.push('  Status: ' + this.status);
                             logs.push('  Length: ' + this.responseText.length);
                         }
-                    });
+                    }, { once: true });
                     return origSend.apply(this, arguments);
                 };
 
                 return openOrig.apply(this, arguments);
             };
 
-            const fetchOrig = window.fetch;
+            const fetchOrig = originalApis.fetch;
             window.fetch = async function(url, opts) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
                 const method = opts?.method || 'GET';
@@ -1249,6 +1274,15 @@ struct BFCacheSnapshot: Codable {
 
                 return response;
             };
+        }
+
+        // Step 1 종료 시 후킹 원복
+        function uninstallInfiniteScrollDetector() {
+            try {
+                if (typeof window.__cleanupInfiniteScrollDetector === 'function') {
+                    window.__cleanupInfiniteScrollDetector();
+                }
+            } catch (e) {}
         }
 
         (function hardenEnv() {
@@ -1308,6 +1342,8 @@ struct BFCacheSnapshot: Codable {
 
                 if (isStaticSite) {
                     logs.push('정적 사이트 - 콘텐츠 이미 충분함');
+                    // Step 1 조기 종료 시 후킹 복구
+                    uninstallInfiniteScrollDetector();
                     return serializeForJSON({
                         success: true,
                         isStaticSite: true,
@@ -1323,8 +1359,12 @@ struct BFCacheSnapshot: Codable {
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
 
                 // 🔍 무한 스크롤 메커니즘 감지 설치
-                installInfiniteScrollDetector(logs);
-                logs.push('🔍 무한 스크롤 감지기 설치 완료');
+                try {
+                    installInfiniteScrollDetector(logs);
+                    logs.push('🔍 무한 스크롤 감지기 설치 완료');
+                } catch (detectorError) {
+                    logs.push('🔍 무한 스크롤 감지기 설치 실패: ' + (detectorError?.message || 'unknown'));
+                }
 
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
@@ -1488,6 +1528,8 @@ struct BFCacheSnapshot: Codable {
 
                 logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
 
+                // Step 1 정상 종료 시 후킹 복구
+                uninstallInfiniteScrollDetector();
                 return serializeForJSON({
                     success: success,
                     isStaticSite: false,
@@ -1500,6 +1542,8 @@ struct BFCacheSnapshot: Codable {
                 });
 
         } catch(e) {
+            // Step 1 예외 종료 시에도 후킹 복구
+            uninstallInfiniteScrollDetector();
             return serializeForJSON({
                 success: false,
                 error: e.message,
