@@ -785,6 +785,39 @@ struct BFCacheSnapshot: Codable {
             }
         }
 
+        function optimizeLazyMedia(rootNode = document) {
+            if (!rootNode || typeof rootNode.querySelectorAll !== 'function') return 0;
+            let optimized = 0;
+            const media = rootNode.querySelectorAll('img, iframe');
+            const viewportBottom = (window.innerHeight || 0) + 1200;
+            for (let i = 0; i < media.length; i++) {
+                const el = media[i];
+                if (!el || !isElementValid(el)) continue;
+
+                // 뷰포트 밖 미디어를 우선 지연 로딩 처리
+                let isNearViewport = true;
+                try {
+                    const rect = el.getBoundingClientRect();
+                    isNearViewport = rect.top < viewportBottom;
+                } catch (e) {}
+
+                if (el.tagName === 'IMG') {
+                    if (!el.getAttribute('loading')) {
+                        el.setAttribute('loading', isNearViewport ? 'eager' : 'lazy');
+                        optimized += 1;
+                    }
+                    if (!el.getAttribute('decoding')) {
+                        el.setAttribute('decoding', 'async');
+                    }
+                }
+
+                if (!isNearViewport && !el.getAttribute('fetchpriority')) {
+                    el.setAttribute('fetchpriority', 'low');
+                }
+            }
+            return optimized;
+        }
+
         function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
             return new Promise((resolve) => {
                 const startTime = Date.now();
@@ -898,7 +931,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function scrollNearBottomAsync(root, options = {}) {
-            const { ratio = 0.9, marginPx = 1 } = options;
+            const { ratio = 1.2, marginPx = 800 } = options;
             if (!root) return;
             const max = Math.max(0, root.scrollHeight - root.clientHeight);
             const goal = Math.max(0, max - marginPx);
@@ -1053,47 +1086,7 @@ struct BFCacheSnapshot: Codable {
                 return instance;
             };
 
-            // 2. scroll 이벤트 감지
-            let scrollListeners = 0;
-            let lastScrollLog = 0;
-            const origAddEventListener = EventTarget.prototype.addEventListener;
-            EventTarget.prototype.addEventListener = function(type, listener, options) {
-                if (type === 'scroll') {
-                    scrollListeners++;
-                    const targetInfo = this === window ? 'window' :
-                                      this === document ? 'document' :
-                                      (this.id || this.className || this.tagName);
-
-                    logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
-                    logs.push('  Target: ' + targetInfo);
-                    logs.push('  Passive: ' + (options?.passive || false));
-                    logs.push('  Capture: ' + (options?.capture || false));
-
-                    const wrappedListener = function(e) {
-                        const target = e.target === document ? document.documentElement : e.target;
-                        const scrollTop = target.scrollTop || 0;
-                        const scrollHeight = target.scrollHeight || 0;
-                        const clientHeight = target.clientHeight || 0;
-                        const remaining = scrollHeight - scrollTop - clientHeight;
-
-                        // 1초에 한 번만 로그 (스팸 방지)
-                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
-                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
-                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
-                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
-                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
-                            lastScrollLog = Date.now();
-                        }
-
-                        return listener.apply(this, arguments);
-                    };
-
-                    return origAddEventListener.call(this, type, wrappedListener, options);
-                }
-                return origAddEventListener.call(this, type, listener, options);
-            };
-
-            // 3. XHR/fetch 감지
+            // 2. XHR/fetch 감지
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
@@ -1184,8 +1177,18 @@ struct BFCacheSnapshot: Codable {
 
                 const currentHeight = root ? root.scrollHeight : 0;
                 const viewportHeight = window.innerHeight || 0;
+                const rawTargetScrollY = parseFloat('\(self.scrollPosition.y)');
+                const targetScrollY = Number.isFinite(rawTargetScrollY) ? Math.max(0, rawTargetScrollY) : 0;
+                const prefetchDistancePx = 800;
+                const desiredRestoreHeight = Math.max(
+                    currentHeight,
+                    Math.min(savedContentHeight, targetScrollY + viewportHeight + prefetchDistancePx)
+                );
+                const desiredScrollReach = targetScrollY + prefetchDistancePx;
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
+                logs.push('[Step 1] 목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
+                logs.push('[Step 1] 목표 복원 높이(Windowed): ' + desiredRestoreHeight.toFixed(0) + 'px');
 
                 // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
                 const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
@@ -1220,6 +1223,10 @@ struct BFCacheSnapshot: Codable {
                 // 🔍 무한 스크롤 메커니즘 감지 설치
                 installInfiniteScrollDetector(logs);
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
+                const optimizedMediaCount = optimizeLazyMedia(document);
+                if (optimizedMediaCount > 0) {
+                    logs.push('[Step 1] 미디어 지연 로딩 최적화: ' + optimizedMediaCount + '개');
+                }
 
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
@@ -1277,14 +1284,14 @@ struct BFCacheSnapshot: Codable {
 
                         // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
                         if (isVirtualList) {
-                            if (maxScrollY >= savedContentHeight) {
+                            if (maxScrollY >= desiredScrollReach) {
                                 logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         } else {
-                            if (currentScrollHeight >= savedContentHeight) {
+                            if (currentScrollHeight >= desiredRestoreHeight) {
                                 logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
@@ -1293,7 +1300,7 @@ struct BFCacheSnapshot: Codable {
                         }
 
                         // 🛡️ **과도한 성장 방지**
-                        if (currentScrollHeight >= savedContentHeight * 1.0) {
+                        if (currentScrollHeight >= desiredRestoreHeight * 1.05) {
                             logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
                             grew = true;
                             containerGrew = true;
@@ -1309,21 +1316,22 @@ struct BFCacheSnapshot: Codable {
                             const beforeHeight = scrollRoot.scrollHeight;
 
                             // 목표 도달 시 중단
-                            if (beforeHeight >= savedContentHeight) {
+                            if (beforeHeight >= desiredRestoreHeight) {
                                 batchSuccess = true;
                                 break;
                             }
 
+                            const prefetchMarginPx = Math.max(prefetchDistancePx, Math.round((scrollRoot.clientHeight || viewportHeight || 0) * 0.75));
                             const sentinel = findSentinel(scrollRoot);
 
                             if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                                 try {
-                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
+                                    await scrollNearBottomAsync(scrollRoot, { ratio: 1.2, marginPx: prefetchMarginPx });
                                 } catch(e) {
-                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                    scrollRoot.scrollTo(0, Math.max(0, scrollRoot.scrollHeight - prefetchMarginPx));
                                 }
                             } else {
-                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
+                                await scrollNearBottomAsync(scrollRoot, { ratio: 1.2, marginPx: prefetchMarginPx });
                             }
 
                             const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
@@ -1334,6 +1342,7 @@ struct BFCacheSnapshot: Codable {
                                 batchGrowth += result.growth;
                                 batchSuccess = true;
                                 lastHeight = result.height;
+                                optimizeLazyMedia(scrollRoot);
                             } else if (result.growth > 0) {
                                 batchGrowth += result.growth;
                                 lastHeight = result.height;
@@ -1378,18 +1387,21 @@ struct BFCacheSnapshot: Codable {
 
                 const refreshedRoot = getROOT();
                 const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
-                const finalPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
-                const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
+                const finalSavedPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
+                const finalGoalPercentage = desiredRestoreHeight > 0 ? (restoredHeight / desiredRestoreHeight) * 100 : 0;
+                const success = finalGoalPercentage >= 95 || (grew && restoredHeight > currentHeight + 128);
 
-                logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
+                logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (goal=' + finalGoalPercentage.toFixed(1) + '%, saved=' + finalSavedPercentage.toFixed(1) + '%)');
 
                 return serializeForJSON({
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
                     savedContentHeight: savedContentHeight,
+                    goalContentHeight: desiredRestoreHeight,
                     restoredHeight: restoredHeight,
-                    percentage: finalPercentage,
+                    percentage: finalGoalPercentage,
+                    savedPercentage: finalSavedPercentage,
                     triggeredInfiniteScroll: grew,
                     logs: logs
                 });
