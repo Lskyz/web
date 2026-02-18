@@ -982,10 +982,11 @@ struct BFCacheSnapshot: Codable {
                         lastFingerprintChanged = true;
                     }
 
-                    const success = mutationAddedCount > 0 && lastFingerprintChanged;
+                    const strongProgress = mutationAddedCount > 0 && lastFingerprintChanged;
+                    const progressed = mutationAddedCount > 0 || lastFingerprintChanged;
                     resolve({
-                        success: success,
-                        progressed: success,
+                        success: strongProgress,
+                        progressed: progressed,
                         reason: reason,
                         newNodeCount: mutationAddedCount,
                         lastFingerprint: latestFingerprint || baselineFingerprint,
@@ -1031,7 +1032,10 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     if (mutationAddedCount > 0 && lastFingerprintChanged) {
-                        finalize('mutation-progress');
+                        finalize('mutation-strong-progress');
+                    } else if (mutationAddedCount > 0) {
+                        // 신규 노드가 확인되면 빠르게 반환해 배치 지연을 줄인다.
+                        finalize('mutation-node-progress');
                     }
                 });
                 observer.observe(scrollRoot, { childList: true, subtree: true });
@@ -1450,9 +1454,10 @@ struct BFCacheSnapshot: Codable {
                 const step1StartTime = Date.now();
 
                 // 🚀 **Observer 기반 이벤트 드리븐 감지**
-                for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+                const containerLimit = Math.min(containers.length, 2);
+                for (let containerIndex = 0; containerIndex < containerLimit; containerIndex++) {
                     const scrollRoot = containers[containerIndex];
-                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
+                    logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containerLimit + ' 체크');
 
                     if (!scrollRoot) {
                         logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + ' null - 스킵');
@@ -1474,9 +1479,9 @@ struct BFCacheSnapshot: Codable {
                     let containerGrew = false;
                     let batchCount = 0;
                     let noProgressBatches = 0;
-                    const noProgressLimit = 3;
-                    const maxWait = 500;
-                    const scrollsPerBatch = 5;
+                    const noProgressLimit = 2;
+                    const maxWait = 220;
+                    const scrollsPerBatch = 2;
 
                     while (true) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1487,8 +1492,8 @@ struct BFCacheSnapshot: Codable {
                             ? Math.max(0, savedContentHeight - maxScrollY)
                             : Math.max(0, savedContentHeight - currentScrollHeight);
                         const dynamicMaxAttempts = computeDynamicAttemptLimit(heightDeficit, viewportHeight, {
-                            minAttempts: 6,
-                            maxAttempts: 40
+                            minAttempts: 3,
+                            maxAttempts: 20
                         });
 
                         if (batchCount >= dynamicMaxAttempts) {
@@ -1542,12 +1547,18 @@ struct BFCacheSnapshot: Codable {
                             }
                             lastHeight = result.height || scrollRoot.scrollHeight;
 
-                            if (result.success) {
+                            if (result.progressed) {
+                                // 증분 진행 신호가 나오면 다음 배치로 넘어간다.
+                                break;
+                            }
+                            if ((result.newNodeCount || 0) === 0 && !result.lastFingerprintChanged) {
+                                // 무진행 상태에서 같은 배치 내 추가 스크롤은 비용만 증가시킨다.
                                 break;
                             }
                         }
 
-                        const batchProgress = batchNewNodes > 0 && batchFingerprintChanged;
+                        const batchStrongProgress = batchNewNodes > 0 && batchFingerprintChanged;
+                        const batchProgress = batchNewNodes > 0 || batchFingerprintChanged;
                         const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
                         batchCount += 1;
 
@@ -1555,7 +1566,7 @@ struct BFCacheSnapshot: Codable {
                             grew = true;
                             containerGrew = true;
                             noProgressBatches = 0;
-                            logs.push('[Step 1] Batch ' + batchCount + ': 신규노드 ' + batchNewNodes + '개 + fingerprint 변경 ✅ (' + batchTime + 's, 높이 +' + batchGrowth.toFixed(0) + 'px, 현재: ' + lastHeight.toFixed(0) + 'px)');
+                            logs.push('[Step 1] Batch ' + batchCount + ': 진행 감지 ' + (batchStrongProgress ? '(강)' : '(약)') + ' - 신규노드=' + batchNewNodes + ', fingerprint=' + (batchFingerprintChanged ? 'Y' : 'N') + ' (' + batchTime + 's, 높이 +' + batchGrowth.toFixed(0) + 'px, 현재: ' + lastHeight.toFixed(0) + 'px)');
                         } else {
                             noProgressBatches += 1;
                             logs.push('[Step 1] Batch ' + batchCount + ': 진행 없음 (신규노드=' + batchNewNodes + ', fingerprint변경=' + (batchFingerprintChanged ? 'Y' : 'N') + ', 높이+' + batchGrowth.toFixed(0) + 'px) [' + noProgressBatches + '/' + noProgressLimit + ']');
@@ -1568,6 +1579,15 @@ struct BFCacheSnapshot: Codable {
 
                     if (containerGrew) {
                         logs.push('[Step 1] 컨테이너 트리거 성공 - 계속');
+                        const nowHeight = scrollRoot.scrollHeight || 0;
+                        const nowMaxScrollY = nowHeight - viewportHeight;
+                        const nowDeficit = isVirtualList
+                            ? Math.max(0, savedContentHeight - nowMaxScrollY)
+                            : Math.max(0, savedContentHeight - nowHeight);
+                        if (nowDeficit <= 0) {
+                            logs.push('[Step 1] 목표 도달 - 추가 컨테이너 탐색 생략');
+                            break;
+                        }
                     } else {
                         logs.push('[Step 1] 컨테이너 트리거 실패');
                     }
