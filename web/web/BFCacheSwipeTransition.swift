@@ -1280,7 +1280,7 @@ struct BFCacheSnapshot: Codable {
                         const remaining = scrollHeight - scrollTop - clientHeight;
 
                         // 1초에 한 번만 로그 (스팸 방지)
-                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
+                        if (remaining < 800 && Date.now() - lastScrollLog > 800) {
                             logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
                             logs.push('  scrollTop: ' + scrollTop.toFixed(0));
                             logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
@@ -1476,7 +1476,7 @@ struct BFCacheSnapshot: Codable {
                     let noProgressBatches = 0;
                     const noProgressLimit = 3;
                     const maxWait = 500;
-                    const scrollsPerBatch = 5;
+                    const scrollsPerBatch = 4;
 
                     while (true) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1549,7 +1549,7 @@ struct BFCacheSnapshot: Codable {
 
                         const batchStrongProgress = batchNewNodes > 0 && batchFingerprintChanged;
                         const batchProgress = batchNewNodes > 0 || batchFingerprintChanged;
-                        const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
+                        const batchTime = ((Date.now() - batchStartTime) / 800).toFixed(2);
                         batchCount += 1;
 
                         if (batchProgress) {
