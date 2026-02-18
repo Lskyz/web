@@ -931,11 +931,13 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function scrollNearBottomAsync(root, options = {}) {
-            const { ratio = 1.2, marginPx = 800 } = options;
+            const { ratio = 1.2, marginPx = 3000 } = options;
             if (!root) return;
             const max = Math.max(0, root.scrollHeight - root.clientHeight);
             const goal = Math.max(0, max - marginPx);
-            await scrollStepAsync(root, goal, 'y', ratio);
+            // Step1 트리거는 세밀 이동보다 빠른 단일 점프가 유리
+            root.scrollTop = goal;
+            await nextFrame();
         }
 
         async function preciseScrollToAsync(x, y) {
@@ -1179,7 +1181,7 @@ struct BFCacheSnapshot: Codable {
                 const viewportHeight = window.innerHeight || 0;
                 const rawTargetScrollY = parseFloat('\(self.scrollPosition.y)');
                 const targetScrollY = Number.isFinite(rawTargetScrollY) ? Math.max(0, rawTargetScrollY) : 0;
-                const prefetchDistancePx = 800;
+                const prefetchDistancePx = 3000;
                 const desiredRestoreHeight = Math.max(
                     currentHeight,
                     Math.min(savedContentHeight, targetScrollY + viewportHeight + prefetchDistancePx)
@@ -1252,9 +1254,15 @@ struct BFCacheSnapshot: Codable {
 
                 let grew = false;
                 const step1StartTime = Date.now();
+                let shouldTryFallbackContainers = false;
 
                 // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
+                    if (containerIndex > 0 && !shouldTryFallbackContainers) {
+                        logs.push('[Step 1] 주 컨테이너로 충분하여 fallback 컨테이너 스킵');
+                        break;
+                    }
+
                     const scrollRoot = containers[containerIndex];
                     logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
 
@@ -1274,7 +1282,7 @@ struct BFCacheSnapshot: Codable {
                     let batchCount = 0;
                     const maxAttempts = 50;
                     const maxWait = 500;
-                    const scrollsPerBatch = 5;
+                    const scrollsPerBatch = 2;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1321,7 +1329,7 @@ struct BFCacheSnapshot: Codable {
                                 break;
                             }
 
-                            const prefetchMarginPx = Math.max(prefetchDistancePx, Math.round((scrollRoot.clientHeight || viewportHeight || 0) * 0.75));
+                            const prefetchMarginPx = Math.max(prefetchDistancePx, Math.round((scrollRoot.clientHeight || viewportHeight || 0) * 2.0));
                             const sentinel = findSentinel(scrollRoot);
 
                             if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
@@ -1378,11 +1386,27 @@ struct BFCacheSnapshot: Codable {
                     } else {
                         logs.push('[Step 1] 컨테이너 트리거 실패');
                     }
+
+                    if (containerIndex == 0) {
+                        const postRoot = getROOT();
+                        const postHeight = postRoot ? postRoot.scrollHeight : 0;
+                        const postMaxScrollY = postHeight - viewportHeight;
+                        const primarySatisfied = isVirtualList
+                            ? postMaxScrollY >= desiredScrollReach
+                            : postHeight >= desiredRestoreHeight;
+                        if (primarySatisfied) {
+                            logs.push('[Step 1] 주 컨테이너에서 목표 도달 - fallback 불필요');
+                            break;
+                        } else {
+                            logs.push('[Step 1] 주 컨테이너만으로 부족 - fallback 컨테이너 시도');
+                            shouldTryFallbackContainers = true;
+                        }
+                    }
                 }
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
 
-                const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
+                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
