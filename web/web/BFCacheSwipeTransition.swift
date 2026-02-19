@@ -783,7 +783,7 @@ struct BFCacheSnapshot: Codable {
             if (!nodes.length) return '';
             const tail = nodes.slice(-sampleSize);
             return tail.map(node => {
-                const text = (node.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+                const text = (node.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
                 const href = typeof node.getAttribute === 'function' ? (node.getAttribute('href') || '') : '';
                 const dataId =
                     (typeof node.getAttribute === 'function' && (
