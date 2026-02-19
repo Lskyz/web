@@ -763,6 +763,102 @@ struct BFCacheSnapshot: Codable {
             return root.querySelector(selector) || root.lastElementChild || root;
         }
 
+        function getListTailFingerprint(root, sampleSize = 4) {
+            if (!root || !isElementValid(root)) return '';
+            const selector = [
+                '[data-id]',
+                '[data-item-id]',
+                '[data-article-id]',
+                '[data-post-id]',
+                '[data-index]',
+                '[data-key]',
+                'article',
+                'li',
+                '.item',
+                '.post',
+                '.card',
+                'a[href]'
+            ].join(',');
+            const nodes = Array.from(root.querySelectorAll(selector));
+            if (!nodes.length) return '';
+            const tail = nodes.slice(-sampleSize);
+            return tail.map(node => {
+                const text = (node.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+                const href = typeof node.getAttribute === 'function' ? (node.getAttribute('href') || '') : '';
+                const dataId =
+                    (typeof node.getAttribute === 'function' && (
+                        node.getAttribute('data-id') ||
+                        node.getAttribute('data-item-id') ||
+                        node.getAttribute('data-article-id') ||
+                        node.getAttribute('data-post-id') ||
+                        node.getAttribute('data-key') ||
+                        node.getAttribute('data-index')
+                    )) || '';
+                return [node.tagName || '', dataId, href, text].join('#');
+            }).join('|');
+        }
+
+        function waitForProgressSignal(scrollRoot, options = {}) {
+            return new Promise((resolve) => {
+                if (!scrollRoot || !isElementValid(scrollRoot)) {
+                    resolve({ success: false, reason: 'invalid_root', time: 0 });
+                    return;
+                }
+
+                const {
+                    timeout = 180,
+                    beforeRequestSeq = null,
+                    beforeFingerprint = ''
+                } = options;
+
+                const start = Date.now();
+                let resolved = false;
+                let rafId = null;
+                let timeoutId = null;
+
+                const finish = (success, reason) => {
+                    if (resolved) return;
+                    resolved = true;
+                    if (rafId !== null) cancelAnimationFrame(rafId);
+                    if (timeoutId !== null) clearTimeout(timeoutId);
+                    resolve({
+                        success: success,
+                        reason: reason,
+                        time: Date.now() - start
+                    });
+                };
+
+                const check = () => {
+                    if (resolved) return;
+                    if (!isElementValid(scrollRoot)) {
+                        finish(false, 'root_detached');
+                        return;
+                    }
+
+                    if (Number.isFinite(beforeRequestSeq)) {
+                        const seq = ((window.__bfcacheNetworkActivity || {}).requestSeq) || 0;
+                        if (seq > beforeRequestSeq) {
+                            finish(true, 'network_start');
+                            return;
+                        }
+                    }
+
+                    if (beforeFingerprint) {
+                        const currentFingerprint = getListTailFingerprint(scrollRoot);
+                        if (currentFingerprint && currentFingerprint !== beforeFingerprint) {
+                            finish(true, 'fingerprint_change');
+                            return;
+                        }
+                    }
+
+                    rafId = requestAnimationFrame(check);
+                };
+
+                rafId = requestAnimationFrame(check);
+                timeoutId = setTimeout(() => finish(false, 'progress_timeout'), timeout);
+            });
+        }
+
         function nudgeSentinelIntoViewport(scrollRoot, sentinel, options = {}) {
             const { padding = 8 } = options;
             if (!scrollRoot || !sentinel || !isElementValid(scrollRoot) || !isElementValid(sentinel)) {
@@ -882,6 +978,7 @@ struct BFCacheSnapshot: Codable {
                 const baseTop = Number.isFinite(options.beforeTop) ? options.beforeTop : (scrollRoot.scrollTop || 0);
                 const minGrowth = Number.isFinite(options.minGrowth) ? options.minGrowth : 10;
                 const networkStartGraceMs = Number.isFinite(options.networkStartGraceMs) ? options.networkStartGraceMs : 50;
+                const resolveOnProgressSignals = options.resolveOnProgressSignals !== false;
                 const networkStateAtStart = window.__bfcacheNetworkActivity || {};
                 const requestSeqAtStart = networkStateAtStart.requestSeq || 0;
 
@@ -889,6 +986,7 @@ struct BFCacheSnapshot: Codable {
                 let rafId = null;
                 let timeoutId = null;
                 let observer = null;
+                let timeoutNudgeTried = false;
 
                 // 센티널: 스크롤 끝에 배치
                 const fallbackSentinel = document.createElement('div');
@@ -927,7 +1025,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     const currentTop = scrollRoot.scrollTop || 0;
-                    if (Math.abs(currentTop - baseTop) >= 1) {
+                    if (resolveOnProgressSignals && Math.abs(currentTop - baseTop) >= 1) {
                         finish(true, 'scroll_applied');
                         return;
                     }
@@ -935,7 +1033,7 @@ struct BFCacheSnapshot: Codable {
                     const networkState = window.__bfcacheNetworkActivity || {};
                     const requestSeq = networkState.requestSeq || 0;
                     const lastStart = networkState.lastStart || 0;
-                    if (requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
+                    if (resolveOnProgressSignals && requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
                         finish(true, 'network_start');
                         return;
                     }
@@ -949,7 +1047,9 @@ struct BFCacheSnapshot: Codable {
                         for (const entry of entries) {
                             if (entry.isIntersecting) {
                                 if (entry.target === scrollRoot) continue;
-                                finish(true, 'sentinel_intersect');
+                                if (resolveOnProgressSignals) {
+                                    finish(true, 'sentinel_intersect');
+                                }
                                 return;
                             }
                         }
@@ -965,6 +1065,24 @@ struct BFCacheSnapshot: Codable {
                 // 타임아웃
                 timeoutId = setTimeout(() => {
                     if (!resolved) {
+                        if (!timeoutNudgeTried && isElementValid(observedSentinel)) {
+                            timeoutNudgeTried = true;
+                            const nudge = nudgeSentinelIntoViewport(scrollRoot, observedSentinel, { padding: 6 });
+                            if (nudge.adjusted) {
+                                requestAnimationFrame(() => {
+                                    if (resolved) return;
+                                    const currentHeight = isElementValid(scrollRoot) ? (scrollRoot.scrollHeight || 0) : baseHeight;
+                                    if (currentHeight - baseHeight >= minGrowth) {
+                                        finish(true, 'height_growth');
+                                        return;
+                                    }
+                                    timeoutId = setTimeout(() => {
+                                        if (!resolved) finish(false, 'timeout');
+                                    }, 80);
+                                });
+                                return;
+                            }
+                        }
                         finish(false, 'timeout');
                     }
                 }, timeout);
@@ -1421,6 +1539,8 @@ struct BFCacheSnapshot: Codable {
                     network_start: 0,
                     sentinel_intersect: 0,
                     scroll_applied: 0,
+                    fingerprint_change: 0,
+                    delayed_growth: 0,
                     timeout: 0
                 };
 
@@ -1482,12 +1602,16 @@ struct BFCacheSnapshot: Codable {
                         // 🔧 **배치당 여러 번 스크롤**
                         let batchGrowth = 0;
                         let batchSuccess = false;
+                        let batchHadProgressSignal = false;
                         let batchProgressOnly = false;
+                        let batchMeaningfulProgress = false;
                         const batchStartTime = Date.now();
 
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
                             const beforeTop = scrollRoot.scrollTop || 0;
+                            const beforeRequestSeq = ((window.__bfcacheNetworkActivity || {}).requestSeq) || 0;
+                            const beforeFingerprint = getListTailFingerprint(scrollRoot);
 
                             // 목표 도달 시 중단
                             if (beforeHeight >= savedContentHeight) {
@@ -1530,13 +1654,50 @@ struct BFCacheSnapshot: Codable {
                                 if (result.growth > 0) {
                                     batchGrowth += result.growth;
                                     lastHeight = result.height;
+                                    batchMeaningfulProgress = true;
+                                    batchSuccess = true;
                                 } else {
+                                    batchHadProgressSignal = true;
                                     batchProgressOnly = true;
+                                    batchSuccess = true; // step A: sentinel/progress 신호를 성공으로 간주
+
+                                    // step B: 요청 시작 또는 fingerprint 변화 확인
+                                    const progressSignal = await waitForProgressSignal(scrollRoot, {
+                                        timeout: result.reason === 'sentinel_intersect' ? 180 : 120,
+                                        beforeRequestSeq: beforeRequestSeq,
+                                        beforeFingerprint: beforeFingerprint
+                                    });
+
+                                    if (!isElementValid(scrollRoot)) break;
+
+                                    if (progressSignal.success && progressSignal.reason && progressSignal.reason !== result.reason) {
+                                        triggerStats[progressSignal.reason] = (triggerStats[progressSignal.reason] || 0) + 1;
+                                    }
+
+                                    if (progressSignal.success) {
+                                        batchMeaningfulProgress = true;
+                                        batchProgressOnly = false;
+                                        if (progressSignal.reason === 'fingerprint_change') {
+                                            triggerStats.delayed_growth += 1;
+                                        }
+                                    } else if (result.reason === 'network_start' || result.reason === 'scroll_applied') {
+                                        batchMeaningfulProgress = true;
+                                        batchProgressOnly = false;
+                                    } else {
+                                        const afterFingerprint = getListTailFingerprint(scrollRoot);
+                                        if (beforeFingerprint && afterFingerprint && afterFingerprint !== beforeFingerprint) {
+                                            triggerStats.fingerprint_change += 1;
+                                            triggerStats.delayed_growth += 1;
+                                            batchMeaningfulProgress = true;
+                                            batchProgressOnly = false;
+                                        }
+                                    }
                                 }
-                                batchSuccess = true;
                             } else if (result.growth > 0) {
                                 batchGrowth += result.growth;
                                 lastHeight = result.height;
+                                batchMeaningfulProgress = true;
+                                batchSuccess = true;
                             } else {
                                 // 더 이상 성장 안 함
                                 break;
@@ -1546,28 +1707,39 @@ struct BFCacheSnapshot: Codable {
                         const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
 
                         if (batchSuccess) {
-                            grew = true;
+                            if (batchGrowth > 0 || (isVirtualList && batchMeaningfulProgress)) {
+                                grew = true;
+                            }
                             containerGrew = true;
                             batchCount++;
 
-                            if (batchGrowth > 0) {
+                            if (batchGrowth > 0 || batchMeaningfulProgress) {
                                 stagnantProgressBatches = 0;
-                            } else if (batchProgressOnly) {
+                            } else {
                                 stagnantProgressBatches += 1;
-                            }
-
-                            if (stagnantProgressBatches >= 3) {
-                                logs.push('[Step 1] 트리거 감지 후 성장 정체 - 중단');
-                                break;
+                                logs.push('[Step 1] 신호 성공(성장 대기): ' + batchTime + 's');
+                                if (stagnantProgressBatches >= 5) {
+                                    logs.push('[Step 1] 신호 반복 대비 성장 정체 - 중단');
+                                    break;
+                                }
                             }
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
                                 logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
                             }
                         } else {
-                            if (batchGrowth > 0) {
+                            if (batchProgressOnly || batchHadProgressSignal) {
+                                batchCount++;
+                                stagnantProgressBatches += 1;
+                                logs.push('[Step 1] 트리거 감지(성장 미확인): ' + batchTime + 's');
+                                if (stagnantProgressBatches >= 6) {
+                                    logs.push('[Step 1] 트리거 반복 대비 성장 정체 - 중단');
+                                    break;
+                                }
+                            } else if (batchGrowth > 0) {
                                 logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 계속)');
                                 batchCount++;
+                                stagnantProgressBatches = 0;
                             } else {
                                 logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
                                 break;
@@ -1582,10 +1754,25 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                const activeTriggers = Object.entries(triggerStats).filter(([_, count]) => count > 0);
-                if (activeTriggers.length > 0) {
-                    logs.push('[Step 1] 신호 요약: ' + activeTriggers.map(([name, count]) => name + '=' + count).join(', '));
-                }
+                const summaryOrder = [
+                    'height_growth',
+                    'network_start',
+                    'sentinel_intersect',
+                    'scroll_applied',
+                    'fingerprint_change',
+                    'delayed_growth',
+                    'timeout',
+                    'progress_timeout',
+                    'root_detached',
+                    'invalid_root'
+                ];
+                const summaryParts = summaryOrder.map(name => name + '=' + (triggerStats[name] || 0));
+                Object.keys(triggerStats).forEach(name => {
+                    if (summaryOrder.indexOf(name) === -1) {
+                        summaryParts.push(name + '=' + triggerStats[name]);
+                    }
+                });
+                logs.push('[Step 1] 신호 요약: ' + summaryParts.join(', '));
 
                 const settleRoot = getROOT();
                 const settleSentinel = findSentinel(settleRoot);
