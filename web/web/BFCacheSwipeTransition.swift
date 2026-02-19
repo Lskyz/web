@@ -806,7 +806,7 @@ struct BFCacheSnapshot: Codable {
                 }
 
                 const {
-                    timeout = 120,
+                    timeout = 100,
                     beforeRequestSeq = null,
                     beforeFingerprint = ''
                 } = options;
@@ -1576,7 +1576,7 @@ struct BFCacheSnapshot: Codable {
 
                                     if (shouldProbeProgress) {
                                         const progressSignal = await waitForProgressSignal(scrollRoot, {
-                                            timeout: isVirtualList ? 120 : 80,
+                                            timeout: isVirtualList ? 100 : 70,
                                             beforeRequestSeq: beforeRequestSeq,
                                             beforeFingerprint: fingerprintBaseline
                                         });
