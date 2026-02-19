@@ -763,114 +763,219 @@ struct BFCacheSnapshot: Codable {
             return root.querySelector(selector) || root.lastElementChild || root;
         }
 
+        function nudgeSentinelIntoViewport(scrollRoot, sentinel, options = {}) {
+            const { padding = 8 } = options;
+            if (!scrollRoot || !sentinel || !isElementValid(scrollRoot) || !isElementValid(sentinel)) {
+                return { adjusted: false, reason: 'invalid_target' };
+            }
+
+            const docEl = document.documentElement;
+            const viewportHeight = window.innerHeight || (docEl ? docEl.clientHeight : 0) || 0;
+            if (viewportHeight <= 0) {
+                return { adjusted: false, reason: 'invalid_viewport' };
+            }
+
+            const containerRect = scrollRoot.getBoundingClientRect();
+            const sentinelRect = sentinel.getBoundingClientRect();
+            const visibleTop = Math.max(padding, containerRect.top + padding);
+            const visibleBottom = Math.min(viewportHeight - padding, containerRect.bottom - padding);
+
+            if (visibleBottom <= visibleTop) {
+                return { adjusted: false, reason: 'container_outside_viewport' };
+            }
+
+            let delta = 0;
+            if (sentinelRect.top > visibleBottom) {
+                delta = sentinelRect.top - visibleBottom;
+            } else if (sentinelRect.bottom < visibleTop) {
+                delta = sentinelRect.bottom - visibleTop;
+            } else {
+                return { adjusted: false, reason: 'already_visible' };
+            }
+
+            if (Math.abs(delta) < 1) {
+                return { adjusted: false, reason: 'small_delta' };
+            }
+
+            const beforeTop = scrollRoot.scrollTop || 0;
+            const maxTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+            const targetTop = Math.max(0, Math.min(maxTop, beforeTop + delta));
+
+            scrollRoot.scrollTop = targetTop;
+            const afterTop = scrollRoot.scrollTop || 0;
+
+            return {
+                adjusted: Math.abs(afterTop - beforeTop) >= 1,
+                reason: 'nudged',
+                beforeTop: beforeTop,
+                afterTop: afterTop,
+                delta: afterTop - beforeTop
+            };
+        }
+
         async function waitForStableLayoutAsync(options = {}) {
-            const { frames = 3, timeout = 800, threshold = 2 } = options;
+            const {
+                frames = 3,
+                timeout = 800,
+                threshold = 2,
+                stabilityElement = null,
+                stableRectFrames = 2,
+                rectThreshold = 1,
+                requireNetworkIdle = false
+            } = options;
             const root = getROOT();
             if (!root) return;
             let stableFrames = 0;
+            let rectStableCount = 0;
             let lastHeight = root.scrollHeight;
+            let lastRectTop = null;
             const start = Date.now();
             while (Date.now() - start < timeout) {
                 await nextFrame();
+                if (!isElementValid(root)) break;
                 const currentHeight = root.scrollHeight;
                 if (Math.abs(currentHeight - lastHeight) <= threshold) {
                     stableFrames += 1;
-                    if (stableFrames >= frames) {
-                        break;
-                    }
                 } else {
                     stableFrames = 0;
                     lastHeight = currentHeight;
                 }
+
+                if (stabilityElement && isElementValid(stabilityElement)) {
+                    const rect = stabilityElement.getBoundingClientRect();
+                    if (lastRectTop !== null && Math.abs(rect.top - lastRectTop) <= rectThreshold) {
+                        rectStableCount += 1;
+                    } else {
+                        rectStableCount = 0;
+                    }
+                    lastRectTop = rect.top;
+                }
+
+                const networkState = window.__bfcacheNetworkActivity || {};
+                const networkIdle = !requireNetworkIdle || (networkState.inFlight || 0) === 0;
+
+                if (stableFrames >= frames && networkIdle) {
+                    break;
+                }
+
+                if (stabilityElement && rectStableCount >= stableRectFrames && networkIdle) {
+                    break;
+                }
             }
         }
 
-        function optimizeLazyMedia(rootNode = document) {
-            if (!rootNode || typeof rootNode.querySelectorAll !== 'function') return 0;
-            let optimized = 0;
-            const media = rootNode.querySelectorAll('img, iframe');
-            const viewportBottom = (window.innerHeight || 0) + 1200;
-            for (let i = 0; i < media.length; i++) {
-                const el = media[i];
-                if (!el || !isElementValid(el)) continue;
-
-                // 뷰포트 밖 미디어를 우선 지연 로딩 처리
-                let isNearViewport = true;
-                try {
-                    const rect = el.getBoundingClientRect();
-                    isNearViewport = rect.top < viewportBottom;
-                } catch (e) {}
-
-                if (el.tagName === 'IMG') {
-                    if (!el.getAttribute('loading')) {
-                        el.setAttribute('loading', isNearViewport ? 'eager' : 'lazy');
-                        optimized += 1;
-                    }
-                    if (!el.getAttribute('decoding')) {
-                        el.setAttribute('decoding', 'async');
-                    }
-                }
-
-                if (!isNearViewport && !el.getAttribute('fetchpriority')) {
-                    el.setAttribute('fetchpriority', 'low');
-                }
-            }
-            return optimized;
-        }
-
-        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500) {
+        function waitForContentLoad(scrollRoot, beforeHeight, timeout = 500, options = {}) {
             return new Promise((resolve) => {
+                if (!scrollRoot || !isElementValid(scrollRoot)) {
+                    resolve({
+                        success: false,
+                        reason: 'invalid_root',
+                        height: 0,
+                        growth: 0,
+                        time: 0
+                    });
+                    return;
+                }
+
                 const startTime = Date.now();
+                const baseHeight = Number.isFinite(beforeHeight) ? beforeHeight : (scrollRoot.scrollHeight || 0);
+                const baseTop = Number.isFinite(options.beforeTop) ? options.beforeTop : (scrollRoot.scrollTop || 0);
+                const minGrowth = Number.isFinite(options.minGrowth) ? options.minGrowth : 10;
+                const networkStartGraceMs = Number.isFinite(options.networkStartGraceMs) ? options.networkStartGraceMs : 50;
+                const networkStateAtStart = window.__bfcacheNetworkActivity || {};
+                const requestSeqAtStart = networkStateAtStart.requestSeq || 0;
+
                 let resolved = false;
+                let rafId = null;
+                let timeoutId = null;
+                let observer = null;
 
                 // 센티널: 스크롤 끝에 배치
-                const sentinel = document.createElement('div');
-                sentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
-                scrollRoot.appendChild(sentinel);
+                const fallbackSentinel = document.createElement('div');
+                fallbackSentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
+                scrollRoot.appendChild(fallbackSentinel);
+                const observedSentinel = (options.observedSentinel && isElementValid(options.observedSentinel))
+                    ? options.observedSentinel
+                    : fallbackSentinel;
 
-                // IntersectionObserver: 새 콘텐츠 렌더링 감지
-                const observer = new IntersectionObserver((entries) => {
+                const finish = (success, reason) => {
                     if (resolved) return;
+                    resolved = true;
+                    cleanup();
+                    const currentHeight = isElementValid(scrollRoot) ? (scrollRoot.scrollHeight || 0) : baseHeight;
+                    resolve({
+                        success: success,
+                        reason: reason,
+                        height: currentHeight,
+                        growth: currentHeight - baseHeight,
+                        time: Date.now() - startTime
+                    });
+                };
 
-                    const currentHeight = scrollRoot.scrollHeight;
-                    const growth = currentHeight - beforeHeight;
-
-                    // 높이 증가 확인
-                    if (growth >= 10) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: true,
-                            height: currentHeight,
-                            growth: growth,
-                            time: Date.now() - startTime
-                        });
+                const checkProgress = () => {
+                    if (resolved) return;
+                    if (!isElementValid(scrollRoot)) {
+                        finish(false, 'root_detached');
+                        return;
                     }
-                }, {
-                    root: null,
-                    threshold: 0,
-                    rootMargin: '5000px'
-                });
 
-                observer.observe(sentinel);
+                    const currentHeight = scrollRoot.scrollHeight || 0;
+                    const growth = currentHeight - baseHeight;
+                    if (growth >= minGrowth) {
+                        finish(true, 'height_growth');
+                        return;
+                    }
+
+                    const currentTop = scrollRoot.scrollTop || 0;
+                    if (Math.abs(currentTop - baseTop) >= 1) {
+                        finish(true, 'scroll_applied');
+                        return;
+                    }
+
+                    const networkState = window.__bfcacheNetworkActivity || {};
+                    const requestSeq = networkState.requestSeq || 0;
+                    const lastStart = networkState.lastStart || 0;
+                    if (requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
+                        finish(true, 'network_start');
+                        return;
+                    }
+
+                    rafId = requestAnimationFrame(checkProgress);
+                };
+
+                if (typeof IntersectionObserver === 'function' && isElementValid(observedSentinel)) {
+                    observer = new IntersectionObserver((entries) => {
+                        if (resolved) return;
+                        for (const entry of entries) {
+                            if (entry.isIntersecting) {
+                                if (entry.target === scrollRoot) continue;
+                                finish(true, 'sentinel_intersect');
+                                return;
+                            }
+                        }
+                    }, {
+                        root: null,
+                        threshold: 0
+                    });
+                    observer.observe(observedSentinel);
+                }
+
+                rafId = requestAnimationFrame(checkProgress);
 
                 // 타임아웃
-                setTimeout(() => {
+                timeoutId = setTimeout(() => {
                     if (!resolved) {
-                        resolved = true;
-                        cleanup();
-                        resolve({
-                            success: false,
-                            height: scrollRoot.scrollHeight,
-                            growth: scrollRoot.scrollHeight - beforeHeight,
-                            time: timeout
-                        });
+                        finish(false, 'timeout');
                     }
                 }, timeout);
 
                 function cleanup() {
-                    observer.disconnect();
-                    sentinel.remove();
+                    if (observer) observer.disconnect();
+                    if (rafId !== null) cancelAnimationFrame(rafId);
+                    if (timeoutId !== null) clearTimeout(timeoutId);
+                    if (fallbackSentinel && fallbackSentinel.isConnected) {
+                        fallbackSentinel.remove();
+                    }
                 }
             });
         }
@@ -931,7 +1036,7 @@ struct BFCacheSnapshot: Codable {
         }
 
         async function scrollNearBottomAsync(root, options = {}) {
-            const { ratio = 1.2, marginPx = 800 } = options;
+            const { ratio = 0.9, marginPx = 1 } = options;
             if (!root) return;
             const max = Math.max(0, root.scrollHeight - root.clientHeight);
             const goal = Math.max(0, max - marginPx);
@@ -1034,6 +1139,25 @@ struct BFCacheSnapshot: Codable {
         function installInfiniteScrollDetector(logs) {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
+            window.__bfcacheNetworkActivity = window.__bfcacheNetworkActivity || {
+                requestSeq: 0,
+                inFlight: 0,
+                lastStart: 0,
+                lastEnd: 0
+            };
+
+            const markNetworkStart = () => {
+                const state = window.__bfcacheNetworkActivity;
+                state.requestSeq = (state.requestSeq || 0) + 1;
+                state.inFlight = (state.inFlight || 0) + 1;
+                state.lastStart = Date.now();
+            };
+
+            const markNetworkEnd = () => {
+                const state = window.__bfcacheNetworkActivity;
+                state.inFlight = Math.max(0, (state.inFlight || 0) - 1);
+                state.lastEnd = Date.now();
+            };
 
             // 1. IntersectionObserver 감지
             const OrigIO = window.IntersectionObserver;
@@ -1086,7 +1210,47 @@ struct BFCacheSnapshot: Codable {
                 return instance;
             };
 
-            // 2. XHR/fetch 감지
+            // 2. scroll 이벤트 감지
+            let scrollListeners = 0;
+            let lastScrollLog = 0;
+            const origAddEventListener = EventTarget.prototype.addEventListener;
+            EventTarget.prototype.addEventListener = function(type, listener, options) {
+                if (type === 'scroll') {
+                    scrollListeners++;
+                    const targetInfo = this === window ? 'window' :
+                                      this === document ? 'document' :
+                                      (this.id || this.className || this.tagName);
+
+                    logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
+                    logs.push('  Target: ' + targetInfo);
+                    logs.push('  Passive: ' + (options?.passive || false));
+                    logs.push('  Capture: ' + (options?.capture || false));
+
+                    const wrappedListener = function(e) {
+                        const target = e.target === document ? document.documentElement : e.target;
+                        const scrollTop = target.scrollTop || 0;
+                        const scrollHeight = target.scrollHeight || 0;
+                        const clientHeight = target.clientHeight || 0;
+                        const remaining = scrollHeight - scrollTop - clientHeight;
+
+                        // 1초에 한 번만 로그 (스팸 방지)
+                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
+                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
+                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
+                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
+                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
+                            lastScrollLog = Date.now();
+                        }
+
+                        return listener.apply(this, arguments);
+                    };
+
+                    return origAddEventListener.call(this, type, wrappedListener, options);
+                }
+                return origAddEventListener.call(this, type, listener, options);
+            };
+
+            // 3. XHR/fetch 감지
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
                 const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
@@ -1098,6 +1262,14 @@ struct BFCacheSnapshot: Codable {
 
                 const origSend = this.send.bind(this);
                 this.send = function() {
+                    markNetworkStart();
+
+                    const onLoadEnd = () => {
+                        markNetworkEnd();
+                        this.removeEventListener('loadend', onLoadEnd);
+                    };
+                    this.addEventListener('loadend', onLoadEnd);
+
                     this.addEventListener('load', function() {
                         try {
                             const json = JSON.parse(this.responseText);
@@ -1129,7 +1301,13 @@ struct BFCacheSnapshot: Codable {
                 logs.push('  Stack:');
                 logs.push('  ' + stack.slice(0, 300));
 
-                const response = await fetchOrig.call(this, url, opts);
+                markNetworkStart();
+                let response;
+                try {
+                    response = await fetchOrig.call(this, url, opts);
+                } finally {
+                    markNetworkEnd();
+                }
 
                 logs.push('[fetch] ✅ 응답 수신');
                 logs.push('  Status: ' + response.status);
@@ -1177,18 +1355,8 @@ struct BFCacheSnapshot: Codable {
 
                 const currentHeight = root ? root.scrollHeight : 0;
                 const viewportHeight = window.innerHeight || 0;
-                const rawTargetScrollY = parseFloat('\(self.scrollPosition.y)');
-                const targetScrollY = Number.isFinite(rawTargetScrollY) ? Math.max(0, rawTargetScrollY) : 0;
-                const prefetchDistancePx = 800;
-                const desiredRestoreHeight = Math.max(
-                    currentHeight,
-                    Math.min(savedContentHeight, targetScrollY + viewportHeight + prefetchDistancePx)
-                );
-                const desiredScrollReach = targetScrollY + prefetchDistancePx;
                 logs.push('[Step 1] 현재 높이: ' + currentHeight.toFixed(0) + 'px');
                 logs.push('[Step 1] 뷰포트 높이: ' + viewportHeight.toFixed(0) + 'px');
-                logs.push('[Step 1] 목표 스크롤: ' + targetScrollY.toFixed(0) + 'px');
-                logs.push('[Step 1] 목표 복원 높이(Windowed): ' + desiredRestoreHeight.toFixed(0) + 'px');
 
                 // 🛡️ **가상 리스트 감지: scrollHeight ≈ 뷰포트 높이**
                 const isVirtualList = Math.abs(currentHeight - viewportHeight) < 50;
@@ -1223,10 +1391,6 @@ struct BFCacheSnapshot: Codable {
                 // 🔍 무한 스크롤 메커니즘 감지 설치
                 installInfiniteScrollDetector(logs);
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
-                const optimizedMediaCount = optimizeLazyMedia(document);
-                if (optimizedMediaCount > 0) {
-                    logs.push('[Step 1] 미디어 지연 로딩 최적화: ' + optimizedMediaCount + '개');
-                }
 
                 const loadMoreButtons = document.querySelectorAll(
                     '[data-testid*="load"], [class*="load"], [class*="more"], ' +
@@ -1252,6 +1416,13 @@ struct BFCacheSnapshot: Codable {
 
                 let grew = false;
                 const step1StartTime = Date.now();
+                const triggerStats = {
+                    height_growth: 0,
+                    network_start: 0,
+                    sentinel_intersect: 0,
+                    scroll_applied: 0,
+                    timeout: 0
+                };
 
                 // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
@@ -1275,6 +1446,7 @@ struct BFCacheSnapshot: Codable {
                     const maxAttempts = 50;
                     const maxWait = 500;
                     const scrollsPerBatch = 5;
+                    let stagnantProgressBatches = 0;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1284,14 +1456,14 @@ struct BFCacheSnapshot: Codable {
 
                         // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
                         if (isVirtualList) {
-                            if (maxScrollY >= desiredScrollReach) {
+                            if (maxScrollY >= savedContentHeight) {
                                 logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
                                 break;
                             }
                         } else {
-                            if (currentScrollHeight >= desiredRestoreHeight) {
+                            if (currentScrollHeight >= savedContentHeight) {
                                 logs.push('[Step 1] 목표 높이 도달 (배치: ' + batchCount + ')');
                                 grew = true;
                                 containerGrew = true;
@@ -1300,7 +1472,7 @@ struct BFCacheSnapshot: Codable {
                         }
 
                         // 🛡️ **과도한 성장 방지**
-                        if (currentScrollHeight >= desiredRestoreHeight * 1.05) {
+                        if (currentScrollHeight >= savedContentHeight * 1.0) {
                             logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
                             grew = true;
                             containerGrew = true;
@@ -1310,39 +1482,58 @@ struct BFCacheSnapshot: Codable {
                         // 🔧 **배치당 여러 번 스크롤**
                         let batchGrowth = 0;
                         let batchSuccess = false;
+                        let batchProgressOnly = false;
                         const batchStartTime = Date.now();
 
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
+                            const beforeTop = scrollRoot.scrollTop || 0;
 
                             // 목표 도달 시 중단
-                            if (beforeHeight >= desiredRestoreHeight) {
+                            if (beforeHeight >= savedContentHeight) {
                                 batchSuccess = true;
                                 break;
                             }
 
-                            const prefetchMarginPx = Math.max(prefetchDistancePx, Math.round((scrollRoot.clientHeight || viewportHeight || 0) * 0.75));
                             const sentinel = findSentinel(scrollRoot);
 
                             if (sentinel && isElementValid(sentinel) && typeof sentinel.scrollIntoView === 'function') {
                                 try {
-                                    await scrollNearBottomAsync(scrollRoot, { ratio: 1.2, marginPx: prefetchMarginPx });
+                                    sentinel.scrollIntoView({ block: 'end', behavior: 'instant' });
                                 } catch(e) {
-                                    scrollRoot.scrollTo(0, Math.max(0, scrollRoot.scrollHeight - prefetchMarginPx));
+                                    scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                                 }
                             } else {
-                                await scrollNearBottomAsync(scrollRoot, { ratio: 1.2, marginPx: prefetchMarginPx });
+                                scrollRoot.scrollTo(0, scrollRoot.scrollHeight);
                             }
 
-                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait);
+                            const observedSentinel = sentinel && isElementValid(sentinel) ? sentinel : findSentinel(scrollRoot);
+                            if (observedSentinel && isElementValid(observedSentinel)) {
+                                const nudgeResult = nudgeSentinelIntoViewport(scrollRoot, observedSentinel, { padding: 6 });
+                                if (nudgeResult.adjusted) {
+                                    await nextFrame();
+                                }
+                            }
+
+                            const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait, {
+                                beforeTop: beforeTop,
+                                observedSentinel: observedSentinel
+                            });
 
                             if (!isElementValid(scrollRoot)) break;
 
+                            if (result.reason) {
+                                triggerStats[result.reason] = (triggerStats[result.reason] || 0) + 1;
+                            }
+
                             if (result.success) {
-                                batchGrowth += result.growth;
+                                if (result.growth > 0) {
+                                    batchGrowth += result.growth;
+                                    lastHeight = result.height;
+                                } else {
+                                    batchProgressOnly = true;
+                                }
                                 batchSuccess = true;
-                                lastHeight = result.height;
-                                optimizeLazyMedia(scrollRoot);
                             } else if (result.growth > 0) {
                                 batchGrowth += result.growth;
                                 lastHeight = result.height;
@@ -1358,6 +1549,17 @@ struct BFCacheSnapshot: Codable {
                             grew = true;
                             containerGrew = true;
                             batchCount++;
+
+                            if (batchGrowth > 0) {
+                                stagnantProgressBatches = 0;
+                            } else if (batchProgressOnly) {
+                                stagnantProgressBatches += 1;
+                            }
+
+                            if (stagnantProgressBatches >= 3) {
+                                logs.push('[Step 1] 트리거 감지 후 성장 정체 - 중단');
+                                break;
+                            }
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
                                 logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
@@ -1380,28 +1582,38 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                await waitForStableLayoutAsync({ frames: 4, timeout: 500 });
+                const activeTriggers = Object.entries(triggerStats).filter(([_, count]) => count > 0);
+                if (activeTriggers.length > 0) {
+                    logs.push('[Step 1] 신호 요약: ' + activeTriggers.map(([name, count]) => name + '=' + count).join(', '));
+                }
+
+                const settleRoot = getROOT();
+                const settleSentinel = findSentinel(settleRoot);
+                await waitForStableLayoutAsync({
+                    frames: 4,
+                    timeout: 500,
+                    stabilityElement: settleSentinel,
+                    stableRectFrames: 2,
+                    requireNetworkIdle: true
+                });
 
                 const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
                 const restoredHeight = refreshedRoot ? refreshedRoot.scrollHeight : 0;
-                const finalSavedPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
-                const finalGoalPercentage = desiredRestoreHeight > 0 ? (restoredHeight / desiredRestoreHeight) * 100 : 0;
-                const success = finalGoalPercentage >= 95 || (grew && restoredHeight > currentHeight + 128);
+                const finalPercentage = savedContentHeight > 0 ? (restoredHeight / savedContentHeight) * 100 : 0;
+                const success = finalPercentage >= 80 || (grew && restoredHeight > currentHeight + 128);
 
-                logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (goal=' + finalGoalPercentage.toFixed(1) + '%, saved=' + finalSavedPercentage.toFixed(1) + '%)');
+                logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
 
                 return serializeForJSON({
                     success: success,
                     isStaticSite: false,
                     currentHeight: currentHeight,
                     savedContentHeight: savedContentHeight,
-                    goalContentHeight: desiredRestoreHeight,
                     restoredHeight: restoredHeight,
-                    percentage: finalGoalPercentage,
-                    savedPercentage: finalSavedPercentage,
+                    percentage: finalPercentage,
                     triggeredInfiniteScroll: grew,
                     logs: logs
                 });
