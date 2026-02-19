@@ -882,6 +882,7 @@ struct BFCacheSnapshot: Codable {
                 const baseTop = Number.isFinite(options.beforeTop) ? options.beforeTop : (scrollRoot.scrollTop || 0);
                 const minGrowth = Number.isFinite(options.minGrowth) ? options.minGrowth : 10;
                 const networkStartGraceMs = Number.isFinite(options.networkStartGraceMs) ? options.networkStartGraceMs : 50;
+                const resolveOnProgressSignals = options.resolveOnProgressSignals !== false;
                 const networkStateAtStart = window.__bfcacheNetworkActivity || {};
                 const requestSeqAtStart = networkStateAtStart.requestSeq || 0;
 
@@ -927,7 +928,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     const currentTop = scrollRoot.scrollTop || 0;
-                    if (Math.abs(currentTop - baseTop) >= 1) {
+                    if (resolveOnProgressSignals && Math.abs(currentTop - baseTop) >= 1) {
                         finish(true, 'scroll_applied');
                         return;
                     }
@@ -935,7 +936,7 @@ struct BFCacheSnapshot: Codable {
                     const networkState = window.__bfcacheNetworkActivity || {};
                     const requestSeq = networkState.requestSeq || 0;
                     const lastStart = networkState.lastStart || 0;
-                    if (requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
+                    if (resolveOnProgressSignals && requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
                         finish(true, 'network_start');
                         return;
                     }
@@ -949,7 +950,9 @@ struct BFCacheSnapshot: Codable {
                         for (const entry of entries) {
                             if (entry.isIntersecting) {
                                 if (entry.target === scrollRoot) continue;
-                                finish(true, 'sentinel_intersect');
+                                if (resolveOnProgressSignals) {
+                                    finish(true, 'sentinel_intersect');
+                                }
                                 return;
                             }
                         }
@@ -1421,6 +1424,7 @@ struct BFCacheSnapshot: Codable {
                     network_start: 0,
                     sentinel_intersect: 0,
                     scroll_applied: 0,
+                    delayed_growth: 0,
                     timeout: 0
                 };
 
@@ -1482,6 +1486,7 @@ struct BFCacheSnapshot: Codable {
                         // 🔧 **배치당 여러 번 스크롤**
                         let batchGrowth = 0;
                         let batchSuccess = false;
+                        let batchHadProgressSignal = false;
                         let batchProgressOnly = false;
                         const batchStartTime = Date.now();
 
@@ -1530,13 +1535,38 @@ struct BFCacheSnapshot: Codable {
                                 if (result.growth > 0) {
                                     batchGrowth += result.growth;
                                     lastHeight = result.height;
+                                    batchSuccess = true;
                                 } else {
+                                    batchHadProgressSignal = true;
                                     batchProgressOnly = true;
+
+                                    // 진행 신호만 잡힌 경우, 짧게 성장 확인을 한 번 더 수행
+                                    const confirmWait = Math.min(260, Math.max(120, Math.floor(maxWait * 0.5)));
+                                    const confirm = await waitForContentLoad(scrollRoot, beforeHeight, confirmWait, {
+                                        beforeTop: scrollRoot.scrollTop || 0,
+                                        observedSentinel: observedSentinel,
+                                        minGrowth: 6,
+                                        resolveOnProgressSignals: false
+                                    });
+
+                                    if (!isElementValid(scrollRoot)) break;
+
+                                    if (confirm.reason) {
+                                        triggerStats[confirm.reason] = (triggerStats[confirm.reason] || 0) + 1;
+                                    }
+
+                                    if (confirm.growth > 0) {
+                                        triggerStats.delayed_growth += 1;
+                                        batchGrowth += confirm.growth;
+                                        lastHeight = confirm.height;
+                                        batchSuccess = true;
+                                        batchProgressOnly = false;
+                                    }
                                 }
-                                batchSuccess = true;
                             } else if (result.growth > 0) {
                                 batchGrowth += result.growth;
                                 lastHeight = result.height;
+                                batchSuccess = true;
                             } else {
                                 // 더 이상 성장 안 함
                                 break;
@@ -1549,25 +1579,24 @@ struct BFCacheSnapshot: Codable {
                             grew = true;
                             containerGrew = true;
                             batchCount++;
-
-                            if (batchGrowth > 0) {
-                                stagnantProgressBatches = 0;
-                            } else if (batchProgressOnly) {
-                                stagnantProgressBatches += 1;
-                            }
-
-                            if (stagnantProgressBatches >= 3) {
-                                logs.push('[Step 1] 트리거 감지 후 성장 정체 - 중단');
-                                break;
-                            }
+                            stagnantProgressBatches = 0;
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
                                 logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
                             }
                         } else {
-                            if (batchGrowth > 0) {
+                            if (batchProgressOnly || batchHadProgressSignal) {
+                                batchCount++;
+                                stagnantProgressBatches += 1;
+                                logs.push('[Step 1] 트리거 감지(성장 미확인): ' + batchTime + 's');
+                                if (stagnantProgressBatches >= 6) {
+                                    logs.push('[Step 1] 트리거 반복 대비 성장 정체 - 중단');
+                                    break;
+                                }
+                            } else if (batchGrowth > 0) {
                                 logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 계속)');
                                 batchCount++;
+                                stagnantProgressBatches = 0;
                             } else {
                                 logs.push('[Step 1] 성장 중단 (배치: ' + batchCount + ')');
                                 break;
