@@ -859,6 +859,153 @@ struct BFCacheSnapshot: Codable {
             });
         }
 
+        function parsePageNumberFromElement(element) {
+            if (!element || !isElementValid(element)) return null;
+            const text = ((element.textContent || '').trim() || '').slice(0, 16);
+            if (!text) return null;
+            const digits = text.replace(/[^0-9]/g, '');
+            if (!digits) return null;
+            const value = parseInt(digits, 10);
+            return Number.isFinite(value) ? value : null;
+        }
+
+        function isElementInteractable(element) {
+            if (!element || !isElementValid(element)) return false;
+            const rect = element.getBoundingClientRect();
+            if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+            const cs = getComputedStyle(element);
+            if (!cs || cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') {
+                return false;
+            }
+            if (element.hasAttribute('disabled')) return false;
+            if ((element.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return false;
+            const cls = (element.className || '').toString().toLowerCase();
+            if (cls.includes('disabled')) return false;
+            return true;
+        }
+
+        function clickNumericPaginationTrigger(root, options = {}) {
+            if (!root || !isElementValid(root)) {
+                return { clicked: false, count: 0, reason: 'invalid_root', labels: [] };
+            }
+
+            const { maxClicks = 1 } = options;
+            if (maxClicks <= 0) {
+                return { clicked: false, count: 0, reason: 'disabled', labels: [] };
+            }
+
+            const pagerSelector = [
+                '[class*="pagination"]',
+                '[class*="Pagination"]',
+                '[class*="pager"]',
+                '[class*="paging"]',
+                '[class*="Paging"]',
+                'nav[aria-label*="page"]',
+                'nav[aria-label*="Page"]',
+                '[data-pagination]',
+                '[data-pager]'
+            ].join(',');
+            const pagerRoots = Array.from(root.querySelectorAll(pagerSelector)).filter(isElementValid);
+            if (!pagerRoots.length) {
+                return { clicked: false, count: 0, reason: 'no_pager', labels: [] };
+            }
+
+            const currentSelectors = [
+                '[aria-current="page"]',
+                '.active',
+                '.current',
+                '.on',
+                '[class*="current"]',
+                '[class*="active"]'
+            ].join(',');
+
+            window.__bfcachePaginationState = window.__bfcachePaginationState || { recent: {} };
+            const recent = window.__bfcachePaginationState.recent;
+            const now = Date.now();
+            const clickedLabels = [];
+            let clickedCount = 0;
+
+            for (let i = 0; i < pagerRoots.length && clickedCount < maxClicks; i++) {
+                const pagerRoot = pagerRoots[i];
+                const currentNode = pagerRoot.querySelector(currentSelectors);
+                const currentPage = parsePageNumberFromElement(currentNode);
+
+                const localCandidates = Array.from(pagerRoot.querySelectorAll('a, button, [role="button"], [onclick]'))
+                    .filter(isElementInteractable)
+                    .map(node => ({
+                        node: node,
+                        page: parsePageNumberFromElement(node),
+                        label: (node.textContent || '').trim().slice(0, 24)
+                    }))
+                    .filter(item => item.label.length > 0);
+
+                if (!localCandidates.length) continue;
+
+                let target = null;
+                if (Number.isFinite(currentPage) && currentPage > 0) {
+                    target = localCandidates.find(item => Number.isFinite(item.page) && item.page === currentPage + 1) || null;
+                }
+                if (!target) {
+                    target = localCandidates.find(item => Number.isFinite(item.page) && item.page > 1) || null;
+                }
+                if (!target) {
+                    const nextWords = ['다음', 'next', '>', '›', '→'];
+                    target = localCandidates.find(item => {
+                        const lower = (item.label || '').toLowerCase();
+                        return nextWords.some(word => lower.includes(word.toLowerCase()));
+                    }) || null;
+                }
+                if (!target || !target.node) continue;
+
+                const href = target.node.getAttribute('href') || '';
+                const signature = (target.label || '') + '|' + href + '|' + (target.page || '');
+                if (recent[signature] && now - recent[signature] < 1400) {
+                    continue;
+                }
+
+                try {
+                    if (typeof target.node.scrollIntoView === 'function') {
+                        target.node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+                    }
+                } catch(e) {}
+
+                const tag = (target.node.tagName || '').toLowerCase();
+                const hrefValue = tag === 'a' ? (target.node.getAttribute('href') || '').trim().toLowerCase() : '';
+                let preventDefaultHandler = null;
+                if (tag === 'a' && hrefValue && !hrefValue.startsWith('#') && !hrefValue.startsWith('javascript:')) {
+                    preventDefaultHandler = function(e) { e.preventDefault(); };
+                    try { target.node.addEventListener('click', preventDefaultHandler, true); } catch(e) {}
+                }
+
+                try {
+                    const event = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                    target.node.dispatchEvent(event);
+                } catch(e) {}
+                if (preventDefaultHandler) {
+                    try { target.node.removeEventListener('click', preventDefaultHandler, true); } catch(e) {}
+                }
+
+                if (tag === 'button') {
+                    try { target.node.click(); } catch(e) {}
+                } else if (tag === 'a') {
+                    if (!hrefValue || hrefValue.startsWith('#') || hrefValue.startsWith('javascript:')) {
+                        try { target.node.click(); } catch(e) {}
+                    }
+                }
+
+                recent[signature] = now;
+                clickedCount += 1;
+                clickedLabels.push(target.label);
+            }
+
+            return {
+                clicked: clickedCount > 0,
+                count: clickedCount,
+                reason: clickedCount > 0 ? 'pagination_click' : 'no_target',
+                labels: clickedLabels
+            };
+        }
+
         function nudgeSentinelIntoViewport(scrollRoot, sentinel, options = {}) {
             const { padding = 8 } = options;
             if (!scrollRoot || !sentinel || !isElementValid(scrollRoot) || !isElementValid(sentinel)) {
@@ -1539,10 +1686,19 @@ struct BFCacheSnapshot: Codable {
                     network_start: 0,
                     sentinel_intersect: 0,
                     scroll_applied: 0,
+                    pagination_click: 0,
                     fingerprint_change: 0,
                     delayed_growth: 0,
                     timeout: 0
                 };
+
+                const initialPagination = clickNumericPaginationTrigger(root || document.body, { maxClicks: 2 });
+                if (initialPagination.clicked) {
+                    triggerStats.pagination_click += initialPagination.count;
+                    logs.push('[Step 1] 숫자 페이지네이션 트리거: ' + initialPagination.count + '회');
+                    await nextFrame();
+                    await delay(120);
+                }
 
                 // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
@@ -1637,6 +1793,19 @@ struct BFCacheSnapshot: Codable {
                                 if (nudgeResult.adjusted) {
                                     await nextFrame();
                                 }
+                            }
+
+                            const paginationTrigger = clickNumericPaginationTrigger(scrollRoot, { maxClicks: 1 });
+                            if (paginationTrigger.clicked) {
+                                triggerStats.pagination_click += paginationTrigger.count;
+                                batchHadProgressSignal = true;
+                                batchProgressOnly = true;
+                                batchMeaningfulProgress = true;
+                                batchSuccess = true;
+                                if (scrollIndex === 0 || batchCount % 3 === 0) {
+                                    logs.push('[Step 1] 페이지네이션 클릭: ' + paginationTrigger.labels.join('/'));
+                                }
+                                await nextFrame();
                             }
 
                             const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait, {
@@ -1754,10 +1923,26 @@ struct BFCacheSnapshot: Codable {
                     }
                 }
 
-                const activeTriggers = Object.entries(triggerStats).filter(([_, count]) => count > 0);
-                if (activeTriggers.length > 0) {
-                    logs.push('[Step 1] 신호 요약: ' + activeTriggers.map(([name, count]) => name + '=' + count).join(', '));
-                }
+                const summaryOrder = [
+                    'height_growth',
+                    'network_start',
+                    'sentinel_intersect',
+                    'scroll_applied',
+                    'pagination_click',
+                    'fingerprint_change',
+                    'delayed_growth',
+                    'timeout',
+                    'progress_timeout',
+                    'root_detached',
+                    'invalid_root'
+                ];
+                const summaryParts = summaryOrder.map(name => name + '=' + (triggerStats[name] || 0));
+                Object.keys(triggerStats).forEach(name => {
+                    if (summaryOrder.indexOf(name) === -1) {
+                        summaryParts.push(name + '=' + triggerStats[name]);
+                    }
+                });
+                logs.push('[Step 1] 신호 요약: ' + summaryParts.join(', '));
 
                 const settleRoot = getROOT();
                 const settleSentinel = findSentinel(settleRoot);
