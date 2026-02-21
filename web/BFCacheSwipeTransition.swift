@@ -806,7 +806,7 @@ struct BFCacheSnapshot: Codable {
                 }
 
                 const {
-                    timeout = 180,
+                    timeout = 100,
                     beforeRequestSeq = null,
                     beforeFingerprint = ''
                 } = options;
@@ -979,6 +979,9 @@ struct BFCacheSnapshot: Codable {
                 const minGrowth = Number.isFinite(options.minGrowth) ? options.minGrowth : 10;
                 const networkStartGraceMs = Number.isFinite(options.networkStartGraceMs) ? options.networkStartGraceMs : 50;
                 const resolveOnProgressSignals = options.resolveOnProgressSignals !== false;
+                const allowNetworkStart = options.allowNetworkStart !== false;
+                const allowScrollApplied = options.allowScrollApplied !== false;
+                const allowSentinelIntersect = options.allowSentinelIntersect !== false;
                 const networkStateAtStart = window.__bfcacheNetworkActivity || {};
                 const requestSeqAtStart = networkStateAtStart.requestSeq || 0;
 
@@ -1025,7 +1028,7 @@ struct BFCacheSnapshot: Codable {
                     }
 
                     const currentTop = scrollRoot.scrollTop || 0;
-                    if (resolveOnProgressSignals && Math.abs(currentTop - baseTop) >= 1) {
+                    if (resolveOnProgressSignals && allowScrollApplied && Math.abs(currentTop - baseTop) >= 1) {
                         finish(true, 'scroll_applied');
                         return;
                     }
@@ -1033,7 +1036,7 @@ struct BFCacheSnapshot: Codable {
                     const networkState = window.__bfcacheNetworkActivity || {};
                     const requestSeq = networkState.requestSeq || 0;
                     const lastStart = networkState.lastStart || 0;
-                    if (resolveOnProgressSignals && requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
+                    if (resolveOnProgressSignals && allowNetworkStart && requestSeq > requestSeqAtStart && lastStart >= startTime - networkStartGraceMs) {
                         finish(true, 'network_start');
                         return;
                     }
@@ -1047,7 +1050,7 @@ struct BFCacheSnapshot: Codable {
                         for (const entry of entries) {
                             if (entry.isIntersecting) {
                                 if (entry.target === scrollRoot) continue;
-                                if (resolveOnProgressSignals) {
+                                if (resolveOnProgressSignals && allowSentinelIntersect) {
                                     finish(true, 'sentinel_intersect');
                                 }
                                 return;
@@ -1254,9 +1257,10 @@ struct BFCacheSnapshot: Codable {
         }
 
         // 🔍 무한 스크롤 메커니즘 감지 (디버깅용)
-        function installInfiniteScrollDetector(logs) {
+        function installInfiniteScrollDetector(logs, options = {}) {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
+            const { verbose = false } = options;
             window.__bfcacheNetworkActivity = window.__bfcacheNetworkActivity || {
                 requestSeq: 0,
                 inFlight: 0,
@@ -1277,106 +1281,14 @@ struct BFCacheSnapshot: Codable {
                 state.lastEnd = Date.now();
             };
 
-            // 1. IntersectionObserver 감지
-            const OrigIO = window.IntersectionObserver;
-            let ioInstances = [];
-            window.IntersectionObserver = function(callback, options) {
-                const instanceId = ioInstances.length + 1;
-                const wrappedCallback = function(entries, observer) {
-                    entries.forEach(entry => {
-                        if (entry.isIntersecting) {
-                            const target = entry.target;
-                            logs.push('[IO-' + instanceId + '] 🎯 요소 감지됨');
-                            logs.push('  Tag: ' + target.tagName);
-                            logs.push('  Class: ' + (target.className || 'none'));
-                            logs.push('  ID: ' + (target.id || 'none'));
-                            try {
-                                const dataStr = JSON.stringify(target.dataset);
-                                if (dataStr && dataStr !== '{}') {
-                                    logs.push('  Data: ' + dataStr.slice(0, 100));
-                                }
-                            } catch(e) {}
-                            const text = (target.textContent || '').trim();
-                            if (text) {
-                                logs.push('  Text: ' + text.slice(0, 50));
-                            }
-                            logs.push('  Y: ' + entry.boundingClientRect.top.toFixed(0));
-                        }
-                    });
-                    return callback.apply(this, arguments);
-                };
-
-                logs.push('[IO-' + instanceId + '] ✨ 생성됨');
-                logs.push('  rootMargin: ' + (options?.rootMargin || '0px'));
-                logs.push('  threshold: ' + JSON.stringify(options?.threshold || 0));
-
-                const instance = new OrigIO(wrappedCallback, options);
-                ioInstances.push(instance);
-
-                const origObserve = instance.observe.bind(instance);
-                instance.observe = function(target) {
-                    const selector = target.className ? '.' + target.className.split(' ')[0] :
-                                   (target.id ? '#' + target.id : target.tagName);
-                    logs.push('[IO-' + instanceId + '] 👀 관찰 시작');
-                    logs.push('  Tag: ' + target.tagName);
-                    logs.push('  Class: ' + (target.className || 'none'));
-                    logs.push('  ID: ' + (target.id || 'none'));
-                    logs.push('  Selector: ' + selector);
-                    return origObserve(target);
-                };
-
-                return instance;
-            };
-
-            // 2. scroll 이벤트 감지
-            let scrollListeners = 0;
-            let lastScrollLog = 0;
-            const origAddEventListener = EventTarget.prototype.addEventListener;
-            EventTarget.prototype.addEventListener = function(type, listener, options) {
-                if (type === 'scroll') {
-                    scrollListeners++;
-                    const targetInfo = this === window ? 'window' :
-                                      this === document ? 'document' :
-                                      (this.id || this.className || this.tagName);
-
-                    logs.push('[Scroll] 📜 리스너 등록 #' + scrollListeners);
-                    logs.push('  Target: ' + targetInfo);
-                    logs.push('  Passive: ' + (options?.passive || false));
-                    logs.push('  Capture: ' + (options?.capture || false));
-
-                    const wrappedListener = function(e) {
-                        const target = e.target === document ? document.documentElement : e.target;
-                        const scrollTop = target.scrollTop || 0;
-                        const scrollHeight = target.scrollHeight || 0;
-                        const clientHeight = target.clientHeight || 0;
-                        const remaining = scrollHeight - scrollTop - clientHeight;
-
-                        // 1초에 한 번만 로그 (스팸 방지)
-                        if (remaining < 1000 && Date.now() - lastScrollLog > 1000) {
-                            logs.push('[Scroll] 🔥 경계 근접! (Listener #' + scrollListeners + ')');
-                            logs.push('  scrollTop: ' + scrollTop.toFixed(0));
-                            logs.push('  scrollHeight: ' + scrollHeight.toFixed(0));
-                            logs.push('  remaining: ' + remaining.toFixed(0) + 'px');
-                            lastScrollLog = Date.now();
-                        }
-
-                        return listener.apply(this, arguments);
-                    };
-
-                    return origAddEventListener.call(this, type, wrappedListener, options);
-                }
-                return origAddEventListener.call(this, type, listener, options);
-            };
-
             // 3. XHR/fetch 감지
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
-                const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
-                logs.push('[XHR] 📡 요청 시작');
-                logs.push('  Method: ' + method);
-                logs.push('  URL: ' + url);
-                logs.push('  Stack:');
-                logs.push('  ' + stack.slice(0, 300));
+                if (verbose) {
+                    logs.push('[XHR] 📡 요청 시작');
+                    logs.push('  Method: ' + method);
+                    logs.push('  URL: ' + url);
+                }
 
                 const origSend = this.send.bind(this);
                 this.send = function() {
@@ -1388,20 +1300,13 @@ struct BFCacheSnapshot: Codable {
                     };
                     this.addEventListener('loadend', onLoadEnd);
 
-                    this.addEventListener('load', function() {
-                        try {
-                            const json = JSON.parse(this.responseText);
-                            const keys = Object.keys(json).slice(0, 5);
+                    if (verbose) {
+                        this.addEventListener('load', function() {
                             logs.push('[XHR] ✅ 응답 수신');
                             logs.push('  Status: ' + this.status);
-                            logs.push('  Keys: ' + keys.join(', '));
-                            logs.push('  Length: ' + this.responseText.length);
-                        } catch(e) {
-                            logs.push('[XHR] ✅ 응답 수신');
-                            logs.push('  Status: ' + this.status);
-                            logs.push('  Length: ' + this.responseText.length);
-                        }
-                    });
+                            logs.push('  Length: ' + (this.responseText ? this.responseText.length : 0));
+                        });
+                    }
                     return origSend.apply(this, arguments);
                 };
 
@@ -1410,28 +1315,25 @@ struct BFCacheSnapshot: Codable {
 
             const fetchOrig = window.fetch;
             window.fetch = async function(url, opts) {
-                const stack = new Error().stack.split('\\n').slice(2, 5).join('\\n  ');
                 const method = opts?.method || 'GET';
-                logs.push('[fetch] 📡 요청 시작');
-                logs.push('  Method: ' + method);
-                logs.push('  URL: ' + url);
-                logs.push('  Body: ' + (opts?.body ? 'present' : 'none'));
-                logs.push('  Stack:');
-                logs.push('  ' + stack.slice(0, 300));
+                if (verbose) {
+                    logs.push('[fetch] 📡 요청 시작');
+                    logs.push('  Method: ' + method);
+                    logs.push('  URL: ' + url);
+                }
 
                 markNetworkStart();
-                let response;
                 try {
-                    response = await fetchOrig.call(this, url, opts);
+                    const response = await fetchOrig.call(this, url, opts);
+                    if (verbose) {
+                        logs.push('[fetch] ✅ 응답 수신');
+                        logs.push('  Status: ' + response.status);
+                        logs.push('  URL: ' + url);
+                    }
+                    return response;
                 } finally {
                     markNetworkEnd();
                 }
-
-                logs.push('[fetch] ✅ 응답 수신');
-                logs.push('  Status: ' + response.status);
-                logs.push('  URL: ' + url);
-
-                return response;
             };
         }
 
@@ -1507,7 +1409,7 @@ struct BFCacheSnapshot: Codable {
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
 
                 // 🔍 무한 스크롤 메커니즘 감지 설치
-                installInfiniteScrollDetector(logs);
+                installInfiniteScrollDetector(logs, { verbose: false });
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
                 const loadMoreButtons = document.querySelectorAll(
@@ -1527,6 +1429,32 @@ struct BFCacheSnapshot: Codable {
                     logs.push('더보기 버튼 ' + clicked + '개 클릭');
                     await nextFrame();
                     await delay(160);
+                }
+
+                // 🚀 워밍업 패스: 배치 루프 전 더보기 버튼+스크롤을 빠르게 2회 선제 실행
+                // (제스처 감지~Step 1 실행 사이의 공백 시간을 활용)
+                {
+                    const warmRoot = document.scrollingElement || document.documentElement;
+                    const warmFindBtn = () => {
+                        const all = document.querySelectorAll('button, [role="button"]');
+                        for (const el of all) {
+                            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                            const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                            if (/더보기|more|load.?more|show.?more/i.test(txt)) return el;
+                        }
+                        return null;
+                    };
+                    const warmH0 = warmRoot.scrollHeight;
+                    // 1차 선제 트리거
+                    const wb1 = warmFindBtn(); if (wb1) wb1.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    // 2차 선제 트리거
+                    const wb2 = warmFindBtn(); if (wb2) wb2.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    const warmGrowth = warmRoot.scrollHeight - warmH0;
+                    if (warmGrowth > 0) logs.push('[Step 1] 워밍업 성장: +' + warmGrowth.toFixed(0) + 'px');
                 }
 
                 const containers = findScrollContainers();
@@ -1563,9 +1491,10 @@ struct BFCacheSnapshot: Codable {
 
                     let containerGrew = false;
                     let batchCount = 0;
-                    const maxAttempts = 50;
-                    const maxWait = 500;
-                    const scrollsPerBatch = 5;
+                    const maxAttempts = isVirtualList ? 36 : 16;
+                    const maxWait = isVirtualList ? 450 : 320;
+                    const scrollsPerBatch = isVirtualList ? 4 : 3;
+                    const maxSignalOnlyBatches = isVirtualList ? 4 : 1;
                     let stagnantProgressBatches = 0;
 
                     while (batchCount < maxAttempts) {
@@ -1605,13 +1534,43 @@ struct BFCacheSnapshot: Codable {
                         let batchHadProgressSignal = false;
                         let batchProgressOnly = false;
                         let batchMeaningfulProgress = false;
+                        let batchSignalCount = 0;
+                        let fingerprintBaseline = '';
                         const batchStartTime = Date.now();
+
+                        // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
+                        const findAndClickLoadMore = () => {
+                            const candidates = [];
+                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
+                                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+                                const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                                const cls = (el.className || '').toString();
+                                if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
+                                    candidates.push(el);
+                                } else if (/load.?more|show.?more|infinite/i.test(cls)) {
+                                    candidates.push(el);
+                                }
+                            });
+                            if (candidates.length > 0) {
+                                candidates[0].click();
+                                return true;
+                            }
+                            return false;
+                        };
+                        const didClickMore = findAndClickLoadMore();
+                        if (didClickMore) {
+                            logs.push('[Step 1] 더보기 버튼 클릭 (배치 ' + batchCount + ')');
+                            await nextFrame();
+                            await delay(60);
+                        }
 
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
                             const beforeTop = scrollRoot.scrollTop || 0;
                             const beforeRequestSeq = ((window.__bfcacheNetworkActivity || {}).requestSeq) || 0;
-                            const beforeFingerprint = getListTailFingerprint(scrollRoot);
+                            if (scrollIndex === 0) {
+                                fingerprintBaseline = getListTailFingerprint(scrollRoot);
+                            }
 
                             // 목표 도달 시 중단
                             if (beforeHeight >= savedContentHeight) {
@@ -1641,7 +1600,10 @@ struct BFCacheSnapshot: Codable {
 
                             const result = await waitForContentLoad(scrollRoot, beforeHeight, maxWait, {
                                 beforeTop: beforeTop,
-                                observedSentinel: observedSentinel
+                                observedSentinel: observedSentinel,
+                                allowNetworkStart: isVirtualList,
+                                allowScrollApplied: isVirtualList,
+                                allowSentinelIntersect: true
                             });
 
                             if (!isElementValid(scrollRoot)) break;
@@ -1659,37 +1621,43 @@ struct BFCacheSnapshot: Codable {
                                 } else {
                                     batchHadProgressSignal = true;
                                     batchProgressOnly = true;
-                                    batchSuccess = true; // step A: sentinel/progress 신호를 성공으로 간주
 
-                                    // step B: 요청 시작 또는 fingerprint 변화 확인
-                                    const progressSignal = await waitForProgressSignal(scrollRoot, {
-                                        timeout: result.reason === 'sentinel_intersect' ? 180 : 120,
-                                        beforeRequestSeq: beforeRequestSeq,
-                                        beforeFingerprint: beforeFingerprint
-                                    });
+                                    // 진행 신호는 최대 1회만 후속 확인하여 과도한 대기 누적 방지
+                                    batchSignalCount += 1;
+                                    const shouldProbeProgress = false; // sentinel_intersect 후 waitForProgressSignal 대기 제거 (fingerprint=0 사이트에서 100ms×N 낭비)
 
-                                    if (!isElementValid(scrollRoot)) break;
+                                    if (shouldProbeProgress) {
+                                        const progressSignal = await waitForProgressSignal(scrollRoot, {
+                                            timeout: isVirtualList ? 100 : 70,
+                                            beforeRequestSeq: beforeRequestSeq,
+                                            beforeFingerprint: fingerprintBaseline
+                                        });
 
-                                    if (progressSignal.success && progressSignal.reason && progressSignal.reason !== result.reason) {
-                                        triggerStats[progressSignal.reason] = (triggerStats[progressSignal.reason] || 0) + 1;
-                                    }
+                                        if (!isElementValid(scrollRoot)) break;
 
-                                    if (progressSignal.success) {
-                                        batchMeaningfulProgress = true;
-                                        batchProgressOnly = false;
-                                        if (progressSignal.reason === 'fingerprint_change') {
-                                            triggerStats.delayed_growth += 1;
+                                        if (progressSignal.reason) {
+                                            triggerStats[progressSignal.reason] = (triggerStats[progressSignal.reason] || 0) + 1;
                                         }
-                                    } else if (result.reason === 'network_start' || result.reason === 'scroll_applied') {
+
+                                        if (progressSignal.success) {
+                                            batchMeaningfulProgress = true;
+                                            batchProgressOnly = false;
+                                            if (progressSignal.reason === 'fingerprint_change') {
+                                                triggerStats.delayed_growth += 1;
+                                                fingerprintBaseline = getListTailFingerprint(scrollRoot);
+                                            }
+                                        }
+                                    } else if (isVirtualList && (result.reason === 'network_start' || result.reason === 'scroll_applied')) {
                                         batchMeaningfulProgress = true;
                                         batchProgressOnly = false;
                                     } else {
                                         const afterFingerprint = getListTailFingerprint(scrollRoot);
-                                        if (beforeFingerprint && afterFingerprint && afterFingerprint !== beforeFingerprint) {
+                                        if (fingerprintBaseline && afterFingerprint && afterFingerprint !== fingerprintBaseline) {
                                             triggerStats.fingerprint_change += 1;
                                             triggerStats.delayed_growth += 1;
                                             batchMeaningfulProgress = true;
                                             batchProgressOnly = false;
+                                            fingerprintBaseline = afterFingerprint;
                                         }
                                     }
                                 }
@@ -1698,10 +1666,15 @@ struct BFCacheSnapshot: Codable {
                                 lastHeight = result.height;
                                 batchMeaningfulProgress = true;
                                 batchSuccess = true;
+                                break; // height_growth 확인 즉시 다음 배치로 (남은 스크롤 불필요)
                             } else {
                                 // 더 이상 성장 안 함
                                 break;
                             }
+                        }
+
+                        if (!batchSuccess && isVirtualList && batchMeaningfulProgress) {
+                            batchSuccess = true;
                         }
 
                         const batchTime = ((Date.now() - batchStartTime) / 1000).toFixed(2);
@@ -1729,13 +1702,13 @@ struct BFCacheSnapshot: Codable {
                             }
                         } else {
                             if (batchProgressOnly || batchHadProgressSignal) {
-                                batchCount++;
                                 stagnantProgressBatches += 1;
                                 logs.push('[Step 1] 트리거 감지(성장 미확인): ' + batchTime + 's');
-                                if (stagnantProgressBatches >= 6) {
+                                if (!isVirtualList || stagnantProgressBatches >= maxSignalOnlyBatches) {
                                     logs.push('[Step 1] 트리거 반복 대비 성장 정체 - 중단');
                                     break;
                                 }
+                                batchCount++;
                             } else if (batchGrowth > 0) {
                                 logs.push('[Step 1] 소폭 증가: +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 계속)');
                                 batchCount++;
@@ -1784,7 +1757,7 @@ struct BFCacheSnapshot: Codable {
                     requireNetworkIdle: true
                 });
 
-                const step1TotalTime = ((Date.now() - step1StartTime) / 800).toFixed(1);
+                const step1TotalTime = ((Date.now() - step1StartTime) / 1000).toFixed(1);
                 logs.push('[Step 1] 총 소요 시간: ' + step1TotalTime + '초');
 
                 const refreshedRoot = getROOT();
