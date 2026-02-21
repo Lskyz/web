@@ -1512,6 +1512,32 @@ struct BFCacheSnapshot: Codable {
                         let fingerprintBaseline = '';
                         const batchStartTime = Date.now();
 
+                        // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
+                        const findAndClickLoadMore = () => {
+                            const candidates = [];
+                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
+                                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+                                const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                                const cls = (el.className || '').toString();
+                                if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
+                                    candidates.push(el);
+                                } else if (/load.?more|show.?more|infinite/i.test(cls)) {
+                                    candidates.push(el);
+                                }
+                            });
+                            if (candidates.length > 0) {
+                                candidates[0].click();
+                                return true;
+                            }
+                            return false;
+                        };
+                        const didClickMore = findAndClickLoadMore();
+                        if (didClickMore) {
+                            logs.push('[Step 1] 더보기 버튼 클릭 (배치 ' + batchCount + ')');
+                            await nextFrame();
+                            await delay(60);
+                        }
+
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
                             const beforeTop = scrollRoot.scrollTop || 0;
@@ -1572,7 +1598,7 @@ struct BFCacheSnapshot: Codable {
 
                                     // 진행 신호는 최대 1회만 후속 확인하여 과도한 대기 누적 방지
                                     batchSignalCount += 1;
-                                    const shouldProbeProgress = result.reason === 'sentinel_intersect' && batchSignalCount === 1;
+                                    const shouldProbeProgress = false; // sentinel_intersect 후 waitForProgressSignal 대기 제거 (fingerprint=0 사이트에서 100ms×N 낭비)
 
                                     if (shouldProbeProgress) {
                                         const progressSignal = await waitForProgressSignal(scrollRoot, {
@@ -1614,6 +1640,7 @@ struct BFCacheSnapshot: Codable {
                                 lastHeight = result.height;
                                 batchMeaningfulProgress = true;
                                 batchSuccess = true;
+                                break; // height_growth 확인 즉시 다음 배치로 (남은 스크롤 불필요)
                             } else {
                                 // 더 이상 성장 안 함
                                 break;
