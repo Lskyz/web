@@ -1353,7 +1353,6 @@ struct BFCacheSnapshot: Codable {
     }
     private func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
-        let targetScrollY = self.scrollPosition.y
 
         // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
@@ -1369,9 +1368,7 @@ struct BFCacheSnapshot: Codable {
 
             const logs = [];
             const savedContentHeight = parseFloat('\(savedHeight)');
-            const targetScrollY = parseFloat('\(targetScrollY)');
             logs.push('[Step 1] 저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
-            logs.push('[Step 1] 목표 scrollTop: ' + targetScrollY.toFixed(0) + 'px');
 
             const root = getROOT();
             logs.push('[Step 1] 스크롤 루트: ' + (root ? root.tagName : 'null'));
@@ -1434,6 +1431,32 @@ struct BFCacheSnapshot: Codable {
                     await delay(160);
                 }
 
+                // 🚀 워밍업 패스: 배치 루프 전 더보기 버튼+스크롤을 빠르게 2회 선제 실행
+                // (제스처 감지~Step 1 실행 사이의 공백 시간을 활용)
+                {
+                    const warmRoot = document.scrollingElement || document.documentElement;
+                    const warmFindBtn = () => {
+                        const all = document.querySelectorAll('button, [role="button"]');
+                        for (const el of all) {
+                            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                            const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                            if (/더보기|more|load.?more|show.?more/i.test(txt)) return el;
+                        }
+                        return null;
+                    };
+                    const warmH0 = warmRoot.scrollHeight;
+                    // 1차 선제 트리거
+                    const wb1 = warmFindBtn(); if (wb1) wb1.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    // 2차 선제 트리거
+                    const wb2 = warmFindBtn(); if (wb2) wb2.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    const warmGrowth = warmRoot.scrollHeight - warmH0;
+                    if (warmGrowth > 0) logs.push('[Step 1] 워밍업 성장: +' + warmGrowth.toFixed(0) + 'px');
+                }
+
                 const containers = findScrollContainers();
                 logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
@@ -1471,12 +1494,8 @@ struct BFCacheSnapshot: Codable {
                     const maxAttempts = isVirtualList ? 36 : 16;
                     const maxWait = isVirtualList ? 450 : 320;
                     const scrollsPerBatch = isVirtualList ? 4 : 3;
-                    const maxSignalOnlyBatches = isVirtualList ? 2 : 1;
+                    const maxSignalOnlyBatches = isVirtualList ? 4 : 1;
                     let stagnantProgressBatches = 0;
-                    let noContentCycles = 0;
-                    const maxNoContentCycles = isVirtualList ? 4 : 2;
-                    let prevFingerprintCount = 0;
-                    let prevScrollTop = scrollRoot.scrollTop || 0;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1486,16 +1505,6 @@ struct BFCacheSnapshot: Codable {
 
                         // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
                         if (isVirtualList) {
-                            // 🎯 목표 scrollTop 도달 시 즉시 종료
-                            if (targetScrollY > 0) {
-                                const currentScrollTop = scrollRoot.scrollTop || 0;
-                                if (currentScrollTop >= targetScrollY * 0.95) {
-                                    logs.push('[Step 1] 가상리스트 목표 scrollTop 도달 (' + currentScrollTop.toFixed(0) + 'px, 배치: ' + batchCount + ')');
-                                    grew = true;
-                                    containerGrew = true;
-                                    break;
-                                }
-                            }
                             if (maxScrollY >= savedContentHeight) {
                                 logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
                                 grew = true;
@@ -1528,6 +1537,32 @@ struct BFCacheSnapshot: Codable {
                         let batchSignalCount = 0;
                         let fingerprintBaseline = '';
                         const batchStartTime = Date.now();
+
+                        // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
+                        const findAndClickLoadMore = () => {
+                            const candidates = [];
+                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
+                                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+                                const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                                const cls = (el.className || '').toString();
+                                if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
+                                    candidates.push(el);
+                                } else if (/load.?more|show.?more|infinite/i.test(cls)) {
+                                    candidates.push(el);
+                                }
+                            });
+                            if (candidates.length > 0) {
+                                candidates[0].click();
+                                return true;
+                            }
+                            return false;
+                        };
+                        const didClickMore = findAndClickLoadMore();
+                        if (didClickMore) {
+                            logs.push('[Step 1] 더보기 버튼 클릭 (배치 ' + batchCount + ')');
+                            await nextFrame();
+                            await delay(60);
+                        }
 
                         for (let scrollIndex = 0; scrollIndex < scrollsPerBatch; scrollIndex++) {
                             const beforeHeight = scrollRoot.scrollHeight;
@@ -1589,7 +1624,7 @@ struct BFCacheSnapshot: Codable {
 
                                     // 진행 신호는 최대 1회만 후속 확인하여 과도한 대기 누적 방지
                                     batchSignalCount += 1;
-                                    const shouldProbeProgress = result.reason === 'sentinel_intersect' && batchSignalCount === 1 && !isVirtualList;
+                                    const shouldProbeProgress = false; // sentinel_intersect 후 waitForProgressSignal 대기 제거 (fingerprint=0 사이트에서 100ms×N 낭비)
 
                                     if (shouldProbeProgress) {
                                         const progressSignal = await waitForProgressSignal(scrollRoot, {
@@ -1612,7 +1647,7 @@ struct BFCacheSnapshot: Codable {
                                                 fingerprintBaseline = getListTailFingerprint(scrollRoot);
                                             }
                                         }
-                                    } else if (isVirtualList && result.reason === 'network_start') {
+                                    } else if (isVirtualList && (result.reason === 'network_start' || result.reason === 'scroll_applied')) {
                                         batchMeaningfulProgress = true;
                                         batchProgressOnly = false;
                                     } else {
@@ -1631,6 +1666,7 @@ struct BFCacheSnapshot: Codable {
                                 lastHeight = result.height;
                                 batchMeaningfulProgress = true;
                                 batchSuccess = true;
+                                break; // height_growth 확인 즉시 다음 배치로 (남은 스크롤 불필요)
                             } else {
                                 // 더 이상 성장 안 함
                                 break;
@@ -1655,26 +1691,11 @@ struct BFCacheSnapshot: Codable {
                             } else {
                                 stagnantProgressBatches += 1;
                                 logs.push('[Step 1] 신호 성공(성장 대기): ' + batchTime + 's');
-                                if (stagnantProgressBatches >= 3) {
+                                if (stagnantProgressBatches >= 5) {
                                     logs.push('[Step 1] 신호 반복 대비 성장 정체 - 중단');
                                     break;
                                 }
                             }
-
-                            const currentFingerprintCount = triggerStats.fingerprint_change || 0;
-                            const currentScrollTop = scrollRoot.scrollTop || 0;
-                            const scrollTopAdvanced = (currentScrollTop - prevScrollTop) > 50;
-                            if (batchGrowth > 0 || currentFingerprintCount > prevFingerprintCount || scrollTopAdvanced) {
-                                noContentCycles = 0;
-                            } else {
-                                noContentCycles += 1;
-                                if (noContentCycles >= maxNoContentCycles) {
-                                    logs.push('[Step 1] 실질 콘텐츠 변화 없음 연속 ' + noContentCycles + '회 - 조기 종료');
-                                    break;
-                                }
-                            }
-                            prevFingerprintCount = currentFingerprintCount;
-                            prevScrollTop = currentScrollTop;
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
                                 logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
