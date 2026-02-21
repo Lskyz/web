@@ -1431,6 +1431,32 @@ struct BFCacheSnapshot: Codable {
                     await delay(160);
                 }
 
+                // 🚀 워밍업 패스: 배치 루프 전 더보기 버튼+스크롤을 빠르게 2회 선제 실행
+                // (제스처 감지~Step 1 실행 사이의 공백 시간을 활용)
+                {
+                    const warmRoot = document.scrollingElement || document.documentElement;
+                    const warmFindBtn = () => {
+                        const all = document.querySelectorAll('button, [role="button"]');
+                        for (const el of all) {
+                            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                            const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                            if (/더보기|more|load.?more|show.?more/i.test(txt)) return el;
+                        }
+                        return null;
+                    };
+                    const warmH0 = warmRoot.scrollHeight;
+                    // 1차 선제 트리거
+                    const wb1 = warmFindBtn(); if (wb1) wb1.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    // 2차 선제 트리거
+                    const wb2 = warmFindBtn(); if (wb2) wb2.click();
+                    warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
+                    await delay(80);
+                    const warmGrowth = warmRoot.scrollHeight - warmH0;
+                    if (warmGrowth > 0) logs.push('[Step 1] 워밍업 성장: +' + warmGrowth.toFixed(0) + 'px');
+                }
+
                 const containers = findScrollContainers();
                 logs.push('[Step 1] 컨테이너: ' + containers.length + '개');
 
