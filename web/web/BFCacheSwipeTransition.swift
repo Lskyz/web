@@ -1412,14 +1412,42 @@ struct BFCacheSnapshot: Codable {
                 installInfiniteScrollDetector(logs, { verbose: false });
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
+                const isSameDocumentAnchor = (href) => {
+                    if (!href) return false;
+                    return href.startsWith('#') || /^javascript:/i.test(href);
+                };
+
+                const isSafeLoadMoreTarget = (el) => {
+                    if (!el || typeof el.click !== 'function' || !isElementValid(el)) return false;
+                    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+
+                    const txt = (
+                        (el.textContent || '') + ' ' +
+                        (el.getAttribute('aria-label') || '') + ' ' +
+                        (el.getAttribute('title') || '')
+                    ).trim();
+                    const cls = (el.className || '').toString();
+                    const looksLikeLoadMore =
+                        /더보기|load.?more|show.?more|view.?more|more.*comments|more.*posts/i.test(txt) ||
+                        /load.?more|show.?more|btn-more|more-btn|infinite/i.test(cls);
+
+                    if (!looksLikeLoadMore) return false;
+
+                    if ((el.tagName || '').toUpperCase() === 'A') {
+                        const href = (el.getAttribute('href') || '').trim();
+                        return isSameDocumentAnchor(href);
+                    }
+
+                    return true;
+                };
+
                 const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
+                    'button, [role="button"], a, [data-testid*="load"], .load-more, .show-more'
                 );
 
                 let clicked = 0;
                 loadMoreButtons.forEach(btn => {
-                    if (clicked < 5 && btn && typeof btn.click === 'function') {
+                    if (clicked < 5 && isSafeLoadMoreTarget(btn)) {
                         btn.click();
                         clicked += 1;
                     }
@@ -1440,7 +1468,7 @@ struct BFCacheSnapshot: Codable {
                         for (const el of all) {
                             if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
                             const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
-                            if (/더보기|more|load.?more|show.?more/i.test(txt)) return el;
+                            if (/더보기|load.?more|show.?more|view.?more/i.test(txt)) return el;
                         }
                         return null;
                     };
@@ -1541,13 +1569,8 @@ struct BFCacheSnapshot: Codable {
                         // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
                         const findAndClickLoadMore = () => {
                             const candidates = [];
-                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
-                                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
-                                const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
-                                const cls = (el.className || '').toString();
-                                if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
-                                    candidates.push(el);
-                                } else if (/load.?more|show.?more|infinite/i.test(cls)) {
+                            document.querySelectorAll('button, [role="button"], a, [data-testid*="load"], .load-more, .show-more').forEach(el => {
+                                if (isSafeLoadMoreTarget(el)) {
                                     candidates.push(el);
                                 }
                             });
