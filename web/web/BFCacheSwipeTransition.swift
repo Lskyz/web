@@ -1492,7 +1492,7 @@ struct BFCacheSnapshot: Codable {
                     let containerGrew = false;
                     let batchCount = 0;
                     const maxAttempts = isVirtualList ? 36 : 16;
-                    const maxWait = isVirtualList ? 450 : 320;
+                    const maxWait = isVirtualList ? 450 : 400; // 일반 DOM: API 응답 ~400ms 커버
                     const scrollsPerBatch = isVirtualList ? 4 : 3;
                     const maxSignalOnlyBatches = isVirtualList ? 4 : 1;
                     let stagnantProgressBatches = 0;
@@ -1603,7 +1603,7 @@ struct BFCacheSnapshot: Codable {
                                 observedSentinel: observedSentinel,
                                 allowNetworkStart: isVirtualList,
                                 allowScrollApplied: isVirtualList,
-                                allowSentinelIntersect: true
+                                allowSentinelIntersect: isVirtualList // 일반 DOM 방식 사이트에서 sentinel 허탕 배치 제거
                             });
 
                             if (!isElementValid(scrollRoot)) break;
