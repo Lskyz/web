@@ -1468,8 +1468,11 @@ struct BFCacheSnapshot: Codable {
                     const maxAttempts = isVirtualList ? 36 : 16;
                     const maxWait = isVirtualList ? 450 : 320;
                     const scrollsPerBatch = isVirtualList ? 4 : 3;
-                    const maxSignalOnlyBatches = isVirtualList ? 4 : 1;
+                    const maxSignalOnlyBatches = isVirtualList ? 2 : 1;
                     let stagnantProgressBatches = 0;
+                    let noContentCycles = 0;
+                    const maxNoContentCycles = isVirtualList ? 4 : 2;
+                    let prevFingerprintCount = 0;
 
                     while (batchCount < maxAttempts) {
                         if (!isElementValid(scrollRoot)) break;
@@ -1572,7 +1575,7 @@ struct BFCacheSnapshot: Codable {
 
                                     // 진행 신호는 최대 1회만 후속 확인하여 과도한 대기 누적 방지
                                     batchSignalCount += 1;
-                                    const shouldProbeProgress = result.reason === 'sentinel_intersect' && batchSignalCount === 1;
+                                    const shouldProbeProgress = result.reason === 'sentinel_intersect' && batchSignalCount === 1 && !isVirtualList;
 
                                     if (shouldProbeProgress) {
                                         const progressSignal = await waitForProgressSignal(scrollRoot, {
@@ -1595,7 +1598,7 @@ struct BFCacheSnapshot: Codable {
                                                 fingerprintBaseline = getListTailFingerprint(scrollRoot);
                                             }
                                         }
-                                    } else if (isVirtualList && (result.reason === 'network_start' || result.reason === 'scroll_applied')) {
+                                    } else if (isVirtualList && result.reason === 'network_start') {
                                         batchMeaningfulProgress = true;
                                         batchProgressOnly = false;
                                     } else {
@@ -1638,11 +1641,23 @@ struct BFCacheSnapshot: Codable {
                             } else {
                                 stagnantProgressBatches += 1;
                                 logs.push('[Step 1] 신호 성공(성장 대기): ' + batchTime + 's');
-                                if (stagnantProgressBatches >= 5) {
+                                if (stagnantProgressBatches >= 3) {
                                     logs.push('[Step 1] 신호 반복 대비 성장 정체 - 중단');
                                     break;
                                 }
                             }
+
+                            const currentFingerprintCount = triggerStats.fingerprint_change || 0;
+                            if (batchGrowth > 0 || currentFingerprintCount > prevFingerprintCount) {
+                                noContentCycles = 0;
+                            } else {
+                                noContentCycles += 1;
+                                if (noContentCycles >= maxNoContentCycles) {
+                                    logs.push('[Step 1] 실질 콘텐츠 변화 없음 연속 ' + noContentCycles + '회 - 조기 종료');
+                                    break;
+                                }
+                            }
+                            prevFingerprintCount = currentFingerprintCount;
 
                             if (batchCount === 0 || batchCount % 5 === 0) {
                                 logs.push('[Step 1] Batch ' + batchCount + ': +' + batchGrowth.toFixed(0) + 'px (' + batchTime + 's, 현재: ' + lastHeight.toFixed(0) + 'px)');
