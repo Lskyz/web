@@ -1412,14 +1412,47 @@ struct BFCacheSnapshot: Codable {
                 installInfiniteScrollDetector(logs, { verbose: false });
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
+                // 더보기 버튼 트리거 시 페이지 이동/탭 전환 버튼 오클릭 방지
+                const isSafeToClick = (el) => {
+                    if (!el) return false;
+                    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+
+                    // 1단계 방어: a 태그 자체 검증
+                    if (el.tagName && el.tagName.toLowerCase() === 'a') {
+                        const href = (el.getAttribute('href') || '').trim();
+                        if (href !== '' && href !== '#') {
+                            return false;
+                        }
+                    }
+
+                    // 2단계 방어: 상위 a 태그(href 유효) 내부 요소 클릭 차단
+                    let parent = el.parentElement;
+                    let depth = 0;
+                    while (parent && depth < 3) {
+                        if (parent.tagName && parent.tagName.toLowerCase() === 'a') {
+                            const parentHref = (parent.getAttribute('href') || '').trim();
+                            if (parentHref !== '' && parentHref !== '#') return false;
+                        }
+                        parent = parent.parentElement;
+                        depth += 1;
+                    }
+
+                    const text = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                    // 3단계 방어: 탭/네비게이션 계열 텍스트 차단
+                    if (/개념글|추천글|베스트|전체글|갤러리|게시판|이동|목록|홈|home|login|로그인/i.test(text)) {
+                        return false;
+                    }
+
+                    return true;
+                };
+
                 const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load"], [class*="more"], ' +
-                    'button[class*="more"], .load-more, .show-more'
+                    '[data-testid*="load"], [class*="load-more"], [class*="show-more"], button[class*="more"]'
                 );
 
                 let clicked = 0;
                 loadMoreButtons.forEach(btn => {
-                    if (clicked < 5 && btn && typeof btn.click === 'function') {
+                    if (clicked < 5 && isSafeToClick(btn) && typeof btn.click === 'function') {
                         btn.click();
                         clicked += 1;
                     }
@@ -1438,9 +1471,11 @@ struct BFCacheSnapshot: Codable {
                     const warmFindBtn = () => {
                         const all = document.querySelectorAll('button, [role="button"]');
                         for (const el of all) {
-                            if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                            if (!isSafeToClick(el)) continue;
                             const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
-                            if (/더보기|more|load.?more|show.?more/i.test(txt)) return el;
+                            const cls = (el.className || '').toString();
+                            if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) return el;
+                            if (/load.?more|show.?more|infinite/i.test(cls)) return el;
                         }
                         return null;
                     };
@@ -1541,8 +1576,8 @@ struct BFCacheSnapshot: Codable {
                         // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
                         const findAndClickLoadMore = () => {
                             const candidates = [];
-                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
-                                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+                            document.querySelectorAll('button, [role="button"]').forEach(el => {
+                                if (!isSafeToClick(el)) return;
                                 const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
                                 const cls = (el.className || '').toString();
                                 if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
