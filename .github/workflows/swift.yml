@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
 
     steps:
       - name: 코드 체크아웃
