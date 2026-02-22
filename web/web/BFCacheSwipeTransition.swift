@@ -23,6 +23,7 @@ struct BFCacheSnapshot: Codable {
     let viewportSize: CGSize  // 📱 뷰포트 크기 정보
     let actualScrollableSize: CGSize  // ♾️ **실제 스크롤 가능한 최대 크기**
     var jsState: [String: Any]?
+    var cachedAPIResponses: [[String: String]]?  // 🌐 배치 성장 중 캡처된 API 응답 캐시
     let timestamp: Date
     var webViewSnapshotPath: String?
     let captureStatus: CaptureStatus
@@ -64,6 +65,7 @@ struct BFCacheSnapshot: Codable {
         case viewportSize
         case actualScrollableSize
         case jsState
+        case cachedAPIResponses
         case timestamp
         case webViewSnapshotPath
         case captureStatus
@@ -87,6 +89,7 @@ struct BFCacheSnapshot: Codable {
         if let jsData = try container.decodeIfPresent(Data.self, forKey: .jsState) {
             jsState = try JSONSerialization.jsonObject(with: jsData) as? [String: Any]
         }
+        cachedAPIResponses = try container.decodeIfPresent([[String: String]].self, forKey: .cachedAPIResponses)
 
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         webViewSnapshotPath = try container.decodeIfPresent(String.self, forKey: .webViewSnapshotPath)
@@ -110,6 +113,7 @@ struct BFCacheSnapshot: Codable {
             let jsData = try JSONSerialization.data(withJSONObject: js)
             try container.encode(jsData, forKey: .jsState)
         }
+        try container.encodeIfPresent(cachedAPIResponses, forKey: .cachedAPIResponses)
 
         try container.encode(timestamp, forKey: .timestamp)
         try container.encodeIfPresent(webViewSnapshotPath, forKey: .webViewSnapshotPath)
@@ -119,17 +123,18 @@ struct BFCacheSnapshot: Codable {
 
     // 직접 초기화용 init (정밀 스크롤 지원)
     init(
-        pageRecord: PageRecord, 
-        domSnapshot: String? = nil, 
-        scrollPosition: CGPoint, 
+        pageRecord: PageRecord,
+        domSnapshot: String? = nil,
+        scrollPosition: CGPoint,
         scrollPositionPercent: CGPoint = CGPoint.zero,
         contentSize: CGSize = CGSize.zero,
         viewportSize: CGSize = CGSize.zero,
         actualScrollableSize: CGSize = CGSize.zero,
-        jsState: [String: Any]? = nil, 
-        timestamp: Date, 
-        webViewSnapshotPath: String? = nil, 
-        captureStatus: CaptureStatus = .partial, 
+        jsState: [String: Any]? = nil,
+        cachedAPIResponses: [[String: String]]? = nil,
+        timestamp: Date,
+        webViewSnapshotPath: String? = nil,
+        captureStatus: CaptureStatus = .partial,
         version: Int = 1,
         restorationConfig: RestorationConfig = RestorationConfig.default
     ) {
@@ -141,6 +146,7 @@ struct BFCacheSnapshot: Codable {
         self.viewportSize = viewportSize
         self.actualScrollableSize = actualScrollableSize
         self.jsState = jsState
+        self.cachedAPIResponses = cachedAPIResponses
         self.timestamp = timestamp
         self.webViewSnapshotPath = webViewSnapshotPath
         self.captureStatus = captureStatus
@@ -1267,6 +1273,7 @@ struct BFCacheSnapshot: Codable {
                 lastStart: 0,
                 lastEnd: 0
             };
+            window.__bfcacheCapturedResponses = window.__bfcacheCapturedResponses || [];
 
             const markNetworkStart = () => {
                 const state = window.__bfcacheNetworkActivity;
@@ -1281,9 +1288,30 @@ struct BFCacheSnapshot: Codable {
                 state.lastEnd = Date.now();
             };
 
+            const captureResponse = (url, method, status, body) => {
+                const captured = window.__bfcacheCapturedResponses;
+                if (captured.length >= 50) return;
+                const urlStr = url ? url.toString() : '';
+                // 중복 URL은 최신으로 덮어쓰기
+                const existingIdx = captured.findIndex(r => r.url === urlStr && r.method === method);
+                const entry = {
+                    url: urlStr,
+                    method: method || 'GET',
+                    status: String(status || 200),
+                    body: (body || '').substring(0, 51200)
+                };
+                if (existingIdx >= 0) {
+                    captured[existingIdx] = entry;
+                } else {
+                    captured.push(entry);
+                }
+            };
+
             // 3. XHR/fetch 감지
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
+                this.__bfcacheMethod = method;
+                this.__bfcacheURL = url;
                 if (verbose) {
                     logs.push('[XHR] 📡 요청 시작');
                     logs.push('  Method: ' + method);
@@ -1296,6 +1324,13 @@ struct BFCacheSnapshot: Codable {
 
                     const onLoadEnd = () => {
                         markNetworkEnd();
+                        try {
+                            const ct = this.getResponseHeader ? this.getResponseHeader('content-type') : '';
+                            const isText = !ct || /json|text|javascript/i.test(ct);
+                            if (isText && this.responseText) {
+                                captureResponse(this.__bfcacheURL, this.__bfcacheMethod, this.status, this.responseText);
+                            }
+                        } catch(e) {}
                         this.removeEventListener('loadend', onLoadEnd);
                     };
                     this.addEventListener('loadend', onLoadEnd);
@@ -1330,6 +1365,16 @@ struct BFCacheSnapshot: Codable {
                         logs.push('  Status: ' + response.status);
                         logs.push('  URL: ' + url);
                     }
+                    // 응답 본문 캡처 (클론해서 원본 스트림 소비 방지)
+                    try {
+                        const ct = response.headers.get('content-type') || '';
+                        const isText = !ct || /json|text|javascript/i.test(ct);
+                        if (isText) {
+                            response.clone().text().then(body => {
+                                captureResponse(url, method, response.status, body);
+                            }).catch(() => {});
+                        }
+                    } catch(e) {}
                     return response;
                 } finally {
                     markNetworkEnd();
@@ -1362,9 +1407,79 @@ struct BFCacheSnapshot: Codable {
             """
         }
 
+        // 🌐 **저장된 API 응답 캐시 JSON 직렬화**
+        let cachedResponsesJSON: String
+        if let responses = self.cachedAPIResponses,
+           !responses.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: responses),
+           let str = String(data: data, encoding: .utf8) {
+            cachedResponsesJSON = str
+            TabPersistenceManager.debugMessages.append("🌐 [Step 1] API 캐시 주입 준비: \(responses.count)개")
+        } else {
+            cachedResponsesJSON = "[]"
+        }
+
         return """
         try {
             \(generateCommonUtilityScript())
+
+            // 🌐 **저장된 API 응답으로 fetch/XHR 오버라이드 (배치 성장 가속)**
+            (function injectCachedResponses() {
+                const cachedResponses = \(cachedResponsesJSON);
+                if (!cachedResponses || cachedResponses.length === 0) return;
+                const responseMap = {};
+                cachedResponses.forEach(function(r) {
+                    if (r && r.url) responseMap[r.url] = r;
+                });
+                const urlCount = Object.keys(responseMap).length;
+                if (urlCount === 0) return;
+
+                // fetch 오버라이드
+                if (typeof window.fetch === 'function' && !window.__bfcacheFetchInjected) {
+                    window.__bfcacheFetchInjected = true;
+                    const origFetch = window.fetch;
+                    window.fetch = async function(url, opts) {
+                        const key = url ? url.toString() : '';
+                        const cached = responseMap[key];
+                        if (cached) {
+                            return new Response(cached.body || '', {
+                                status: parseInt(cached.status) || 200,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                        }
+                        return origFetch.apply(this, arguments);
+                    };
+                }
+
+                // XHR 오버라이드
+                if (typeof XMLHttpRequest !== 'undefined' && !window.__bfcacheXHRInjected) {
+                    window.__bfcacheXHRInjected = true;
+                    const openOrig = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        this.__bfcacheCachedURL = url ? url.toString() : '';
+                        this.__bfcacheCachedMethod = method;
+                        return openOrig.apply(this, arguments);
+                    };
+                    const sendOrig = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.send = function() {
+                        const cached = responseMap[this.__bfcacheCachedURL];
+                        if (cached) {
+                            const self = this;
+                            setTimeout(function() {
+                                Object.defineProperty(self, 'status', { value: parseInt(cached.status) || 200, configurable: true });
+                                Object.defineProperty(self, 'responseText', { value: cached.body || '', configurable: true });
+                                Object.defineProperty(self, 'readyState', { value: 4, configurable: true });
+                                if (typeof self.onload === 'function') self.onload();
+                                if (typeof self.onreadystatechange === 'function') self.onreadystatechange();
+                                self.dispatchEvent(new Event('load'));
+                                self.dispatchEvent(new Event('loadend'));
+                            }, 0);
+                            return;
+                        }
+                        return sendOrig.apply(this, arguments);
+                    };
+                }
+            })();
 
             const logs = [];
             const savedContentHeight = parseFloat('\(savedHeight)');
@@ -2704,6 +2819,15 @@ extension BFCacheTransitionSystem {
             savedContentHeight: max(captureData.actualScrollableSize.height, captureData.contentSize.height)
         )
 
+        // jsState에서 cachedAPIResponses 추출 (별도 필드로 저장)
+        var capturedAPIResponses: [[String: String]]? = nil
+        if let jsData = jsState,
+           let responses = jsData["cachedAPIResponses"] as? [[String: String]],
+           !responses.isEmpty {
+            capturedAPIResponses = responses
+            TabPersistenceManager.debugMessages.append("🌐 API 응답 캐시 캡처: \(responses.count)개")
+        }
+
         let snapshot = BFCacheSnapshot(
             pageRecord: pageRecord,
             domSnapshot: domSnapshot,
@@ -2713,6 +2837,7 @@ extension BFCacheTransitionSystem {
             viewportSize: captureData.viewportSize,
             actualScrollableSize: captureData.actualScrollableSize,
             jsState: jsState,
+            cachedAPIResponses: capturedAPIResponses,
             timestamp: Date(),
             webViewSnapshotPath: nil,  // 나중에 디스크 저장시 설정
             captureStatus: captureStatus,
@@ -3222,22 +3347,23 @@ extension BFCacheTransitionSystem {
                     userAgent: navigator.userAgent,
                     viewport: { width: viewportWidth, height: viewportHeight },
                     content: { width: contentWidth, height: contentHeight },
-                    actualScrollable: { 
+                    actualScrollable: {
                         width: Math.max(contentWidth, viewportWidth),
                         height: Math.max(contentHeight, viewportHeight)
                     },
                     detailedLogs: detailedLogs,
                     captureStats: infiniteScrollAnchorsData.stats,
                     pageAnalysis: pageAnalysis,
-                    captureTime: captureTime
+                    captureTime: captureTime,
+                    cachedAPIResponses: window.__bfcacheCapturedResponses || []
                 };
-            } catch(e) { 
+            } catch(e) {
                 console.error('🚀 무한스크롤 전용 앵커 캡처 실패:', e);
                 return {
                     infiniteScrollAnchors: { anchors: [], stats: {} },
-                    scroll: { 
-                        x: parseFloat(document.scrollingElement?.scrollLeft || document.documentElement.scrollLeft) || 0, 
-                        y: parseFloat(document.scrollingElement?.scrollTop || document.documentElement.scrollTop) || 0 
+                    scroll: {
+                        x: parseFloat(document.scrollingElement?.scrollLeft || document.documentElement.scrollLeft) || 0,
+                        y: parseFloat(document.scrollingElement?.scrollTop || document.documentElement.scrollTop) || 0
                     },
                     href: window.location.href,
                     title: document.title,
@@ -3245,7 +3371,8 @@ extension BFCacheTransitionSystem {
                     error: e.message,
                     detailedLogs: ['무한스크롤 전용 앵커 캡처 실패: ' + e.message],
                     captureStats: { error: e.message },
-                    pageAnalysis: { error: e.message }
+                    pageAnalysis: { error: e.message },
+                    cachedAPIResponses: window.__bfcacheCapturedResponses || []
                 };
             }
         })()
