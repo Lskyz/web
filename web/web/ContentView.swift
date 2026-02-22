@@ -1,4 +1,3 @@
-import Foundation
 import SwiftUI
 import AVKit
 import WebKit
@@ -12,7 +11,7 @@ struct WhiteGlassBlur: UIViewRepresentable {
     var intensity: CGFloat = 1.0
     
     func makeUIView(context: Context) -> UIVisualEffectView {
-        let effect = makeEffect()
+        let effect = UIBlurEffect(style: blurStyle)
         let effectView = UIVisualEffectView(effect: effect)
         effectView.clipsToBounds = true
         effectView.layer.cornerRadius = cornerRadius
@@ -22,42 +21,20 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
-        uiView.effect = makeEffect()
+        uiView.effect = UIBlurEffect(style: blurStyle)
         uiView.layer.cornerRadius = cornerRadius
         uiView.backgroundColor = .clear
         uiView.alpha = intensity
-    }
-
-    private func makeEffect() -> UIVisualEffect {
-        if let dynamicGlass = makeDynamicGlassEffect() {
-            return dynamicGlass
-        }
-        return UIBlurEffect(style: blurStyle)
-    }
-
-    // SDK에 심볼이 없어도(iOS 26 API 미노출 환경) 런타임에서 Glass Effect를 시도한다.
-    private func makeDynamicGlassEffect() -> UIVisualEffect? {
-        guard let glassType = NSClassFromString("UIGlassEffect") as? NSObject.Type else {
-            return nil
-        }
-
-        let glassObject = glassType.init()
-        if glassObject.responds(to: NSSelectorFromString("setIsInteractive:")) {
-            glassObject.setValue(true, forKey: "isInteractive")
-        } else if glassObject.responds(to: NSSelectorFromString("setInteractive:")) {
-            glassObject.setValue(true, forKey: "interactive")
-        }
-        return glassObject as? UIVisualEffect
     }
     
     private func setupWhiteGlassEffect(_ effectView: UIVisualEffectView) {
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
-            UIColor.white.withAlphaComponent(0.20).cgColor,
-            UIColor.white.withAlphaComponent(0.08).cgColor,
+            UIColor.white.withAlphaComponent(0.1).cgColor,
+            UIColor.white.withAlphaComponent(0.05).cgColor,
             UIColor.clear.cgColor
         ]
-        gradientLayer.locations = [0.0, 0.62, 1.0]
+        gradientLayer.locations = [0.0, 0.8, 1.0]
         gradientLayer.startPoint = CGPoint(x: 0, y: 0)
         gradientLayer.endPoint   = CGPoint(x: 1, y: 1)
         effectView.contentView.layer.addSublayer(gradientLayer)
@@ -111,7 +88,6 @@ struct ContentView: View {
 
     @State private var isMenuButtonPressed = false
     @State private var menuButtonPressStartTime: Date? = nil
-    @GestureState private var toolbarDragOffsetX: CGFloat = 0
 
     // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
@@ -121,8 +97,8 @@ struct ContentView: View {
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let toolbarSpacing: CGFloat = 40
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
+    private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
-    private let toolbarHorizontalDragLimit: CGFloat = 84
     
     // ✅ 키보드 높이 추가 (수동 처리 필요)
     @State private var keyboardHeight: CGFloat = 0
@@ -205,7 +181,7 @@ struct ContentView: View {
         if animated {
             let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
             withAnimation(.easeInOut(duration: duration)) { 
-                self.keyboardHeight = adjustedHeight
+                self.keyboardHeight = adjustedHeight 
             }
         } else {
             self.keyboardHeight = adjustedHeight
@@ -380,12 +356,20 @@ struct ContentView: View {
                 
                 // 네비게이션 툴바 - 배경에 자연스럽게 통합
                 HStack(spacing: 0) {
-                    toolbarButtonsRow
-                    .offset(x: toolbarLiquidOffsetX)
-                    .scaleEffect(x: 1.0 - (abs(toolbarLiquidOffsetX) * 0.00025), y: 1.0, anchor: .center)
-                    .animation(.interactiveSpring(response: 0.30, dampingFraction: 0.82), value: toolbarLiquidOffsetX)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(toolbarHorizontalDragGesture)
+                    HStack(spacing: toolbarSpacing) {
+                        toolbarButton("chevron.left", action: {
+                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                        }, enabled: currentState.canGoBack)
+                        toolbarButton("chevron.right", action: {
+                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                        }, enabled: currentState.canGoForward)
+                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                        if pipManager.isPIPActive {
+                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                        }
+                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+                    }
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .padding(.horizontal, 16)
@@ -686,68 +670,17 @@ struct ContentView: View {
         }
         .disabled(!enabled)
     }
-
-    private var toolbarButtonsContent: some View {
-        HStack(spacing: toolbarSpacing) {
-            toolbarButton("chevron.left", action: {
-                currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-            }, enabled: currentState.canGoBack)
-            toolbarButton("chevron.right", action: {
-                currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-            }, enabled: currentState.canGoForward)
-            toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
-            toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
-            if pipManager.isPIPActive {
-                toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-            }
-            toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-        }
-    }
-
-    private var toolbarButtonsRow: some View {
-        toolbarButtonsContent
-    }
-
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
-            Rectangle().fill(Color.white.opacity(0.02))
+            Rectangle().fill(Color.white.opacity(whiteGlassTintOpacity))
         }
     }
     private var whiteGlassOverlay: some View {
         Group {
-            Rectangle().strokeBorder(.white.opacity(0.16), lineWidth: 0.6)
-            Rectangle().strokeBorder(.white.opacity(0.05), lineWidth: 0.35)
+            Rectangle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
+            Rectangle().strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
         }
-    }
-
-    // MARK: - Toolbar Horizontal Liquid Drag
-    private var toolbarLiquidOffsetX: CGFloat {
-        clamp(toolbarDragOffsetX * 0.88, min: -toolbarHorizontalDragLimit, max: toolbarHorizontalDragLimit)
-    }
-
-    private var toolbarHorizontalDragGesture: some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .local)
-            .updating($toolbarDragOffsetX) { value, state, _ in
-                guard !isTextFieldFocused, !siteMenuManager.showSiteMenu else {
-                    state = 0
-                    return
-                }
-
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                state = abs(horizontal) > abs(vertical) ? horizontal : 0
-            }
-            .onEnded { value in
-                guard !isTextFieldFocused, !siteMenuManager.showSiteMenu else { return }
-                if abs(value.translation.width) > 36 && abs(value.translation.width) > abs(value.translation.height) {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }
-            }
-    }
-
-    private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
-        Swift.min(maxValue, Swift.max(minValue, value))
     }
     
     // MARK: - 핸들러
