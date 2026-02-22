@@ -1,591 +1,138 @@
-복원 시도: 데이터 크기 21760 바이트
-복원 성공: 1개 탭 디코딩
-탭 복원 준비: ID 6373C199, 76개 페이지, idx 75
-🏊‍♂️ 웹뷰 풀 초기화 (LRU 정책)
-[20:40:48.573] ☁️ 전역 방문 기록 저장: 97개
-[20:40:48.575] ☁️ 전역 방문 기록 로드: 97개
-[20:40:48.575][6373C1][B:❌ F:❌] 🔄 === 세션 복원 시작 ===
-[20:40:48.576][noTab][B:❌ F:❌][0] 🔄 === 세션 복원 시작 ===
-[20:40:48.576][noTab][B:✅ F:❌][76][sessionRestoring] 🎯 네비게이션 상태: back=true, forward=false, index=75/76
-[20:40:48.576][noTab][B:✅ F:❌][76][sessionRestoring] 🔄 세션 복원: 76개 페이지, 현재 인덱스 75
-[20:40:48.576][6373C1][B:✅ F:❌][sessionRestoring] 🔄 세션 복원: 76개 페이지, 현재 '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-복원 탭 생성: ID 6373C199, 76개 페이지, 인덱스 75
-복원 완료: [76페이지]
-웹뷰 풀 상태: 활성: 0, 풀: 0/10, PIP보호: 0
-오디오 세션 설정 성공
-무음 오디오 재생 시작
-SilentAudioPlayer 초기화
-[20:40:48.636] ☁️ 전역 방문 기록 저장: 97개
-[20:40:48.636] ☁️ 전역 방문 기록 로드: 97개
-앱 초기화: 탭 1개 로드, 선택된 탭 인덱스 0
-🎬 PIP 관리자 초기화
-🎬 PIP 웹뷰 컨테이너 초기화
-🏊‍♂️ 웹뷰 풀 재사용 시도: 탭 6373C199
-🆕 새 웹뷰 생성: 탭 6373C199
-🏊‍♂️ 웹뷰 등록: 탭 6373C199
-🏊‍♂️ 웹뷰 풀 등록: 탭 6373C199
-📁 다운로드 핸들링 설정 완료
-📁 WebView 다운로드 기능 설정 완료
-📁 다운로드 기능 활성화 완료 (iOS 14+)
-[20:40:48.685][6373C1][B:✅ F:❌] 🎯 웹뷰 네이티브 네비게이션 완전 제어 설정
-🧵 제스처 컨텍스트 생성: FE8B873F
-[BFCache] 📸 네비게이션 감지 등록: 탭 6373C199
-[BFCache] 🎯 통합 앵커 BFCache 제스처 설정 완료
-✅ 통합 앵커 BFCache 시스템 설치 완료
-탭 진입, 주소창 동기화: https://m.dcinside.com/board/thesingularity?recommend=1
-🖥️ 웹뷰 상태 동기화 완료
-🖥️ 웹뷰 상태 동기화 완료
-[20:40:48.719][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: false
-[20:40:48.720][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-[20:40:48.720][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
-[20:40:48.720][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-🖥️ 데스크탑 모드 적용 완료: false
-🖥️ 데스크탑 모드 적용 완료: false
-[20:40:48.757][noTab][B:✅ F:❌][76] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:40:48.851][noTab][B:✅ F:❌][76] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 75] URL: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:40:48.970][noTab][B:✅ F:❌][76] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 75] URL: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:40:48.970][noTab][B:✅ F:❌][76] 🔄 같은 페이지 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:40:48.970][noTab][B:✅ F:❌][76] 🆕 페이지 기록: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (총 76개)
-HIST ⏪가능 ▶︎불가 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: 17704612)
-ID 정렬: dataModel.tabID <- 6373C199
-[20:40:48.970][6373C1][B:✅ F:❌][76] 💾 세션 저장: 76개 페이지, 현재 인덱스 75
-스냅샷 생성: ID 6373C199, 76개 페이지, 인덱스 75
-저장 시도: 탭 1개 [76페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 21760 바이트
-[20:40:48.971][6373C1][B:✅ F:❌][76] ✅ 네비게이션 완료
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (background)
-[20:40:49.281][6373C1][B:✅ F:❌][76] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 84090문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 96개 (Vue=0, Hash=48, Index=48)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 48, "virtualIndexAnchors": 48, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "totalCandidates": 162, "vueComponentAnchors": 0, "finalAnchors": 96]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=2019.0, viewportHeight=812.0, maxScrollY=1207.0
-🔥 캡처된 jsState 키: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=48, Index=48, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["qualityScore", "anchorType", "textContent", "offsetFromTop", "contentHash", "elementId", "dataAttributes", "tagName", "absolutePosition", "size", "viewportPosition", "anchorIndex", "elementClasses", "captureTimestamp", "region"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 48, "virtualIndexAnchors": 48, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "totalCandidates": 162, "vueComponentAnchors": 0, "finalAnchors": 96]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:40:51.530][6373C1][B:✅ F:❌][76] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[20:40:51.531][6373C1][B:✅ F:❌][76] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:40:51.538][6373C1][B:✅ F:❌][76] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 84090문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureStats", "scroll", "actualScrollable", "viewport", "infiniteScrollAnchors", "content", "userAgent", "timestamp", "title", "href", "captureTime", "detailedLogs", "pageAnalysis"]
-🚀 JS 캡처된 앵커: 총 96개 (Vue=0, Hash=48, Index=48)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 48, "virtualIndexAnchors": 48, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "finalAnchors": 96, "totalCandidates": 162, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=2019.0, viewportHeight=812.0, maxScrollY=1207.0
-🔥 캡처된 jsState 키: ["captureStats", "scroll", "actualScrollable", "viewport", "infiniteScrollAnchors", "content", "userAgent", "timestamp", "title", "href", "captureTime", "detailedLogs", "pageAnalysis"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=48, Index=48, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["textContent", "tagName", "elementClasses", "captureTimestamp", "elementId", "viewportPosition", "size", "anchorType", "qualityScore", "absolutePosition", "offsetFromTop", "contentHash", "dataAttributes", "region", "anchorIndex"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 48, "virtualIndexAnchors": 48, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "finalAnchors": 96, "totalCandidates": 162, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 84090문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["userAgent", "timestamp", "scroll", "pageAnalysis", "infiniteScrollAnchors", "title", "actualScrollable", "captureStats", "detailedLogs", "content", "captureTime", "href", "viewport"]
-🚀 JS 캡처된 앵커: 총 96개 (Vue=0, Hash=48, Index=48)
-📊 무한스크롤 JS 캡처 통계: ["virtualIndexAnchors": 48, "contentHashAnchors": 48, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "finalAnchors": 96, "totalCandidates": 162, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=2019.0, viewportHeight=812.0, maxScrollY=1207.0
-🔥 캡처된 jsState 키: ["userAgent", "timestamp", "scroll", "pageAnalysis", "infiniteScrollAnchors", "title", "actualScrollable", "captureStats", "detailedLogs", "content", "captureTime", "href", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=48, Index=48, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["dataAttributes", "region", "viewportPosition", "anchorType", "offsetFromTop", "elementId", "textContent", "anchorIndex", "size", "absolutePosition", "elementClasses", "captureTimestamp", "contentHash", "tagName", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["virtualIndexAnchors": 48, "contentHashAnchors": 48, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 19;
-    others = 14;
-    paragraphs = 0;
-}, "finalAnchors": 96, "totalCandidates": 162, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:40:51.672][6373C1][B:✅ F:❌][76] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 74] URL: https://m.dcinside.com/board/thesingularity
-✏️ 쿼리 차이: -["recommend"] +[]
-[20:40:51.711][6373C1][B:✅ F:❌][76] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:40:51.712][6373C1][B:✅ F:❌][76]    현재: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:40:51.712][6373C1][B:✅ F:❌][76]    신규: https://m.dcinside.com/board/thesingularity
-[20:40:51.712][6373C1][B:✅ F:❌][77] 📄 새 페이지 추가: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7] (총 77개)
-[20:40:51.712][6373C1][B:✅ F:❌][77] 🆕 페이지 기록: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (총 77개)
-HIST ⏪가능 ▶︎불가 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:40:51.712][6373C1][B:✅ F:❌][77] 💾 세션 저장: 77개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 77개 페이지, 인덱스 76
-저장 시도: 탭 1개 [77페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22040 바이트
-[20:40:51.712][6373C1][B:✅ F:❌][77] ✅ 네비게이션 완료
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 도착 스냅샷 캡처
-[20:40:52.015][6373C1][B:✅ F:❌][77] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (background)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81154문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["scroll", "detailedLogs", "captureTime", "userAgent", "title", "captureStats", "pageAnalysis", "infiniteScrollAnchors", "content", "timestamp", "actualScrollable", "viewport", "href"]
-🚀 JS 캡처된 앵커: 총 100개 (Vue=0, Hash=50, Index=50)
-📊 무한스크롤 JS 캡처 통계: ["tagDistribution": {
-    headings = 1;
-    links = 17;
-    listItems = 21;
-    others = 11;
-    paragraphs = 0;
-}, "regionDistribution": {
-    aboveViewport = 4;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 10;
-    viewportUpper = 12;
-}, "finalAnchors": 100, "totalCandidates": 156, "vueComponentAnchors": 0, "contentHashAnchors": 50, "virtualIndexAnchors": 50]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 55.7), 백분율=(0.00%, 5.05%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["scroll", "detailedLogs", "captureTime", "userAgent", "title", "captureStats", "pageAnalysis", "infiniteScrollAnchors", "content", "timestamp", "actualScrollable", "viewport", "href"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=50, Index=50, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorType", "textContent", "anchorIndex", "offsetFromTop", "region", "dataAttributes", "size", "elementClasses", "contentHash", "tagName", "absolutePosition", "captureTimestamp", "elementId", "viewportPosition", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["tagDistribution": {
-    headings = 1;
-    links = 17;
-    listItems = 21;
-    others = 11;
-    paragraphs = 0;
-}, "regionDistribution": {
-    aboveViewport = 4;
-    belowViewport = 12;
-    viewportLower = 12;
-    viewportMiddle = 10;
-    viewportUpper = 12;
-}, "finalAnchors": 100, "totalCandidates": 156, "vueComponentAnchors": 0, "contentHashAnchors": 50, "virtualIndexAnchors": 50]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 디스크 캐시 로드 완료: 330개
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v1]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v2]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v3]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v1]
-[20:40:53.719][6373C1][B:✅ F:❌][77] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/986486
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:53.720][6373C1][B:✅ F:❌][77] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:40:53.727][6373C1][B:✅ F:❌][77] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/986486
-🌐 DOM 캡처 성공: 81154문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "captureTime", "timestamp", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["totalCandidates": 156, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "captureTime", "timestamp", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["region", "dataAttributes", "viewportPosition", "offsetFromTop", "absolutePosition", "anchorIndex", "elementId", "elementClasses", "qualityScore", "size", "contentHash", "captureTimestamp", "tagName", "textContent", "anchorType"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=fbp31r, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["totalCandidates": 156, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81154문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureStats", "pageAnalysis", "scroll", "infiniteScrollAnchors", "detailedLogs", "content", "href", "captureTime", "title", "actualScrollable", "viewport", "timestamp", "userAgent"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["finalAnchors": 90, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "totalCandidates": 156]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["captureStats", "pageAnalysis", "scroll", "infiniteScrollAnchors", "detailedLogs", "content", "href", "captureTime", "title", "actualScrollable", "viewport", "timestamp", "userAgent"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["captureTimestamp", "elementId", "anchorType", "anchorIndex", "dataAttributes", "absolutePosition", "offsetFromTop", "textContent", "elementClasses", "qualityScore", "region", "tagName", "viewportPosition", "contentHash", "size"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=fbp31r, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["finalAnchors": 90, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "totalCandidates": 156]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[20:40:53.871][6373C1][B:✅ F:❌][77] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/986486
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v2]
-[20:40:53.940][6373C1][B:✅ F:❌][77] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:40:53.940][6373C1][B:✅ F:❌][77]    현재: https://m.dcinside.com/board/thesingularity
-[20:40:53.941][6373C1][B:✅ F:❌][77]    신규: https://m.dcinside.com/board/thesingularity/986486
-[20:40:53.941][6373C1][B:✅ F:❌][78] 📄 새 페이지 추가: '씨댄스 안되네 - 특이점이 온다 마이너 갤러리' [ID: B3B1217F] (총 78개)
-[20:40:53.941] ☁️ 전역 방문 기록 저장: 98개
-[20:40:53.941][6373C1][B:✅ F:❌][78] 🆕 페이지 기록: '씨댄스 안되네 - 특이점이 온다 마이너 갤러리' (총 78개)
-HIST ⏪가능 ▶︎불가 | '씨댄스 안되네 - 특이점이 온다 마이너 갤러리' [ID: B3B1217F)
-[20:40:53.941][6373C1][B:✅ F:❌][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 77
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 77
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22309 바이트
-[20:40:53.942][6373C1][B:✅ F:❌][78] ✅ 네비게이션 완료
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v3]
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리 (background)
-[20:40:54.255][6373C1][B:✅ F:❌][78] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 82253문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 60개 (Vue=0, Hash=30, Index=30)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 30, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
-    viewportUpper = 12;
-}, "vueComponentAnchors": 0, "totalCandidates": 105, "finalAnchors": 60, "virtualIndexAnchors": 30, "tagDistribution": {
-    headings = 1;
-    links = 4;
-    listItems = 8;
-    others = 16;
-    paragraphs = 1;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3058.0, viewportHeight=812.0, maxScrollY=2246.0
-🔥 캡처된 jsState 키: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=30, Index=30, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["size", "captureTimestamp", "anchorType", "viewportPosition", "anchorIndex", "dataAttributes", "offsetFromTop", "qualityScore", "tagName", "textContent", "elementClasses", "contentHash", "region", "absolutePosition", "elementId"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 30, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
-    viewportUpper = 12;
-}, "vueComponentAnchors": 0, "totalCandidates": 105, "finalAnchors": 60, "virtualIndexAnchors": 30, "tagDistribution": {
-    headings = 1;
-    links = 4;
-    listItems = 8;
-    others = 16;
-    paragraphs = 1;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리 [v1]
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 앵커 직렬 캡처 시작: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리 (forceUpdate)
-📸 스냅샷 캡처 시도: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
+🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 이런 시발 소넷 3분 이상 생각하는거 첨보네 ㅋㅋ - 특이점이 온다 마이너 갤러리
+🚀 무한스크롤 앵커 직렬 캡처 시작: 이런 시발 소넷 3분 이상 생각하는거 첨보네 ㅋㅋ - 특이점이 온다 마이너 갤러리 (forceUpdate)
+📸 스냅샷 캡처 시도: 이런 시발 소넷 3분 이상 생각하는거 첨보네 ㅋㅋ - 특이점이 온다 마이너 갤러리
 [BFCache] 💭 메모리 캐시 히트
 [BFCache] 📸 BFCache 스냅샷 사용
 [BFCache] 🎬 전환 시작: 뒤로
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 82253문자
+🌐 DOM 캡처 성공: 82599문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["detailedLogs", "scroll", "captureTime", "userAgent", "title", "captureStats", "pageAnalysis", "infiniteScrollAnchors", "content", "timestamp", "actualScrollable", "viewport", "href"]
+✅ JS 상태 캡처 성공: ["content", "href", "captureStats", "captureTime", "detailedLogs", "viewport", "actualScrollable", "title", "infiniteScrollAnchors", "scroll", "pageAnalysis", "userAgent", "timestamp"]
 🚀 JS 캡처된 앵커: 총 60개 (Vue=0, Hash=30, Index=30)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 30, "vueComponentAnchors": 0, "regionDistribution": {
+📊 무한스크롤 JS 캡처 통계: ["regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
+    viewportLower = 5;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 60, "totalCandidates": 105, "virtualIndexAnchors": 30, "tagDistribution": {
+}, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "totalCandidates": 106, "tagDistribution": {
     headings = 1;
     links = 4;
-    listItems = 8;
+    listItems = 9;
     others = 16;
-    paragraphs = 1;
-}]
+    paragraphs = 0;
+}, "contentHashAnchors": 30, "finalAnchors": 60]
 ✅ 완전 캡처 성공
 📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3058.0, viewportHeight=812.0, maxScrollY=2246.0
-🔥 캡처된 jsState 키: ["detailedLogs", "scroll", "captureTime", "userAgent", "title", "captureStats", "pageAnalysis", "infiniteScrollAnchors", "content", "timestamp", "actualScrollable", "viewport", "href"]
+📊 스크롤 계산 정보: actualScrollableHeight=3025.0, viewportHeight=812.0, maxScrollY=2213.0
+🔥 캡처된 jsState 키: ["content", "href", "captureStats", "captureTime", "detailedLogs", "viewport", "actualScrollable", "title", "infiniteScrollAnchors", "scroll", "pageAnalysis", "userAgent", "timestamp"]
 🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
 🚀 무한스크롤 앵커 타입별: Vue=0, Hash=30, Index=30, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["dataAttributes", "region", "viewportPosition", "anchorType", "offsetFromTop", "elementId", "textContent", "anchorIndex", "size", "absolutePosition", "elementClasses", "captureTimestamp", "contentHash", "tagName", "qualityScore"]
+🚀 첫 번째 앵커 키: ["size", "captureTimestamp", "elementClasses", "anchorIndex", "contentHash", "offsetFromTop", "dataAttributes", "viewportPosition", "elementId", "textContent", "anchorType", "absolutePosition", "qualityScore", "tagName", "region"]
 📊 첫 앵커 타입: contentHash
 📊 콘텐츠 해시: hash=97qcau, textLen=100
 📊 첫 앵커 위치: X=0.0px, Y=0.0px
 📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 30, "vueComponentAnchors": 0, "regionDistribution": {
+📊 무한스크롤 앵커 수집 통계: ["regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
+    viewportLower = 5;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 60, "totalCandidates": 105, "virtualIndexAnchors": 30, "tagDistribution": {
+}, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "totalCandidates": 106, "tagDistribution": {
     headings = 1;
     links = 4;
-    listItems = 8;
+    listItems = 9;
     others = 16;
-    paragraphs = 1;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리
+    paragraphs = 0;
+}, "contentHashAnchors": 30, "finalAnchors": 60]
+✅ 무한스크롤 앵커 직렬 캡처 완료: 이런 시발 소넷 3분 이상 생각하는거 첨보네 ㅋㅋ - 특이점이 온다 마이너 갤러리
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 씨댄스 안되네 - 특이점이 온다 마이너 갤러리 [v2]
-[20:40:55.281][6373C1][B:✅ F:❌][78][Q:1] 📥 복원 큐 추가: 인덱스 76 (큐 길이: 1)
-[20:40:55.281][6373C1][B:✅ F:✅][78][preparing(76)] 🎯 네비게이션 상태: back=true, forward=true, index=76/78
-[20:40:55.282][6373C1][B:✅ F:✅][78][preparing(76)] 🔄 복원 시작: 인덱스 76 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
+[BFCache] 💾 디스크 저장 완료: 이런 시발 소넷 3분 이상 생각하는거 첨보네 ㅋㅋ - 특이점이 온다 마이너 갤러리 [v3]
+[15:37:56.488][12C318][B:✅ F:❌][21][Q:1] 📥 복원 큐 추가: 인덱스 19 (큐 길이: 1)
+[15:37:56.488][12C318][B:✅ F:✅][21][preparing(19)] 🎯 네비게이션 상태: back=true, forward=true, index=19/21
+[15:37:56.489][12C318][B:✅ F:✅][21][preparing(19)] 🔄 복원 시작: 인덱스 19 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
 🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
 [BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
 🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:55.283][6373C1][B:✅ F:✅][🚩FLAG][preparing(76)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
-[20:40:55.285][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 76/78]
+[15:37:56.490][12C318][B:✅ F:✅][🚩FLAG][preparing(19)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
+[15:37:56.491][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(19)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 19/21]
 [BFCache] ⬅️ 뒤로가기 완료
 [BFCache] 💭 메모리 캐시 히트
 🎯 순차적 4단계 BFCache 복원 시작
 📊 복원 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📊 목표 위치: X=0.0px, Y=1103.0px
-📊 목표 백분율: X=0.00%, Y=100.00%
+📊 목표 위치: X=0.0px, Y=424.0px
+📊 목표 백분율: X=0.00%, Y=38.44%
 📊 저장 콘텐츠 높이: 1915px
 📦 [Step 1] 저장 콘텐츠 높이 복원 시작
 📦 [Step 1] 목표 높이: 1915px
 📦 [Step 1] 페이지 안정화 대기 중...
-[20:40:55.291][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoBack 변경: true
-[20:40:55.292][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoForward 변경: true
+[15:37:56.499][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(19)] 🎯 DataModel canGoBack 변경: true
+[15:37:56.499][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(19)] 🎯 DataModel canGoForward 변경: true
 📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-[20:40:55.298][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 84881문자
+[15:37:56.510][12C318][B:✅ F:✅][21][queueRestoring(19)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
+🌐 DOM 캡처 성공: 85300문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "userAgent", "detailedLogs", "title", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
+✅ JS 상태 캡처 성공: ["detailedLogs", "userAgent", "href", "scroll", "title", "captureTime", "viewport", "pageAnalysis", "infiniteScrollAnchors", "captureStats", "actualScrollable", "timestamp", "content"]
 🚀 JS 캡처된 앵커: 총 60개 (Vue=0, Hash=30, Index=30)
-📊 무한스크롤 JS 캡처 통계: ["totalCandidates": 126, "contentHashAnchors": 30, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 1;
-    links = 4;
-    listItems = 8;
-    others = 16;
-    paragraphs = 1;
-}, "regionDistribution": {
+📊 무한스크롤 JS 캡처 통계: ["regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
+    viewportLower = 5;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 60]
+}, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "totalCandidates": 127, "tagDistribution": {
+    headings = 1;
+    links = 4;
+    listItems = 9;
+    others = 16;
+    paragraphs = 0;
+}, "contentHashAnchors": 30, "finalAnchors": 60]
 ✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, -9.0), 백분율=(0.00%, -0.52%)
-📊 스크롤 계산 정보: actualScrollableHeight=2532.0, viewportHeight=812.0, maxScrollY=1720.0
-🔥 캡처된 jsState 키: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "userAgent", "detailedLogs", "title", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
+📊 캡처 완료: 위치=(0.0, -3.0), 백분율=(0.00%, -0.18%)
+📊 스크롤 계산 정보: actualScrollableHeight=2499.0, viewportHeight=812.0, maxScrollY=1687.0
+🔥 캡처된 jsState 키: ["detailedLogs", "userAgent", "href", "scroll", "title", "captureTime", "viewport", "pageAnalysis", "infiniteScrollAnchors", "captureStats", "actualScrollable", "timestamp", "content"]
+🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
 🚀 무한스크롤 앵커 타입별: Vue=0, Hash=30, Index=30, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["captureTimestamp", "anchorType", "viewportPosition", "offsetFromTop", "anchorIndex", "dataAttributes", "elementClasses", "absolutePosition", "qualityScore", "contentHash", "tagName", "size", "region", "textContent", "elementId"]
+🚀 첫 번째 앵커 키: ["anchorType", "viewportPosition", "anchorIndex", "qualityScore", "tagName", "offsetFromTop", "region", "dataAttributes", "elementClasses", "textContent", "captureTimestamp", "contentHash", "elementId", "absolutePosition", "size"]
 📊 첫 앵커 타입: contentHash
 📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-8.0px
+📊 첫 앵커 위치: X=0.0px, Y=-3.0px
 📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["totalCandidates": 126, "contentHashAnchors": 30, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 1;
-    links = 4;
-    listItems = 8;
-    others = 16;
-    paragraphs = 1;
-}, "regionDistribution": {
+📊 무한스크롤 앵커 수집 통계: ["regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 2;
+    viewportLower = 5;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 60]
+}, "virtualIndexAnchors": 30, "vueComponentAnchors": 0, "totalCandidates": 127, "tagDistribution": {
+    headings = 1;
+    links = 4;
+    listItems = 9;
+    others = 16;
+    paragraphs = 0;
+}, "contentHashAnchors": 30, "finalAnchors": 60]
 ✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[15:37:56.626][12C318][B:✅ F:✅][21][queueRestoring(19)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 19] URL: https://m.dcinside.com/board/thesingularity
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
 [BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v4]
-[20:40:55.441][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v1
-[20:40:55.473][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[20:40:55.473][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:40:55.473][6373C1][B:✅ F:✅][78] ✅ 복원 완료, 다음 큐 처리 시작
-HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:40:55.473][6373C1][B:✅ F:✅][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 76
-저장 시도: 탭 1개 [78페이지]
+[BFCache] 🗑️ 이전 버전 삭제: Page_87FDAF72-0C6E-4F90-B931-8AB2C8A6FF6C_v1
+[15:37:56.684][12C318][B:✅ F:✅][21][queueRestoring(19)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 19] URL: https://m.dcinside.com/board/thesingularity
+[15:37:56.684][12C318][B:✅ F:✅][21][queueRestoring(19)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
+[15:37:56.684][12C318][B:✅ F:✅][21] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: 87FDAF72)
+[15:37:56.684][12C318][B:✅ F:✅][21] 💾 세션 저장: 21개 페이지, 현재 인덱스 19
+스냅샷 생성: ID 12C3188E, 21개 페이지, 인덱스 19
+저장 시도: 탭 1개 [21페이지]
 웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22308 바이트
-[20:40:55.474][6373C1][B:✅ F:✅][78] ✅ 네비게이션 완료
+저장 성공: 데이터 크기 5724 바이트
+[15:37:56.684][12C318][B:✅ F:✅][21] ✅ 네비게이션 완료
 📦 [Step 1] JavaScript 생성 완료: 42349자
 📦 [Step 1] 현재 높이: 1915px
 📦 [Step 1] 저장 시점 높이: 1915px
@@ -600,46 +147,46 @@ HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤�
    정적 사이트 - 콘텐츠 이미 충분함
 📦 [Step 1] 완료: 성공 (소요: 0.2초)
 📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)
-📏 [Step 2] 목표 백분율: X=0.00%, Y=100.00%
-📏 [Step 2] 계산된 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 실제 위치: X=0.0px, Y=1103.0px
+📏 [Step 2] 목표 백분율: X=0.00%, Y=38.44%
+📏 [Step 2] 계산된 위치: X=0.0px, Y=424.0px
+📏 [Step 2] 실제 위치: X=0.0px, Y=424.0px
 📏 [Step 2] 위치 차이: X=0.0px, Y=0.0px
    [Step 2] 상대좌표 기반 스크롤 복원
-   목표 백분율: X=0.00%, Y=100.00%
+   목표 백분율: X=0.00%, Y=38.44%
    저장 시점 높이: 1915px
    최대 스크롤 (저장 기준): X=0px, Y=1103px
-   계산된 목표: X=0.0px, Y=1103.0px
+   계산된 목표: X=0.0px, Y=424.0px
 📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주
 📏 [Step 2] 완료: 성공 (소요: 0.2초)
 🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작
-🔍 [Step 3] 사용 가능한 앵커: 90개
+🔍 [Step 3] 사용 가능한 앵커: 120개
 🔍 [Step 3] 매칭된 앵커 타입: contentHash
 🔍 [Step 3] 매칭 방법: element_id
 🔍 [Step 3] 매칭 신뢰도: 100.0%
-🔍 [Step 3] 복원된 위치: X=0.0px, Y=1103.0px
+🔍 [Step 3] 복원된 위치: X=0.0px, Y=424.0px
 🔍 [Step 3] 목표와의 차이: X=0.0px, Y=0.0px
    [Step 3] 무한스크롤 전용 앵커 복원
-   목표 위치: X=0.0px, Y=1103.0px
+   목표 위치: X=0.0px, Y=424.0px
    저장 시점 높이: 1915px
-   사용 가능한 앵커: 90개
+   사용 가능한 앵커: 120개
    Vue Component 앵커: 0개
-   Content Hash 앵커: 45개
-   Virtual Index 앵커: 45개
-   🔍 거리 기반 매칭 시작 (목표: Y=1103px)
-   매칭된 후보 수: 6133개
+   Content Hash 앵커: 60개
+   Virtual Index 앵커: 60개
+   🔍 거리 기반 매칭 시작 (목표: Y=424px)
+   매칭된 후보 수: 5702개
    최적 매칭 선택: element_id (거리: 0px, 신뢰도: 100%)
 🔍 [Step 3] 완료: 성공 (소요: 0.1초)
 ✅ [Step 4] 최종 검증 및 미세 보정 시작
-✅ [Step 4] 최종 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 목표 위치: X=0.0px, Y=1103.0px
+✅ [Step 4] 최종 위치: X=0.0px, Y=424.0px
+✅ [Step 4] 목표 위치: X=0.0px, Y=424.0px
 ✅ [Step 4] 최종 차이: X=0.0px, Y=0.0px
 ✅ [Step 4] 허용 오차 내: 예
    [Step 4] 최종 검증 및 미세 보정
-   목표 위치: X=0.0px, Y=1103.0px
+   목표 위치: X=0.0px, Y=424.0px
    저장 시점 높이: 1915px
-   현재 위치: X=0.0px, Y=1103.0px
+   현재 위치: X=0.0px, Y=424.0px
    위치 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 완료: 성공 (소요: 0.1초)
+✅ [Step 4] 완료: 성공 (소요: 0.0초)
 🎯 전체 BFCache 복원 완료: 성공
 🔓 복원 완료 - 캡처 재개
 ⏱️ 전체 복원 소요 시간: 0.6초
@@ -650,1635 +197,450 @@ HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤�
 📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81196문자
+🌐 DOM 캡처 성공: 81255문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["timestamp", "captureStats", "title", "userAgent", "captureTime", "viewport", "detailedLogs", "pageAnalysis", "content", "infiniteScrollAnchors", "href", "actualScrollable", "scroll"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "regionDistribution": {
+✅ JS 상태 캡처 성공: ["viewport", "captureTime", "detailedLogs", "title", "href", "timestamp", "infiniteScrollAnchors", "pageAnalysis", "scroll", "actualScrollable", "captureStats", "userAgent", "content"]
+🚀 JS 캡처된 앵커: 총 120개 (Vue=0, Hash=60, Index=60)
+📊 무한스크롤 JS 캡처 통계: ["virtualIndexAnchors": 60, "vueComponentAnchors": 0, "totalCandidates": 152, "contentHashAnchors": 60, "tagDistribution": {
+    headings = 0;
+    links = 23;
+    listItems = 24;
+    others = 13;
+    paragraphs = 0;
+}, "regionDistribution": {
     aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
+    belowViewport = 12;
+    viewportLower = 12;
     viewportMiddle = 12;
     viewportUpper = 12;
-}, "finalAnchors": 90, "totalCandidates": 156, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
+}, "finalAnchors": 120]
 ✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
+📊 캡처 완료: 위치=(0.0, 424.0), 백분율=(0.00%, 38.44%)
 📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["timestamp", "captureStats", "title", "userAgent", "captureTime", "viewport", "detailedLogs", "pageAnalysis", "content", "infiniteScrollAnchors", "href", "actualScrollable", "scroll"]
+🔥 캡처된 jsState 키: ["viewport", "captureTime", "detailedLogs", "title", "href", "timestamp", "infiniteScrollAnchors", "pageAnalysis", "scroll", "actualScrollable", "captureStats", "userAgent", "content"]
 🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorType", "textContent", "anchorIndex", "offsetFromTop", "contentHash", "elementClasses", "region", "dataAttributes", "size", "tagName", "absolutePosition", "captureTimestamp", "elementId", "viewportPosition", "qualityScore"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=60, Index=60, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["size", "region", "viewportPosition", "absolutePosition", "offsetFromTop", "contentHash", "anchorIndex", "qualityScore", "elementClasses", "anchorType", "elementId", "dataAttributes", "textContent", "tagName", "captureTimestamp"]
 📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=3qau5p, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "regionDistribution": {
+📊 콘텐츠 해시: hash=14cyzg, textLen=76
+📊 첫 앵커 위치: X=12.0px, Y=221.5px
+📊 첫 앵커 품질점수: 67점
+📊 무한스크롤 앵커 수집 통계: ["virtualIndexAnchors": 60, "vueComponentAnchors": 0, "totalCandidates": 152, "contentHashAnchors": 60, "tagDistribution": {
+    headings = 0;
+    links = 23;
+    listItems = 24;
+    others = 13;
+    paragraphs = 0;
+}, "regionDistribution": {
     aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
+    belowViewport = 12;
+    viewportLower = 12;
     viewportMiddle = 12;
     viewportUpper = 12;
-}, "finalAnchors": 90, "totalCandidates": 156, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
+}, "finalAnchors": 120]
 [BFCache] 💭 메모리 캐시 저장
 ✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:40:56.321][6373C1][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
-[20:40:56.708][6373C1][B:✅ F:✅][78] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/986487
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:56.708][6373C1][B:✅ F:✅][78] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
+[15:37:57.532][12C318][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+🛡️ DebugView 완전 격리 모드 - 키보드 리셋
+🛡️ DebugView 완전 격리 모드 - 키보드 리셋 + 안전영역 전체 무시
 🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
 [BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:40:56.714][6373C1][B:✅ F:✅][78] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/986487
-🌐 DOM 캡처 성공: 81196문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["actualScrollable", "userAgent", "pageAnalysis", "content", "href", "timestamp", "infiniteScrollAnchors", "captureTime", "captureStats", "viewport", "detailedLogs", "scroll", "title"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "contentHashAnchors": 45, "totalCandidates": 156, "virtualIndexAnchors": 45, "finalAnchors": 90, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["actualScrollable", "userAgent", "pageAnalysis", "content", "href", "timestamp", "infiniteScrollAnchors", "captureTime", "captureStats", "viewport", "detailedLogs", "scroll", "title"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["textContent", "elementClasses", "absolutePosition", "elementId", "qualityScore", "viewportPosition", "region", "anchorType", "tagName", "offsetFromTop", "contentHash", "dataAttributes", "anchorIndex", "captureTimestamp", "size"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=3qau5p, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "contentHashAnchors": 45, "totalCandidates": 156, "virtualIndexAnchors": 45, "finalAnchors": 90, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
 📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81196문자
+🌐 DOM 캡처 성공: 93993문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["content", "pageAnalysis", "scroll", "title", "href", "actualScrollable", "infiniteScrollAnchors", "captureTime", "captureStats", "detailedLogs", "timestamp", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "contentHashAnchors": 45, "totalCandidates": 156, "tagDistribution": {
+✅ JS 상태 캡처 성공: ["actualScrollable", "pageAnalysis", "captureStats", "content", "infiniteScrollAnchors", "href", "detailedLogs", "captureTime", "scroll", "timestamp", "userAgent", "title", "viewport"]
+🚀 JS 캡처된 앵커: 총 118개 (Vue=0, Hash=59, Index=59)
+📊 무한스크롤 JS 캡처 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
     headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 45, "finalAnchors": 90]
+    links = 21;
+    listItems = 27;
+    others = 11;
+    paragraphs = 0;
+}, "regionDistribution": {
+    aboveViewport = 12;
+    belowViewport = 12;
+    viewportLower = 12;
+    viewportMiddle = 11;
+    viewportUpper = 12;
+}]
 ✅ 완전 캡처 성공
 📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
 📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["content", "pageAnalysis", "scroll", "title", "href", "actualScrollable", "infiniteScrollAnchors", "captureTime", "captureStats", "detailedLogs", "timestamp", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["region", "dataAttributes", "viewportPosition", "offsetFromTop", "absolutePosition", "anchorIndex", "elementId", "elementClasses", "qualityScore", "size", "contentHash", "captureTimestamp", "tagName", "textContent", "anchorType"]
+🔥 캡처된 jsState 키: ["actualScrollable", "pageAnalysis", "captureStats", "content", "infiniteScrollAnchors", "href", "detailedLogs", "captureTime", "scroll", "timestamp", "userAgent", "title", "viewport"]
+🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=59, Index=59, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["dataAttributes", "qualityScore", "elementId", "viewportPosition", "absolutePosition", "anchorType", "offsetFromTop", "captureTimestamp", "tagName", "anchorIndex", "contentHash", "elementClasses", "size", "textContent", "region"]
 📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=3qau5p, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "contentHashAnchors": 45, "totalCandidates": 156, "tagDistribution": {
+📊 콘텐츠 해시: hash=wicg77, textLen=65
+📊 첫 앵커 위치: X=0.0px, Y=785.0px
+📊 첫 앵커 품질점수: 76점
+📊 무한스크롤 앵커 수집 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
     headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 45, "finalAnchors": 90]
+    links = 21;
+    listItems = 27;
+    others = 11;
+    paragraphs = 0;
+}, "regionDistribution": {
+    aboveViewport = 12;
+    belowViewport = 12;
+    viewportLower = 12;
+    viewportMiddle = 11;
+    viewportUpper = 12;
+}]
 ✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[15:38:14.848][12C318][B:✅ F:✅][21] 🌐 SPA push: m.dcinside.com_query_single_spa | https://m.dcinside.com/board/thesingularity?page=2
+✏️ 쿼리 차이: -[] +["page"]
+[15:38:14.848][12C318][B:✅ F:✅][21] 🆕 URL 차이 감지 - 새 페이지 추가
+[15:38:14.848][12C318][B:✅ F:✅][21]    현재: https://m.dcinside.com/board/thesingularity
+[15:38:14.848][12C318][B:✅ F:✅][21]    신규: https://m.dcinside.com/board/thesingularity?page=2
+[15:38:14.849][12C318][B:✅ F:✅][20] 🗑️ forward 스택 1개 제거
+[15:38:14.849][12C318][B:✅ F:❌][21] 🎯 네비게이션 상태: back=true, forward=false, index=20/21
+[15:38:14.849][12C318][B:✅ F:❌][21] 📄 새 페이지 추가: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: F10EFB00] (총 21개)
+[15:38:14.849][12C318][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
+[15:38:14.849][12C318][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
 [BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v6]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v2
-[20:40:56.872][6373C1][B:✅ F:✅][78] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/986487
-[20:40:56.932][6373C1][B:✅ F:✅][78] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:40:56.932][6373C1][B:✅ F:✅][78]    현재: https://m.dcinside.com/board/thesingularity
-[20:40:56.932][6373C1][B:✅ F:✅][78]    신규: https://m.dcinside.com/board/thesingularity/986487
-[20:40:56.932][6373C1][B:✅ F:✅][77] 🗑️ forward 스택 1개 제거
-[20:40:56.933][6373C1][B:✅ F:❌][78] 🎯 네비게이션 상태: back=true, forward=false, index=77/78
-[20:40:56.933][6373C1][B:✅ F:❌][78] 📄 새 페이지 추가: '그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리' [ID: 573AD8A7] (총 78개)
-[20:40:56.933] ☁️ 전역 방문 기록 저장: 99개
-[20:40:56.933][6373C1][B:✅ F:❌][78] 🆕 페이지 기록: '그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리' (총 78개)
-HIST ⏪가능 ▶︎불가 | '그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리' [ID: 573AD8A7)
-[20:40:56.933][6373C1][B:✅ F:❌][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 77
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 77
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22326 바이트
-[20:40:56.934][6373C1][B:✅ F:❌][78] ✅ 네비게이션 완료
-[20:40:56.934][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
-[20:40:56.934][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v7]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v3
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리 (background)
-[20:40:57.248][6373C1][B:✅ F:❌][78] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
+[BFCache] 🗑️ 이전 버전 삭제: Page_87FDAF72-0C6E-4F90-B931-8AB2C8A6FF6C_v2
+[15:38:16.016][12C318][B:✅ F:❌][21] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/987826?page=2
+🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[BFCache] 📸 떠나기 스냅샷 캡처
+🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
+[15:38:16.017][12C318][B:✅ F:❌][21] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
+📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 85444문자
+🌐 DOM 캡처 성공: 93993문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["userAgent", "pageAnalysis", "content", "detailedLogs", "captureStats", "infiniteScrollAnchors", "scroll", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 JS 캡처된 앵커: 총 62개 (Vue=0, Hash=31, Index=31)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 31, "virtualIndexAnchors": 31, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 9;
-    others = 15;
-    paragraphs = 0;
-}, "finalAnchors": 62, "totalCandidates": 121, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 6;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3453.0, viewportHeight=812.0, maxScrollY=2641.0
-🔥 캡처된 jsState 키: ["userAgent", "pageAnalysis", "content", "detailedLogs", "captureStats", "infiniteScrollAnchors", "scroll", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=31, Index=31, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["contentHash", "elementId", "captureTimestamp", "dataAttributes", "textContent", "anchorType", "absolutePosition", "anchorIndex", "size", "viewportPosition", "region", "elementClasses", "tagName", "qualityScore", "offsetFromTop"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 31, "virtualIndexAnchors": 31, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 9;
-    others = 15;
-    paragraphs = 0;
-}, "finalAnchors": 62, "totalCandidates": 121, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 6;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 앵커 직렬 캡처 시작: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리 (forceUpdate)
-📸 스냅샷 캡처 시도: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
-[BFCache] 💭 메모리 캐시 히트
-[BFCache] 📸 BFCache 스냅샷 사용
-[BFCache] 🎬 전환 시작: 뒤로
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 85444문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 62개 (Vue=0, Hash=31, Index=31)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 31, "virtualIndexAnchors": 31, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 9;
-    others = 15;
-    paragraphs = 0;
-}, "finalAnchors": 62, "totalCandidates": 121, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 6;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3453.0, viewportHeight=812.0, maxScrollY=2641.0
-🔥 캡처된 jsState 키: ["infiniteScrollAnchors", "content", "detailedLogs", "title", "captureStats", "pageAnalysis", "actualScrollable", "href", "scroll", "timestamp", "captureTime", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=31, Index=31, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["size", "contentHash", "offsetFromTop", "viewportPosition", "dataAttributes", "region", "anchorType", "captureTimestamp", "elementClasses", "anchorIndex", "textContent", "elementId", "absolutePosition", "qualityScore", "tagName"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 31, "virtualIndexAnchors": 31, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 9;
-    others = 15;
-    paragraphs = 0;
-}, "finalAnchors": 62, "totalCandidates": 121, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 6;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리 [v1]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 그록 진짜 사용감 엄청 좋네 - 특이점이 온다 마이너 갤러리 [v2]
-[20:40:57.685][6373C1][B:✅ F:❌][78][Q:1] 📥 복원 큐 추가: 인덱스 76 (큐 길이: 1)
-[20:40:57.686][6373C1][B:✅ F:✅][78][preparing(76)] 🎯 네비게이션 상태: back=true, forward=true, index=76/78
-[20:40:57.686][6373C1][B:✅ F:✅][78][preparing(76)] 🔄 복원 시작: 인덱스 76 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
 🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
 [BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:57.687][6373C1][B:✅ F:✅][🚩FLAG][preparing(76)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
-[20:40:57.689][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 76/78]
-[BFCache] ⬅️ 뒤로가기 완료
-[BFCache] 💭 메모리 캐시 히트
-🎯 순차적 4단계 BFCache 복원 시작
-📊 복원 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📊 목표 위치: X=0.0px, Y=1103.0px
-📊 목표 백분율: X=0.00%, Y=100.00%
-📊 저장 콘텐츠 높이: 1915px
-📦 [Step 1] 저장 콘텐츠 높이 복원 시작
-📦 [Step 1] 목표 높이: 1915px
-📦 [Step 1] 페이지 안정화 대기 중...
-[20:40:57.695][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoBack 변경: true
-[20:40:57.696][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoForward 변경: true
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-[20:40:57.701][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 85444문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["actualScrollable", "pageAnalysis", "captureStats", "timestamp", "userAgent", "captureTime", "detailedLogs", "infiniteScrollAnchors", "content", "href", "scroll", "viewport", "title"]
-🚀 JS 캡처된 앵커: 총 60개 (Vue=0, Hash=30, Index=30)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 5;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}, "finalAnchors": 60, "contentHashAnchors": 30, "virtualIndexAnchors": 30, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 8;
-    others = 15;
+[15:38:16.040][12C318][B:✅ F:❌][21] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/987826?page=2
+✅ JS 상태 캡처 성공: ["captureTime", "content", "timestamp", "href", "captureStats", "infiniteScrollAnchors", "title", "scroll", "viewport", "actualScrollable", "userAgent", "detailedLogs", "pageAnalysis"]
+🚀 JS 캡처된 앵커: 총 118개 (Vue=0, Hash=59, Index=59)
+📊 무한스크롤 JS 캡처 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
+    headings = 0;
+    links = 22;
+    listItems = 25;
+    others = 12;
     paragraphs = 0;
-}, "totalCandidates": 121]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, -5.7), 백분율=(0.00%, -0.21%)
-📊 스크롤 계산 정보: actualScrollableHeight=3453.0, viewportHeight=812.0, maxScrollY=2641.0
-🔥 캡처된 jsState 키: ["actualScrollable", "pageAnalysis", "captureStats", "timestamp", "userAgent", "captureTime", "detailedLogs", "infiniteScrollAnchors", "content", "href", "scroll", "viewport", "title"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=30, Index=30, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["contentHash", "elementId", "captureTimestamp", "dataAttributes", "textContent", "anchorType", "absolutePosition", "anchorIndex", "size", "viewportPosition", "region", "elementClasses", "tagName", "qualityScore", "offsetFromTop"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-5.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 5;
-    viewportMiddle = 1;
-    viewportUpper = 12;
-}, "finalAnchors": 60, "contentHashAnchors": 30, "virtualIndexAnchors": 30, "tagDistribution": {
-    headings = 1;
-    links = 6;
-    listItems = 8;
-    others = 15;
-    paragraphs = 0;
-}, "totalCandidates": 121]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v8]
-[20:40:57.873][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v4
-📦 [Step 1] JavaScript 생성 완료: 42349자
-📦 [Step 1] 현재 높이: 1915px
-📦 [Step 1] 저장 시점 높이: 1915px
-📦 [Step 1] 복원된 높이: 1915px
-📦 [Step 1] 복원률: 100.0%
-📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요
-   [Step 1] 저장 시점 높이: 1915px
-   [Step 1] 스크롤 루트: HTML
-   [Step 1] 현재 높이: 1915px
-   [Step 1] 뷰포트 높이: 812px
-   [Step 1] 높이 차이: 0px (충분)
-   정적 사이트 - 콘텐츠 이미 충분함
-📦 [Step 1] 완료: 성공 (소요: 0.2초)
-📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)
-[20:40:57.911][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[20:40:57.911][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:40:57.911][6373C1][B:✅ F:✅][78] ✅ 복원 완료, 다음 큐 처리 시작
-HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:40:57.911][6373C1][B:✅ F:✅][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 76
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22327 바이트
-[20:40:57.912][6373C1][B:✅ F:✅][78] ✅ 네비게이션 완료
-📏 [Step 2] 목표 백분율: X=0.00%, Y=100.00%
-📏 [Step 2] 계산된 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 실제 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 위치 차이: X=0.0px, Y=0.0px
-   [Step 2] 상대좌표 기반 스크롤 복원
-   목표 백분율: X=0.00%, Y=100.00%
-   저장 시점 높이: 1915px
-   최대 스크롤 (저장 기준): X=0px, Y=1103px
-   계산된 목표: X=0.0px, Y=1103.0px
-📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주
-📏 [Step 2] 완료: 성공 (소요: 0.2초)
-🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작
-🔍 [Step 3] 사용 가능한 앵커: 90개
-🔍 [Step 3] 매칭된 앵커 타입: contentHash
-🔍 [Step 3] 매칭 방법: element_id
-🔍 [Step 3] 매칭 신뢰도: 100.0%
-🔍 [Step 3] 복원된 위치: X=0.0px, Y=1103.0px
-🔍 [Step 3] 목표와의 차이: X=0.0px, Y=0.0px
-   [Step 3] 무한스크롤 전용 앵커 복원
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   사용 가능한 앵커: 90개
-   Vue Component 앵커: 0개
-   Content Hash 앵커: 45개
-   Virtual Index 앵커: 45개
-   🔍 거리 기반 매칭 시작 (목표: Y=1103px)
-   매칭된 후보 수: 6130개
-   최적 매칭 선택: element_id (거리: 0px, 신뢰도: 100%)
-🔍 [Step 3] 완료: 성공 (소요: 0.1초)
-✅ [Step 4] 최종 검증 및 미세 보정 시작
-✅ [Step 4] 최종 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 목표 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 최종 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 허용 오차 내: 예
-   [Step 4] 최종 검증 및 미세 보정
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   현재 위치: X=0.0px, Y=1103.0px
-   위치 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 완료: 성공 (소요: 0.0초)
-🎯 전체 BFCache 복원 완료: 성공
-🔓 복원 완료 - 캡처 재개
-⏱️ 전체 복원 소요 시간: 0.6초
-[BFCache] ✅ BFCache 복원 성공
-[BFCache] 🎬 BFCache 복원 성공
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (immediate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81188문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "scroll", "content", "timestamp"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90, "totalCandidates": 155, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "scroll", "content", "timestamp"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorType", "textContent", "anchorIndex", "offsetFromTop", "contentHash", "elementClasses", "size", "region", "dataAttributes", "tagName", "absolutePosition", "captureTimestamp", "elementId", "viewportPosition", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=xg5qp8, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90, "totalCandidates": 155, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}]
-[BFCache] 💭 메모리 캐시 저장
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:40:58.709][6373C1][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
-[20:40:58.873][6373C1][B:✅ F:✅][78] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/986488
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:58.873][6373C1][B:✅ F:✅][78] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:40:58.883][6373C1][B:✅ F:✅][78] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/986488
-🌐 DOM 캡처 성공: 81188문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureStats", "scroll", "actualScrollable", "content", "infiniteScrollAnchors", "viewport", "timestamp", "userAgent", "title", "href", "captureTime", "detailedLogs", "pageAnalysis"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 90, "totalCandidates": 155, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["captureStats", "scroll", "actualScrollable", "content", "infiniteScrollAnchors", "viewport", "timestamp", "userAgent", "title", "href", "captureTime", "detailedLogs", "pageAnalysis"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["contentHash", "size", "textContent", "anchorType", "offsetFromTop", "elementId", "tagName", "captureTimestamp", "qualityScore", "viewportPosition", "anchorIndex", "elementClasses", "absolutePosition", "region", "dataAttributes"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=xg5qp8, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 90, "totalCandidates": 155, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81188문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "userAgent", "title", "detailedLogs", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 90, "totalCandidates": 155, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "userAgent", "title", "detailedLogs", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["captureTimestamp", "anchorType", "viewportPosition", "offsetFromTop", "anchorIndex", "dataAttributes", "elementClasses", "absolutePosition", "qualityScore", "contentHash", "tagName", "size", "region", "textContent", "elementId"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=xg5qp8, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 90, "totalCandidates": 155, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v10]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v6
-[20:40:59.047][6373C1][B:✅ F:✅][78] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/986488
-[20:40:59.113][6373C1][B:✅ F:✅][78] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:40:59.113][6373C1][B:✅ F:✅][78]    현재: https://m.dcinside.com/board/thesingularity
-[20:40:59.113][6373C1][B:✅ F:✅][78]    신규: https://m.dcinside.com/board/thesingularity/986488
-[20:40:59.113][6373C1][B:✅ F:✅][77] 🗑️ forward 스택 1개 제거
-[20:40:59.113][6373C1][B:✅ F:❌][78] 🎯 네비게이션 상태: back=true, forward=false, index=77/78
-[20:40:59.113][6373C1][B:✅ F:❌][78] 📄 새 페이지 추가: '아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리' [ID: 09259907] (총 78개)
-[20:40:59.114] ☁️ 전역 방문 기록 저장: 100개
-[20:40:59.114][6373C1][B:✅ F:❌][78] 🆕 페이지 기록: '아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리' (총 78개)
-HIST ⏪가능 ▶︎불가 | '아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리' [ID: 09259907)
-[20:40:59.114][6373C1][B:✅ F:❌][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 77
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 77
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22336 바이트
-[20:40:59.114][6373C1][B:✅ F:❌][78] ✅ 네비게이션 완료
-[20:40:59.114][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
-[20:40:59.115][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v11]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v7
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리 (background)
-[20:40:59.426][6373C1][B:✅ F:❌][78] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 85284문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-[BFCache] 💭 메모리 캐시 히트
-[BFCache] 📸 BFCache 스냅샷 사용
-[BFCache] 🎬 전환 시작: 뒤로
-✅ JS 상태 캡처 성공: ["actualScrollable", "userAgent", "pageAnalysis", "content", "href", "timestamp", "infiniteScrollAnchors", "captureTime", "captureStats", "detailedLogs", "viewport", "scroll", "title"]
-🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
-    viewportUpper = 12;
-}, "contentHashAnchors": 32, "totalCandidates": 122, "virtualIndexAnchors": 32, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 15;
-    paragraphs = 7;
-}, "finalAnchors": 64]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3468.0, viewportHeight=812.0, maxScrollY=2656.0
-🔥 캡처된 jsState 키: ["actualScrollable", "userAgent", "pageAnalysis", "content", "href", "timestamp", "infiniteScrollAnchors", "captureTime", "captureStats", "detailedLogs", "viewport", "scroll", "title"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=32, Index=32, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["qualityScore", "anchorType", "textContent", "offsetFromTop", "contentHash", "elementId", "dataAttributes", "tagName", "size", "absolutePosition", "viewportPosition", "anchorIndex", "elementClasses", "captureTimestamp", "region"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
-    viewportUpper = 12;
-}, "contentHashAnchors": 32, "totalCandidates": 122, "virtualIndexAnchors": 32, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 15;
-    paragraphs = 7;
-}, "finalAnchors": 64]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 앵커 직렬 캡처 시작: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리 (forceUpdate)
-📸 스냅샷 캡처 시도: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 85284문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["content", "pageAnalysis", "scroll", "title", "href", "actualScrollable", "infiniteScrollAnchors", "captureTime", "detailedLogs", "captureStats", "timestamp", "userAgent", "viewport"]
-🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
-    viewportUpper = 12;
-}, "finalAnchors": 64, "contentHashAnchors": 32, "virtualIndexAnchors": 32, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 15;
-    paragraphs = 7;
-}, "totalCandidates": 122]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3468.0, viewportHeight=812.0, maxScrollY=2656.0
-🔥 캡처된 jsState 키: ["content", "pageAnalysis", "scroll", "title", "href", "actualScrollable", "infiniteScrollAnchors", "captureTime", "detailedLogs", "captureStats", "timestamp", "userAgent", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=32, Index=32, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["region", "dataAttributes", "viewportPosition", "offsetFromTop", "absolutePosition", "anchorIndex", "elementId", "elementClasses", "qualityScore", "contentHash", "size", "captureTimestamp", "tagName", "textContent", "anchorType"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
-    viewportUpper = 12;
-}, "finalAnchors": 64, "contentHashAnchors": 32, "virtualIndexAnchors": 32, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 15;
-    paragraphs = 7;
-}, "totalCandidates": 122]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리 [v1]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 아 좀 늦게 태어났으면 좋았을텐데 - 특이점이 온다 마이너 갤러리 [v2]
-[20:40:59.780][6373C1][B:✅ F:❌][78][Q:1] 📥 복원 큐 추가: 인덱스 76 (큐 길이: 1)
-[20:40:59.780][6373C1][B:✅ F:✅][78][preparing(76)] 🎯 네비게이션 상태: back=true, forward=true, index=76/78
-[20:40:59.780][6373C1][B:✅ F:✅][78][preparing(76)] 🔄 복원 시작: 인덱스 76 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:40:59.781][6373C1][B:✅ F:✅][🚩FLAG][preparing(76)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
-[20:40:59.781][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 76/78]
-[BFCache] ⬅️ 뒤로가기 완료
-[BFCache] 💭 메모리 캐시 히트
-🎯 순차적 4단계 BFCache 복원 시작
-📊 복원 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📊 목표 위치: X=0.0px, Y=1103.0px
-📊 목표 백분율: X=0.00%, Y=100.00%
-📊 저장 콘텐츠 높이: 1915px
-📦 [Step 1] 저장 콘텐츠 높이 복원 시작
-📦 [Step 1] 목표 높이: 1915px
-📦 [Step 1] 페이지 안정화 대기 중...
-[20:40:59.785][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoBack 변경: true
-[20:40:59.785][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoForward 변경: true
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-[20:40:59.794][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 85284문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["pageAnalysis", "viewport", "detailedLogs", "infiniteScrollAnchors", "href", "title", "content", "captureStats", "userAgent", "actualScrollable", "scroll", "captureTime", "timestamp"]
-🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 32, "vueComponentAnchors": 0, "virtualIndexAnchors": 32, "totalCandidates": 122, "finalAnchors": 64, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 15;
-    paragraphs = 7;
 }, "regionDistribution": {
-    aboveViewport = 0;
+    aboveViewport = 12;
     belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
+    viewportLower = 12;
+    viewportMiddle = 11;
     viewportUpper = 12;
 }]
 ✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 1542.0), 백분율=(0.00%, 57.86%)
+📊 스크롤 계산 정보: actualScrollableHeight=3477.0, viewportHeight=812.0, maxScrollY=2665.0
+🔥 캡처된 jsState 키: ["captureTime", "content", "timestamp", "href", "captureStats", "infiniteScrollAnchors", "title", "scroll", "viewport", "actualScrollable", "userAgent", "detailedLogs", "pageAnalysis"]
+🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=59, Index=59, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["region", "offsetFromTop", "captureTimestamp", "contentHash", "size", "textContent", "anchorType", "elementId", "qualityScore", "viewportPosition", "absolutePosition", "dataAttributes", "tagName", "anchorIndex", "elementClasses"]
+📊 첫 앵커 타입: contentHash
+📊 콘텐츠 해시: hash=i7duyg, textLen=76
+📊 첫 앵커 위치: X=0.0px, Y=1252.0px
+📊 첫 앵커 품질점수: 92점
+📊 무한스크롤 앵커 수집 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
+    headings = 0;
+    links = 22;
+    listItems = 25;
+    others = 12;
+    paragraphs = 0;
+}, "regionDistribution": {
+    aboveViewport = 12;
+    belowViewport = 12;
+    viewportLower = 12;
+    viewportMiddle = 11;
+    viewportUpper = 12;
+}]
+✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
+📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 93993문자
+🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["viewport", "captureTime", "detailedLogs", "title", "href", "timestamp", "infiniteScrollAnchors", "pageAnalysis", "scroll", "actualScrollable", "captureStats", "userAgent", "content"]
+🚀 JS 캡처된 앵커: 총 118개 (Vue=0, Hash=59, Index=59)
+📊 무한스크롤 JS 캡처 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
+    headings = 0;
+    links = 22;
+    listItems = 25;
+    others = 12;
+    paragraphs = 0;
+}, "regionDistribution": {
+    aboveViewport = 12;
+    belowViewport = 12;
+    viewportLower = 12;
+    viewportMiddle = 11;
+    viewportUpper = 12;
+}]
+✅ 완전 캡처 성공
+📊 캡처 완료: 위치=(0.0, 1542.0), 백분율=(0.00%, 57.86%)
+📊 스크롤 계산 정보: actualScrollableHeight=3477.0, viewportHeight=812.0, maxScrollY=2665.0
+🔥 캡처된 jsState 키: ["viewport", "captureTime", "detailedLogs", "title", "href", "timestamp", "infiniteScrollAnchors", "pageAnalysis", "scroll", "actualScrollable", "captureStats", "userAgent", "content"]
+🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=59, Index=59, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["captureTimestamp", "elementClasses", "anchorType", "size", "viewportPosition", "qualityScore", "dataAttributes", "elementId", "offsetFromTop", "textContent", "region", "tagName", "absolutePosition", "contentHash", "anchorIndex"]
+📊 첫 앵커 타입: contentHash
+📊 콘텐츠 해시: hash=i7duyg, textLen=76
+📊 첫 앵커 위치: X=0.0px, Y=1252.0px
+📊 첫 앵커 품질점수: 92점
+📊 무한스크롤 앵커 수집 통계: ["finalAnchors": 118, "contentHashAnchors": 59, "totalCandidates": 218, "vueComponentAnchors": 0, "virtualIndexAnchors": 59, "tagDistribution": {
+    headings = 0;
+    links = 22;
+    listItems = 25;
+    others = 12;
+    paragraphs = 0;
+}, "regionDistribution": {
+    aboveViewport = 12;
+    belowViewport = 12;
+    viewportLower = 12;
+    viewportMiddle = 11;
+    viewportUpper = 12;
+}]
+✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[15:38:16.154][12C318][B:✅ F:❌][21] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/987826?page=2
+[BFCache] 💾 이미지 저장 성공
+[BFCache] 💾 상태 저장 성공
+[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v1]
+[15:38:16.242][12C318][B:✅ F:❌][21] 🆕 URL 차이 감지 - 새 페이지 추가
+[15:38:16.242][12C318][B:✅ F:❌][21]    현재: https://m.dcinside.com/board/thesingularity?page=2
+[15:38:16.242][12C318][B:✅ F:❌][21]    신규: https://m.dcinside.com/board/thesingularity/987826?page=2
+[15:38:16.242][12C318][B:✅ F:❌][22] 📄 새 페이지 추가: 'AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리' [ID: 57C8AC91] (총 22개)
+[15:38:16.243] ☁️ 전역 방문 기록 저장: 260개
+[15:38:16.243][12C318][B:✅ F:❌][22] 🆕 페이지 기록: 'AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리' (총 22개)
+HIST ⏪가능 ▶︎불가 | 'AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리' [ID: 57C8AC91)
+[15:38:16.243][12C318][B:✅ F:❌][22] 💾 세션 저장: 22개 페이지, 현재 인덱스 21
+스냅샷 생성: ID 12C3188E, 22개 페이지, 인덱스 21
+저장 시도: 탭 1개 [22페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 6011 바이트
+[15:38:16.244][12C318][B:✅ F:❌][22] ✅ 네비게이션 완료
+[BFCache] 💾 이미지 저장 성공
+[BFCache] 💾 상태 저장 성공
+[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v2]
+🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
+[BFCache] 📸 도착 스냅샷 캡처
+🚀 무한스크롤 앵커 직렬 캡처 시작: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리 (background)
+[15:38:16.553][12C318][B:✅ F:❌][22] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
+📸 스냅샷 캡처 시도: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
+📸 스냅샷 성공
+🌐 DOM 캡처 시작
+🌐 DOM 캡처 성공: 116774문자
+🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
+✅ JS 상태 캡처 성공: ["content", "scroll", "viewport", "pageAnalysis", "actualScrollable", "detailedLogs", "infiniteScrollAnchors", "userAgent", "captureStats", "title", "href", "timestamp", "captureTime"]
+🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
+📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 32, "finalAnchors": 64, "virtualIndexAnchors": 32, "regionDistribution": {
+    aboveViewport = 0;
+    belowViewport = 12;
+    viewportLower = 7;
+    viewportMiddle = 1;
+    viewportUpper = 12;
+}, "tagDistribution": {
+    headings = 0;
+    links = 6;
+    listItems = 9;
+    others = 15;
+    paragraphs = 2;
+}, "totalCandidates": 146]
+✅ 완전 캡처 성공
 📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3468.0, viewportHeight=812.0, maxScrollY=2656.0
-🔥 캡처된 jsState 키: ["pageAnalysis", "viewport", "detailedLogs", "infiniteScrollAnchors", "href", "title", "content", "captureStats", "userAgent", "actualScrollable", "scroll", "captureTime", "timestamp"]
+📊 스크롤 계산 정보: actualScrollableHeight=4200.0, viewportHeight=812.0, maxScrollY=3388.0
+🔥 캡처된 jsState 키: ["content", "scroll", "viewport", "pageAnalysis", "actualScrollable", "detailedLogs", "infiniteScrollAnchors", "userAgent", "captureStats", "title", "href", "timestamp", "captureTime"]
 🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
 🚀 무한스크롤 앵커 타입별: Vue=0, Hash=32, Index=32, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["dataAttributes", "region", "viewportPosition", "anchorType", "elementId", "offsetFromTop", "textContent", "anchorIndex", "size", "absolutePosition", "elementClasses", "captureTimestamp", "contentHash", "tagName", "qualityScore"]
+🚀 첫 번째 앵커 키: ["dataAttributes", "elementId", "textContent", "absolutePosition", "qualityScore", "viewportPosition", "tagName", "captureTimestamp", "size", "anchorIndex", "anchorType", "offsetFromTop", "elementClasses", "region", "contentHash"]
 📊 첫 앵커 타입: contentHash
 📊 콘텐츠 해시: hash=97qcau, textLen=100
 📊 첫 앵커 위치: X=0.0px, Y=0.0px
 📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 32, "vueComponentAnchors": 0, "virtualIndexAnchors": 32, "totalCandidates": 122, "finalAnchors": 64, "tagDistribution": {
+📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 32, "finalAnchors": 64, "virtualIndexAnchors": 32, "regionDistribution": {
+    aboveViewport = 0;
+    belowViewport = 12;
+    viewportLower = 7;
+    viewportMiddle = 1;
+    viewportUpper = 12;
+}, "tagDistribution": {
     headings = 0;
-    links = 3;
-    listItems = 7;
+    links = 6;
+    listItems = 9;
     others = 15;
-    paragraphs = 7;
-}, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 4;
-    viewportMiddle = 4;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+    paragraphs = 2;
+}, "totalCandidates": 146]
+✅ 무한스크롤 앵커 직렬 캡처 완료: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v12]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v8
-[20:40:59.944][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-📦 [Step 1] JavaScript 생성 완료: 42349자
-📦 [Step 1] 현재 높이: 1915px
-📦 [Step 1] 저장 시점 높이: 1915px
-📦 [Step 1] 복원된 높이: 1915px
-📦 [Step 1] 복원률: 100.0%
-📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요
-   [Step 1] 저장 시점 높이: 1915px
-   [Step 1] 스크롤 루트: HTML
-   [Step 1] 현재 높이: 1915px
-   [Step 1] 뷰포트 높이: 812px
-   [Step 1] 높이 차이: 0px (충분)
-   정적 사이트 - 콘텐츠 이미 충분함
-📦 [Step 1] 완료: 성공 (소요: 0.2초)
-📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)
-[20:41:00.000][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[20:41:00.000][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:41:00.001][6373C1][B:✅ F:✅][78] ✅ 복원 완료, 다음 큐 처리 시작
-HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:41:00.001][6373C1][B:✅ F:✅][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 76
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22336 바이트
-[20:41:00.001][6373C1][B:✅ F:✅][78] ✅ 네비게이션 완료
-📏 [Step 2] 목표 백분율: X=0.00%, Y=100.00%
-📏 [Step 2] 계산된 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 실제 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 위치 차이: X=0.0px, Y=0.0px
-   [Step 2] 상대좌표 기반 스크롤 복원
-   목표 백분율: X=0.00%, Y=100.00%
-   저장 시점 높이: 1915px
-   최대 스크롤 (저장 기준): X=0px, Y=1103px
-   계산된 목표: X=0.0px, Y=1103.0px
-📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주
-📏 [Step 2] 완료: 성공 (소요: 0.2초)
-🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작
-🔍 [Step 3] 사용 가능한 앵커: 90개
-🔍 [Step 3] 매칭된 앵커 타입: contentHash
-🔍 [Step 3] 매칭 방법: element_id
-🔍 [Step 3] 매칭 신뢰도: 100.0%
-🔍 [Step 3] 복원된 위치: X=0.0px, Y=1103.0px
-🔍 [Step 3] 목표와의 차이: X=0.0px, Y=0.0px
-   [Step 3] 무한스크롤 전용 앵커 복원
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   사용 가능한 앵커: 90개
-   Vue Component 앵커: 0개
-   Content Hash 앵커: 45개
-   Virtual Index 앵커: 45개
-   🔍 거리 기반 매칭 시작 (목표: Y=1103px)
-   매칭된 후보 수: 6134개
-   최적 매칭 선택: element_id (거리: 0px, 신뢰도: 100%)
-🔍 [Step 3] 완료: 성공 (소요: 0.1초)
-✅ [Step 4] 최종 검증 및 미세 보정 시작
-✅ [Step 4] 최종 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 목표 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 최종 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 허용 오차 내: 예
-   [Step 4] 최종 검증 및 미세 보정
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   현재 위치: X=0.0px, Y=1103.0px
-   위치 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 완료: 성공 (소요: 0.1초)
-🎯 전체 BFCache 복원 완료: 성공
-🔓 복원 완료 - 캡처 재개
-⏱️ 전체 복원 소요 시간: 0.6초
-[BFCache] ✅ BFCache 복원 성공
-[BFCache] 🎬 BFCache 복원 성공
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (immediate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81207문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["userAgent", "pageAnalysis", "content", "detailedLogs", "captureStats", "infiniteScrollAnchors", "scroll", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "totalCandidates": 156, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 45, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["userAgent", "pageAnalysis", "content", "detailedLogs", "captureStats", "infiniteScrollAnchors", "scroll", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorType", "textContent", "anchorIndex", "size", "contentHash", "offsetFromTop", "region", "elementClasses", "dataAttributes", "tagName", "absolutePosition", "captureTimestamp", "elementId", "viewportPosition", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=7v3eqd, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 45, "vueComponentAnchors": 0, "totalCandidates": 156, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 45, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 90]
-[BFCache] 💭 메모리 캐시 저장
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:41:00.817][6373C1][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
-[20:41:00.852][6373C1][B:✅ F:✅][78] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/986489
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:41:00.852][6373C1][B:✅ F:✅][78] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:41:00.859][6373C1][B:✅ F:✅][78] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/986489
-🌐 DOM 캡처 성공: 81207문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["viewport", "href", "content", "captureStats", "timestamp", "pageAnalysis", "captureTime", "detailedLogs", "actualScrollable", "userAgent", "infiniteScrollAnchors", "scroll", "title"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "totalCandidates": 156, "finalAnchors": 90, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["viewport", "href", "content", "captureStats", "timestamp", "pageAnalysis", "captureTime", "detailedLogs", "actualScrollable", "userAgent", "infiniteScrollAnchors", "scroll", "title"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["size", "contentHash", "offsetFromTop", "viewportPosition", "dataAttributes", "region", "anchorType", "captureTimestamp", "elementClasses", "anchorIndex", "textContent", "elementId", "absolutePosition", "qualityScore", "tagName"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=7v3eqd, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "totalCandidates": 156, "finalAnchors": 90, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81207문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 JS 캡처된 앵커: 총 90개 (Vue=0, Hash=45, Index=45)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "totalCandidates": 156, "finalAnchors": 90, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 100.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=1915.0, viewportHeight=812.0, maxScrollY=1103.0
-🔥 캡처된 jsState 키: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=45, Index=45, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["dataAttributes", "captureTimestamp", "anchorType", "absolutePosition", "elementClasses", "size", "region", "textContent", "anchorIndex", "offsetFromTop", "elementId", "viewportPosition", "tagName", "contentHash", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=7v3eqd, textLen=62
-📊 첫 앵커 위치: X=0.0px, Y=836.0px
-📊 첫 앵커 품질점수: 91점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 45, "virtualIndexAnchors": 45, "tagDistribution": {
-    headings = 0;
-    links = 15;
-    listItems = 16;
-    others = 13;
-    paragraphs = 1;
-}, "totalCandidates": 156, "finalAnchors": 90, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 0;
-    viewportLower = 9;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v14]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v10
-[20:41:01.025][6373C1][B:✅ F:✅][78] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/986489
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v15]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v11
-[20:41:01.138][6373C1][B:✅ F:✅][78] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:41:01.138][6373C1][B:✅ F:✅][78]    현재: https://m.dcinside.com/board/thesingularity
-[20:41:01.138][6373C1][B:✅ F:✅][78]    신규: https://m.dcinside.com/board/thesingularity/986489
-[20:41:01.138][6373C1][B:✅ F:✅][77] 🗑️ forward 스택 1개 제거
-[20:41:01.139][6373C1][B:✅ F:❌][78] 🎯 네비게이션 상태: back=true, forward=false, index=77/78
-[20:41:01.139][6373C1][B:✅ F:❌][78] 📄 새 페이지 추가: '코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리' [ID: 0246F0EB] (총 78개)
-[20:41:01.139] ☁️ 전역 방문 기록 저장: 101개
-[20:41:01.139][6373C1][B:✅ F:❌][78] 🆕 페이지 기록: '코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리' (총 78개)
-HIST ⏪가능 ▶︎불가 | '코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리' [ID: 0246F0EB)
-[20:41:01.139][6373C1][B:✅ F:❌][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 77
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 77
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22319 바이트
-[20:41:01.140][6373C1][B:✅ F:❌][78] ✅ 네비게이션 완료
-[20:41:01.140][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
-[20:41:01.140][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 앵커 직렬 캡처 시작: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리 (forceUpdate)
-📸 스냅샷 캡처 시도: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
+[BFCache] 💾 디스크 저장 완료: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리 [v1]
+🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
+🚀 무한스크롤 앵커 직렬 캡처 시작: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리 (forceUpdate)
+📸 스냅샷 캡처 시도: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
 [BFCache] 💭 메모리 캐시 히트
 [BFCache] 📸 BFCache 스냅샷 사용
 [BFCache] 🎬 전환 시작: 뒤로
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 115900문자
+🌐 DOM 캡처 성공: 116774문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["pageAnalysis", "captureTime", "actualScrollable", "viewport", "infiniteScrollAnchors", "userAgent", "scroll", "href", "content", "timestamp", "detailedLogs", "title", "captureStats"]
-🚀 JS 캡처된 앵커: 총 50개 (Vue=0, Hash=25, Index=25)
-📊 무한스크롤 JS 캡처 통계: ["totalCandidates": 140, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "regionDistribution": {
+✅ JS 상태 캡처 성공: ["userAgent", "captureStats", "title", "infiniteScrollAnchors", "captureTime", "scroll", "timestamp", "href", "pageAnalysis", "viewport", "detailedLogs", "content", "actualScrollable"]
+🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
+📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 32, "finalAnchors": 64, "virtualIndexAnchors": 32, "regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
+    viewportLower = 7;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 50]
+}, "tagDistribution": {
+    headings = 0;
+    links = 6;
+    listItems = 9;
+    others = 15;
+    paragraphs = 2;
+}, "totalCandidates": 146]
 ✅ 완전 캡처 성공
 📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=4126.0, viewportHeight=812.0, maxScrollY=3314.0
-🔥 캡처된 jsState 키: ["pageAnalysis", "captureTime", "actualScrollable", "viewport", "infiniteScrollAnchors", "userAgent", "scroll", "href", "content", "timestamp", "detailedLogs", "title", "captureStats"]
+📊 스크롤 계산 정보: actualScrollableHeight=4200.0, viewportHeight=812.0, maxScrollY=3388.0
+🔥 캡처된 jsState 키: ["userAgent", "captureStats", "title", "infiniteScrollAnchors", "captureTime", "scroll", "timestamp", "href", "pageAnalysis", "viewport", "detailedLogs", "content", "actualScrollable"]
 🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=25, Index=25, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["textContent", "elementClasses", "absolutePosition", "elementId", "qualityScore", "viewportPosition", "region", "anchorType", "tagName", "offsetFromTop", "contentHash", "dataAttributes", "anchorIndex", "size", "captureTimestamp"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-4.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "finalAnchors": 50, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "totalCandidates": 140]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리 (background)
-[20:41:01.452][6373C1][B:✅ F:❌][78] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 115900문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "title", "detailedLogs", "userAgent", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
-🚀 JS 캡처된 앵커: 총 50개 (Vue=0, Hash=25, Index=25)
-📊 무한스크롤 JS 캡처 통계: ["totalCandidates": 140, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "finalAnchors": 50]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, -12.7), 백분율=(0.00%, -0.38%)
-📊 스크롤 계산 정보: actualScrollableHeight=4126.0, viewportHeight=812.0, maxScrollY=3314.0
-🔥 캡처된 jsState 키: ["scroll", "infiniteScrollAnchors", "viewport", "timestamp", "captureStats", "title", "detailedLogs", "userAgent", "captureTime", "actualScrollable", "content", "pageAnalysis", "href"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=25, Index=25, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["qualityScore", "anchorType", "contentHash", "textContent", "offsetFromTop", "elementId", "dataAttributes", "tagName", "size", "absolutePosition", "viewportPosition", "anchorIndex", "elementClasses", "captureTimestamp", "region"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-14.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "finalAnchors": 50, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "totalCandidates": 140]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리 [v1]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 코덱스 스파크의 위엄 - 특이점이 온다 마이너 갤러리 [v2]
-[20:41:01.737][6373C1][B:✅ F:❌][78][Q:1] 📥 복원 큐 추가: 인덱스 76 (큐 길이: 1)
-[20:41:01.737][6373C1][B:✅ F:✅][78][preparing(76)] 🎯 네비게이션 상태: back=true, forward=true, index=76/78
-[20:41:01.738][6373C1][B:✅ F:✅][78][preparing(76)] 🔄 복원 시작: 인덱스 76 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:41:01.739][6373C1][B:✅ F:✅][🚩FLAG][preparing(76)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
-[20:41:01.740][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 76/78]
-[BFCache] ⬅️ 뒤로가기 완료
-[BFCache] 💭 메모리 캐시 히트
-🎯 순차적 4단계 BFCache 복원 시작
-📊 복원 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📊 목표 위치: X=0.0px, Y=1103.0px
-📊 목표 백분율: X=0.00%, Y=100.00%
-📊 저장 콘텐츠 높이: 1915px
-📦 [Step 1] 저장 콘텐츠 높이 복원 시작
-📦 [Step 1] 목표 높이: 1915px
-📦 [Step 1] 페이지 안정화 대기 중...
-[20:41:01.746][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoBack 변경: true
-[20:41:01.746][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoForward 변경: true
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-[20:41:01.751][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 115900문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["title", "infiniteScrollAnchors", "href", "userAgent", "viewport", "pageAnalysis", "content", "timestamp", "captureStats", "scroll", "detailedLogs", "captureTime", "actualScrollable"]
-🚀 JS 캡처된 앵커: 총 50개 (Vue=0, Hash=25, Index=25)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "finalAnchors": 50, "totalCandidates": 140, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, -4.0), 백분율=(0.00%, -0.12%)
-📊 스크롤 계산 정보: actualScrollableHeight=4126.0, viewportHeight=812.0, maxScrollY=3314.0
-🔥 캡처된 jsState 키: ["title", "infiniteScrollAnchors", "href", "userAgent", "viewport", "pageAnalysis", "content", "timestamp", "captureStats", "scroll", "detailedLogs", "captureTime", "actualScrollable"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=25, Index=25, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["captureTimestamp", "elementId", "anchorType", "anchorIndex", "dataAttributes", "absolutePosition", "offsetFromTop", "textContent", "elementClasses", "qualityScore", "region", "tagName", "viewportPosition", "contentHash", "size"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-4.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 25, "virtualIndexAnchors": 25, "tagDistribution": {
-    headings = 0;
-    links = 3;
-    listItems = 7;
-    others = 14;
-    paragraphs = 1;
-}, "finalAnchors": 50, "totalCandidates": 140, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 1;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[20:41:01.895][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v16]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v12
-[20:41:01.951][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[20:41:01.951][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:41:01.951][6373C1][B:✅ F:✅][78] ✅ 복원 완료, 다음 큐 처리 시작
-HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:41:01.951][6373C1][B:✅ F:✅][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 76
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22319 바이트
-[20:41:01.952][6373C1][B:✅ F:✅][78] ✅ 네비게이션 완료
-📦 [Step 1] JavaScript 생성 완료: 42349자
-📦 [Step 1] 현재 높이: 1965px
-📦 [Step 1] 저장 시점 높이: 1915px
-📦 [Step 1] 복원된 높이: 1965px
-📦 [Step 1] 복원률: 102.6%
-📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요
-   [Step 1] 저장 시점 높이: 1915px
-   [Step 1] 스크롤 루트: HTML
-   [Step 1] 현재 높이: 1965px
-   [Step 1] 뷰포트 높이: 812px
-   [Step 1] 높이 차이: -50px (충분)
-   정적 사이트 - 콘텐츠 이미 충분함
-📦 [Step 1] 완료: 성공 (소요: 0.2초)
-📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)
-📏 [Step 2] 목표 백분율: X=0.00%, Y=100.00%
-📏 [Step 2] 계산된 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 실제 위치: X=0.0px, Y=1103.0px
-📏 [Step 2] 위치 차이: X=0.0px, Y=0.0px
-   [Step 2] 상대좌표 기반 스크롤 복원
-   목표 백분율: X=0.00%, Y=100.00%
-   저장 시점 높이: 1915px
-   최대 스크롤 (저장 기준): X=0px, Y=1103px
-   계산된 목표: X=0.0px, Y=1103.0px
-📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주
-📏 [Step 2] 완료: 성공 (소요: 0.2초)
-🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작
-🔍 [Step 3] 사용 가능한 앵커: 90개
-🔍 [Step 3] 매칭된 앵커 타입: contentHash
-🔍 [Step 3] 매칭 방법: element_id
-🔍 [Step 3] 매칭 신뢰도: 100.0%
-🔍 [Step 3] 복원된 위치: X=0.0px, Y=1103.0px
-🔍 [Step 3] 목표와의 차이: X=0.0px, Y=0.0px
-   [Step 3] 무한스크롤 전용 앵커 복원
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   사용 가능한 앵커: 90개
-   Vue Component 앵커: 0개
-   Content Hash 앵커: 45개
-   Virtual Index 앵커: 45개
-   🔍 거리 기반 매칭 시작 (목표: Y=1103px)
-   매칭된 후보 수: 6158개
-   최적 매칭 선택: element_id (거리: 0px, 신뢰도: 100%)
-🔍 [Step 3] 완료: 성공 (소요: 0.1초)
-✅ [Step 4] 최종 검증 및 미세 보정 시작
-✅ [Step 4] 최종 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 목표 위치: X=0.0px, Y=1103.0px
-✅ [Step 4] 최종 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 허용 오차 내: 예
-   [Step 4] 최종 검증 및 미세 보정
-   목표 위치: X=0.0px, Y=1103.0px
-   저장 시점 높이: 1915px
-   현재 위치: X=0.0px, Y=1103.0px
-   위치 차이: X=0.0px, Y=0.0px
-✅ [Step 4] 완료: 성공 (소요: 0.0초)
-🎯 전체 BFCache 복원 완료: 성공
-🔓 복원 완료 - 캡처 재개
-⏱️ 전체 복원 소요 시간: 0.6초
-[BFCache] ✅ BFCache 복원 성공
-[BFCache] 🎬 BFCache 복원 성공
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (immediate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81542문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 JS 캡처된 앵커: 총 98개 (Vue=0, Hash=49, Index=49)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 49, "totalCandidates": 156, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 49, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 98]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 95.66%)
-📊 스크롤 계산 정보: actualScrollableHeight=1965.0, viewportHeight=812.0, maxScrollY=1153.0
-🔥 캡처된 jsState 키: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=49, Index=49, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorType", "textContent", "anchorIndex", "offsetFromTop", "size", "contentHash", "region", "elementClasses", "dataAttributes", "tagName", "absolutePosition", "captureTimestamp", "elementId", "viewportPosition", "qualityScore"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=11hssk, textLen=74
-📊 첫 앵커 위치: X=0.0px, Y=834.0px
-📊 첫 앵커 품질점수: 92점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 49, "totalCandidates": 156, "vueComponentAnchors": 0, "tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "virtualIndexAnchors": 49, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 98]
-[BFCache] 💭 메모리 캐시 저장
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[20:41:02.763][6373C1][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
-[20:41:02.797][6373C1][B:✅ F:✅][78] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity/986491
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[20:41:02.798][6373C1][B:✅ F:✅][78] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 📸 떠나기 스냅샷 캡처
-[BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:41:02.805][6373C1][B:✅ F:✅][78] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity/986491
-🌐 DOM 캡처 성공: 81542문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["userAgent", "scroll", "pageAnalysis", "detailedLogs", "captureStats", "infiniteScrollAnchors", "content", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 JS 캡처된 앵커: 총 98개 (Vue=0, Hash=49, Index=49)
-📊 무한스크롤 JS 캡처 통계: ["regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "virtualIndexAnchors": 49, "tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 98, "contentHashAnchors": 49, "totalCandidates": 156, "vueComponentAnchors": 0]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 95.66%)
-📊 스크롤 계산 정보: actualScrollableHeight=1965.0, viewportHeight=812.0, maxScrollY=1153.0
-🔥 캡처된 jsState 키: ["userAgent", "scroll", "pageAnalysis", "detailedLogs", "captureStats", "infiniteScrollAnchors", "content", "captureTime", "href", "title", "actualScrollable", "timestamp", "viewport"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=49, Index=49, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["absolutePosition", "elementClasses", "viewportPosition", "elementId", "anchorType", "region", "captureTimestamp", "offsetFromTop", "tagName", "qualityScore", "contentHash", "anchorIndex", "dataAttributes", "textContent", "size"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=11hssk, textLen=74
-📊 첫 앵커 위치: X=0.0px, Y=834.0px
-📊 첫 앵커 품질점수: 92점
-📊 무한스크롤 앵커 수집 통계: ["regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "virtualIndexAnchors": 49, "tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "finalAnchors": 98, "contentHashAnchors": 49, "totalCandidates": 156, "vueComponentAnchors": 0]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 81542문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureStats", "pageAnalysis", "scroll", "infiniteScrollAnchors", "detailedLogs", "content", "href", "captureTime", "title", "actualScrollable", "viewport", "timestamp", "userAgent"]
-🚀 JS 캡처된 앵커: 총 98개 (Vue=0, Hash=49, Index=49)
-📊 무한스크롤 JS 캡처 통계: ["tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 98, "totalCandidates": 156, "vueComponentAnchors": 0, "contentHashAnchors": 49, "virtualIndexAnchors": 49]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 1103.0), 백분율=(0.00%, 95.66%)
-📊 스크롤 계산 정보: actualScrollableHeight=1965.0, viewportHeight=812.0, maxScrollY=1153.0
-🔥 캡처된 jsState 키: ["captureStats", "pageAnalysis", "scroll", "infiniteScrollAnchors", "detailedLogs", "content", "href", "captureTime", "title", "actualScrollable", "viewport", "timestamp", "userAgent"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=49, Index=49, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["size", "contentHash", "offsetFromTop", "viewportPosition", "dataAttributes", "region", "anchorType", "captureTimestamp", "elementClasses", "anchorIndex", "textContent", "elementId", "absolutePosition", "qualityScore", "tagName"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=11hssk, textLen=74
-📊 첫 앵커 위치: X=0.0px, Y=834.0px
-📊 첫 앵커 품질점수: 92점
-📊 무한스크롤 앵커 수집 통계: ["tagDistribution": {
-    headings = 0;
-    links = 16;
-    listItems = 19;
-    others = 13;
-    paragraphs = 1;
-}, "regionDistribution": {
-    aboveViewport = 12;
-    belowViewport = 3;
-    viewportLower = 10;
-    viewportMiddle = 12;
-    viewportUpper = 12;
-}, "finalAnchors": 98, "totalCandidates": 156, "vueComponentAnchors": 0, "contentHashAnchors": 49, "virtualIndexAnchors": 49]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v18]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v14
-[20:41:02.963][6373C1][B:✅ F:✅][78] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity/986491
-[20:41:03.025][6373C1][B:✅ F:✅][78] 🆕 URL 차이 감지 - 새 페이지 추가
-[20:41:03.026][6373C1][B:✅ F:✅][78]    현재: https://m.dcinside.com/board/thesingularity
-[20:41:03.026][6373C1][B:✅ F:✅][78]    신규: https://m.dcinside.com/board/thesingularity/986491
-[20:41:03.026][6373C1][B:✅ F:✅][77] 🗑️ forward 스택 1개 제거
-[20:41:03.026][6373C1][B:✅ F:❌][78] 🎯 네비게이션 상태: back=true, forward=false, index=77/78
-[20:41:03.026][6373C1][B:✅ F:❌][78] 📄 새 페이지 추가: '검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리' [ID: D9399A6E] (총 78개)
-[20:41:03.026] ☁️ 전역 방문 기록 저장: 102개
-[20:41:03.026][6373C1][B:✅ F:❌][78] 🆕 페이지 기록: '검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리' (총 78개)
-HIST ⏪가능 ▶︎불가 | '검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리' [ID: D9399A6E)
-[20:41:03.026][6373C1][B:✅ F:❌][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 77
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 77
-저장 시도: 탭 1개 [78페이지]
-웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22318 바이트
-[20:41:03.027][6373C1][B:✅ F:❌][78] ✅ 네비게이션 완료
-[20:41:03.027][6373C1][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
-[20:41:03.027][6373C1][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v19]
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v15
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
-[BFCache] 📸 도착 스냅샷 캡처
-🚀 무한스크롤 앵커 직렬 캡처 시작: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리 (background)
-[20:41:03.336][6373C1][B:✅ F:❌][78] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
-📸 스냅샷 캡처 시도: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 83847문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["timestamp", "captureStats", "title", "userAgent", "captureTime", "viewport", "detailedLogs", "pageAnalysis", "content", "infiniteScrollAnchors", "href", "actualScrollable", "scroll"]
-🚀 JS 캡처된 앵커: 총 52개 (Vue=0, Hash=26, Index=26)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "contentHashAnchors": 26, "virtualIndexAnchors": 26, "finalAnchors": 52, "totalCandidates": 110, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3483.0, viewportHeight=812.0, maxScrollY=2671.0
-🔥 캡처된 jsState 키: ["timestamp", "captureStats", "title", "userAgent", "captureTime", "viewport", "detailedLogs", "pageAnalysis", "content", "infiniteScrollAnchors", "href", "actualScrollable", "scroll"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=26, Index=26, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["qualityScore", "anchorType", "textContent", "offsetFromTop", "contentHash", "elementId", "dataAttributes", "tagName", "size", "absolutePosition", "viewportPosition", "anchorIndex", "elementClasses", "captureTimestamp", "region"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=32, Index=32, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["region", "dataAttributes", "qualityScore", "captureTimestamp", "elementClasses", "viewportPosition", "textContent", "anchorType", "tagName", "elementId", "anchorIndex", "absolutePosition", "offsetFromTop", "size", "contentHash"]
 📊 첫 앵커 타입: contentHash
 📊 콘텐츠 해시: hash=97qcau, textLen=100
 📊 첫 앵커 위치: X=0.0px, Y=0.0px
 📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
+📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "contentHashAnchors": 32, "finalAnchors": 64, "virtualIndexAnchors": 32, "regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
+    viewportLower = 7;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "contentHashAnchors": 26, "virtualIndexAnchors": 26, "finalAnchors": 52, "totalCandidates": 110, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
-🚀 무한스크롤 앵커 직렬 캡처 시작: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리 (forceUpdate)
-📸 스냅샷 캡처 시도: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
-[BFCache] 💭 메모리 캐시 히트
-[BFCache] 📸 BFCache 스냅샷 사용
-[BFCache] 🎬 전환 시작: 뒤로
-📸 스냅샷 성공
-🌐 DOM 캡처 시작
-🌐 DOM 캡처 성공: 83847문자
-🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["href", "title", "captureStats", "scroll", "userAgent", "infiniteScrollAnchors", "captureTime", "content", "actualScrollable", "viewport", "pageAnalysis", "timestamp", "detailedLogs"]
-🚀 JS 캡처된 앵커: 총 52개 (Vue=0, Hash=26, Index=26)
-📊 무한스크롤 JS 캡처 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "contentHashAnchors": 26, "virtualIndexAnchors": 26, "finalAnchors": 52, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}, "totalCandidates": 110]
-✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
-📊 스크롤 계산 정보: actualScrollableHeight=3483.0, viewportHeight=812.0, maxScrollY=2671.0
-🔥 캡처된 jsState 키: ["href", "title", "captureStats", "scroll", "userAgent", "infiniteScrollAnchors", "captureTime", "content", "actualScrollable", "viewport", "pageAnalysis", "timestamp", "detailedLogs"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=26, Index=26, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["anchorIndex", "absolutePosition", "contentHash", "anchorType", "tagName", "region", "elementClasses", "offsetFromTop", "dataAttributes", "size", "viewportPosition", "qualityScore", "textContent", "elementId", "captureTimestamp"]
-📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=97qcau, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=0.0px
-📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["vueComponentAnchors": 0, "regionDistribution": {
-    aboveViewport = 0;
-    belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
-    viewportUpper = 12;
-}, "contentHashAnchors": 26, "virtualIndexAnchors": 26, "finalAnchors": 52, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}, "totalCandidates": 110]
-✅ 무한스크롤 앵커 직렬 캡처 완료: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리
+}, "tagDistribution": {
+    headings = 0;
+    links = 6;
+    listItems = 9;
+    others = 15;
+    paragraphs = 2;
+}, "totalCandidates": 146]
+✅ 무한스크롤 앵커 직렬 캡처 완료: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리 [v1]
-[BFCache] 💾 이미지 저장 성공
-[BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 검색용으로 쓰기에는 - 특이점이 온다 마이너 갤러리 [v2]
-[20:41:03.742][6373C1][B:✅ F:❌][78][Q:1] 📥 복원 큐 추가: 인덱스 76 (큐 길이: 1)
-[20:41:03.742][6373C1][B:✅ F:✅][78][preparing(76)] 🎯 네비게이션 상태: back=true, forward=true, index=76/78
-[20:41:03.743][6373C1][B:✅ F:✅][78][preparing(76)] 🔄 복원 시작: 인덱스 76 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
+[BFCache] 💾 디스크 저장 완료: AI때문에 자아실현이 막힌 사람들은 어떡함? - 특이점이 온다 마이너 갤러리 [v2]
+[15:38:17.413][12C318][B:✅ F:❌][22][Q:1] 📥 복원 큐 추가: 인덱스 20 (큐 길이: 1)
+[15:38:17.414][12C318][B:✅ F:✅][22][preparing(20)] 🎯 네비게이션 상태: back=true, forward=true, index=20/22
+[15:38:17.414][12C318][B:✅ F:✅][22][preparing(20)] 🔄 복원 시작: 인덱스 20 → '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (큐 남은 건수: 0)
 🚀 무한스크롤 전용 앵커 캡처 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
 [BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
 🚀 무한스크롤 앵커 직렬 캡처 시작: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 (forceUpdate)
-[20:41:03.743][6373C1][B:✅ F:✅][🚩FLAG][preparing(76)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity
-[20:41:03.745][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 76/78]
+[15:38:17.415][12C318][B:✅ F:✅][🚩FLAG][preparing(20)] 🔄 복원 로드: https://m.dcinside.com/board/thesingularity?page=2
+[15:38:17.417][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(20)] ⬅️ 뒤로가기 큐 추가 성공: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [DataModel 인덱스: 20/22]
 [BFCache] ⬅️ 뒤로가기 완료
 [BFCache] 💭 메모리 캐시 히트
 🎯 순차적 4단계 BFCache 복원 시작
 📊 복원 대상: m.dcinside.com - 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
-📊 목표 위치: X=0.0px, Y=1103.0px
-📊 목표 백분율: X=0.00%, Y=95.66%
-📊 저장 콘텐츠 높이: 1965px
+📊 목표 위치: X=0.0px, Y=1542.0px
+📊 목표 백분율: X=0.00%, Y=57.86%
+📊 저장 콘텐츠 높이: 3477px
 📦 [Step 1] 저장 콘텐츠 높이 복원 시작
-📦 [Step 1] 목표 높이: 1965px
+📦 [Step 1] 목표 높이: 3477px
 📦 [Step 1] 페이지 안정화 대기 중...
-[20:41:03.751][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoBack 변경: true
-[20:41:03.751][6373C1][B:✅ F:✅][🚩FLAG][queueRestoring(76)] 🎯 DataModel canGoForward 변경: true
+[15:38:17.425][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(20)] 🎯 DataModel canGoBack 변경: true
+[15:38:17.426][12C318][B:✅ F:✅][🚩FLAG][queueRestoring(20)] 🎯 DataModel canGoForward 변경: true
 📸 스냅샷 캡처 시도: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 📸 스냅샷 성공
 🌐 DOM 캡처 시작
-[20:41:03.764][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity
-🌐 DOM 캡처 성공: 83847문자
+[15:38:17.444][12C318][B:✅ F:✅][22][queueRestoring(20)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity?page=2
+🌐 DOM 캡처 성공: 116774문자
 🚀 무한스크롤 전용 앵커 JS 상태 캡처 시작
-✅ JS 상태 캡처 성공: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 JS 캡처된 앵커: 총 52개 (Vue=0, Hash=26, Index=26)
-📊 무한스크롤 JS 캡처 통계: ["contentHashAnchors": 26, "vueComponentAnchors": 0, "totalCandidates": 110, "virtualIndexAnchors": 26, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}, "regionDistribution": {
+✅ JS 상태 캡처 성공: ["captureTime", "content", "timestamp", "href", "captureStats", "infiniteScrollAnchors", "title", "scroll", "actualScrollable", "viewport", "userAgent", "detailedLogs", "pageAnalysis"]
+🚀 JS 캡처된 앵커: 총 64개 (Vue=0, Hash=32, Index=32)
+📊 무한스크롤 JS 캡처 통계: ["finalAnchors": 64, "vueComponentAnchors": 0, "tagDistribution": {
+    headings = 0;
+    links = 6;
+    listItems = 9;
+    others = 15;
+    paragraphs = 2;
+}, "virtualIndexAnchors": 32, "regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
+    viewportLower = 7;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 52]
+}, "contentHashAnchors": 32, "totalCandidates": 146]
 ✅ 완전 캡처 성공
-📊 캡처 완료: 위치=(0.0, -4.7), 백분율=(0.00%, -0.17%)
-📊 스크롤 계산 정보: actualScrollableHeight=3483.0, viewportHeight=812.0, maxScrollY=2671.0
-🔥 캡처된 jsState 키: ["captureTime", "viewport", "detailedLogs", "captureStats", "pageAnalysis", "title", "href", "userAgent", "actualScrollable", "infiniteScrollAnchors", "content", "scroll", "timestamp"]
-🚀 캡처된 무한스크롤 앵커 데이터 키: ["stats", "anchors"]
-🚀 무한스크롤 앵커 타입별: Vue=0, Hash=26, Index=26, Path=0, Intersection=0
-🚀 첫 번째 앵커 키: ["offsetFromTop", "captureTimestamp", "dataAttributes", "anchorIndex", "textContent", "qualityScore", "region", "elementClasses", "contentHash", "viewportPosition", "tagName", "absolutePosition", "size", "elementId", "anchorType"]
+📊 캡처 완료: 위치=(0.0, 0.0), 백분율=(0.00%, 0.00%)
+📊 스크롤 계산 정보: actualScrollableHeight=4200.0, viewportHeight=812.0, maxScrollY=3388.0
+🔥 캡처된 jsState 키: ["captureTime", "content", "timestamp", "href", "captureStats", "infiniteScrollAnchors", "title", "scroll", "actualScrollable", "viewport", "userAgent", "detailedLogs", "pageAnalysis"]
+🚀 캡처된 무한스크롤 앵커 데이터 키: ["anchors", "stats"]
+🚀 무한스크롤 앵커 타입별: Vue=0, Hash=32, Index=32, Path=0, Intersection=0
+🚀 첫 번째 앵커 키: ["dataAttributes", "anchorType", "qualityScore", "anchorIndex", "absolutePosition", "elementId", "contentHash", "viewportPosition", "captureTimestamp", "elementClasses", "size", "tagName", "region", "offsetFromTop", "textContent"]
 📊 첫 앵커 타입: contentHash
-📊 콘텐츠 해시: hash=kvgp8g, textLen=100
-📊 첫 앵커 위치: X=0.0px, Y=-4.0px
+📊 콘텐츠 해시: hash=97qcau, textLen=100
+📊 첫 앵커 위치: X=0.0px, Y=0.0px
 📊 첫 앵커 품질점수: 90점
-📊 무한스크롤 앵커 수집 통계: ["contentHashAnchors": 26, "vueComponentAnchors": 0, "totalCandidates": 110, "virtualIndexAnchors": 26, "tagDistribution": {
-    headings = 1;
-    links = 1;
-    listItems = 7;
-    others = 16;
-    paragraphs = 1;
-}, "regionDistribution": {
+📊 무한스크롤 앵커 수집 통계: ["finalAnchors": 64, "vueComponentAnchors": 0, "tagDistribution": {
+    headings = 0;
+    links = 6;
+    listItems = 9;
+    others = 15;
+    paragraphs = 2;
+}, "virtualIndexAnchors": 32, "regionDistribution": {
     aboveViewport = 0;
     belowViewport = 12;
-    viewportLower = 2;
-    viewportMiddle = 0;
+    viewportLower = 7;
+    viewportMiddle = 1;
     viewportUpper = 12;
-}, "finalAnchors": 52]
+}, "contentHashAnchors": 32, "totalCandidates": 146]
 ✅ 무한스크롤 앵커 직렬 캡처 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[15:38:17.569][12C318][B:✅ F:✅][22][queueRestoring(20)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 20] URL: https://m.dcinside.com/board/thesingularity?page=2
 [BFCache] 💾 이미지 저장 성공
 [BFCache] 💾 상태 저장 성공
-[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v20]
-[20:41:03.916][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 76] URL: https://m.dcinside.com/board/thesingularity
-[BFCache] 🗑️ 이전 버전 삭제: Page_B13B5AF7-FDE5-4A1F-A960-23B58A110D4D_v16
+[BFCache] 💾 디스크 저장 완료: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드 [v3]
+[15:38:17.627][12C318][B:✅ F:✅][22][queueRestoring(20)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 20] URL: https://m.dcinside.com/board/thesingularity?page=2
+[15:38:17.627][12C318][B:✅ F:✅][22][queueRestoring(20)] 🤫 큐 복원 완료 - 제목만 업데이트: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
+[15:38:17.627][12C318][B:✅ F:✅][22] ✅ 복원 완료, 다음 큐 처리 시작
+HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: F10EFB00)
+[15:38:17.627][12C318][B:✅ F:✅][22] 💾 세션 저장: 22개 페이지, 현재 인덱스 20
+스냅샷 생성: ID 12C3188E, 22개 페이지, 인덱스 20
+저장 시도: 탭 1개 [22페이지]
+웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
+저장 성공: 데이터 크기 6011 바이트
+[15:38:17.627][12C318][B:✅ F:✅][22] ✅ 네비게이션 완료
 📦 [Step 1] JavaScript 생성 완료: 42349자
-[20:41:03.958][6373C1][B:✅ F:✅][78][queueRestoring(76)] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity?recommend=1
+[15:38:17.631][12C318][B:✅ F:✅][22] 👆 사용자 클릭 감지: https://m.dcinside.com/board/thesingularity?recommend=1
 🔒 복원 중 - 캡처 스킵: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
-[20:41:03.959][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
+[15:38:17.631][12C318][B:✅ F:✅][22] 📸 사용자 클릭 - 떠나기 전 즉시 고품질 캡처 (최고 우선순위)
 🔒 복원 중 - 캡처 스킵: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
 [BFCache] 📸 떠나기 스냅샷 캡처
 [BFCache] 📸 URL 변경 감지 - 떠나기 전 캐시
-[20:41:03.960][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:41:04.099][6373C1][B:✅ F:✅][78][queueRestoring(76)] 📝 URL 기반 제목 업데이트(보정): '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [인덱스: 75] URL: https://m.dcinside.com/board/thesingularity?recommend=1
-[20:41:04.142][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🔄 SPA Replace - 현재 페이지 교체: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:41:04.142][6373C1][B:✅ F:✅][78][queueRestoring(76)] 🤫 큐 복원 중 URL변경 - 현재 항목 치환: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드'
-[20:41:04.142][6373C1][B:✅ F:✅][78] ✅ 복원 완료, 다음 큐 처리 시작
-HIST ⏪가능 ▶︎가능 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: B13B5AF7)
-[20:41:04.142][6373C1][B:✅ F:✅][78] 💾 세션 저장: 78개 페이지, 현재 인덱스 76
-스냅샷 생성: ID 6373C199, 78개 페이지, 인덱스 76
-저장 시도: 탭 1개 [78페이지]
+[15:38:17.636][12C318][B:✅ F:✅][22] 🚀 네비게이션 시작: https://m.dcinside.com/board/thesingularity?recommend=1
+[15:38:17.734][12C318][B:✅ F:✅][22] ⚠️ URL 기반 제목 업데이트 실패: 해당 URL 없음 - https://m.dcinside.com/board/thesingularity?recommend=1
+✏️ 쿼리 차이: -["page"] +["recommend"]
+[15:38:17.788][12C318][B:✅ F:✅][22] 🆕 URL 차이 감지 - 새 페이지 추가
+[15:38:17.788][12C318][B:✅ F:✅][22]    현재: https://m.dcinside.com/board/thesingularity?page=2
+[15:38:17.788][12C318][B:✅ F:✅][22]    신규: https://m.dcinside.com/board/thesingularity?recommend=1
+[15:38:17.788][12C318][B:✅ F:✅][21] 🗑️ forward 스택 1개 제거
+[15:38:17.788][12C318][B:✅ F:❌][22] 🎯 네비게이션 상태: back=true, forward=false, index=21/22
+[15:38:17.788][12C318][B:✅ F:❌][22] 📄 새 페이지 추가: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: 58A0B75A] (총 22개)
+[15:38:17.788][12C318][B:✅ F:❌][22] 🆕 페이지 기록: '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' (총 22개)
+HIST ⏪가능 ▶︎불가 | '특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드' [ID: 58A0B75A)
+[15:38:17.788][12C318][B:✅ F:❌][22] 💾 세션 저장: 22개 페이지, 현재 인덱스 21
+스냅샷 생성: ID 12C3188E, 22개 페이지, 인덱스 21
+저장 시도: 탭 1개 [22페이지]
 웹뷰 풀 상태: 활성: 1, 풀: 0/10, PIP보호: 0
-저장 성공: 데이터 크기 22354 바이트
-[20:41:04.142][6373C1][B:✅ F:✅][78] ✅ 네비게이션 완료
-[20:41:04.788][6373C1][B:✅ F:✅] 🔄 뒤로가기 플래그 리셋 완료
+저장 성공: 데이터 크기 5988 바이트
+[15:38:17.789][12C318][B:✅ F:❌][22] ✅ 네비게이션 완료
+[15:38:17.789][12C318][B:✅ F:❌] 🎯 DataModel canGoBack 변경: true
+[15:38:17.789][12C318][B:✅ F:❌] 🎯 DataModel canGoForward 변경: false
+🔒 복원 중 - 캡처 스킵: 특이점이 온다 마이너 갤러리 - 커뮤니티 포털 디시인사이드
+[BFCache] 📸 도착 스냅샷 캡처
+[15:38:18.104][12C318][B:✅ F:❌][22] 📸 페이지 처리 완료 후 도착 캡처 예약 - 동적 렌더링 대기
+[15:38:18.466][12C318][B:✅ F:❌] 🔄 뒤로가기 플래그 리셋 완료
 🛡️ DebugView 완전 격리 모드 - 키보드 리셋
