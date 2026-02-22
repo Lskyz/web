@@ -1,4 +1,4 @@
-﻿//  BFCacheSnapshotManager.swift
+//  BFCacheSnapshotManager.swift
 //  📸 **순차적 4단계 BFCache 복원 시스템**
 //  🎯 **Step 1**: 저장 콘텐츠 높이 복원 (동적 사이트만)
 //  📏 **Step 2**: 상대좌표 기반 스크롤 복원 (최우선)
@@ -345,7 +345,11 @@ struct BFCacheSnapshot: Codable {
             return
         }
 
-        self.executeStep1_Delayed(context: context, startTime: step1StartTime)
+        // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.executeStep1_Delayed(context: context, startTime: step1StartTime)
+        }
     }
 
     private func executeStep1_Delayed(context: RestorationContext, startTime: Date) {
@@ -353,14 +357,8 @@ struct BFCacheSnapshot: Codable {
         let jsLength = js.count
         TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
 
-        guard let webView1 = context.webView else {
-            TabPersistenceManager.debugMessages.append("[Step 1] WebView nil - 복원 중단")
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            context.completion(false)
-            return
-        }
-        webView1.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
 
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step1Success = false
 
             switch result {
@@ -459,13 +457,7 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep2_PercentScrollScript()
 
-        guard let webView2 = context.webView else {
-            TabPersistenceManager.debugMessages.append("[Step 2] WebView nil - 복원 중단")
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            context.completion(false)
-            return
-        }
-        webView2.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step2Success = false
             var updatedContext = context
 
@@ -496,9 +488,6 @@ struct BFCacheSnapshot: Codable {
                     if let difference = resultDict["difference"] as? [String: Double] {
                         TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
                     }
-                    if let errorMsg = resultDict["error"] as? String {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ❌ 에러: \(errorMsg)")
-                    }
                     if let logs = resultDict["logs"] as? [String] {
                         for log in logs.prefix(5) {
                             TabPersistenceManager.debugMessages.append("   \(log)")
@@ -510,23 +499,9 @@ struct BFCacheSnapshot: Codable {
                         updatedContext.overallSuccess = true
                         TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
                     }
-                } else {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] ⚠️ resultDict 파싱 실패 - 체인은 계속 진행")
                 }
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
-                if let nsError = error as NSError? {
-                    TabPersistenceManager.debugMessages.append("📏 [Step 2] Error Domain: \(nsError.domain), Code: \(nsError.code)")
-                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] JS 예외 메시지: \(message)")
-                    }
-                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] JS 예외 라인: \(lineNumber)")
-                    }
-                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] JS 스택 트레이스: \(stackTrace)")
-                    }
-                }
             }
 
             let step2Time = Date().timeIntervalSince(step2StartTime)
@@ -558,13 +533,7 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
 
-        guard let webView3 = context.webView else {
-            TabPersistenceManager.debugMessages.append("[Step 3] WebView nil - 복원 중단")
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            context.completion(false)
-            return
-        }
-        webView3.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step3Success = false
 
             switch result {
@@ -610,18 +579,6 @@ struct BFCacheSnapshot: Codable {
                 }
             case .failure(let error):
                 TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
-                if let nsError = error as NSError? {
-                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] Error Domain: \(nsError.domain), Code: \(nsError.code)")
-                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] JS 예외 메시지: \(message)")
-                    }
-                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] JS 예외 라인: \(lineNumber)")
-                    }
-                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] JS 스택 트레이스: \(stackTrace)")
-                    }
-                }
             }
 
             let step3Time = Date().timeIntervalSince(step3StartTime)
@@ -645,13 +602,7 @@ struct BFCacheSnapshot: Codable {
 
         let js = generateStep4_FinalVerificationScript()
 
-        guard let webView4 = context.webView else {
-            TabPersistenceManager.debugMessages.append("[Step 4] WebView nil - 복원 중단")
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            context.completion(false)
-            return
-        }
-        webView4.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
+        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
             var step4Success = false
 
             switch result {
