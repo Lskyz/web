@@ -1273,7 +1273,7 @@ struct BFCacheSnapshot: Codable {
                 lastStart: 0,
                 lastEnd: 0
             };
-            window.__bfcacheCapturedResponses = window.__bfcacheCapturedResponses || [];
+            window.__bfcacheCapturedResponses = [];  // 항상 리셋 (이전 세션 오염 방지)
 
             const markNetworkStart = () => {
                 const state = window.__bfcacheNetworkActivity;
@@ -1423,7 +1423,7 @@ struct BFCacheSnapshot: Codable {
         try {
             \(generateCommonUtilityScript())
 
-            // 🌐 **저장된 API 응답으로 fetch/XHR 오버라이드 (배치 성장 가속)**
+            // 🌐 **저장된 API 응답으로 fetch/XHR 임시 오버라이드 (Step 1 완료 시 자동 복구)**
             (function injectCachedResponses() {
                 const cachedResponses = \(cachedResponsesJSON);
                 if (!cachedResponses || cachedResponses.length === 0) return;
@@ -1431,13 +1431,12 @@ struct BFCacheSnapshot: Codable {
                 cachedResponses.forEach(function(r) {
                     if (r && r.url) responseMap[r.url] = r;
                 });
-                const urlCount = Object.keys(responseMap).length;
-                if (urlCount === 0) return;
+                if (Object.keys(responseMap).length === 0) return;
 
-                // fetch 오버라이드
-                if (typeof window.fetch === 'function' && !window.__bfcacheFetchInjected) {
-                    window.__bfcacheFetchInjected = true;
+                // fetch 오버라이드 (플래그 없이 매번 주입 — Step 1 완료 후 복구)
+                if (typeof window.fetch === 'function') {
                     const origFetch = window.fetch;
+                    window.__bfcacheOrigFetch = origFetch;
                     window.fetch = async function(url, opts) {
                         const key = url ? url.toString() : '';
                         const cached = responseMap[key];
@@ -1451,34 +1450,45 @@ struct BFCacheSnapshot: Codable {
                     };
                 }
 
-                // XHR 오버라이드
-                if (typeof XMLHttpRequest !== 'undefined' && !window.__bfcacheXHRInjected) {
-                    window.__bfcacheXHRInjected = true;
-                    const openOrig = XMLHttpRequest.prototype.open;
+                // XHR 오버라이드: prototype.send 건드리지 않고 인스턴스별 send만 교체
+                if (typeof XMLHttpRequest !== 'undefined') {
+                    const origOpen = XMLHttpRequest.prototype.open;
+                    window.__bfcacheOrigXHROpen = origOpen;
                     XMLHttpRequest.prototype.open = function(method, url) {
                         this.__bfcacheCachedURL = url ? url.toString() : '';
-                        this.__bfcacheCachedMethod = method;
-                        return openOrig.apply(this, arguments);
-                    };
-                    const sendOrig = XMLHttpRequest.prototype.send;
-                    XMLHttpRequest.prototype.send = function() {
                         const cached = responseMap[this.__bfcacheCachedURL];
                         if (cached) {
-                            const self = this;
-                            setTimeout(function() {
-                                Object.defineProperty(self, 'status', { value: parseInt(cached.status) || 200, configurable: true });
-                                Object.defineProperty(self, 'responseText', { value: cached.body || '', configurable: true });
-                                Object.defineProperty(self, 'readyState', { value: 4, configurable: true });
-                                if (typeof self.onload === 'function') self.onload();
-                                if (typeof self.onreadystatechange === 'function') self.onreadystatechange();
-                                self.dispatchEvent(new Event('load'));
-                                self.dispatchEvent(new Event('loadend'));
-                            }, 0);
-                            return;
+                            // prototype.send 전역 오염 없이 이 인스턴스에만 send 오버라이드
+                            this.send = function() {
+                                const self = this;
+                                setTimeout(function() {
+                                    try {
+                                        Object.defineProperty(self, 'status', { value: parseInt(cached.status) || 200, configurable: true, writable: true });
+                                        Object.defineProperty(self, 'responseText', { value: cached.body || '', configurable: true, writable: true });
+                                        Object.defineProperty(self, 'readyState', { value: 4, configurable: true, writable: true });
+                                    } catch(e) {}
+                                    try { if (typeof self.onload === 'function') self.onload(); } catch(e) {}
+                                    try { if (typeof self.onreadystatechange === 'function') self.onreadystatechange(); } catch(e) {}
+                                    try { self.dispatchEvent(new Event('load')); self.dispatchEvent(new Event('loadend')); } catch(e) {}
+                                }, 0);
+                            };
                         }
-                        return sendOrig.apply(this, arguments);
+                        return origOpen.apply(this, arguments);
                     };
                 }
+
+                // Step 1 완료 후 반드시 원복 — window 전역에 등록
+                window.__bfcacheRestoreNetworkAPIs = function() {
+                    if (window.__bfcacheOrigFetch) {
+                        window.fetch = window.__bfcacheOrigFetch;
+                        delete window.__bfcacheOrigFetch;
+                    }
+                    if (window.__bfcacheOrigXHROpen) {
+                        XMLHttpRequest.prototype.open = window.__bfcacheOrigXHROpen;
+                        delete window.__bfcacheOrigXHROpen;
+                    }
+                    delete window.__bfcacheRestoreNetworkAPIs;
+                };
             })();
 
             const logs = [];
@@ -1917,6 +1927,11 @@ struct BFCacheSnapshot: Codable {
 
                 logs.push('복원: ' + restoredHeight.toFixed(0) + 'px (' + finalPercentage.toFixed(1) + '%)');
 
+                // 🔧 Step 1 완료 - fetch/XHR 원복
+                if (typeof window.__bfcacheRestoreNetworkAPIs === 'function') {
+                    window.__bfcacheRestoreNetworkAPIs();
+                }
+
                 return serializeForJSON({
                     success: success,
                     isStaticSite: false,
@@ -1929,6 +1944,10 @@ struct BFCacheSnapshot: Codable {
                 });
 
         } catch(e) {
+            // 🔧 예외 경로에서도 fetch/XHR 원복
+            if (typeof window.__bfcacheRestoreNetworkAPIs === 'function') {
+                try { window.__bfcacheRestoreNetworkAPIs(); } catch(_) {}
+            }
             return serializeForJSON({
                 success: false,
                 error: e.message,
