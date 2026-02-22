@@ -1875,9 +1875,9 @@ struct BFCacheSnapshot: Codable {
                     });
                 }
 
-                const maxScrollY = Math.max(0, root.scrollHeight - window.innerHeight);
+                const maxScrollY = Math.max(0, savedContentHeight - window.innerHeight);
                 const maxScrollX = Math.max(0, root.scrollWidth - window.innerWidth);
-                logs.push('최대 스크롤 (현재 기준): X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
+                logs.push('최대 스크롤 (저장 기준): X=' + maxScrollX.toFixed(0) + 'px, Y=' + maxScrollY.toFixed(0) + 'px');
 
                 const targetX = (targetPercentX / 100) * maxScrollX;
                 const targetY = (targetPercentY / 100) * maxScrollY;
