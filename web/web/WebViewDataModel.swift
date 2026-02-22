@@ -516,7 +516,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
         guard PageRecord.isSearchURL(url) else { return nil }
 
         let searchURL = PageRecord.normalizeSearchURL(url)
-        let isDesktopMode = stateModel?.isDesktopMode ?? false
 
         for (index, record) in pageHistory.enumerated().reversed() {
             // 🚫 **현재 페이지는 제외** (SPA pop에서 현재 페이지로 돌아가는 경우 방지)
@@ -525,7 +524,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
 
             if PageRecord.isSearchURL(record.url) {
-                // 🔧 **수정: isDesktopMode를 실제로 활용하여 일관된 정규화 적용**
+                // 검색 URL은 normalizeSearchURL 기준으로 일관 비교
                 let recordSearchURL = PageRecord.normalizeSearchURL(record.url)
                 if recordSearchURL == searchURL {
                     return index

@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import AVKit
 import WebKit
@@ -28,58 +29,39 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
 
     private func makeEffect() -> UIVisualEffect {
-        if #available(iOS 26.0, *) {
-            let glassEffect = UIGlassEffect()
-            glassEffect.isInteractive = true
-            return glassEffect
-        } else {
-            return UIBlurEffect(style: blurStyle)
+        if let dynamicGlass = makeDynamicGlassEffect() {
+            return dynamicGlass
         }
+        return UIBlurEffect(style: blurStyle)
+    }
+
+    // SDK에 심볼이 없어도(iOS 26 API 미노출 환경) 런타임에서 Glass Effect를 시도한다.
+    private func makeDynamicGlassEffect() -> UIVisualEffect? {
+        guard let glassType = NSClassFromString("UIGlassEffect") as? NSObject.Type else {
+            return nil
+        }
+
+        let glassObject = glassType.init()
+        if glassObject.responds(to: NSSelectorFromString("setIsInteractive:")) {
+            glassObject.setValue(true, forKey: "isInteractive")
+        } else if glassObject.responds(to: NSSelectorFromString("setInteractive:")) {
+            glassObject.setValue(true, forKey: "interactive")
+        }
+        return glassObject as? UIVisualEffect
     }
     
     private func setupWhiteGlassEffect(_ effectView: UIVisualEffectView) {
         let gradientLayer = CAGradientLayer()
-        if #available(iOS 26.0, *) {
-            gradientLayer.colors = [
-                UIColor.white.withAlphaComponent(0.20).cgColor,
-                UIColor.white.withAlphaComponent(0.08).cgColor,
-                UIColor.clear.cgColor
-            ]
-            gradientLayer.locations = [0.0, 0.62, 1.0]
-        } else {
-            gradientLayer.colors = [
-                UIColor.white.withAlphaComponent(0.1).cgColor,
-                UIColor.white.withAlphaComponent(0.05).cgColor,
-                UIColor.clear.cgColor
-            ]
-            gradientLayer.locations = [0.0, 0.8, 1.0]
-        }
+        gradientLayer.colors = [
+            UIColor.white.withAlphaComponent(0.20).cgColor,
+            UIColor.white.withAlphaComponent(0.08).cgColor,
+            UIColor.clear.cgColor
+        ]
+        gradientLayer.locations = [0.0, 0.62, 1.0]
         gradientLayer.startPoint = CGPoint(x: 0, y: 0)
         gradientLayer.endPoint   = CGPoint(x: 1, y: 1)
         effectView.contentView.layer.addSublayer(gradientLayer)
         DispatchQueue.main.async { gradientLayer.frame = effectView.bounds }
-    }
-}
-
-private struct LiquidBottomBarModifier: ViewModifier {
-    let cornerRadius: CGFloat
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(
-                .regular.interactive(true),
-                in: UnevenRoundedRectangle(
-                    topLeadingRadius: cornerRadius,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: cornerRadius
-                ),
-                isEnabled: true
-            )
-        } else {
-            content
-        }
     }
 }
 
@@ -139,7 +121,6 @@ struct ContentView: View {
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let toolbarSpacing: CGFloat = 40
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
-    private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     private let toolbarHorizontalDragLimit: CGFloat = 84
     
@@ -443,7 +424,6 @@ struct ContentView: View {
                 topTrailingRadius: barCornerRadius
             )
         )
-        .modifier(LiquidBottomBarModifier(cornerRadius: barCornerRadius))
         .background(Color.clear)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
@@ -724,34 +704,20 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
     private var toolbarButtonsRow: some View {
-        if #available(iOS 26.0, *) {
-            toolbarButtonsContent.buttonStyle(.glass)
-        } else {
-            toolbarButtonsContent
-        }
+        toolbarButtonsContent
     }
 
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
-            if #available(iOS 26.0, *) {
-                Rectangle().fill(Color.white.opacity(0.02))
-            } else {
-                Rectangle().fill(Color.white.opacity(whiteGlassTintOpacity))
-            }
+            Rectangle().fill(Color.white.opacity(0.02))
         }
     }
     private var whiteGlassOverlay: some View {
         Group {
-            if #available(iOS 26.0, *) {
-                Rectangle().strokeBorder(.white.opacity(0.16), lineWidth: 0.6)
-                Rectangle().strokeBorder(.white.opacity(0.05), lineWidth: 0.35)
-            } else {
-                Rectangle().strokeBorder(.white.opacity(0.3), lineWidth: 0.5)
-                Rectangle().strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
-            }
+            Rectangle().strokeBorder(.white.opacity(0.16), lineWidth: 0.6)
+            Rectangle().strokeBorder(.white.opacity(0.05), lineWidth: 0.35)
         }
     }
 
