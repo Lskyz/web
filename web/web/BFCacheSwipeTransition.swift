@@ -1448,7 +1448,7 @@ struct BFCacheSnapshot: Codable {
                 };
 
                 const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load-more"], [class*="show-more"], button[class*="more"]'
+                    '[data-testid*="load"], [class*="load-more"], [class*="show-more"], button[class*="more"], #pnnext, [jsname="TeSSVd"], [id*="pnnext"], a[aria-label*="다음"], a[aria-label*="Next"], a[aria-label*="more"]'
                 );
 
                 let clicked = 0;
@@ -1470,12 +1470,15 @@ struct BFCacheSnapshot: Codable {
                 {
                     const warmRoot = document.scrollingElement || document.documentElement;
                     const warmFindBtn = () => {
-                        const all = document.querySelectorAll('button, [role="button"]');
+                        // 구글 전용: #pnnext, jsname="TeSSVd"
+                        const googleBtn = document.querySelector('#pnnext, [jsname="TeSSVd"], [id*="pnnext"]');
+                        if (googleBtn && isSafeToClick(googleBtn)) return googleBtn;
+                        const all = document.querySelectorAll('button, [role="button"], a');
                         for (const el of all) {
                             if (!isSafeToClick(el)) continue;
                             const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
                             const cls = (el.className || '').toString();
-                            if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) return el;
+                            if (/더보기|more results|load.?more|show.?more|view.?more/i.test(txt)) return el;
                             if (/load.?more|show.?more|infinite/i.test(cls)) return el;
                         }
                         return null;
@@ -1576,12 +1579,18 @@ struct BFCacheSnapshot: Codable {
 
                         // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
                         const findAndClickLoadMore = () => {
+                            // 구글 전용: #pnnext, jsname="TeSSVd"
+                            const googleBtn = document.querySelector('#pnnext, [jsname="TeSSVd"], [id*="pnnext"]');
+                            if (googleBtn && isSafeToClick(googleBtn) && typeof googleBtn.click === 'function') {
+                                googleBtn.click();
+                                return true;
+                            }
                             const candidates = [];
-                            document.querySelectorAll('button, [role="button"]').forEach(el => {
+                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
                                 if (!isSafeToClick(el)) return;
                                 const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
                                 const cls = (el.className || '').toString();
-                                if (/더보기|more|load.?more|show.?more|view.?more/i.test(txt)) {
+                                if (/더보기|more results|load.?more|show.?more|view.?more/i.test(txt)) {
                                     candidates.push(el);
                                 } else if (/load.?more|show.?more|infinite/i.test(cls)) {
                                     candidates.push(el);
