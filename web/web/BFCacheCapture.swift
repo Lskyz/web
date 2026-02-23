@@ -1,6 +1,9 @@
 //  BFCacheCapture.swift
 //  📸 BFCache 캡처 시스템
 
+import UIKit
+import WebKit
+import SwiftUI
 
 // MARK: - BFCacheTransitionSystem 캐처/복원 확장
 extension BFCacheTransitionSystem {
