@@ -421,8 +421,7 @@ struct ContentView: View {
                                 .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
                         )
                         .padding(.horizontal, outerHorizontalPadding)
-
-                        Spacer().frame(height: addressToToolbarGap)
+                        .padding(.bottom, addressToToolbarGap)
 
                         // 탭바 - 주소창과 동일한 outerHorizontalPadding
                         BrowserActionTabBar(
