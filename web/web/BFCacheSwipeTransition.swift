@@ -1447,8 +1447,29 @@ struct BFCacheSnapshot: Codable {
                     return true;
                 };
 
+                // 🔍 더보기 전용 탐색 함수 (isSafeToClick 우회 — href 있는 a도 더보기 패턴이면 허용)
+                const findLoadMoreButton = () => {
+                    // 1순위: id 기반 명시 패턴 (구글 #pnnext 등)
+                    const byId = document.querySelector(
+                        '#pnnext, #load-more, #loadMore, [id*="load-more"], [id*="loadmore"], [id*="pnnext"]'
+                    );
+                    if (byId && !byId.disabled && byId.getAttribute('aria-disabled') !== 'true') return byId;
+                    // 2순위: 텍스트/클래스 기반 (button + a + role=button, href 있어도 허용)
+                    const all = document.querySelectorAll('button, [role="button"], a');
+                    for (const el of all) {
+                        if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                        const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                        // 탭/네비게이션 제외 (isSafeToClick 3rd guard 동일 적용)
+                        if (/개념글|추천글|베스트|전체글|갤러리|게시판|이동|목록|홈|home|login|로그인/i.test(txt)) continue;
+                        if (/더보기|more.?results|load.?more|show.?more|view.?more/i.test(txt)) return el;
+                        const cls = (el.className || '').toString();
+                        if (/load.?more|show.?more|infinite/i.test(cls)) return el;
+                    }
+                    return null;
+                };
+
                 const loadMoreButtons = document.querySelectorAll(
-                    '[data-testid*="load"], [class*="load-more"], [class*="show-more"], button[class*="more"], #pnnext, [jsname="TeSSVd"], [id*="pnnext"], a[aria-label*="다음"], a[aria-label*="Next"], a[aria-label*="more"]'
+                    '[data-testid*="load"], [class*="load-more"], [class*="show-more"], button[class*="more"], [id*="load-more"], [id*="pnnext"]'
                 );
 
                 let clicked = 0;
@@ -1469,27 +1490,13 @@ struct BFCacheSnapshot: Codable {
                 // (제스처 감지~Step 1 실행 사이의 공백 시간을 활용)
                 {
                     const warmRoot = document.scrollingElement || document.documentElement;
-                    const warmFindBtn = () => {
-                        // 구글 전용: #pnnext, jsname="TeSSVd"
-                        const googleBtn = document.querySelector('#pnnext, [jsname="TeSSVd"], [id*="pnnext"]');
-                        if (googleBtn && isSafeToClick(googleBtn)) return googleBtn;
-                        const all = document.querySelectorAll('button, [role="button"], a');
-                        for (const el of all) {
-                            if (!isSafeToClick(el)) continue;
-                            const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
-                            const cls = (el.className || '').toString();
-                            if (/더보기|more results|load.?more|show.?more|view.?more/i.test(txt)) return el;
-                            if (/load.?more|show.?more|infinite/i.test(cls)) return el;
-                        }
-                        return null;
-                    };
                     const warmH0 = warmRoot.scrollHeight;
                     // 1차 선제 트리거
-                    const wb1 = warmFindBtn(); if (wb1) wb1.click();
+                    const wb1 = findLoadMoreButton(); if (wb1) wb1.click();
                     warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
                     await delay(80);
                     // 2차 선제 트리거
-                    const wb2 = warmFindBtn(); if (wb2) wb2.click();
+                    const wb2 = findLoadMoreButton(); if (wb2) wb2.click();
                     warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
                     await delay(80);
                     const warmGrowth = warmRoot.scrollHeight - warmH0;
@@ -1579,29 +1586,10 @@ struct BFCacheSnapshot: Codable {
 
                         // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
                         const findAndClickLoadMore = () => {
-                            // 구글 전용: #pnnext, jsname="TeSSVd"
-                            const googleBtn = document.querySelector('#pnnext, [jsname="TeSSVd"], [id*="pnnext"]');
-                            if (googleBtn && isSafeToClick(googleBtn) && typeof googleBtn.click === 'function') {
-                                googleBtn.click();
+                            const btn = findLoadMoreButton();
+                            if (btn && typeof btn.click === 'function') {
+                                btn.click();
                                 return true;
-                            }
-                            const candidates = [];
-                            document.querySelectorAll('button, [role="button"], a').forEach(el => {
-                                if (!isSafeToClick(el)) return;
-                                const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
-                                const cls = (el.className || '').toString();
-                                if (/더보기|more results|load.?more|show.?more|view.?more/i.test(txt)) {
-                                    candidates.push(el);
-                                } else if (/load.?more|show.?more|infinite/i.test(cls)) {
-                                    candidates.push(el);
-                                }
-                            });
-                            if (candidates.length > 0) {
-                                const target = candidates[0];
-                                if (target && typeof target.click === 'function') {
-                                    target.click();
-                                    return true;
-                                }
                             }
                             return false;
                         };
