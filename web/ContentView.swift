@@ -79,6 +79,10 @@ struct BrowserActionTabBar: UIViewRepresentable {
         return tabBar
     }
 
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITabBar, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? UIScreen.main.bounds.width, height: 62)
+    }
+
     func updateUIView(_ tabBar: UITabBar, context: Context) {
         context.coordinator.onSelect = onSelect
 
