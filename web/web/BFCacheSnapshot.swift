@@ -164,67 +164,69 @@ struct BFCacheSnapshot: Codable {
 
     // MARK: - 🎯 **핵심: 순차적 4단계 복원 시스템**
 
-    // 복원 컨텍스트 구조체
-    private struct RestorationContext {
-        let snapshot: BFCacheSnapshot
-        weak var webView: WKWebView?
-        let completion: (Bool) -> Void
-        var overallSuccess: Bool = false
-    }
+    private static var activeRestoreTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private static var activeRestoreTokens: [ObjectIdentifier: UUID] = [:]
 
     func restore(to webView: WKWebView, completion: @escaping (Bool) -> Void) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async {
+                self.restore(to: webView, completion: completion)
+            }
+            return
+        }
+
+        let webViewID = ObjectIdentifier(webView)
+        let token = UUID()
+
+        if let previous = Self.activeRestoreTasks[webViewID] {
+            previous.cancel()
+            TabPersistenceManager.debugMessages.append("🛑 이전 BFCache 복원 작업 취소")
+        }
+        Self.activeRestoreTokens[webViewID] = token
+
         // 🔒 **복원 시작 - 캡처 방지 플래그 설정**
         BFCacheTransitionSystem.shared.setRestoring(true)
 
         let totalStartTime = Date()
-
         TabPersistenceManager.debugMessages.append("🎯 순차적 4단계 BFCache 복원 시작")
         TabPersistenceManager.debugMessages.append("📊 복원 대상: \(pageRecord.url.host ?? "unknown") - \(pageRecord.title)")
         TabPersistenceManager.debugMessages.append("📊 목표 위치: X=\(String(format: "%.1f", scrollPosition.x))px, Y=\(String(format: "%.1f", scrollPosition.y))px")
         TabPersistenceManager.debugMessages.append("📊 목표 백분율: X=\(String(format: "%.2f", scrollPositionPercent.x))%, Y=\(String(format: "%.2f", scrollPositionPercent.y))%")
         TabPersistenceManager.debugMessages.append("📊 저장 콘텐츠 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
 
-        // 복원 컨텍스트 생성
-        let context = RestorationContext(
-            snapshot: self,
-            webView: webView,
-            completion: { success in
+        let task = Task { @MainActor in
+            defer {
+                if Self.activeRestoreTokens[webViewID] == token {
+                    Self.activeRestoreTasks[webViewID] = nil
+                    Self.activeRestoreTokens[webViewID] = nil
+                }
                 let totalTime = Date().timeIntervalSince(totalStartTime)
                 TabPersistenceManager.debugMessages.append("⏱️ 전체 복원 소요 시간: \(String(format: "%.1f", totalTime))초")
-                completion(success)
             }
-        )
 
-        // Step 1 시작
-        executeStep1_RestoreContentHeight(context: context)
+            let success = await self.runRestorePipeline(on: webView, webViewID: webViewID, token: token)
+            guard Self.activeRestoreTokens[webViewID] == token else { return }
+            completion(success)
+        }
+
+        Self.activeRestoreTasks[webViewID] = task
     }
 
-    private func runRestorationScript(_ script: String, on webView: WKWebView?, completion: @escaping (Any?, Error?) -> Void) {
-        guard let webView = webView else {
-            let error = NSError(domain: "BFCacheSwipeTransition", code: -1, userInfo: [NSLocalizedDescriptionKey: "WebView unavailable"])
-            // Ensure completions and logging always occur on main to avoid races
-            if Thread.isMainThread {
-                completion(nil, error)
-            } else {
-                DispatchQueue.main.async { completion(nil, error) }
-            }
-            return
+    @MainActor
+    private func runRestorationScriptAsync(_ script: String, on webView: WKWebView, stepLabel: String) async throws -> [String: Any] {
+        try Task.checkCancellation()
+        let result = try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page)
+        try Task.checkCancellation()
+
+        if let dict = dictionaryFromResult(result, stepLabel: stepLabel) {
+            return dict
         }
-        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page, completionHandler: { result in
-            let deliver = {
-                switch result {
-                case .success(let value):
-                    completion(value, nil)
-                case .failure(let error):
-                    completion(nil, error)
-                }
-            }
-            if Thread.isMainThread {
-                deliver()
-            } else {
-                DispatchQueue.main.async { deliver() }
-            }
-        })
+
+        throw NSError(
+            domain: "BFCacheSwipeTransition",
+            code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "\(stepLabel) JSON 파싱 실패"]
+        )
     }
 
 
@@ -333,197 +335,185 @@ struct BFCacheSnapshot: Codable {
         TabPersistenceManager.debugMessages.append("⚠️ \(stepLabel) \(key) 파싱 실패 → \(description)")
     }
 
+    @MainActor
+    private func runRestorePipeline(on webView: WKWebView, webViewID: ObjectIdentifier, token: UUID) async -> Bool {
+        var overallSuccess = false
+
+        defer {
+            if Self.activeRestoreTokens[webViewID] == token {
+                BFCacheTransitionSystem.shared.setRestoring(false)
+                TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
+            }
+        }
+
+        do {
+            _ = try await executeStep1_RestoreContentHeightAsync(on: webView)
+            try Task.checkCancellation()
+
+            let step2Success = try await executeStep2_PercentScrollAsync(on: webView)
+            if step2Success {
+                overallSuccess = true
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
+            }
+            try Task.checkCancellation()
+
+            _ = try await executeStep3_AnchorRestoreAsync(on: webView)
+            try Task.checkCancellation()
+
+            let step4Success = try await executeStep4_FinalVerificationAsync(on: webView)
+            try Task.checkCancellation()
+            let finalSuccess = overallSuccess || step4Success
+            TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                BFCacheTransitionSystem.shared.captureSnapshot(
+                    pageRecord: self.pageRecord,
+                    webView: webView,
+                    type: .immediate
+                )
+            }
+            return finalSuccess
+        } catch is CancellationError {
+            TabPersistenceManager.debugMessages.append("🛑 BFCache 복원 작업 취소됨")
+            return false
+        } catch {
+            TabPersistenceManager.debugMessages.append("🛑 BFCache 복원 파이프라인 오류: \(error.localizedDescription)")
+            return overallSuccess
+        }
+    }
+
     // MARK: - Step 1: 저장 콘텐츠 높이 복원
-    private func executeStep1_RestoreContentHeight(context: RestorationContext) {
+    @MainActor
+    private func executeStep1_RestoreContentHeightAsync(on webView: WKWebView) async throws -> Bool {
         let step1StartTime = Date()
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 콘텐츠 높이 복원 시작")
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 목표 높이: \(String(format: "%.0f", restorationConfig.savedContentHeight))px")
 
         guard restorationConfig.enableContentRestore else {
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - 즉시 Step 2 진행")
-            self.executeStep2_PercentScroll(context: context)
-            return
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] 비활성화됨 - Step 2 진행")
+            return false
         }
 
-        // 🛡️ **페이지 안정화 대기 (200ms) - completion handler unreachable 방지**
         TabPersistenceManager.debugMessages.append("📦 [Step 1] 페이지 안정화 대기 중...")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            self.executeStep1_Delayed(context: context, startTime: step1StartTime)
-        }
-    }
+        try await Task.sleep(nanoseconds: 200_000_000)
 
-    private func executeStep1_Delayed(context: RestorationContext, startTime: Date) {
         let js = generateStep1_ContentRestoreScript()
-        let jsLength = js.count
-        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(jsLength)자")
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 생성 완료: \(js.count)자")
 
+        var step1Success = false
+        do {
+            let resultDict = try await runRestorationScriptAsync(js, on: webView, stepLabel: "[Step 1]")
+            step1Success = (resultDict["success"] as? Bool) ?? false
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
-            var step1Success = false
-
-            switch result {
-            case .success(let value):
-                var resultDict: [String: Any]?
-
-                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
-                if let jsonString = value as? String,
-                   let jsonData = jsonString.data(using: .utf8) {
-                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-                } else if let dict = value as? [String: Any] {
-                    resultDict = dict
-                }
-
-                if let resultDict = resultDict {
-                    step1Success = (resultDict["success"] as? Bool) ?? false
-
-                    // 에러 정보가 있으면 먼저 출력
-                    if let errorMsg = resultDict["error"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] ❌ 에러: \(errorMsg)")
-                    }
-                    if let errorStack = resultDict["errorStack"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 스택: \(errorStack)")
-                    }
-
-                    if let currentHeight = resultDict["currentHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
-                    }
-                    if let savedHeight = resultDict["savedContentHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 시점 높이: \(String(format: "%.0f", savedHeight))px")
-                    }
-                    if let restoredHeight = resultDict["restoredHeight"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
-                    }
-                    if let percentage = resultDict["percentage"] as? Double {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
-                    }
-                    if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
-                    }
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-                } else {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] JSON 파싱 실패")
-                }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
-
-                // 🔍 **상세 에러 정보 추출**
-                if let nsError = error as NSError? {
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Domain: \(nsError.domain)")
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Code: \(nsError.code)")
-
-                    if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Message: \(message)")
-                    }
-                    if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Line: \(lineNumber)")
-                    }
-                    if let columnNumber = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] as? Int {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Column: \(columnNumber)")
-                    }
-                    if let stackTrace = nsError.userInfo["WKJavaScriptExceptionStackTrace"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Stack Trace: \(stackTrace)")
-                    }
-                    if let sourceURL = nsError.userInfo["WKJavaScriptExceptionSourceURL"] as? String {
-                        TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Source URL: \(sourceURL)")
-                    }
-
-                    // 전체 userInfo 출력
-                    TabPersistenceManager.debugMessages.append("📦 [Step 1] Full userInfo: \(nsError.userInfo)")
+            if let errorMsg = resultDict["error"] as? String {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] ❌ 에러: \(errorMsg)")
+            }
+            if let errorStack = resultDict["errorStack"] as? String {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 스택: \(errorStack)")
+            }
+            if let currentHeight = doubleValue(from: resultDict["currentHeight"]) {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 현재 높이: \(String(format: "%.0f", currentHeight))px")
+            }
+            if let savedHeight = doubleValue(from: resultDict["savedContentHeight"]) {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 저장 시점 높이: \(String(format: "%.0f", savedHeight))px")
+            }
+            if let restoredHeight = doubleValue(from: resultDict["restoredHeight"]) {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원된 높이: \(String(format: "%.0f", restoredHeight))px")
+            }
+            if let percentage = doubleValue(from: resultDict["percentage"]) {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 복원률: \(String(format: "%.1f", percentage))%")
+            }
+            if let isStatic = resultDict["isStaticSite"] as? Bool, isStatic {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] 정적 사이트 - 콘텐츠 복원 불필요")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
                 }
             }
-
-            let step1Time = Date().timeIntervalSince(startTime)
-            TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step1Time))초)")
-
-            // 🚀 **비동기 실행: delay 제거**
-            self.executeStep2_PercentScroll(context: context)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            TabPersistenceManager.debugMessages.append("📦 [Step 1] JavaScript 오류: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Domain: \(nsError.domain)")
+                TabPersistenceManager.debugMessages.append("📦 [Step 1] Error Code: \(nsError.code)")
+                if let message = nsError.userInfo["WKJavaScriptExceptionMessage"] as? String {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Message: \(message)")
+                }
+                if let lineNumber = nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? Int {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Line: \(lineNumber)")
+                }
+                if let columnNumber = nsError.userInfo["WKJavaScriptExceptionColumnNumber"] as? Int {
+                    TabPersistenceManager.debugMessages.append("📦 [Step 1] JS Exception Column: \(columnNumber)")
+                }
+            }
         }
+
+        let step1Time = Date().timeIntervalSince(step1StartTime)
+        TabPersistenceManager.debugMessages.append("📦 [Step 1] 완료: \(step1Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step1Time))초)")
+        return step1Success
     }
 
     // MARK: - Step 2: 상대좌표 기반 스크롤 (최우선)
-    private func executeStep2_PercentScroll(context: RestorationContext) {
+    @MainActor
+    private func executeStep2_PercentScrollAsync(on webView: WKWebView) async throws -> Bool {
         let step2StartTime = Date()
         TabPersistenceManager.debugMessages.append("📏 [Step 2] 상대좌표 기반 스크롤 복원 시작 (최우선)")
 
         guard restorationConfig.enablePercentRestore else {
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - 즉시 Step 3 진행")
-            self.executeStep3_AnchorRestore(context: context)
-            return
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] 비활성화됨 - Step 3 진행")
+            return false
         }
 
         let js = generateStep2_PercentScrollScript()
+        var step2Success = false
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
-            var step2Success = false
-            var updatedContext = context
+        do {
+            let resultDict = try await runRestorationScriptAsync(js, on: webView, stepLabel: "[Step 2]")
+            step2Success = (resultDict["success"] as? Bool) ?? false
 
-            switch result {
-            case .success(let value):
-                var resultDict: [String: Any]?
-
-                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
-                if let jsonString = value as? String,
-                   let jsonData = jsonString.data(using: .utf8) {
-                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-                } else if let dict = value as? [String: Any] {
-                    resultDict = dict
-                }
-
-                if let resultDict = resultDict {
-                    step2Success = (resultDict["success"] as? Bool) ?? false
-
-                    if let targetPercent = resultDict["targetPercent"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
-                    }
-                    if let calculatedPosition = resultDict["calculatedPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
-                    }
-                    if let actualPosition = resultDict["actualPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
-                    }
-                    if let difference = resultDict["difference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
-                    }
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-
-                    // 상대좌표 복원 성공 시 전체 성공으로 간주
-                    if step2Success {
-                        updatedContext.overallSuccess = true
-                        TabPersistenceManager.debugMessages.append("📏 [Step 2] ✅ 상대좌표 복원 성공 - 전체 복원 성공으로 간주")
-                    }
-                }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
+            if let targetPercent = doubleDictionary(from: resultDict["targetPercent"]) {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] 목표 백분율: X=\(String(format: "%.2f", targetPercent["x"] ?? 0))%, Y=\(String(format: "%.2f", targetPercent["y"] ?? 0))%")
+            } else {
+                logDictionaryParseFailure(stepLabel: "[Step 2]", key: "targetPercent", value: resultDict["targetPercent"])
             }
-
-            let step2Time = Date().timeIntervalSince(step2StartTime)
-            TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step2Time))초)")
-
-            // 🚀 **비동기 실행: delay 제거**
-            self.executeStep3_AnchorRestore(context: updatedContext)
+            if let calculatedPosition = doubleDictionary(from: resultDict["calculatedPosition"]) {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] 계산된 위치: X=\(String(format: "%.1f", calculatedPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", calculatedPosition["y"] ?? 0))px")
+            }
+            if let actualPosition = doubleDictionary(from: resultDict["actualPosition"]) {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] 실제 위치: X=\(String(format: "%.1f", actualPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", actualPosition["y"] ?? 0))px")
+            }
+            if let difference = doubleDictionary(from: resultDict["difference"]) {
+                TabPersistenceManager.debugMessages.append("📏 [Step 2] 위치 차이: X=\(String(format: "%.1f", difference["x"] ?? 0))px, Y=\(String(format: "%.1f", difference["y"] ?? 0))px")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(5) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
+                }
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            TabPersistenceManager.debugMessages.append("📏 [Step 2] JavaScript 오류: \(error.localizedDescription)")
         }
+
+        let step2Time = Date().timeIntervalSince(step2StartTime)
+        TabPersistenceManager.debugMessages.append("📏 [Step 2] 완료: \(step2Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step2Time))초)")
+        return step2Success
     }
 
     // MARK: - Step 3: 무한스크롤 전용 앵커 복원
-    private func executeStep3_AnchorRestore(context: RestorationContext) {
+    @MainActor
+    private func executeStep3_AnchorRestoreAsync(on webView: WKWebView) async throws -> Bool {
         let step3StartTime = Date()
         TabPersistenceManager.debugMessages.append("🔍 [Step 3] 무한스크롤 전용 앵커 정밀 복원 시작")
 
         guard restorationConfig.enableAnchorRestore else {
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - 즉시 Step 4 진행")
-            self.executeStep4_FinalVerification(context: context)
-            return
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 비활성화됨 - Step 4 진행")
+            return false
         }
 
-        // 무한스크롤 앵커 데이터 확인
         var infiniteScrollAnchorDataJSON = "null"
         if let jsState = self.jsState,
            let infiniteScrollAnchorData = jsState["infiniteScrollAnchors"] as? [String: Any],
@@ -532,143 +522,95 @@ struct BFCacheSnapshot: Codable {
         }
 
         let js = generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: infiniteScrollAnchorDataJSON)
+        var step3Success = false
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
-            var step3Success = false
+        do {
+            let resultDict = try await runRestorationScriptAsync(js, on: webView, stepLabel: "[Step 3]")
+            step3Success = (resultDict["success"] as? Bool) ?? false
 
-            switch result {
-            case .success(let value):
-                var resultDict: [String: Any]?
-
-                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
-                if let jsonString = value as? String,
-                   let jsonData = jsonString.data(using: .utf8) {
-                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-                } else if let dict = value as? [String: Any] {
-                    resultDict = dict
-                }
-
-                if let resultDict = resultDict {
-                    step3Success = (resultDict["success"] as? Bool) ?? false
-
-                    if let anchorCount = resultDict["anchorCount"] as? Int {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
-                    }
-                    if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
-                        if let anchorType = matchedAnchor["anchorType"] as? String {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
-                        }
-                        if let method = matchedAnchor["matchMethod"] as? String {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
-                        }
-                        if let confidence = matchedAnchor["confidence"] as? Double {
-                            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
-                        }
-                    }
-                    if let restoredPosition = resultDict["restoredPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
-                    }
-                    if let targetDifference = resultDict["targetDifference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
-                    }
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(10) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-                }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
+            if let anchorCount = resultDict["anchorCount"] as? Int {
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] 사용 가능한 앵커: \(anchorCount)개")
             }
-
-            let step3Time = Date().timeIntervalSince(step3StartTime)
-            TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step3Time))초)")
-
-            // 성공/실패 관계없이 다음 단계 진행
-            self.executeStep4_FinalVerification(context: context)
+            if let matchedAnchor = resultDict["matchedAnchor"] as? [String: Any] {
+                if let anchorType = matchedAnchor["anchorType"] as? String {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭된 앵커 타입: \(anchorType)")
+                }
+                if let method = matchedAnchor["matchMethod"] as? String {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 방법: \(method)")
+                }
+                if let confidence = doubleValue(from: matchedAnchor["confidence"]) {
+                    TabPersistenceManager.debugMessages.append("🔍 [Step 3] 매칭 신뢰도: \(String(format: "%.1f", confidence))%")
+                }
+            }
+            if let restoredPosition = doubleDictionary(from: resultDict["restoredPosition"]) {
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] 복원된 위치: X=\(String(format: "%.1f", restoredPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", restoredPosition["y"] ?? 0))px")
+            }
+            if let targetDifference = doubleDictionary(from: resultDict["targetDifference"]) {
+                TabPersistenceManager.debugMessages.append("🔍 [Step 3] 목표와의 차이: X=\(String(format: "%.1f", targetDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", targetDifference["y"] ?? 0))px")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(10) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
+                }
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            TabPersistenceManager.debugMessages.append("🔍 [Step 3] JavaScript 오류: \(error.localizedDescription)")
         }
+
+        let step3Time = Date().timeIntervalSince(step3StartTime)
+        TabPersistenceManager.debugMessages.append("🔍 [Step 3] 완료: \(step3Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step3Time))초)")
+        return step3Success
     }
 
     // MARK: - Step 4: 최종 검증 및 미세 보정
-    private func executeStep4_FinalVerification(context: RestorationContext) {
+    @MainActor
+    private func executeStep4_FinalVerificationAsync(on webView: WKWebView) async throws -> Bool {
         let step4StartTime = Date()
         TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 검증 및 미세 보정 시작")
 
         guard restorationConfig.enableFinalVerification else {
             TabPersistenceManager.debugMessages.append("✅ [Step 4] 비활성화됨 - 스킵")
-            context.completion(context.overallSuccess)
-            return
+            return false
         }
 
         let js = generateStep4_FinalVerificationScript()
+        var step4Success = false
 
-        context.webView?.callAsyncJavaScript(js, arguments: [:], in: nil, in: .page) { result in
-            var step4Success = false
+        do {
+            let resultDict = try await runRestorationScriptAsync(js, on: webView, stepLabel: "[Step 4]")
+            step4Success = (resultDict["success"] as? Bool) ?? false
 
-            switch result {
-            case .success(let value):
-                var resultDict: [String: Any]?
-
-                // callAsyncJavaScript는 JSON 문자열로 반환하므로 파싱 필요
-                if let jsonString = value as? String,
-                   let jsonData = jsonString.data(using: .utf8) {
-                    resultDict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-                } else if let dict = value as? [String: Any] {
-                    resultDict = dict
-                }
-
-                if let resultDict = resultDict {
-                    step4Success = (resultDict["success"] as? Bool) ?? false
-
-                    if let finalPosition = resultDict["finalPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
-                    }
-                    if let targetPosition = resultDict["targetPosition"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
-                    }
-                    if let finalDifference = resultDict["finalDifference"] as? [String: Double] {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
-                    }
-                    if let withinTolerance = resultDict["withinTolerance"] as? Bool {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
-                    }
-                    if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
-                        TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
-                    }
-                    if let logs = resultDict["logs"] as? [String] {
-                        for log in logs.prefix(5) {
-                            TabPersistenceManager.debugMessages.append("   \(log)")
-                        }
-                    }
-                }
-            case .failure(let error):
-                TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
+            if let finalPosition = doubleDictionary(from: resultDict["finalPosition"]) {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 위치: X=\(String(format: "%.1f", finalPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", finalPosition["y"] ?? 0))px")
             }
-
-            let step4Time = Date().timeIntervalSince(step4StartTime)
-            TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step4Time))초)")
-
-            // 즉시 완료 처리
-            let finalSuccess = context.overallSuccess || step4Success
-            TabPersistenceManager.debugMessages.append("🎯 전체 BFCache 복원 완료: \(finalSuccess ? "성공" : "실패")")
-
-            // 🔒 **복원 완료 - 캡처 허용**
-            BFCacheTransitionSystem.shared.setRestoring(false)
-            TabPersistenceManager.debugMessages.append("🔓 복원 완료 - 캡처 재개")
-
-            // 📸 **복원 완료 후 최종 위치 캡처**
-            if let webView = context.webView {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    BFCacheTransitionSystem.shared.captureSnapshot(
-                        pageRecord: self.pageRecord,
-                        webView: webView,
-                        type: .immediate
-                    )
+            if let targetPosition = doubleDictionary(from: resultDict["targetPosition"]) {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] 목표 위치: X=\(String(format: "%.1f", targetPosition["x"] ?? 0))px, Y=\(String(format: "%.1f", targetPosition["y"] ?? 0))px")
+            }
+            if let finalDifference = doubleDictionary(from: resultDict["finalDifference"]) {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] 최종 차이: X=\(String(format: "%.1f", finalDifference["x"] ?? 0))px, Y=\(String(format: "%.1f", finalDifference["y"] ?? 0))px")
+            }
+            if let withinTolerance = resultDict["withinTolerance"] as? Bool {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] 허용 오차 내: \(withinTolerance ? "예" : "아니오")")
+            }
+            if let correctionApplied = resultDict["correctionApplied"] as? Bool, correctionApplied {
+                TabPersistenceManager.debugMessages.append("✅ [Step 4] 미세 보정 적용됨")
+            }
+            if let logs = resultDict["logs"] as? [String] {
+                for log in logs.prefix(5) {
+                    TabPersistenceManager.debugMessages.append("   \(log)")
                 }
             }
-
-            context.completion(finalSuccess)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            TabPersistenceManager.debugMessages.append("✅ [Step 4] JavaScript 오류: \(error.localizedDescription)")
         }
+
+        let step4Time = Date().timeIntervalSince(step4StartTime)
+        TabPersistenceManager.debugMessages.append("✅ [Step 4] 완료: \(step4Success ? "성공" : "실패") (소요: \(String(format: "%.1f", step4Time))초)")
+        return step4Success
     }
 
 }
