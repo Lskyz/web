@@ -63,6 +63,111 @@ class PIPWebViewContainer: ObservableObject {
     }
 }
 
+// MARK: - 🔮 iOS 26 Liquid Glass 슬라이딩 렌즈 툴바
+/// iOS 26: GlassEffectContainer + glassEffectID 슬라이딩 렌즈
+/// iOS 18 이하: matchedGeometryEffect + blur 폴백
+private struct LiquidGlassToolbar: View {
+
+    // 버튼 정의
+    struct ToolbarItem: Identifiable {
+        let id: String
+        let icon: String
+        var isEnabled: Bool = true
+        var color: Color = .primary
+        let action: () -> Void
+    }
+
+    let items: [ToolbarItem]
+    /// 현재 "렌즈"가 올라가 있는 버튼 ID (nil = 없음)
+    @Binding var focusedItemID: String?
+
+    // iOS 26 namespace
+    @Namespace private var glassNS
+    // iOS 18 폴백 namespace
+    @Namespace private var legacyNS
+
+    // 버튼 하나의 크기
+    private let itemSize: CGFloat = 44
+
+    var body: some View {
+        if #available(iOS 26, *) {
+            ios26Toolbar
+        } else {
+            legacyToolbar
+        }
+    }
+
+    // MARK: iOS 26 - 공식 Liquid Glass API
+    @available(iOS 26, *)
+    private var ios26Toolbar: some View {
+        GlassEffectContainer(spacing: itemSize * 0.6) {
+            HStack(spacing: 0) {
+                ForEach(items) { item in
+                    Button(action: {
+                        withAnimation(.bouncy(duration: 0.38)) {
+                            focusedItemID = item.id
+                        }
+                        item.action()
+                    }) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 23))
+                            .foregroundColor(item.isEnabled ? item.color : .secondary)
+                            .frame(width: itemSize, height: itemSize)
+                    }
+                    .disabled(!item.isEnabled)
+                    // 🔑 핵심: focusedItem에 glassEffect 렌즈를 달아줌
+                    // GlassEffectContainer 안에서 glassEffectID가 같으면
+                    // 렌즈가 이전 위치 → 새 위치로 유기적으로 슬라이딩/모핑
+                    .glassEffect(
+                        focusedItemID == item.id
+                            ? .regular.interactive()
+                            : .clear.interactive(),
+                        in: Circle()
+                    )
+                    .glassEffectID("lens-\(item.id)", in: glassNS)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+    }
+
+    // MARK: iOS 18 이하 폴백 - matchedGeometryEffect + blur 렌즈
+    private var legacyToolbar: some View {
+        HStack(spacing: 0) {
+            ForEach(items) { item in
+                ZStack {
+                    // 렌즈 배경 (선택된 버튼에만 표시)
+                    if focusedItemID == item.id {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8)
+                            )
+                            .frame(width: itemSize, height: itemSize)
+                            .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+                            .matchedGeometryEffect(id: "legacyLens", in: legacyNS)
+                    }
+
+                    Button(action: {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
+                            focusedItemID = item.id
+                        }
+                        item.action()
+                    }) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 23))
+                            .foregroundColor(item.isEnabled ? item.color : .secondary)
+                            .frame(width: itemSize, height: itemSize)
+                    }
+                    .disabled(!item.isEnabled)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
 // MARK: - 메인 뷰
 struct ContentView: View {
     @Binding var tabs: [WebTab]
@@ -89,6 +194,9 @@ struct ContentView: View {
     @State private var isMenuButtonPressed = false
     @State private var menuButtonPressStartTime: Date? = nil
 
+    // 🔮 렌즈 포커스 상태 (마지막으로 탭/드래그된 버튼 ID)
+    @State private var lensItemID: String? = nil
+
     // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
@@ -100,16 +208,14 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    // ✅ 키보드 높이 추가 (수동 처리 필요)
+    // ✅ 키보드 높이 추가
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
 
-                // 하단 통합 UI 고정: 키보드만큼 상승
                 VStack {
                     Spacer()
                     bottomUnifiedUIContent()
@@ -118,7 +224,6 @@ struct ContentView: View {
                 }
             }
         }
-        // 🔽 상단은 안전영역 유지 (다이나믹 아일랜드/노치), 하단만 무시
         .ignoresSafeArea(.all, edges: [.leading, .trailing, .bottom])
         .ignoresSafeArea(.keyboard, edges: .all)
 
@@ -132,16 +237,13 @@ struct ContentView: View {
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
             debugView()
-                // 🔽 탭매니저처럼 완전 격리 - 키보드 전파 차단
                 .ignoresSafeArea(.all, edges: .all)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
 
-        // 🎬 PIP 상태 동기화
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
 
-        // ✅ 키보드 높이 수동 계산 (안전영역 무시하면서도 정확한 처리)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
             updateKeyboard(from: n, animated: true)
         }
@@ -152,7 +254,6 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.25)) { keyboardHeight = 0 }
         }
 
-        // 오버레이도 동일한 처리
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -166,23 +267,18 @@ struct ContentView: View {
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
-    // MARK: - 키보드 높이 수동 계산 (안전영역 포함)
+    // MARK: - 키보드 높이
     private func updateKeyboard(from n: Notification, animated: Bool) {
         guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
         let screen = UIScreen.main.bounds
         let safeBottom = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.windows.first?.safeAreaInsets.bottom ?? 0
-        
-        // 키보드 높이에서 안전영역 제외 (중복 제거)
         let keyboardHeight = max(0, screen.maxY - endFrame.minY)
         let adjustedHeight = max(0, keyboardHeight - safeBottom)
-        
         if animated {
             let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-            withAnimation(.easeInOut(duration: duration)) { 
-                self.keyboardHeight = adjustedHeight 
-            }
+            withAnimation(.easeInOut(duration: duration)) { self.keyboardHeight = adjustedHeight }
         } else {
             self.keyboardHeight = adjustedHeight
         }
@@ -291,7 +387,7 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 🎯 통합된 하단 UI (사파리 스타일 - 배경 통합, 주소창만 테두리 구분)
+    // MARK: - 🎯 통합된 하단 UI
     @ViewBuilder
     private func bottomUnifiedUIContent() -> some View {
         VStack(spacing: 0) {
@@ -302,10 +398,9 @@ struct ContentView: View {
                     .ignoresSafeArea(.keyboard, edges: .all)
             }
             
-            // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
+            // 2️⃣ 통합 툴바
             VStack(spacing: 12) {
                 if showAddressBar {
-                    // 주소창 영역 - 별도 테두리로 구분
                     HStack(spacing: 12) {
                         VStack(spacing: 0) {
                             addressBarMainContent
@@ -354,49 +449,29 @@ struct ContentView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
                 
-                // 네비게이션 툴바 - 배경에 자연스럽게 통합
-                HStack(spacing: 0) {
-                    HStack(spacing: toolbarSpacing) {
-                        toolbarButton("chevron.left", action: {
-                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-                        }, enabled: currentState.canGoBack)
-                        toolbarButton("chevron.right", action: {
-                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-                        }, enabled: currentState.canGoForward)
-                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
-                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
-                        if pipManager.isPIPActive {
-                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-                        }
-                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                }
-                .padding(.horizontal, 16)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onToolbarTap)
+                // 🔮 네비게이션 툴바 - Liquid Glass 렌즈 적용
+                liquidGlassNavigationToolbar
             }
             .padding(.vertical, barVPadding)
             .padding(.bottom, max(20, UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .first?.windows.first?.safeAreaInsets.bottom ?? 0))
         }
-        // 🎯 완전한 전체 화면 글래스 배경 (상단 안전영역 제외, 하단 포함)
         .background(
             GeometryReader { geometry in
                 whiteGlassBackground
-                    .frame(width: UIScreen.main.bounds.width, 
+                    .frame(width: UIScreen.main.bounds.width,
                            height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
-                    .offset(x: -geometry.frame(in: .global).minX, 
+                    .offset(x: -geometry.frame(in: .global).minX,
                            y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
         .overlay(
             GeometryReader { geometry in
                 whiteGlassOverlay
-                    .frame(width: UIScreen.main.bounds.width, 
+                    .frame(width: UIScreen.main.bounds.width,
                            height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
-                    .offset(x: -geometry.frame(in: .global).minX, 
+                    .offset(x: -geometry.frame(in: .global).minX,
                            y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
@@ -411,8 +486,64 @@ struct ContentView: View {
         .background(Color.clear)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
+
+    // MARK: - 🔮 Liquid Glass 네비게이션 툴바
+    /// 버튼들 위에 버튼 크기의 유리 렌즈가 좌우로 슬라이딩
+    @ViewBuilder
+    private var liquidGlassNavigationToolbar: some View {
+        // 드래그로 렌즈 이동 지원
+        let items = buildToolbarItems()
+        LiquidGlassToolbar(items: items, focusedItemID: $lensItemID)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onToolbarTap)
+            // 🔮 드래그로 렌즈 슬라이딩
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        snapLensToNearestItem(dragX: value.location.x, items: items)
+                    }
+            )
+    }
+
+    /// 현재 상태에 맞는 툴바 아이템 배열 생성
+    private func buildToolbarItems() -> [LiquidGlassToolbar.ToolbarItem] {
+        var items: [LiquidGlassToolbar.ToolbarItem] = [
+            .init(id: "back", icon: "chevron.left", isEnabled: currentState.canGoBack, action: {
+                currentState.goBack()
+                TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+            }),
+            .init(id: "forward", icon: "chevron.right", isEnabled: currentState.canGoForward, action: {
+                currentState.goForward()
+                TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+            }),
+            .init(id: "history", icon: "clock.arrow.circlepath", action: { showHistorySheet = true }),
+            .init(id: "tabs", icon: "square.on.square", action: { showTabManager = true }),
+        ]
+        if pipManager.isPIPActive {
+            items.append(.init(id: "pip", icon: "pip.fill", color: .green, action: { pipManager.stopPIP() }))
+        }
+        items.append(.init(id: "debug", icon: "ladybug", color: .orange, action: { showDebugView = true }))
+        return items
+    }
+
+    /// 드래그 위치에서 가장 가까운 아이템으로 렌즈 스냅
+    private func snapLensToNearestItem(dragX: CGFloat, items: [LiquidGlassToolbar.ToolbarItem]) {
+        let itemWidth: CGFloat = 44
+        let totalWidth = CGFloat(items.count) * itemWidth
+        let startX = (UIScreen.main.bounds.width - totalWidth) / 2
+        let relativeX = dragX - startX
+        let index = max(0, min(items.count - 1, Int(relativeX / itemWidth)))
+        let targetID = items[index].id
+        guard targetID != lensItemID else { return }
+        withAnimation(.bouncy(duration: 0.28)) {
+            lensItemID = targetID
+        }
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+    }
     
-    // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
+    // 방문기록/자동완성
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
@@ -462,9 +593,9 @@ struct ContentView: View {
                 
                 HStack {
                     Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
-                        HStack(spacing: 4) { 
+                        HStack(spacing: 4) {
                             Image(systemName: "slider.horizontal.3")
-                            Text("방문기록 관리") 
+                            Text("방문기록 관리")
                         }
                         .font(.caption)
                         .foregroundColor(.blue)
@@ -500,10 +631,8 @@ struct ContentView: View {
         )
     }
     
-    // 🎯 키보드 상태에 따라 메뉴와 자물쇠 아이콘 숨김/표시하여 주소창 폭 조절
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
-            // 🎯 메뉴 버튼 - 키보드가 올라오면 숨김
             if !isTextFieldFocused {
                 menuButton
                     .transition(.asymmetric(
@@ -512,7 +641,6 @@ struct ContentView: View {
                     ))
             }
             
-            // 🎯 사이트 보안 아이콘 - 키보드가 올라오면 숨김
             if !isTextFieldFocused {
                 siteSecurityIcon
                     .transition(.asymmetric(
@@ -523,16 +651,13 @@ struct ContentView: View {
             
             urlTextField
             
-            // 🎯 키보드 상태에 따른 동적 버튼 표시
             if isTextFieldFocused {
-                // 키보드가 올라온 상태: 지우기 버튼 (크기 확대)
                 clearButton
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
                         removal: .move(edge: .trailing).combined(with: .opacity)
                     ))
             } else {
-                // 키보드가 내려간 상태: 새로고침 버튼
                 refreshButton
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -545,7 +670,6 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isTextFieldFocused)
     }
     
-    // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경 (검은색)
     private var menuButton: some View {
         Button(action: {
             siteMenuManager.setCurrentStateModel(currentState)
@@ -616,13 +740,11 @@ struct ContentView: View {
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
             .onSubmit(onTextFieldSubmit)
-            // 🎯 overlay 제거 - 별도 버튼으로 분리
     }
     
-    // 🎯 새로운 크기 확대된 지우기 버튼
     private var clearButton: some View {
-        Button(action: { 
-            inputURL = "" 
+        Button(action: {
+            inputURL = ""
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: "xmark.circle.fill")
@@ -637,12 +759,12 @@ struct ContentView: View {
     
     private var refreshButton: some View {
         Button(action: {
-            if currentState.isLoading { 
+            if currentState.isLoading {
                 currentState.stopLoading()
-                TabPersistenceManager.debugMessages.append("로딩 중지") 
-            } else { 
+                TabPersistenceManager.debugMessages.append("로딩 중지")
+            } else {
                 currentState.reload()
-                TabPersistenceManager.debugMessages.append("페이지 새로고침") 
+                TabPersistenceManager.debugMessages.append("페이지 새로고침")
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
@@ -661,15 +783,7 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
-    
-    private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: iconSize))
-                .foregroundColor(enabled ? color : .secondary)
-        }
-        .disabled(!enabled)
-    }
+
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
@@ -786,19 +900,19 @@ struct ContentView: View {
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
             AVPlayerView(url: url)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
-    @ViewBuilder private func debugView() -> some View { 
+    @ViewBuilder private func debugView() -> some View {
         GeometryReader { geometry in
             DebugLogView()
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .ignoresSafeArea(.all, edges: .all)
         .ignoresSafeArea(.keyboard, edges: .all)
-        .onAppear { 
+        .onAppear {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋")
         }
@@ -881,7 +995,7 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 🎬 PIP 상태 변경 핸들러 (ContentView 내부 메서드)
+    // MARK: - 🎬 PIP 상태 변경 핸들러
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         if isPIPActive {
             if tabs.indices.contains(selectedTabIndex) {
