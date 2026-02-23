@@ -507,8 +507,22 @@ struct ContentView: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: {
+                UIPasteboard.general.string = currentState.currentURL?.absoluteString
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            }) {
+                Label("URL 복사", systemImage: "doc.on.doc")
+            }
+            Button(action: {
+                UIPasteboard.general.string = currentState.currentPageRecord?.title ?? currentState.currentURL?.host ?? ""
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            }) {
+                Label("제목 복사", systemImage: "text.quote")
+            }
+        }
     }
-    
+
     // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
     @ViewBuilder
     private var addressBarHistoryContent: some View {
