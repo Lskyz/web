@@ -181,7 +181,7 @@ struct ContentView: View {
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
-    private let addressToToolbarGap: CGFloat = 14
+    private let addressToToolbarGap: CGFloat = 20
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
@@ -406,7 +406,7 @@ struct ContentView: View {
                     }
 
                     // 2️⃣ 통합 툴바
-                    VStack(spacing: 0) {
+                    VStack(spacing: addressToToolbarGap) {
                         // 주소창 - 탭바와 동일한 outerHorizontalPadding 적용
                         VStack(spacing: 0) {
                             addressBarMainContent
@@ -421,7 +421,6 @@ struct ContentView: View {
                                 .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
                         )
                         .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.bottom, addressToToolbarGap)
 
                         // 탭바 - 주소창과 동일한 outerHorizontalPadding
                         BrowserActionTabBar(
