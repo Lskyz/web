@@ -215,11 +215,27 @@ struct BFCacheSnapshot: Codable {
     @MainActor
     private func runRestorationScriptAsync(_ script: String, on webView: WKWebView, stepLabel: String) async throws -> [String: Any] {
         try Task.checkCancellation()
-        let result = try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page)
+        let result = try await callAsyncJavaScriptCompat(script, on: webView)
         try Task.checkCancellation()
 
         if let dict = dictionaryFromResult(result, stepLabel: stepLabel) {
             return dict
+        }
+
+        // iOS 런타임에서 async 오버로드가 () 를 반환하는 케이스 대응
+        if isVoidResult(result) {
+            TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) void result detected - fallback wrapper retry")
+            let wrappedScript = """
+            return await (async () => {
+            \(script)
+            })();
+            """
+            let wrappedResult = try await callAsyncJavaScriptCompat(wrappedScript, on: webView)
+            try Task.checkCancellation()
+            if let dict = dictionaryFromResult(wrappedResult, stepLabel: stepLabel) {
+                return dict
+            }
+            TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) fallback wrapper parse failed: \(describeJSONValue(unwrapOptional(wrappedResult)))")
         }
 
         let rawDescription = describeJSONValue(result)
@@ -232,6 +248,20 @@ struct BFCacheSnapshot: Codable {
             code: -2,
             userInfo: [NSLocalizedDescriptionKey: "\(stepLabel) JSON 파싱 실패"]
         )
+    }
+
+    @MainActor
+    private func callAsyncJavaScriptCompat(_ script: String, on webView: WKWebView) async throws -> Any? {
+        try await withCheckedThrowingContinuation { continuation in
+            webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in
+                switch result {
+                case .success(let value):
+                    continuation.resume(returning: value)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
 
@@ -310,6 +340,12 @@ struct BFCacheSnapshot: Codable {
             return unwrapOptional(child.value)
         }
         return nil
+    }
+
+    private func isVoidResult(_ value: Any?) -> Bool {
+        guard let normalized = unwrapOptional(value) else { return false }
+        let mirror = Mirror(reflecting: normalized)
+        return mirror.displayStyle == .tuple && mirror.children.isEmpty
     }
 
     private func toStringKeyedDictionary(_ value: Any?) -> [String: Any]? {
