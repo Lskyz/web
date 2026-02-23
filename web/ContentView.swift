@@ -42,8 +42,8 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
 }
 
-// MARK: - 하단 액션 탭바 (시스템 UITabBar 사용)
-struct BrowserActionTabBar: UIViewRepresentable {
+// MARK: - 하단 액션 탭바 (순수 SwiftUI)
+struct BrowserActionTabBar: View {
     enum Item: Int, CaseIterable {
         case back
         case forward
@@ -58,77 +58,32 @@ struct BrowserActionTabBar: UIViewRepresentable {
     var showsPIPItem: Bool
     var onSelect: (Item) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onSelect: onSelect)
-    }
-
-    func makeUIView(context: Context) -> UITabBar {
-        let tabBar = UITabBar()
-        tabBar.delegate = context.coordinator
-        tabBar.itemPositioning = .automatic
-        tabBar.isTranslucent = true
-        tabBar.unselectedItemTintColor = UIColor.secondaryLabel
-        let appearance = UITabBarAppearance()
-        appearance.configureWithTransparentBackground()
-        appearance.backgroundColor = .clear
-        appearance.shadowColor = .clear
-        tabBar.standardAppearance = appearance
-        if #available(iOS 15.0, *) {
-            tabBar.scrollEdgeAppearance = appearance
-        }
-        return tabBar
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITabBar, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? UIScreen.main.bounds.width, height: 62)
-    }
-
-    func updateUIView(_ tabBar: UITabBar, context: Context) {
-        context.coordinator.onSelect = onSelect
-
-        let items = makeItems()
-        tabBar.setItems(items, animated: false)
-        items.first(where: { $0.tag == Item.back.rawValue })?.isEnabled = canGoBack
-        items.first(where: { $0.tag == Item.forward.rawValue })?.isEnabled = canGoForward
-
-        if let fallback = items.first(where: { $0.tag == Item.tabs.rawValue }) {
-            tabBar.selectedItem = fallback
-        }
-    }
-
-    private func makeItems() -> [UITabBarItem] {
-        var items: [UITabBarItem] = [
-            UITabBarItem(title: "뒤로", image: UIImage(systemName: "chevron.left"), tag: Item.back.rawValue),
-            UITabBarItem(title: "앞으로", image: UIImage(systemName: "chevron.right"), tag: Item.forward.rawValue),
-            UITabBarItem(title: "기록", image: UIImage(systemName: "clock.arrow.circlepath"), tag: Item.history.rawValue),
-            UITabBarItem(title: "탭", image: UIImage(systemName: "square.on.square"), tag: Item.tabs.rawValue)
-        ]
-
-        if showsPIPItem {
-            items.append(UITabBarItem(title: "PIP", image: UIImage(systemName: "pip.fill"), tag: Item.pip.rawValue))
-        }
-
-        items.append(UITabBarItem(title: "디버그", image: UIImage(systemName: "ladybug"), tag: Item.debug.rawValue))
-        return items
-    }
-
-    final class Coordinator: NSObject, UITabBarDelegate {
-        var onSelect: (Item) -> Void
-
-        init(onSelect: @escaping (Item) -> Void) {
-            self.onSelect = onSelect
-        }
-
-        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-            guard let selected = Item(rawValue: item.tag) else { return }
-            onSelect(selected)
-
-            DispatchQueue.main.async {
-                if let fallback = tabBar.items?.first(where: { $0.tag == Item.tabs.rawValue }) {
-                    tabBar.selectedItem = fallback
-                }
+    var body: some View {
+        HStack(spacing: 0) {
+            tabButton(icon: "chevron.left", title: "뒤로", item: .back, enabled: canGoBack)
+            tabButton(icon: "chevron.right", title: "앞으로", item: .forward, enabled: canGoForward)
+            tabButton(icon: "clock.arrow.circlepath", title: "기록", item: .history)
+            tabButton(icon: "square.on.square", title: "탭", item: .tabs)
+            if showsPIPItem {
+                tabButton(icon: "pip.fill", title: "PIP", item: .pip)
             }
+            tabButton(icon: "ladybug", title: "디버그", item: .debug)
         }
+    }
+
+    private func tabButton(icon: String, title: String, item: Item, enabled: Bool = true) -> some View {
+        Button(action: { onSelect(item) }) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                Text(title)
+                    .font(.system(size: 10))
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundColor(enabled ? .secondary : Color(UIColor.tertiaryLabel))
+        }
+        .disabled(!enabled)
+        .buttonStyle(.plain)
     }
 }
 
