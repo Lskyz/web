@@ -153,6 +153,7 @@ struct ContentView: View {
     @State private var showTabManager = false
     @State private var showDebugView = false
     @State private var showAddressBar = false
+    @State private var showBottomChrome = true
     @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
     
@@ -171,9 +172,7 @@ struct ContentView: View {
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
-    private let addressTabBarSpacing: CGFloat = 14
-    private let floatingBarBackgroundOpacity: CGFloat = 0.82
-    private let historyPanelBackgroundOpacity: CGFloat = 0.88
+    private let addressToToolbarGap: CGFloat = 10
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
@@ -374,80 +373,140 @@ struct ContentView: View {
     @ViewBuilder
     private func bottomUnifiedUIContent() -> some View {
         VStack(spacing: 0) {
-            // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
-            if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
-                addressBarHistoryContent
-                    .padding(.horizontal, outerHorizontalPadding)
-                    .ignoresSafeArea(.keyboard, edges: .all)
-            }
-            
-            // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
-            VStack(spacing: addressTabBarSpacing) {
-                if showAddressBar {
-                    // 주소창 영역 - 별도 테두리로 구분
-                    HStack(spacing: 12) {
-                        VStack(spacing: 0) {
-                            addressBarMainContent
-                            if currentState.isLoading { progressBarView }
-                        }
-                        .background(
-                            RoundedRectangle(cornerRadius: barCornerRadius)
-                                .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: barCornerRadius)
-                                .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
-                        )
-                        
-                        if isTextFieldFocused {
-                            Button(action: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    isTextFieldFocused = false
-                                    siteMenuManager.closeSiteMenu()
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                                }
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 44, height: 44)
-                                    .background(
-                                        Circle()
-                                            .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
-                                    )
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
-                                    )
-                            }
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .trailing).combined(with: .opacity)
-                            ))
-                        }
-                    }
-                    .padding(.horizontal, outerHorizontalPadding)
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
+            if showBottomChrome {
+                // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
+                if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
+                    addressBarHistoryContent
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .ignoresSafeArea(.keyboard, edges: .all)
                 }
-                
-                // 네비게이션 메뉴를 시스템 탭바로 구성
-                BrowserActionTabBar(
-                    canGoBack: currentState.canGoBack,
-                    canGoForward: currentState.canGoForward,
-                    showsPIPItem: pipManager.isPIPActive,
-                    onSelect: { selected in
-                        handleBottomTabSelection(selected)
-                    })
-                    .frame(height: 54)
-                    .padding(.horizontal, 8)
+
+                // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
+                VStack(spacing: 0) {
+                    if showAddressBar {
+                        // 주소창 영역 - 별도 테두리로 구분
+                        HStack(spacing: 12) {
+                            VStack(spacing: 0) {
+                                addressBarMainContent
+                                if currentState.isLoading { progressBarView }
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: barCornerRadius)
+                                    .fill(Color(UIColor.systemBackground))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: barCornerRadius)
+                                    .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                            )
+
+                            if isTextFieldFocused {
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        isTextFieldFocused = false
+                                        siteMenuManager.closeSiteMenu()
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                    }
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                }) {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 16, weight: .medium))
+                                        .foregroundColor(.primary)
+                                        .frame(width: 44, height: 44)
+                                        .background(
+                                            Circle()
+                                                .fill(Color(UIColor.systemBackground))
+                                        )
+                                        .overlay(
+                                            Circle()
+                                                .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                                        )
+                                }
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                                    removal: .move(edge: .trailing).combined(with: .opacity)
+                                ))
+                            }
+                        }
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
+                    }
+
+                    // 네비게이션 메뉴를 시스템 탭바로 구성
+                    BrowserActionTabBar(
+                        canGoBack: currentState.canGoBack,
+                        canGoForward: currentState.canGoForward,
+                        showsPIPItem: pipManager.isPIPActive,
+                        onSelect: { selected in
+                            handleBottomTabSelection(selected)
+                        })
+                        .frame(height: 54)
+                        .padding(.top, showAddressBar ? addressToToolbarGap : 0)
+                        .padding(.horizontal, 8)
+                }
+                .padding(.vertical, barVPadding)
+                .padding(.bottom, 0)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                compactPageInfoView
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .padding(.vertical, barVPadding)
-            .padding(.bottom, 0)
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: showBottomChrome)
         .ignoresSafeArea(.keyboard, edges: .all)
+    }
+
+    private var compactPageInfoView: some View {
+        let rawTitle = currentState.currentPageRecord?.title
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let host = currentState.currentURL?.host ?? ""
+        let fallback = currentState.currentURL?.absoluteString ?? "페이지 정보"
+        let primaryText = rawTitle.isEmpty ? (host.isEmpty ? fallback : host) : rawTitle
+        let secondaryText = rawTitle.isEmpty ? nil : (host.isEmpty ? nil : host)
+
+        return Button(action: {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
+                showBottomChrome = true
+                showAddressBar = true
+            }
+        }) {
+            HStack(spacing: 10) {
+                Image(systemName: "link")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(primaryText)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .foregroundColor(.primary)
+
+                    if let secondaryText {
+                        Text(secondaryText)
+                            .font(.system(size: 11, weight: .regular))
+                            .lineLimit(1)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color(UIColor.separator).opacity(0.25), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
     
     // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
@@ -516,7 +575,7 @@ struct ContentView: View {
                 .padding(.bottom, 8)
             }
         }
-        .background(Color(UIColor.systemBackground).opacity(historyPanelBackgroundOpacity))
+        .background(Color(UIColor.systemBackground).opacity(0.95))
         .cornerRadius(barCornerRadius)
         .overlay(
             RoundedRectangle(cornerRadius: barCornerRadius)
@@ -729,10 +788,13 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
         }
         TabPersistenceManager.saveTabs(tabs)
-        if !showAddressBar {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true }
+        if !showAddressBar || !showBottomChrome {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showBottomChrome = true
+                showAddressBar = true
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                if showAddressBar && !isTextFieldFocused {
+                if showBottomChrome && showAddressBar && !isTextFieldFocused {
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = false }
                 }
             }
@@ -841,11 +903,17 @@ struct ContentView: View {
             previousOffset = offset; return
         }
         let delta = offset - previousOffset
-        if delta < -30 && showAddressBar {
+        if delta < -30 && showBottomChrome {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                showBottomChrome = false
                 showAddressBar = false
                 isTextFieldFocused = false
                 siteMenuManager.closeSiteMenu()
+            }
+        } else if delta > 20 && !showBottomChrome {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
+                showBottomChrome = true
+                showAddressBar = true
             }
         }
         previousOffset = offset
@@ -853,6 +921,13 @@ struct ContentView: View {
     private func onContentTap() {
         if isMenuButtonPressed { return }
         if let t = menuButtonPressStartTime, Date().timeIntervalSince(t) < 0.3 { menuButtonPressStartTime = nil; return }
+        if !showBottomChrome {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
+                showBottomChrome = true
+                showAddressBar = true
+            }
+            return
+        }
         withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
             if siteMenuManager.showSiteMenu { siteMenuManager.closeSiteMenu() }
             else if showAddressBar { showAddressBar = false; isTextFieldFocused = false }
@@ -861,6 +936,8 @@ struct ContentView: View {
         if siteMenuManager.showSiteMenu { siteMenuManager.closeSiteMenu() }
     }
     private func onTextFieldTap() {
+        if !showBottomChrome { showBottomChrome = true }
+        if !showAddressBar { showAddressBar = true }
         if !isTextFieldFocused { isTextFieldFocused = true }
         if !textFieldSelectedAll {
             DispatchQueue.main.async {
@@ -871,7 +948,13 @@ struct ContentView: View {
         }
     }
     private func onTextFieldFocusChange(focused: Bool) {
-        if !focused { textFieldSelectedAll = false; TabPersistenceManager.debugMessages.append("주소창 포커스 해제") }
+        if focused {
+            if !showBottomChrome { showBottomChrome = true }
+            if !showAddressBar { showAddressBar = true }
+        } else {
+            textFieldSelectedAll = false
+            TabPersistenceManager.debugMessages.append("주소창 포커스 해제")
+        }
     }
     private func onTextFieldSubmit() {
         if let url = fixedURL(from: inputURL) {
@@ -910,8 +993,11 @@ struct ContentView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
 
-        if !showAddressBar {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true }
+        if !showBottomChrome || !showAddressBar {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showBottomChrome = true
+                showAddressBar = true
+            }
         }
     }
 
@@ -933,14 +1019,18 @@ struct ContentView: View {
         if isTextFieldFocused || isMenuButtonPressed || siteMenuManager.showSiteMenu { lastWebContentOffsetY = yOffset; return }
         let delta = yOffset - lastWebContentOffsetY
         if abs(delta) < 2 { lastWebContentOffsetY = yOffset; return }
-        if delta > 4 && (showAddressBar || siteMenuManager.showSiteMenu) {
+        if delta > 4 && (showBottomChrome || siteMenuManager.showSiteMenu) {
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                showBottomChrome = false
                 showAddressBar = false
                 siteMenuManager.closeSiteMenu()
                 isTextFieldFocused = false
             }
-        } else if delta < -12 && !showAddressBar {
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true }
+        } else if delta < -12 && !showBottomChrome {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showBottomChrome = true
+                showAddressBar = true
+            }
         }
         lastWebContentOffsetY = yOffset
     }
