@@ -22,6 +22,7 @@
 		33BF79EE2E62DE35007250B7 /* BFCacheSwipeTransition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79ED2E62DE35007250B7 /* BFCacheSwipeTransition.swift */; };
 		33BF79F02E62DE35007250B7 /* BFCacheSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79EF2E62DE35007250B7 /* BFCacheSnapshot.swift */; };
 		33BF79F22E62DE35007250B7 /* BFCacheCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79F12E62DE35007250B7 /* BFCacheCapture.swift */; };
+		33BF79F42E62DE35007250B7 /* BFCacheJS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BF79F32E62DE35007250B7 /* BFCacheJS.swift */; };
 		33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C8EF7A2E3EFBC100A48206 /* tabview.swift */; };
 		33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */; };
 		33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */; };
@@ -64,6 +65,7 @@
 		33BF79ED2E62DE35007250B7 /* BFCacheSwipeTransition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BFCacheSwipeTransition.swift; sourceTree = "<group>"; };
 		33BF79EF2E62DE35007250B7 /* BFCacheSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BFCacheSnapshot.swift; sourceTree = "<group>"; };
 		33BF79F12E62DE35007250B7 /* BFCacheCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BFCacheCapture.swift; sourceTree = "<group>"; };
+		33BF79F32E62DE35007250B7 /* BFCacheJS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BFCacheJS.swift; sourceTree = "<group>"; };
 		33C8EF7A2E3EFBC100A48206 /* tabview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tabview.swift; sourceTree = "<group>"; };
 		33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHelper.swift; sourceTree = "<group>"; };
 		33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewDataModel.swift; sourceTree = "<group>"; };
@@ -124,6 +126,7 @@
 				33BF79ED2E62DE35007250B7 /* BFCacheSwipeTransition.swift */,
 				33BF79EF2E62DE35007250B7 /* BFCacheSnapshot.swift */,
 				33BF79F12E62DE35007250B7 /* BFCacheCapture.swift */,
+				33BF79F32E62DE35007250B7 /* BFCacheJS.swift */,
 				33BB0A4F2E6E4C0800F88877 /* BFCache UI.swift */,
 				3322308A2E3B717B00EB7526 /* Info.plist */,
 				3322308F2E3D85B600EB7526 /* web.mp3 */,
@@ -290,6 +293,7 @@
 				33BF79EE2E62DE35007250B7 /* BFCacheSwipeTransition.swift in Sources */,
 				33BF79F02E62DE35007250B7 /* BFCacheSnapshot.swift in Sources */,
 				33BF79F22E62DE35007250B7 /* BFCacheCapture.swift in Sources */,
+				33BF79F42E62DE35007250B7 /* BFCacheJS.swift in Sources */,
 				3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */,
 				33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */,
 			);
