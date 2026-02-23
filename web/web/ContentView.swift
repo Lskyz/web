@@ -3,13 +3,13 @@ import AVKit
 import WebKit
 
 // ============================================================
-// ✨ 투명한 흰색 유리 효과 (Clean White Glass) — siteMenuOverlay 등 기존 호환용 유지
+// ✨ 투명한 흰색 유리 효과 (Clean White Glass)
 // ============================================================
 struct WhiteGlassBlur: UIViewRepresentable {
     var blurStyle: UIBlurEffect.Style
     var cornerRadius: CGFloat = 0
     var intensity: CGFloat = 1.0
-
+    
     func makeUIView(context: Context) -> UIVisualEffectView {
         let effect = UIBlurEffect(style: blurStyle)
         let effectView = UIVisualEffectView(effect: effect)
@@ -19,14 +19,14 @@ struct WhiteGlassBlur: UIViewRepresentable {
         setupWhiteGlassEffect(effectView)
         return effectView
     }
-
+    
     func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
         uiView.effect = UIBlurEffect(style: blurStyle)
         uiView.layer.cornerRadius = cornerRadius
         uiView.backgroundColor = .clear
         uiView.alpha = intensity
     }
-
+    
     private func setupWhiteGlassEffect(_ effectView: UIVisualEffectView) {
         let gradientLayer = CAGradientLayer()
         gradientLayer.colors = [
@@ -75,8 +75,9 @@ struct ContentView: View {
     @State private var showTabManager = false
     @State private var showDebugView = false
     @State private var showAddressBar = false
+    @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
-
+    
     // 상태
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -94,108 +95,30 @@ struct ContentView: View {
     private let barVPadding: CGFloat = 10
     private let iconSize: CGFloat = 23
     private let textFont: Font = .system(size: 16, weight: .medium)
+    private let toolbarSpacing: CGFloat = 40
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
-
+    
+    // ✅ 키보드 높이 추가 (수동 처리 필요)
+    @State private var keyboardHeight: CGFloat = 0
+    
     var body: some View {
-        // 🍎 NavigationStack으로 감싸서 네이티브 Liquid Glass toolbar 활성화
-        NavigationStack {
+        GeometryReader { geometry in
             ZStack {
+                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
-                if pipManager.isPIPActive { pipStatusOverlay }
-            }
-            .ignoresSafeArea(.all, edges: [.leading, .trailing, .bottom])
-            // 🍎 주소창 히스토리/자동완성 오버레이
-            .overlay(alignment: .bottom) {
-                if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
-                    addressBarHistoryContent
-                        .padding(.horizontal, outerHorizontalPadding)
-                        .padding(.bottom, 80) // 툴바 높이만큼 띄움
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                // 하단 통합 UI 고정: 키보드만큼 상승
+                VStack {
+                    Spacer()
+                    bottomUnifiedUIContent()
+                        .padding(.bottom, keyboardHeight)
+                        .animation(.easeInOut(duration: 0.25), value: keyboardHeight)
                 }
             }
-            // 🍎 네이티브 하단 툴바 — iOS 26이 자동으로 Liquid Glass 렌즈 효과 적용
-            .toolbar {
-                // ── 주소창 (상단 중앙)
-                ToolbarItem(placement: .principal) {
-                    if showAddressBar {
-                        addressBarPrincipal
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-
-                // ── 하단 툴바: 뒤로/앞으로/히스토리/탭/PIP/디버그
-                ToolbarItemGroup(placement: .bottomBar) {
-                    // 뒤로가기
-                    Button {
-                        currentState.goBack()
-                        TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: iconSize))
-                    }
-                    .disabled(!currentState.canGoBack)
-
-                    Spacer()
-
-                    // 앞으로가기
-                    Button {
-                        currentState.goForward()
-                        TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: iconSize))
-                    }
-                    .disabled(!currentState.canGoForward)
-
-                    Spacer()
-
-                    // 히스토리
-                    Button {
-                        showHistorySheet = true
-                    } label: {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: iconSize))
-                    }
-
-                    Spacer()
-
-                    // 탭 매니저
-                    Button {
-                        showTabManager = true
-                    } label: {
-                        Image(systemName: "square.on.square")
-                            .font(.system(size: iconSize))
-                    }
-
-                    Spacer()
-
-                    // PIP (활성 시만 표시)
-                    if pipManager.isPIPActive {
-                        Button {
-                            pipManager.stopPIP()
-                        } label: {
-                            Image(systemName: "pip.fill")
-                                .font(.system(size: iconSize))
-                                .foregroundColor(.green)
-                        }
-                        Spacer()
-                    }
-
-                    // 디버그
-                    Button {
-                        showDebugView = true
-                    } label: {
-                        Image(systemName: "ladybug")
-                            .font(.system(size: iconSize))
-                            .foregroundColor(.orange)
-                    }
-                }
-            }
-            // 툴바 탭 → 주소창 표시
-            .onTapGesture(perform: onToolbarTap)
         }
+        // 🔽 상단은 안전영역 유지 (다이나믹 아일랜드/노치), 하단만 무시
         .ignoresSafeArea(.all, edges: [.leading, .trailing, .bottom])
         .ignoresSafeArea(.keyboard, edges: .all)
 
@@ -209,11 +132,27 @@ struct ContentView: View {
         .fullScreenCover(isPresented: avPlayerBinding, content: avPlayerView)
         .fullScreenCover(isPresented: $showDebugView) {
             debugView()
+                // 🔽 탭매니저처럼 완전 격리 - 키보드 전파 차단
                 .ignoresSafeArea(.all, edges: .all)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
+
+        // 🎬 PIP 상태 동기화
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
+
+        // ✅ 키보드 높이 수동 계산 (안전영역 무시하면서도 정확한 처리)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
+            updateKeyboard(from: n, animated: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+            updateKeyboard(from: n, animated: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeInOut(duration: 0.25)) { keyboardHeight = 0 }
+        }
+
+        // 오버레이도 동일한 처리
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -226,13 +165,35 @@ struct ContentView: View {
         )
         .ignoresSafeArea(.keyboard, edges: .all)
     }
+    
+    // MARK: - 키보드 높이 수동 계산 (안전영역 포함)
+    private func updateKeyboard(from n: Notification, animated: Bool) {
+        guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
+        let screen = UIScreen.main.bounds
+        let safeBottom = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets.bottom ?? 0
+        
+        // 키보드 높이에서 안전영역 제외 (중복 제거)
+        let keyboardHeight = max(0, screen.maxY - endFrame.minY)
+        let adjustedHeight = max(0, keyboardHeight - safeBottom)
+        
+        if animated {
+            let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeInOut(duration: duration)) { 
+                self.keyboardHeight = adjustedHeight 
+            }
+        } else {
+            self.keyboardHeight = adjustedHeight
+        }
+    }
 
     // MARK: - 현재 탭 상태
     private var currentState: WebViewStateModel {
         if tabs.indices.contains(selectedTabIndex) { return tabs[selectedTabIndex].stateModel }
         return WebViewStateModel()
     }
-
+    
     // MARK: - 콘텐츠
     @ViewBuilder
     private var mainContentView: some View {
@@ -250,12 +211,13 @@ struct ContentView: View {
                 } else {
                     dashboardView
                 }
+                if pipManager.isPIPActive { pipStatusOverlay }
             }
         } else {
             dashboardView
         }
     }
-
+    
     @ViewBuilder
     private var pipStatusOverlay: some View {
         VStack {
@@ -275,32 +237,34 @@ struct ContentView: View {
         }
         .allowsHitTesting(false)
     }
-
+    
     @ViewBuilder
     private func webContentView(state: WebViewStateModel) -> some View {
         createWebContentView(state: state)
+            .overlay(scrollOffsetOverlay)
+            .onPreferenceChange(ScrollOffsetPreferenceKey.self, perform: onScrollOffsetChange)
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
     }
-
+    
     @ViewBuilder
     private func createWebContentView(state: WebViewStateModel) -> some View {
         CustomWebView(
             stateModel: state,
             playerURL: Binding(
                 get: {
-                    if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].playerURL }
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[index].playerURL }
                     return nil
                 },
                 set: { newValue in
-                    if let i = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        tabs[i].playerURL = newValue
-                        if let url = newValue, tabs[i].showAVPlayer { pipManager.pipPlayerURL = url }
+                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[index].playerURL = newValue
+                        if let url = newValue, tabs[index].showAVPlayer { pipManager.pipPlayerURL = url }
                     }
                 }
             ),
             showAVPlayer: Binding(
-                get: { if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].showAVPlayer }; return false },
+                get: { if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].showAVPlayer } ; return false },
                 set: { newValue in
                     if let i = tabs.firstIndex(where: { $0.id == state.tabID }) {
                         tabs[i].showAVPlayer = newValue
@@ -313,98 +277,148 @@ struct ContentView: View {
         .id(state.tabID)
         .ignoresSafeArea(.keyboard, edges: .all)
     }
-
+    
     private var dashboardView: some View {
         DashboardView(onNavigateToURL: handleDashboardNavigation(_:))
             .contentShape(Rectangle())
             .onTapGesture(perform: onContentTap)
             .ignoresSafeArea(.keyboard, edges: .all)
     }
-
-    // MARK: - 🍎 principal 주소창 (네비게이션 바 중앙, Liquid Glass 자동 적용)
-    private var addressBarPrincipal: some View {
-        HStack(spacing: 8) {
-            // 메뉴 버튼
-            if !isTextFieldFocused {
-                menuButton
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
-            }
-
-            // 보안 아이콘
-            if !isTextFieldFocused {
-                siteSecurityIcon
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
-            }
-
-            // URL 텍스트필드
-            urlTextField
-
-            // 키보드 올라왔을 때: 지우기 / 내려갔을 때: 새로고침
-            if isTextFieldFocused {
-                clearButton
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-                // 닫기 버튼
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isTextFieldFocused = false
-                        siteMenuManager.closeSiteMenu()
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                    }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                } label: {
-                    Text("취소")
-                        .font(.system(size: 15, weight: .medium))
-                }
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .move(edge: .trailing).combined(with: .opacity)
-                ))
-            } else {
-                refreshButton
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-            }
+    
+    private var scrollOffsetOverlay: some View {
+        GeometryReader { g in
+            Color.clear.preference(key: ScrollOffsetPreferenceKey.self, value: g.frame(in: .global).origin.y)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, barVPadding - 2)
+    }
+    
+    // MARK: - 🎯 통합된 하단 UI (사파리 스타일 - 배경 통합, 주소창만 테두리 구분)
+    @ViewBuilder
+    private func bottomUnifiedUIContent() -> some View {
+        VStack(spacing: 0) {
+            // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
+            if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
+                addressBarHistoryContent
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .ignoresSafeArea(.keyboard, edges: .all)
+            }
+            
+            // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
+            VStack(spacing: 12) {
+                if showAddressBar {
+                    // 주소창 영역 - 별도 테두리로 구분
+                    HStack(spacing: 12) {
+                        VStack(spacing: 0) {
+                            addressBarMainContent
+                            if currentState.isLoading { progressBarView }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color(UIColor.systemBackground))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                        )
+                        
+                        if isTextFieldFocused {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    isTextFieldFocused = false
+                                    siteMenuManager.closeSiteMenu()
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(
+                                        Circle()
+                                            .fill(Color(UIColor.systemBackground))
+                                    )
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                                    )
+                            }
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
+                        }
+                    }
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
+                }
+                
+                // 네비게이션 툴바 - 배경에 자연스럽게 통합
+                HStack(spacing: 0) {
+                    HStack(spacing: toolbarSpacing) {
+                        toolbarButton("chevron.left", action: {
+                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                        }, enabled: currentState.canGoBack)
+                        toolbarButton("chevron.right", action: {
+                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                        }, enabled: currentState.canGoForward)
+                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                        if pipManager.isPIPActive {
+                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                        }
+                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .padding(.horizontal, 16)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onToolbarTap)
+            }
+            .padding(.vertical, barVPadding)
+            .padding(.bottom, max(20, UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.windows.first?.safeAreaInsets.bottom ?? 0))
+        }
+        // 🎯 완전한 전체 화면 글래스 배경 (상단 안전영역 제외, 하단 포함)
         .background(
-            RoundedRectangle(cornerRadius: barCornerRadius)
-                .fill(Color(UIColor.systemBackground).opacity(0.85))
+            GeometryReader { geometry in
+                whiteGlassBackground
+                    .frame(width: UIScreen.main.bounds.width, 
+                           height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
+                    .offset(x: -geometry.frame(in: .global).minX, 
+                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
+            }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: barCornerRadius)
-                .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
-        )
-        // 로딩 프로그레스
-        .overlay(alignment: .bottom) {
-            if currentState.isLoading {
-                progressBarView
+            GeometryReader { geometry in
+                whiteGlassOverlay
+                    .frame(width: UIScreen.main.bounds.width, 
+                           height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
+                    .offset(x: -geometry.frame(in: .global).minX, 
+                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isTextFieldFocused)
-        .frame(maxWidth: .infinity)
+        )
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: barCornerRadius,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: barCornerRadius
+            )
+        )
+        .background(Color.clear)
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
-
-    // 방문기록/자동완성
+    
+    // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
             Divider()
                 .background(Color(UIColor.separator).opacity(0.3))
-
+            
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
                     if inputURL.isEmpty {
@@ -441,18 +455,21 @@ struct ContentView: View {
             }
             .frame(maxHeight: 300)
             .fixedSize(horizontal: false, vertical: true)
-
+            
             VStack(spacing: 8) {
-                Divider().background(Color(UIColor.separator).opacity(0.3))
+                Divider()
+                    .background(Color(UIColor.separator).opacity(0.3))
+                
                 HStack {
                     Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 4) { 
                             Image(systemName: "slider.horizontal.3")
-                            Text("방문기록 관리")
+                            Text("방문기록 관리") 
                         }
                         .font(.caption)
                         .foregroundColor(.blue)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
                         .background(Color.blue.opacity(0.1))
                         .cornerRadius(8)
                     }
@@ -482,8 +499,53 @@ struct ContentView: View {
             }
         )
     }
-
-    // MARK: - 주소창 서브뷰들
+    
+    // 🎯 키보드 상태에 따라 메뉴와 자물쇠 아이콘 숨김/표시하여 주소창 폭 조절
+    private var addressBarMainContent: some View {
+        HStack(spacing: 8) {
+            // 🎯 메뉴 버튼 - 키보드가 올라오면 숨김
+            if !isTextFieldFocused {
+                menuButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+            
+            // 🎯 사이트 보안 아이콘 - 키보드가 올라오면 숨김
+            if !isTextFieldFocused {
+                siteSecurityIcon
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+            
+            urlTextField
+            
+            // 🎯 키보드 상태에 따른 동적 버튼 표시
+            if isTextFieldFocused {
+                // 키보드가 올라온 상태: 지우기 버튼 (크기 확대)
+                clearButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+            } else {
+                // 키보드가 내려간 상태: 새로고침 버튼
+                refreshButton
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, barVPadding)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isTextFieldFocused)
+    }
+    
+    // 🍔 퍼즐 버튼을 메뉴 아이콘으로 변경 (검은색)
     private var menuButton: some View {
         Button(action: {
             siteMenuManager.setCurrentStateModel(currentState)
@@ -517,7 +579,7 @@ struct ContentView: View {
         )
         .zIndex(999)
     }
-
+    
     private var siteSecurityIcon: some View {
         HStack(spacing: 4) {
             if currentState.isLoading {
@@ -542,7 +604,7 @@ struct ContentView: View {
         if url.scheme == "http" { return .orange }
         return .secondary
     }
-
+    
     private var urlTextField: some View {
         TextField("URL 또는 검색어", text: $inputURL)
             .textFieldStyle(.plain)
@@ -554,11 +616,13 @@ struct ContentView: View {
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
             .onSubmit(onTextFieldSubmit)
+            // 🎯 overlay 제거 - 별도 버튼으로 분리
     }
-
+    
+    // 🎯 새로운 크기 확대된 지우기 버튼
     private var clearButton: some View {
-        Button(action: {
-            inputURL = ""
+        Button(action: { 
+            inputURL = "" 
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: "xmark.circle.fill")
@@ -570,15 +634,15 @@ struct ContentView: View {
         .disabled(inputURL.isEmpty)
         .animation(.easeInOut(duration: 0.15), value: inputURL.isEmpty)
     }
-
+    
     private var refreshButton: some View {
         Button(action: {
-            if currentState.isLoading {
+            if currentState.isLoading { 
                 currentState.stopLoading()
-                TabPersistenceManager.debugMessages.append("로딩 중지")
-            } else {
+                TabPersistenceManager.debugMessages.append("로딩 중지") 
+            } else { 
                 currentState.reload()
-                TabPersistenceManager.debugMessages.append("페이지 새로고침")
+                TabPersistenceManager.debugMessages.append("페이지 새로고침") 
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
@@ -588,7 +652,7 @@ struct ContentView: View {
         }
         .frame(width: 24, height: 24)
     }
-
+    
     private var progressBarView: some View {
         ProgressView(value: max(0.0, min(1.0, currentState.loadingProgress)))
             .progressViewStyle(LinearProgressViewStyle(tint: currentState.currentURL?.scheme == "https" ? .green : .secondary))
@@ -597,7 +661,15 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
-
+    
+    private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: iconSize))
+                .foregroundColor(enabled ? color : .secondary)
+        }
+        .disabled(!enabled)
+    }
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
@@ -610,7 +682,7 @@ struct ContentView: View {
             Rectangle().strokeBorder(.white.opacity(0.03), lineWidth: 0.5)
         }
     }
-
+    
     // MARK: - 핸들러
     private func onAppearHandler() {
         if let url = currentState.currentURL { inputURL = url.absoluteString; TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)") }
@@ -714,24 +786,38 @@ struct ContentView: View {
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
             AVPlayerView(url: url)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
     }
-    @ViewBuilder private func debugView() -> some View {
+    @ViewBuilder private func debugView() -> some View { 
         GeometryReader { geometry in
             DebugLogView()
                 .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .ignoresSafeArea(.all, edges: .all)
         .ignoresSafeArea(.keyboard, edges: .all)
-        .onAppear {
+        .onAppear { 
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋")
         }
     }
-
+    
+    private func onScrollOffsetChange(offset: CGFloat) {
+        if isTextFieldFocused || isMenuButtonPressed || siteMenuManager.showSiteMenu {
+            previousOffset = offset; return
+        }
+        let delta = offset - previousOffset
+        if delta < -30 && showAddressBar {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                showAddressBar = false
+                isTextFieldFocused = false
+                siteMenuManager.closeSiteMenu()
+            }
+        }
+        previousOffset = offset
+    }
     private func onContentTap() {
         if isMenuButtonPressed { return }
         if let t = menuButtonPressStartTime, Date().timeIntervalSince(t) < 0.3 { menuButtonPressStartTime = nil; return }
@@ -795,7 +881,7 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 🎬 PIP 핸들러
+    // MARK: - 🎬 PIP 상태 변경 핸들러 (ContentView 내부 메서드)
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         if isPIPActive {
             if tabs.indices.contains(selectedTabIndex) {
@@ -984,6 +1070,12 @@ struct AutocompleteView: View {
             return AnyView(Text(text).foregroundColor(.primary))
         }
     }
+}
+
+// MARK: - 스크롤 오프셋 PreferenceKey
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 // MARK: - 에러 노티
