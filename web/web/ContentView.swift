@@ -102,6 +102,9 @@ struct ContentView: View {
     
     // ✅ 키보드 높이 추가 (수동 처리 필요)
     @State private var keyboardHeight: CGFloat = 0
+
+    // 🍎 Liquid Glass 네임스페이스
+    @Namespace private var toolbarGlassNamespace
     
     var body: some View {
         GeometryReader { geometry in
@@ -354,27 +357,8 @@ struct ContentView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
                 
-                // 네비게이션 툴바 - 배경에 자연스럽게 통합
-                HStack(spacing: 0) {
-                    HStack(spacing: toolbarSpacing) {
-                        toolbarButton("chevron.left", action: {
-                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-                        }, enabled: currentState.canGoBack)
-                        toolbarButton("chevron.right", action: {
-                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-                        }, enabled: currentState.canGoForward)
-                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
-                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
-                        if pipManager.isPIPActive {
-                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-                        }
-                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                }
-                .padding(.horizontal, 16)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onToolbarTap)
+                // 🍎 네비게이션 툴바 — Liquid Glass 적용
+                liquidGlassToolbar
             }
             .padding(.vertical, barVPadding)
             .padding(.bottom, max(20, UIApplication.shared.connectedScenes
@@ -410,6 +394,127 @@ struct ContentView: View {
         )
         .background(Color.clear)
         .ignoresSafeArea(.keyboard, edges: .all)
+    }
+
+    // MARK: - 🍎 Liquid Glass 툴바
+    @ViewBuilder
+    private var liquidGlassToolbar: some View {
+        HStack(spacing: 0) {
+            if #available(iOS 26.0, *) {
+                // ✅ iOS 26+: 네이티브 Liquid Glass
+                GlassEffectContainer(spacing: 16) {
+                    HStack(spacing: 16) {
+                        // 뒤로가기
+                        Button {
+                            currentState.goBack()
+                            TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: iconSize))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(!currentState.canGoBack)
+                        .foregroundColor(currentState.canGoBack ? .primary : .secondary)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("back", in: toolbarGlassNamespace)
+
+                        // 앞으로가기
+                        Button {
+                            currentState.goForward()
+                            TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: iconSize))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(!currentState.canGoForward)
+                        .foregroundColor(currentState.canGoForward ? .primary : .secondary)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("forward", in: toolbarGlassNamespace)
+
+                        // 히스토리
+                        Button {
+                            showHistorySheet = true
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: iconSize))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .foregroundColor(.primary)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("history", in: toolbarGlassNamespace)
+
+                        // 탭 매니저
+                        Button {
+                            showTabManager = true
+                        } label: {
+                            Image(systemName: "square.on.square")
+                                .font(.system(size: iconSize))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .foregroundColor(.primary)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("tabs", in: toolbarGlassNamespace)
+
+                        // PIP 활성 시 표시
+                        if pipManager.isPIPActive {
+                            Button {
+                                pipManager.stopPIP()
+                            } label: {
+                                Image(systemName: "pip.fill")
+                                    .font(.system(size: iconSize))
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .foregroundColor(.green)
+                            .glassEffect(.regular.tint(.green.opacity(0.25)).interactive(), in: .circle)
+                            .glassEffectID("pip", in: toolbarGlassNamespace)
+                        }
+
+                        // 디버그
+                        Button {
+                            showDebugView = true
+                        } label: {
+                            Image(systemName: "ladybug")
+                                .font(.system(size: iconSize))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .foregroundColor(.orange)
+                        .glassEffect(.regular.tint(.orange.opacity(0.2)).interactive(), in: .circle)
+                        .glassEffectID("debug", in: toolbarGlassNamespace)
+                    }
+                    .padding(.horizontal, 16)
+                }
+            } else {
+                // ✅ iOS 26 미만: 기존 툴바 그대로 유지
+                HStack(spacing: toolbarSpacing) {
+                    toolbarButton("chevron.left", action: {
+                        currentState.goBack()
+                        TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                    }, enabled: currentState.canGoBack)
+                    toolbarButton("chevron.right", action: {
+                        currentState.goForward()
+                        TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                    }, enabled: currentState.canGoForward)
+                    toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                    toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                    if pipManager.isPIPActive {
+                        toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
+                    }
+                    toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 16)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onToolbarTap)
     }
     
     // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
@@ -616,7 +721,6 @@ struct ContentView: View {
             .onTapGesture(perform: onTextFieldTap)
             .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
             .onSubmit(onTextFieldSubmit)
-            // 🎯 overlay 제거 - 별도 버튼으로 분리
     }
     
     // 🎯 새로운 크기 확대된 지우기 버튼
