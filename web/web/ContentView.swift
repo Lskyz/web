@@ -72,76 +72,72 @@ private struct LiquidToolbarItem: Identifiable {
     let color: Color
 }
 
-// MARK: - 💧 iOS 26+ Liquid Glass 드래그 툴바
+// MARK: - 💧 iOS 26+ Liquid Glass 드래그 물방울 툴바
+// 핵심 원리:
+//  - GlassEffectContainer 안에서 .offset으로 버튼이 겹치면 실제 물방울 합체(lensing morphing) 발생
+//  - 드래그 시 모든 버튼의 x offset이 같이 이동 → 겹치는 순간 합체 애니메이션
+//  - 손 떼면 spring으로 스냅백 → 분리 애니메이션 (거울/물방울 분리)
+//  - .clear glass: 실제 빛 굴절(lensing) 효과, .regular: 프로스트
 @available(iOS 26.0, *)
 private struct LiquidGlassToolbar: View {
     let items: [LiquidToolbarItem]
 
-    @GestureState private var dragX: CGFloat = 0
+    // 드래그 상태: GestureState는 손 떼면 자동 0 복귀
+    @GestureState private var dragTranslation: CGFloat = 0
     @State private var isDragging: Bool = false
-    @Namespace private var glassNS
 
-    // 고무줄 저항
-    private func rubberBand(_ x: CGFloat) -> CGFloat {
-        let limit: CGFloat = 80
+    // 고무줄 저항: 일정 이상 당기면 감쇠
+    private func rubberBand(_ x: CGFloat, limit: CGFloat = 70) -> CGFloat {
+        let sign: CGFloat = x >= 0 ? 1 : -1
         let abs = Swift.abs(x)
         guard abs > limit else { return x }
-        let sign: CGFloat = x > 0 ? 1 : -1
-        return sign * (limit + (abs - limit) * 0.3)
+        return sign * (limit + (abs - limit) * 0.25)
     }
 
     var body: some View {
-        // GlassEffectContainer: 자식 뷰들이 spacing 이하로 겹치면 물방울 합체
-        GlassEffectContainer(spacing: 16) {
+        // GlassEffectContainer: 내부 glass 뷰들이 겹치면 실제 물방울 합체 렌더링
+        GlassEffectContainer(spacing: 20) {
             HStack(spacing: 0) {
                 ForEach(items) { item in
+                    // 버튼 label에 background 없이 Image만 + frame
+                    // → glassEffect가 캡슐 모양으로 버튼 전체를 감쌈
                     Button {
                         guard item.enabled else { return }
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         item.action()
                     } label: {
                         Image(systemName: item.systemName)
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 20, weight: .regular))
                             .foregroundStyle(item.enabled ? item.color : Color.secondary)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 50, height: 44)
                     }
-                    .disabled(!item.enabled)
                     .buttonStyle(.plain)
-                    // 💧 각 버튼마다 물방울 글래스 적용
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                    // 💧 같은 namespace로 묶어 서로 합체/분리 모핑
-                    .glassEffectUnion(id: "toolbar_group", namespace: glassNS)
-                    // 버튼 사이 간격 — 가까울수록 물방울처럼 붙음
-                    .padding(.horizontal, 10)
-                    // 드래그 중 살짝 늘어나는 효과
-                    .scaleEffect(
-                        CGSize(
-                            width: isDragging ? 1.0 + Swift.abs(dragX) * 0.0008 : 1.0,
-                            height: isDragging ? max(0.92, 1.0 - Swift.abs(dragX) * 0.0012) : 1.0
-                        )
-                    )
-                    .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.6), value: isDragging)
+                    .disabled(!item.enabled)
+                    // glassEffect를 Button 바깥(전체)에 적용
+                    // .clear: 빛 굴절 lensing 효과 극대화
+                    // .interactive(): 터치 시 반응형 하이라이트
+                    .glassEffect(.clear.interactive(), in: .capsule)
+                    // 드래그 offset은 glassEffect 밖에서 적용해야
+                    // GlassEffectContainer가 실제 위치를 계산해 합체 처리
+                    .offset(x: rubberBand(dragTranslation))
                 }
             }
-            // 드래그 오프셋을 HStack 전체에 적용
-            .offset(x: rubberBand(dragX))
         }
         .gesture(
-            DragGesture(minimumDistance: 6)
-                .updating($dragX) { value, state, _ in
+            DragGesture(minimumDistance: 4)
+                // @GestureState: 손 떼면 자동으로 0 → spring 스냅백 트리거
+                .updating($dragTranslation) { value, state, _ in
                     state = value.translation.width
                 }
                 .onChanged { _ in
-                    if !isDragging {
-                        withAnimation(.interactiveSpring(response: 0.2, dampingFraction: 0.7)) {
-                            isDragging = true
-                        }
+                    withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.8)) {
+                        isDragging = true
                     }
                 }
                 .onEnded { _ in
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) {
+                    // GestureState가 0으로 복귀하면서 spring 분리 애니메이션 발생
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.65)) {
                         isDragging = false
-                        // dragX는 @GestureState라 자동으로 0으로 스냅백됨
                     }
                 }
         )
@@ -149,7 +145,7 @@ private struct LiquidGlassToolbar: View {
     }
 }
 
-// MARK: - 💧 iOS 25 이하 폴백 툴바 (기존 동일 스타일)
+// MARK: - 💧 iOS 25 이하 폴백 툴바 (기존 그대로)
 private struct FallbackToolbar: View {
     let items: [LiquidToolbarItem]
     let spacing: CGFloat
@@ -160,7 +156,6 @@ private struct FallbackToolbar: View {
             ForEach(items) { item in
                 Button(action: {
                     guard item.enabled else { return }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     item.action()
                 }) {
                     Image(systemName: item.systemName)
@@ -283,12 +278,12 @@ struct ContentView: View {
         return WebViewStateModel()
     }
     
-    // MARK: - 💧 툴바 아이템 목록 (상태 반영)
+    // MARK: - 💧 툴바 아이템 목록
     private var liquidToolbarItems: [LiquidToolbarItem] {
         var items: [LiquidToolbarItem] = [
             .init(id: "back",    systemName: "chevron.left",
                   action: { currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기") },
-                  enabled: currentState.canGoBack,  color: .primary),
+                  enabled: currentState.canGoBack,    color: .primary),
             .init(id: "forward", systemName: "chevron.right",
                   action: { currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기") },
                   enabled: currentState.canGoForward, color: .primary),
@@ -464,22 +459,21 @@ struct ContentView: View {
                 }
                 
                 // 💧 네비게이션 툴바 — iOS 26 분기
-                Group {
-                    if #available(iOS 26.0, *) {
-                        LiquidGlassToolbar(items: liquidToolbarItems)
-                            .padding(.horizontal, outerHorizontalPadding)
-                    } else {
-                        FallbackToolbar(
-                            items: liquidToolbarItems,
-                            spacing: toolbarSpacing,
-                            iconSize: iconSize
-                        )
-                        .padding(.horizontal, 16)
-                    }
+                if #available(iOS 26.0, *) {
+                    LiquidGlassToolbar(items: liquidToolbarItems)
+                        .padding(.horizontal, outerHorizontalPadding)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: onToolbarTap)
+                } else {
+                    FallbackToolbar(
+                        items: liquidToolbarItems,
+                        spacing: toolbarSpacing,
+                        iconSize: iconSize
+                    )
+                    .padding(.horizontal, 16)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onToolbarTap)
                 }
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onToolbarTap)
             }
             .padding(.vertical, barVPadding)
             .padding(.bottom, max(20, UIApplication.shared.connectedScenes
@@ -960,7 +954,6 @@ struct ContentView: View {
         }
         lastWebContentOffsetY = yOffset
     }
-
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         if isPIPActive {
             if tabs.indices.contains(selectedTabIndex) {
@@ -985,7 +978,6 @@ struct ContentView: View {
             TabPersistenceManager.debugMessages.append("🎬 PIP 탭 해제")
         }
     }
-
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
