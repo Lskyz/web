@@ -171,6 +171,9 @@ struct ContentView: View {
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
+    private let addressTabBarSpacing: CGFloat = 14
+    private let floatingBarBackgroundOpacity: CGFloat = 0.82
+    private let historyPanelBackgroundOpacity: CGFloat = 0.88
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
@@ -379,7 +382,7 @@ struct ContentView: View {
             }
             
             // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
-            VStack(spacing: 12) {
+            VStack(spacing: addressTabBarSpacing) {
                 if showAddressBar {
                     // 주소창 영역 - 별도 테두리로 구분
                     HStack(spacing: 12) {
@@ -389,7 +392,7 @@ struct ContentView: View {
                         }
                         .background(
                             RoundedRectangle(cornerRadius: barCornerRadius)
-                                .fill(Color(UIColor.systemBackground))
+                                .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: barCornerRadius)
@@ -413,7 +416,7 @@ struct ContentView: View {
                                     .frame(width: 44, height: 44)
                                     .background(
                                         Circle()
-                                            .fill(Color(UIColor.systemBackground))
+                                            .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
                                     )
                                     .overlay(
                                         Circle()
@@ -442,9 +445,7 @@ struct ContentView: View {
                     .padding(.horizontal, 8)
             }
             .padding(.vertical, barVPadding)
-            .padding(.bottom, max(20, UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first?.windows.first?.safeAreaInsets.bottom ?? 0))
+            .padding(.bottom, 0)
         }
         .ignoresSafeArea(.keyboard, edges: .all)
     }
@@ -515,7 +516,7 @@ struct ContentView: View {
                 .padding(.bottom, 8)
             }
         }
-        .background(Color(UIColor.systemBackground).opacity(0.95))
+        .background(Color(UIColor.systemBackground).opacity(historyPanelBackgroundOpacity))
         .cornerRadius(barCornerRadius)
         .overlay(
             RoundedRectangle(cornerRadius: barCornerRadius)
