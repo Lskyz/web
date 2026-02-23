@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:web.dev)",
+      "WebFetch(domain:support.google.com)",
+      "WebFetch(domain:developer.chrome.com)"
+    ]
+  }
+}

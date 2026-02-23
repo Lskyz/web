@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>viewweb</string>
+	<key>CFBundleName</key>
+	<string>web</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.view.web</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>MinimumOSVersion</key>
+	<string>16.0</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>NSMainNibFile</key>
+	<string></string>
+	
+	<!-- 🔥 중복 제거하고 RTSP 지원 강화 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>1.0</string>
+			</dict>
+		</dict>
+	</dict>
+	
+	<!-- 📡 RTSP 스킴 지원 추가 -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>rtsp</string>
+		<string>rtsps</string>
+		<string>http</string>
+		<string>https</string>
+	</array>
+	
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>background-processing</string>
+	</array>
+	
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>웹에서 이미지를 사진 앱에 저장하기 위해 사진 라이브러리 접근 권한이 필요합니다.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>이미지를 사진 앱에 저장하기 위해 사진 라이브러리 접근 권한이 필요합니다.</string>
+	
+	<!-- 📡 RTSP를 포함한 URL 스킴 지원 -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.view.web.webapp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>webapp</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.view.web.rtsp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>rtsp</string>
+				<string>rtsps</string>
+			</array>
+		</dict>
+	</array>
+	
+	<!-- 🎬 미디어 재생 관련 권한 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RTSP 스트림의 오디오 재생을 위해 마이크 권한이 필요할 수 있습니다.</string>
+	
+	<!-- 📡 VLC 관련 설정 -->
+	<key>UIFileSharingEnabled</key>
+	<false/>
+	<key>UISupportsDocumentBrowser</key>
+	<false/>
+	
+	<!-- 🔄 네트워크 연결 허용 -->
+	<key>NSAllowsArbitraryLoadsInWebContent</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:stackoverflow.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developer.chrome.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
