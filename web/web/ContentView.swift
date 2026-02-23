@@ -88,11 +88,6 @@ struct ContentView: View {
 
     @State private var isMenuButtonPressed = false
     @State private var menuButtonPressStartTime: Date? = nil
-    @State private var showLiquidGlassLens = false
-    @State private var liquidGlassDragOffsetX: CGFloat = 0
-    @State private var liquidGlassRestOffsetX: CGFloat = 0
-    @State private var isLiquidGlassDragging = false
-    @State private var liquidGlassHideToken = UUID()
 
     // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
@@ -104,9 +99,6 @@ struct ContentView: View {
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
-    private let liquidGlassLensWidth: CGFloat = 148
-    private let liquidGlassLensHeight: CGFloat = 46
-    private let liquidGlassRefractionShift: CGFloat = 14
     
     // ✅ 키보드 높이 추가 (수동 처리 필요)
     @State private var keyboardHeight: CGFloat = 0
@@ -362,25 +354,27 @@ struct ContentView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
                 
-                // 네비게이션 툴바 + 터치로 등장하는 리퀴드 글래스 렌즈
-                GeometryReader { toolbarGeometry in
-                    let toolbarWidth = toolbarGeometry.size.width
-                    ZStack {
-                        navigationToolbarButtons(interactive: true)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                        if showLiquidGlassLens {
-                            liquidGlassToolbarOverlay(toolbarWidth: toolbarWidth)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                                .allowsHitTesting(false)
+                // 네비게이션 툴바 - 배경에 자연스럽게 통합
+                HStack(spacing: 0) {
+                    HStack(spacing: toolbarSpacing) {
+                        toolbarButton("chevron.left", action: {
+                            currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
+                        }, enabled: currentState.canGoBack)
+                        toolbarButton("chevron.right", action: {
+                            currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
+                        }, enabled: currentState.canGoForward)
+                        toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
+                        toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
+                        if pipManager.isPIPActive {
+                            toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
                         }
+                        toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
                     }
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(liquidGlassDragGesture(toolbarWidth: toolbarWidth))
-                    .onTapGesture(perform: onToolbarTap)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .frame(height: 52)
                 .padding(.horizontal, 16)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onToolbarTap)
             }
             .padding(.vertical, barVPadding)
             .padding(.bottom, max(20, UIApplication.shared.connectedScenes
@@ -668,145 +662,8 @@ struct ContentView: View {
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
     
-    @ViewBuilder
-    private func navigationToolbarButtons(interactive: Bool) -> some View {
-        HStack(spacing: toolbarSpacing) {
-            toolbarButton("chevron.left", action: {
-                currentState.goBack()
-                TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치")
-            }, enabled: currentState.canGoBack)
-            toolbarButton("chevron.right", action: {
-                currentState.goForward()
-                TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치")
-            }, enabled: currentState.canGoForward)
-            toolbarButton("clock.arrow.circlepath", action: { showHistorySheet = true }, enabled: true)
-            toolbarButton("square.on.square", action: { showTabManager = true }, enabled: true)
-            if pipManager.isPIPActive {
-                toolbarButton("pip.fill", action: { pipManager.stopPIP() }, enabled: true, color: .green)
-            }
-            toolbarButton("ladybug", action: { showDebugView = true }, enabled: true, color: .orange)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .allowsHitTesting(interactive)
-    }
-
-    @ViewBuilder
-    private func liquidGlassToolbarOverlay(toolbarWidth: CGFloat) -> some View {
-        let clampedOffset = clampedLiquidGlassOffset(toolbarWidth: toolbarWidth)
-        let travelLimit = liquidGlassTravelLimit(toolbarWidth: toolbarWidth)
-        let normalizedOffset = travelLimit > 0 ? clampedOffset / travelLimit : 0
-
-        ZStack {
-            navigationToolbarButtons(interactive: false)
-                .offset(x: -normalizedOffset * liquidGlassRefractionShift)
-                .opacity(0.92)
-                .saturation(1.12)
-                .blur(radius: 0.35)
-                .mask(
-                    Capsule(style: .continuous)
-                        .frame(width: liquidGlassLensWidth + 22, height: liquidGlassLensHeight + 10)
-                        .offset(x: clampedOffset)
-                )
-
-            Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.55), lineWidth: 0.9)
-                )
-                .overlay(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.46),
-                            Color.white.opacity(0.14),
-                            .clear
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .clipShape(Capsule(style: .continuous))
-                )
-                .overlay(
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [Color.white.opacity(0.34), .clear],
-                                center: .center,
-                                startRadius: 1,
-                                endRadius: liquidGlassLensWidth * 0.42
-                            )
-                        )
-                        .scaleEffect(x: 1.15, y: 0.82)
-                        .offset(x: -20 + normalizedOffset * 18, y: -6)
-                )
-                .frame(width: liquidGlassLensWidth, height: liquidGlassLensHeight)
-                .offset(x: clampedOffset + normalizedOffset * 5)
-                .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 5)
-        }
-        .animation(
-            isLiquidGlassDragging
-                ? .interactiveSpring(response: 0.18, dampingFraction: 0.84)
-                : .spring(response: 0.36, dampingFraction: 0.82),
-            value: clampedOffset
-        )
-    }
-
-    private func liquidGlassDragGesture(toolbarWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .local)
-            .onChanged { value in
-                triggerLiquidGlassAppearance()
-                isLiquidGlassDragging = true
-                liquidGlassDragOffsetX = value.translation.width
-            }
-            .onEnded { value in
-                let travelLimit = liquidGlassTravelLimit(toolbarWidth: toolbarWidth)
-                let inertialDelta = (value.predictedEndTranslation.width - value.translation.width) * 0.18
-                let projectedOffset = liquidGlassRestOffsetX + value.translation.width + inertialDelta
-
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
-                    liquidGlassRestOffsetX = min(max(projectedOffset, -travelLimit), travelLimit)
-                    liquidGlassDragOffsetX = 0
-                    isLiquidGlassDragging = false
-                }
-                scheduleLiquidGlassAutoHide()
-            }
-    }
-
-    private func liquidGlassTravelLimit(toolbarWidth: CGFloat) -> CGFloat {
-        max(0, ((toolbarWidth - liquidGlassLensWidth) * 0.5) - 8)
-    }
-
-    private func clampedLiquidGlassOffset(toolbarWidth: CGFloat) -> CGFloat {
-        let travelLimit = liquidGlassTravelLimit(toolbarWidth: toolbarWidth)
-        let currentOffset = liquidGlassRestOffsetX + liquidGlassDragOffsetX
-        return min(max(currentOffset, -travelLimit), travelLimit)
-    }
-
-    private func triggerLiquidGlassAppearance() {
-        if !showLiquidGlassLens {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                showLiquidGlassLens = true
-            }
-        }
-        scheduleLiquidGlassAutoHide()
-    }
-
-    private func scheduleLiquidGlassAutoHide() {
-        let token = UUID()
-        liquidGlassHideToken = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-            guard token == liquidGlassHideToken, !isLiquidGlassDragging else { return }
-            withAnimation(.easeInOut(duration: 0.22)) {
-                showLiquidGlassLens = false
-            }
-        }
-    }
-
     private func toolbarButton(_ systemName: String, action: @escaping () -> Void, enabled: Bool, color: Color = .primary) -> some View {
-        Button(action: {
-            triggerLiquidGlassAppearance()
-            action()
-        }) {
+        Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: iconSize))
                 .foregroundColor(enabled ? color : .secondary)
@@ -994,7 +851,6 @@ struct ContentView: View {
         isTextFieldFocused = false
     }
     private func onToolbarTap() {
-        triggerLiquidGlassAppearance()
         if !showAddressBar { withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true } }
     }
     private func handleDashboardNavigation(_ selectedURL: URL) {
