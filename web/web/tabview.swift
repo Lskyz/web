@@ -516,7 +516,7 @@ struct DashboardView: View {
         dashboardContent
             .alert("북마크 추가", isPresented: $showAddBookmarkAlert, actions: addBookmarkActions, message: addBookmarkMessage)
             .alert("북마크 삭제", isPresented: $showDeleteBookmarkAlert, actions: deleteBookmarkActions, message: deleteBookmarkMessage)
-            .onChange(of: bookmarks) { _ in
+            .onChange(of: bookmarks) { _, _ in
                 TabPersistenceManager.saveBookmarks(bookmarks)
             }
     }
@@ -851,7 +851,9 @@ struct TabManager: View {
         }
         .ignoresSafeArea(.all)
         .onAppear(perform: onAppearHandler)
-        .onChange(of: tabs, perform: onTabsChange)
+        .onChange(of: tabs) { _, newTabs in
+            onTabsChange(newTabs)
+        }
         .fullScreenCover(isPresented: $showDebugView, content: debugView)
         .sheet(isPresented: $showHistorySheet, content: historySheet)
     }
@@ -1342,7 +1344,7 @@ struct DebugLogView: View {
                 }
                 .padding(.horizontal)
                 .onAppear { if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) } }
-                .onChange(of: debugMessages.count) { _ in
+                .onChange(of: debugMessages.count) { _, _ in
                     if !filteredMessages.isEmpty { proxy.scrollTo(0, anchor: .top) }
                 }
             }

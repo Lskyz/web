@@ -48,8 +48,6 @@ struct CustomWebView: UIViewRepresentable {
             config.allowsPictureInPictureMediaPlayback = true
             config.mediaTypesRequiringUserActionForPlayback = []
             config.websiteDataStore = WKWebsiteDataStore.default()
-            config.processPool = WKProcessPool()
-
             // 📁 **다운로드 기능 헬퍼 통합**: iOS 14+ 다운로드 설정 강화
             if #available(iOS 14.0, *) {
                 config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")

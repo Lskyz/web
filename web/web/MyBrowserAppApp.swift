@@ -34,7 +34,7 @@ struct MyBrowserAppApp: App {
                 )
             }
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 // 백그라운드로 가면 탭 스냅샷 저장
                 TabPersistenceManager.saveTabs(tabs)

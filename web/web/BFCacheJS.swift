@@ -688,7 +688,7 @@ extension BFCacheSnapshot {
         })();
         """
     }
-    private func generateStep1_ContentRestoreScript() -> String {
+    func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
 
         // 🛡️ **값 검증**
@@ -1166,7 +1166,7 @@ extension BFCacheSnapshot {
         }
         """
     }
-    private func generateStep2_PercentScrollScript() -> String {
+    func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = self.scrollPositionPercent.x
         let targetPercentY = self.scrollPositionPercent.y
         let savedHeight = self.restorationConfig.savedContentHeight
@@ -1242,7 +1242,7 @@ extension BFCacheSnapshot {
         }
         """
     }
-    private func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
+    func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = self.scrollPosition.x
         let targetY = self.scrollPosition.y
         let savedHeight = self.restorationConfig.savedContentHeight
@@ -1564,7 +1564,7 @@ extension BFCacheSnapshot {
         """
     }
 
-    private func generateStep4_FinalVerificationScript() -> String {
+    func generateStep4_FinalVerificationScript() -> String {
         let targetX = self.scrollPosition.x
         let targetY = self.scrollPosition.y
         let savedHeight = self.restorationConfig.savedContentHeight
@@ -1665,7 +1665,7 @@ extension BFCacheSnapshot {
         """
     }
 
-    private func convertToJSONString(_ object: Any) -> String? {
+    func convertToJSONString(_ object: Any) -> String? {
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: object, options: [])
             return String(data: jsonData, encoding: .utf8)

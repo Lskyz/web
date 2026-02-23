@@ -216,8 +216,12 @@ struct ContentView: View {
         }
 
         // 🎬 PIP 상태 동기화
-        .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
-        .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
+        .onChange(of: pipManager.isPIPActive) { _, isPIPActive in
+            handlePIPStateChange(isPIPActive)
+        }
+        .onChange(of: pipManager.currentPIPTab) { _, currentPIPTab in
+            handlePIPTabChange(currentPIPTab)
+        }
 
         // ✅ 키보드 높이 수동 계산 (안전영역 무시하면서도 정확한 처리)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
@@ -725,7 +729,9 @@ struct ContentView: View {
             .keyboardType(.URL)
             .focused($isTextFieldFocused)
             .onTapGesture(perform: onTextFieldTap)
-            .onChange(of: isTextFieldFocused, perform: onTextFieldFocusChange)
+            .onChange(of: isTextFieldFocused) { _, focused in
+                onTextFieldFocusChange(focused: focused)
+            }
             .onSubmit(onTextFieldSubmit)
             // 🎯 overlay 제거 - 별도 버튼으로 분리
     }
