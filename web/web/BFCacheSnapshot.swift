@@ -222,6 +222,11 @@ struct BFCacheSnapshot: Codable {
             return dict
         }
 
+        let rawDescription = describeJSONValue(result)
+        let normalizedDescription = describeJSONValue(unwrapOptional(result))
+        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) result parse failed: raw=\(rawDescription)")
+        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) result parse failed: normalized=\(normalizedDescription)")
+
         throw NSError(
             domain: "BFCacheSwipeTransition",
             code: -2,
@@ -279,7 +284,13 @@ struct BFCacheSnapshot: Codable {
             return converted.isEmpty ? nil : converted
         }
         if let dictionary = value as? NSDictionary {
-            let converted = convert(from: dictionary as! [AnyHashable: Any])
+            var bridged: [AnyHashable: Any] = [:]
+            for (key, element) in dictionary {
+                if let hashableKey = key as? AnyHashable {
+                    bridged[hashableKey] = element
+                }
+            }
+            let converted = convert(from: bridged)
             return converted.isEmpty ? nil : converted
 
 
@@ -290,21 +301,66 @@ struct BFCacheSnapshot: Codable {
         }
         return nil
     }
+
+    private func unwrapOptional(_ value: Any?) -> Any? {
+        guard let value else { return nil }
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .optional else { return value }
+        if let child = mirror.children.first {
+            return unwrapOptional(child.value)
+        }
+        return nil
+    }
+
+    private func toStringKeyedDictionary(_ value: Any?) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+        if let dictionary = value as? [AnyHashable: Any] {
+            var converted: [String: Any] = [:]
+            for (key, element) in dictionary {
+                if let keyString = key as? String {
+                    converted[keyString] = element
+                }
+            }
+            return converted.isEmpty ? nil : converted
+        }
+        if let dictionary = value as? NSDictionary {
+            var converted: [String: Any] = [:]
+            for (key, element) in dictionary {
+                if let keyString = key as? String {
+                    converted[keyString] = element
+                }
+            }
+            return converted.isEmpty ? nil : converted
+        }
+        return nil
+    }
+
+    private func dictionaryFromJSONData(_ data: Data, stepLabel: String) -> [String: Any]? {
+        do {
+            let jsonObject = try JSONSerialization.jsonObject(with: data)
+            if let dict = toStringKeyedDictionary(jsonObject) {
+                return dict
+            }
+            TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: root is not dictionary")
+        } catch {
+            TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
+        }
+        return nil
+    }
+
     private func dictionaryFromResult(_ result: Any?, stepLabel: String) -> [String: Any]? {
-        if let dict = result as? [String: Any] {
+        let normalized = unwrapOptional(result)
+
+        if let dict = toStringKeyedDictionary(normalized) {
 
             return dict
         }
-        if let jsonString = result as? String {
+        if let jsonString = normalized as? String {
             if let data = jsonString.data(using: .utf8) {
-                do {
-                    if let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                        return dict
-                    } else {
-                        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: unexpected structure")
-                    }
-                } catch {
-                    TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) JSON decode failed: \(error.localizedDescription)")
+                if let dict = dictionaryFromJSONData(data, stepLabel: stepLabel) {
+                    return dict
                 }
             } else {
 
@@ -319,8 +375,20 @@ struct BFCacheSnapshot: Codable {
 
 
             }
+            return nil
+        }
+        if let data = normalized as? Data {
+            return dictionaryFromJSONData(data, stepLabel: stepLabel)
+        }
+        if let boolValue = normalized as? Bool {
+            return ["success": boolValue]
+        }
+        if let number = normalized as? NSNumber {
+            return ["value": number]
 
         }
+
+        TabPersistenceManager.debugMessages.append("WARNING \(stepLabel) unsupported result type: \(describeJSONValue(normalized))")
         return nil
     }
 
