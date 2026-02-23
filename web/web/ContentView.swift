@@ -72,104 +72,84 @@ private struct LiquidToolbarItem: Identifiable {
     let color: Color
 }
 
-// MARK: - 💧 Liquid Glass 드래그 거울 툴바
-/// iOS 26+: GlassEffectContainer + glassEffect + glassEffectUnion
-/// iOS 25 이하: 기존 WhiteGlass 폴백
+// MARK: - 💧 iOS 26+ Liquid Glass 드래그 툴바
 @available(iOS 26.0, *)
 private struct LiquidGlassToolbar: View {
     let items: [LiquidToolbarItem]
-    let spacing: CGFloat
 
-    // 드래그로 이동하는 오프셋
-    @State private var dragOffset: CGFloat = 0
+    @GestureState private var dragX: CGFloat = 0
     @State private var isDragging: Bool = false
-    @GestureState private var gestureOffset: CGFloat = 0
-
-    // 물방울 합체 거리 threshold (spacing과 동일하게 연동)
-    private let mergeThreshold: CGFloat
-
-    init(items: [LiquidToolbarItem], spacing: CGFloat = 40) {
-        self.items = items
-        self.spacing = spacing
-        self.mergeThreshold = spacing
-    }
-
     @Namespace private var glassNS
 
+    // 고무줄 저항
+    private func rubberBand(_ x: CGFloat) -> CGFloat {
+        let limit: CGFloat = 80
+        let abs = Swift.abs(x)
+        guard abs > limit else { return x }
+        let sign: CGFloat = x > 0 ? 1 : -1
+        return sign * (limit + (abs - limit) * 0.3)
+    }
+
     var body: some View {
-        GlassEffectContainer(spacing: mergeThreshold) {
+        // GlassEffectContainer: 자식 뷰들이 spacing 이하로 겹치면 물방울 합체
+        GlassEffectContainer(spacing: 16) {
             HStack(spacing: 0) {
                 ForEach(items) { item in
-                    liquidButton(item: item)
+                    Button {
+                        guard item.enabled else { return }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        item.action()
+                    } label: {
+                        Image(systemName: item.systemName)
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(item.enabled ? item.color : Color.secondary)
+                            .frame(width: 44, height: 44)
+                    }
+                    .disabled(!item.enabled)
+                    .buttonStyle(.plain)
+                    // 💧 각 버튼마다 물방울 글래스 적용
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    // 💧 같은 namespace로 묶어 서로 합체/분리 모핑
+                    .glassEffectUnion(id: "toolbar_group", namespace: glassNS)
+                    // 버튼 사이 간격 — 가까울수록 물방울처럼 붙음
+                    .padding(.horizontal, 10)
+                    // 드래그 중 살짝 늘어나는 효과
+                    .scaleEffect(
+                        CGSize(
+                            width: isDragging ? 1.0 + Swift.abs(dragX) * 0.0008 : 1.0,
+                            height: isDragging ? max(0.92, 1.0 - Swift.abs(dragX) * 0.0012) : 1.0
+                        )
+                    )
+                    .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.6), value: isDragging)
                 }
             }
-            .offset(x: totalOffset)
-            .gesture(
-                DragGesture(minimumDistance: 4)
-                    .updating($gestureOffset) { value, state, _ in
-                        state = value.translation.width
-                    }
-                    .onChanged { _ in
-                        withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.7)) {
+            // 드래그 오프셋을 HStack 전체에 적용
+            .offset(x: rubberBand(dragX))
+        }
+        .gesture(
+            DragGesture(minimumDistance: 6)
+                .updating($dragX) { value, state, _ in
+                    state = value.translation.width
+                }
+                .onChanged { _ in
+                    if !isDragging {
+                        withAnimation(.interactiveSpring(response: 0.2, dampingFraction: 0.7)) {
                             isDragging = true
                         }
                     }
-                    .onEnded { value in
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
-                            // 좌우 이동 후 스냅백 (거울 반동 효과)
-                            dragOffset = 0
-                            isDragging = false
-                        }
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) {
+                        isDragging = false
+                        // dragX는 @GestureState라 자동으로 0으로 스냅백됨
                     }
-            )
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    // 드래그 총 오프셋 (고무줄 저항 적용)
-    private var totalOffset: CGFloat {
-        let raw = dragOffset + gestureOffset
-        // 고무줄 저항: 멀어질수록 감쇠
-        return raw * rubberBandFactor(raw)
-    }
-
-    private func rubberBandFactor(_ offset: CGFloat) -> CGFloat {
-        let limit: CGFloat = 120
-        let absOffset = abs(offset)
-        if absOffset < limit { return 1.0 }
-        return limit / absOffset * 0.4
-    }
-
-    @ViewBuilder
-    private func liquidButton(item: LiquidToolbarItem) -> some View {
-        Button(action: {
-            if item.enabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                item.action()
-            }
-        }) {
-            Image(systemName: item.systemName)
-                .font(.system(size: 21, weight: .medium))
-                .foregroundStyle(item.enabled ? item.color : Color.secondary)
-                .frame(width: 52, height: 44)
-                // 드래그 중 살짝 확대되어 물방울이 늘어나는 느낌
-                .scaleEffect(isDragging ? 1.08 : 1.0)
-                .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.6), value: isDragging)
-        }
-        .disabled(!item.enabled)
-        .buttonStyle(.plain)
-        // 💧 각 버튼에 글래스 + 합체 처리
-        .glassEffect(
-            .regular.interactive(),
-            in: .capsule
+                }
         )
-        // glassEffectUnion: 버튼들이 가까워지면 물방울처럼 합체
-        .glassEffectUnion(id: "toolbar", namespace: glassNS)
-        .padding(.horizontal, spacing / 2)
+        .frame(maxWidth: .infinity)
     }
 }
 
-// MARK: - 💧 iOS 25 이하 폴백 툴바
+// MARK: - 💧 iOS 25 이하 폴백 툴바 (기존 동일 스타일)
 private struct FallbackToolbar: View {
     let items: [LiquidToolbarItem]
     let spacing: CGFloat
@@ -179,10 +159,9 @@ private struct FallbackToolbar: View {
         HStack(spacing: spacing) {
             ForEach(items) { item in
                 Button(action: {
-                    if item.enabled {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        item.action()
-                    }
+                    guard item.enabled else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    item.action()
                 }) {
                     Image(systemName: item.systemName)
                         .font(.system(size: iconSize))
@@ -192,7 +171,6 @@ private struct FallbackToolbar: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 16)
     }
 }
 
@@ -211,7 +189,6 @@ struct ContentView: View {
     @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
     
-    // 상태
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var errorTitle = ""
@@ -222,7 +199,6 @@ struct ContentView: View {
     @State private var isMenuButtonPressed = false
     @State private var menuButtonPressStartTime: Date? = nil
 
-    // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
@@ -233,16 +209,12 @@ struct ContentView: View {
     private let whiteGlassTintOpacity: CGFloat = 0.1
     private let whiteGlassIntensity: CGFloat = 0.80
     
-    // ✅ 키보드 높이 추가 (수동 처리 필요)
     @State private var keyboardHeight: CGFloat = 0
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 메인 웹 콘텐츠 (전체 underlap)
                 mainContentView
-
-                // 하단 통합 UI 고정: 키보드만큼 상승
                 VStack {
                     Spacer()
                     bottomUnifiedUIContent()
@@ -251,10 +223,8 @@ struct ContentView: View {
                 }
             }
         }
-        // 🔽 상단은 안전영역 유지 (다이나믹 아일랜드/노치), 하단만 무시
         .ignoresSafeArea(.all, edges: [.leading, .trailing, .bottom])
         .ignoresSafeArea(.keyboard, edges: .all)
-
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
         .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
@@ -268,12 +238,8 @@ struct ContentView: View {
                 .ignoresSafeArea(.all, edges: .all)
                 .ignoresSafeArea(.keyboard, edges: .all)
         }
-
-        // 🎬 PIP 상태 동기화
         .onChange(of: pipManager.isPIPActive) { handlePIPStateChange($0) }
         .onChange(of: pipManager.currentPIPTab) { handlePIPTabChange($0) }
-
-        // ✅ 키보드 높이 수동 계산
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
             updateKeyboard(from: n, animated: true)
         }
@@ -283,7 +249,6 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             withAnimation(.easeInOut(duration: 0.25)) { keyboardHeight = 0 }
         }
-
         .siteMenuOverlay(
             manager: siteMenuManager,
             currentState: currentState,
@@ -297,33 +262,54 @@ struct ContentView: View {
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
-    // MARK: - 키보드 높이 수동 계산
     private func updateKeyboard(from n: Notification, animated: Bool) {
         guard let endFrame = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) else { return }
         let screen = UIScreen.main.bounds
         let safeBottom = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?.windows.first?.safeAreaInsets.bottom ?? 0
-        
-        let keyboardHeight = max(0, screen.maxY - endFrame.minY)
-        let adjustedHeight = max(0, keyboardHeight - safeBottom)
-        
+        let kh = max(0, screen.maxY - endFrame.minY)
+        let adjusted = max(0, kh - safeBottom)
         if animated {
-            let duration = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-            withAnimation(.easeInOut(duration: duration)) { 
-                self.keyboardHeight = adjustedHeight 
-            }
+            let dur = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+            withAnimation(.easeInOut(duration: dur)) { keyboardHeight = adjusted }
         } else {
-            self.keyboardHeight = adjustedHeight
+            keyboardHeight = adjusted
         }
     }
 
-    // MARK: - 현재 탭 상태
     private var currentState: WebViewStateModel {
         if tabs.indices.contains(selectedTabIndex) { return tabs[selectedTabIndex].stateModel }
         return WebViewStateModel()
     }
     
+    // MARK: - 💧 툴바 아이템 목록 (상태 반영)
+    private var liquidToolbarItems: [LiquidToolbarItem] {
+        var items: [LiquidToolbarItem] = [
+            .init(id: "back",    systemName: "chevron.left",
+                  action: { currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기") },
+                  enabled: currentState.canGoBack,  color: .primary),
+            .init(id: "forward", systemName: "chevron.right",
+                  action: { currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기") },
+                  enabled: currentState.canGoForward, color: .primary),
+            .init(id: "history", systemName: "clock.arrow.circlepath",
+                  action: { showHistorySheet = true },
+                  enabled: true, color: .primary),
+            .init(id: "tabs",    systemName: "square.on.square",
+                  action: { showTabManager = true },
+                  enabled: true, color: .primary),
+        ]
+        if pipManager.isPIPActive {
+            items.append(.init(id: "pip", systemName: "pip.fill",
+                               action: { pipManager.stopPIP() },
+                               enabled: true, color: .green))
+        }
+        items.append(.init(id: "debug", systemName: "ladybug",
+                           action: { showDebugView = true },
+                           enabled: true, color: .orange))
+        return items
+    }
+
     // MARK: - 콘텐츠
     @ViewBuilder
     private var mainContentView: some View {
@@ -383,22 +369,22 @@ struct ContentView: View {
             stateModel: state,
             playerURL: Binding(
                 get: {
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[index].playerURL }
+                    if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].playerURL }
                     return nil
                 },
-                set: { newValue in
-                    if let index = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        tabs[index].playerURL = newValue
-                        if let url = newValue, tabs[index].showAVPlayer { pipManager.pipPlayerURL = url }
+                set: { nv in
+                    if let i = tabs.firstIndex(where: { $0.id == state.tabID }) {
+                        tabs[i].playerURL = nv
+                        if let url = nv, tabs[i].showAVPlayer { pipManager.pipPlayerURL = url }
                     }
                 }
             ),
             showAVPlayer: Binding(
-                get: { if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].showAVPlayer } ; return false },
-                set: { newValue in
+                get: { if let i = tabs.firstIndex(where: { $0.id == state.tabID }) { return tabs[i].showAVPlayer }; return false },
+                set: { nv in
                     if let i = tabs.firstIndex(where: { $0.id == state.tabID }) {
-                        tabs[i].showAVPlayer = newValue
-                        if !newValue && pipManager.currentPIPTab == tabs[i].id { pipManager.stopPIP() }
+                        tabs[i].showAVPlayer = nv
+                        if !nv && pipManager.currentPIPTab == tabs[i].id { pipManager.stopPIP() }
                     }
                 }
             ),
@@ -421,62 +407,11 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 💧 Liquid Glass 툴바 아이템 빌더
-    private var liquidToolbarItems: [LiquidToolbarItem] {
-        var items: [LiquidToolbarItem] = [
-            LiquidToolbarItem(
-                id: "back",
-                systemName: "chevron.left",
-                action: { currentState.goBack(); TabPersistenceManager.debugMessages.append("🎯 뒤로가기 버튼 터치") },
-                enabled: currentState.canGoBack,
-                color: .primary
-            ),
-            LiquidToolbarItem(
-                id: "forward",
-                systemName: "chevron.right",
-                action: { currentState.goForward(); TabPersistenceManager.debugMessages.append("🎯 앞으로가기 버튼 터치") },
-                enabled: currentState.canGoForward,
-                color: .primary
-            ),
-            LiquidToolbarItem(
-                id: "history",
-                systemName: "clock.arrow.circlepath",
-                action: { showHistorySheet = true },
-                enabled: true,
-                color: .primary
-            ),
-            LiquidToolbarItem(
-                id: "tabs",
-                systemName: "square.on.square",
-                action: { showTabManager = true },
-                enabled: true,
-                color: .primary
-            ),
-        ]
-        if pipManager.isPIPActive {
-            items.append(LiquidToolbarItem(
-                id: "pip",
-                systemName: "pip.fill",
-                action: { pipManager.stopPIP() },
-                enabled: true,
-                color: .green
-            ))
-        }
-        items.append(LiquidToolbarItem(
-            id: "debug",
-            systemName: "ladybug",
-            action: { showDebugView = true },
-            enabled: true,
-            color: .orange
-        ))
-        return items
-    }
-
     // MARK: - 🎯 통합된 하단 UI
     @ViewBuilder
     private func bottomUnifiedUIContent() -> some View {
         VStack(spacing: 0) {
-            // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
+            // 1️⃣ 주소창 관련 콘텐츠
             if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
                 addressBarHistoryContent
                     .padding(.horizontal, outerHorizontalPadding)
@@ -515,14 +450,8 @@ struct ContentView: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(width: 44, height: 44)
-                                    .background(
-                                        Circle()
-                                            .fill(Color(UIColor.systemBackground))
-                                    )
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
-                                    )
+                                    .background(Circle().fill(Color(UIColor.systemBackground)))
+                                    .overlay(Circle().strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5))
                             }
                             .transition(.asymmetric(
                                 insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -535,20 +464,20 @@ struct ContentView: View {
                 }
                 
                 // 💧 네비게이션 툴바 — iOS 26 분기
-                HStack(spacing: 0) {
+                Group {
                     if #available(iOS 26.0, *) {
-                        LiquidGlassToolbar(
-                            items: liquidToolbarItems,
-                            spacing: toolbarSpacing
-                        )
+                        LiquidGlassToolbar(items: liquidToolbarItems)
+                            .padding(.horizontal, outerHorizontalPadding)
                     } else {
                         FallbackToolbar(
                             items: liquidToolbarItems,
                             spacing: toolbarSpacing,
                             iconSize: iconSize
                         )
+                        .padding(.horizontal, 16)
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onToolbarTap)
             }
@@ -560,19 +489,19 @@ struct ContentView: View {
         .background(
             GeometryReader { geometry in
                 whiteGlassBackground
-                    .frame(width: UIScreen.main.bounds.width, 
+                    .frame(width: UIScreen.main.bounds.width,
                            height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
-                    .offset(x: -geometry.frame(in: .global).minX, 
-                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
+                    .offset(x: -geometry.frame(in: .global).minX,
+                            y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
         .overlay(
             GeometryReader { geometry in
                 whiteGlassOverlay
-                    .frame(width: UIScreen.main.bounds.width, 
+                    .frame(width: UIScreen.main.bounds.width,
                            height: UIScreen.main.bounds.height - geometry.safeAreaInsets.top)
-                    .offset(x: -geometry.frame(in: .global).minX, 
-                           y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
+                    .offset(x: -geometry.frame(in: .global).minX,
+                            y: max(0, geometry.safeAreaInsets.top - geometry.frame(in: .global).minY))
             }
         )
         .clipShape(
@@ -587,7 +516,7 @@ struct ContentView: View {
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
-    // 방문기록/자동완성
+    // MARK: - 방문기록/자동완성
     @ViewBuilder
     private var addressBarHistoryContent: some View {
         VStack(spacing: 0) {
@@ -632,14 +561,12 @@ struct ContentView: View {
             .fixedSize(horizontal: false, vertical: true)
             
             VStack(spacing: 8) {
-                Divider()
-                    .background(Color(UIColor.separator).opacity(0.3))
-                
+                Divider().background(Color(UIColor.separator).opacity(0.3))
                 HStack {
                     Button(action: { siteMenuManager.showHistoryFilterManager = true }) {
-                        HStack(spacing: 4) { 
+                        HStack(spacing: 4) {
                             Image(systemName: "slider.horizontal.3")
-                            Text("방문기록 관리") 
+                            Text("방문기록 관리")
                         }
                         .font(.caption)
                         .foregroundColor(.blue)
@@ -675,7 +602,7 @@ struct ContentView: View {
         )
     }
     
-    // 🎯 키보드 상태에 따라 메뉴와 자물쇠 아이콘 숨김/표시
+    // MARK: - 주소창 메인
     private var addressBarMainContent: some View {
         HStack(spacing: 8) {
             if !isTextFieldFocused {
@@ -685,7 +612,6 @@ struct ContentView: View {
                         removal: .move(edge: .leading).combined(with: .opacity)
                     ))
             }
-            
             if !isTextFieldFocused {
                 siteSecurityIcon
                     .transition(.asymmetric(
@@ -693,9 +619,7 @@ struct ContentView: View {
                         removal: .move(edge: .leading).combined(with: .opacity)
                     ))
             }
-            
             urlTextField
-            
             if isTextFieldFocused {
                 clearButton
                     .transition(.asymmetric(
@@ -764,13 +688,13 @@ struct ContentView: View {
     private func getSiteIcon() -> String {
         guard let url = currentState.currentURL else { return "globe" }
         if url.scheme == "https" { return "lock.fill" }
-        if url.scheme == "http" { return "exclamationmark.triangle.fill" }
+        if url.scheme == "http"  { return "exclamationmark.triangle.fill" }
         return "globe"
     }
     private func getSiteIconColor() -> Color {
         guard let url = currentState.currentURL else { return .secondary }
         if url.scheme == "https" { return .green }
-        if url.scheme == "http" { return .orange }
+        if url.scheme == "http"  { return .orange }
         return .secondary
     }
     
@@ -788,8 +712,8 @@ struct ContentView: View {
     }
     
     private var clearButton: some View {
-        Button(action: { 
-            inputURL = "" 
+        Button(action: {
+            inputURL = ""
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
             Image(systemName: "xmark.circle.fill")
@@ -804,12 +728,12 @@ struct ContentView: View {
     
     private var refreshButton: some View {
         Button(action: {
-            if currentState.isLoading { 
+            if currentState.isLoading {
                 currentState.stopLoading()
-                TabPersistenceManager.debugMessages.append("로딩 중지") 
-            } else { 
+                TabPersistenceManager.debugMessages.append("로딩 중지")
+            } else {
                 currentState.reload()
-                TabPersistenceManager.debugMessages.append("페이지 새로고침") 
+                TabPersistenceManager.debugMessages.append("페이지 새로고침")
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }) {
@@ -844,7 +768,7 @@ struct ContentView: View {
     
     // MARK: - 핸들러
     private func onAppearHandler() {
-        if let url = currentState.currentURL { inputURL = url.absoluteString; TabPersistenceManager.debugMessages.append("탭 진입, 주소창 동기화: \(url)") }
+        if let url = currentState.currentURL { inputURL = url.absoluteString }
         siteMenuManager.setCurrentStateModel(currentState)
         siteMenuManager.refreshDownloads()
     }
@@ -852,7 +776,7 @@ struct ContentView: View {
     private func onNavigationFinish(_: Void) {
         if let r = currentState.currentPageRecord {
             let back = currentState.canGoBack ? "가능" : "불가"
-            let fwd = currentState.canGoForward ? "가능" : "불가"
+            let fwd  = currentState.canGoForward ? "가능" : "불가"
             TabPersistenceManager.debugMessages.append("HIST ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(r.id.uuidString.prefix(8)))")
         } else {
             TabPersistenceManager.debugMessages.append("HIST 페이지 기록 없음")
@@ -923,7 +847,7 @@ struct ContentView: View {
                     let s = tabs[index].stateModel
                     if let r = s.currentPageRecord {
                         let back = s.canGoBack ? "가능" : "불가"
-                        let fwd = s.canGoForward ? "가능" : "불가"
+                        let fwd  = s.canGoForward ? "가능" : "불가"
                         TabPersistenceManager.debugMessages.append("HIST(tab \(index)) ⏪\(back) ▶︎\(fwd) | '\(r.title)' [ID: \(r.id.uuidString.prefix(8)))")
                     } else {
                         TabPersistenceManager.debugMessages.append("HIST(tab \(index)) 준비중")
@@ -936,28 +860,26 @@ struct ContentView: View {
     private var avPlayerBinding: Binding<Bool> {
         Binding(
             get: { tabs.indices.contains(selectedTabIndex) ? tabs[selectedTabIndex].showAVPlayer : false },
-            set: { newValue in
+            set: { nv in
                 if tabs.indices.contains(selectedTabIndex) {
-                    tabs[selectedTabIndex].showAVPlayer = newValue
-                    if !newValue && pipManager.currentPIPTab == tabs[selectedTabIndex].id { pipManager.stopPIP() }
+                    tabs[selectedTabIndex].showAVPlayer = nv
+                    if !nv && pipManager.currentPIPTab == tabs[selectedTabIndex].id { pipManager.stopPIP() }
                 }
             }
         )
     }
     @ViewBuilder private func avPlayerView() -> some View {
-        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL { 
-            AVPlayerView(url: url)
-                .ignoresSafeArea(.keyboard, edges: .all)
+        if tabs.indices.contains(selectedTabIndex), let url = tabs[selectedTabIndex].playerURL {
+            AVPlayerView(url: url).ignoresSafeArea(.keyboard, edges: .all)
         }
     }
-    @ViewBuilder private func debugView() -> some View { 
+    @ViewBuilder private func debugView() -> some View {
         GeometryReader { geometry in
-            DebugLogView()
-                .frame(width: geometry.size.width, height: geometry.size.height)
+            DebugLogView().frame(width: geometry.size.width, height: geometry.size.height)
         }
         .ignoresSafeArea(.all, edges: .all)
         .ignoresSafeArea(.keyboard, edges: .all)
-        .onAppear { 
+        .onAppear {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             TabPersistenceManager.debugMessages.append("🛡️ DebugView 완전 격리 모드 - 키보드 리셋")
         }
@@ -993,12 +915,11 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
                 textFieldSelectedAll = true
-                TabPersistenceManager.debugMessages.append("주소창 텍스트 전체 선택")
             }
         }
     }
     private func onTextFieldFocusChange(focused: Bool) {
-        if !focused { textFieldSelectedAll = false; TabPersistenceManager.debugMessages.append("주소창 포커스 해제") }
+        if !focused { textFieldSelectedAll = false }
     }
     private func onTextFieldSubmit() {
         if let url = fixedURL(from: inputURL) {
@@ -1040,7 +961,6 @@ struct ContentView: View {
         lastWebContentOffsetY = yOffset
     }
 
-    // MARK: - 🎬 PIP 상태 변경 핸들러
     private func handlePIPStateChange(_ isPIPActive: Bool) {
         if isPIPActive {
             if tabs.indices.contains(selectedTabIndex) {
@@ -1066,7 +986,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - 로컬/사설 IP 판별
     private func isLocalOrPrivateIP(_ host: String) -> Bool {
         let ipPattern = #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#
         guard host.range(of: ipPattern, options: .regularExpression) != nil else {
@@ -1093,13 +1012,11 @@ struct ContentView: View {
         }
         if trimmed.contains(".") && !trimmed.contains(" ") {
             if isLocalOrPrivateIP(trimmed) {
-                let httpURL = URL(string: "http://\(trimmed)")
                 TabPersistenceManager.debugMessages.append("🏠 로컬 IP 감지, HTTP 적용: http://\(trimmed)")
-                return httpURL
+                return URL(string: "http://\(trimmed)")
             } else {
-                let httpsURL = URL(string: "https://\(trimmed)")
                 TabPersistenceManager.debugMessages.append("🔗 도메인 감지, HTTPS 적용: https://\(trimmed)")
-                return httpsURL
+                return URL(string: "https://\(trimmed)")
             }
         }
         let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
@@ -1122,14 +1039,14 @@ struct ContentView: View {
         let ns = error as NSError
         guard ns.domain == NSURLErrorDomain else { return nil }
         switch ns.code {
-        case NSURLErrorCannotFindHost:        return ("주소를 찾을 수 없음 (\(ns.code))", "\(domain)을(를) 찾을 수 없습니다.")
-        case NSURLErrorTimedOut:              return ("연결 시간 초과 (\(ns.code))", "\(domain) 서버 응답이 늦습니다.")
-        case NSURLErrorNotConnectedToInternet:return ("인터넷 연결 없음 (\(ns.code))", "인터넷에 연결되어 있지 않습니다.")
-        case NSURLErrorCannotConnectToHost:   return ("서버 연결 실패 (\(ns.code))", "\(domain) 서버에 연결할 수 없습니다.")
-        case NSURLErrorNetworkConnectionLost: return ("네트워크 연결 끊김 (\(ns.code))", "네트워크 연결이 끊어졌습니다.")
-        case NSURLErrorDNSLookupFailed:       return ("DNS 조회 실패 (\(ns.code))", "\(domain)의 DNS 조회에 실패했습니다.")
-        case NSURLErrorBadURL:                return ("잘못된 주소 (\(ns.code))", "입력한 주소 형식이 올바르지 않습니다.")
-        case NSURLErrorUnsupportedURL:        return ("지원하지 않는 주소 (\(ns.code))", "이 주소 형식은 지원하지 않습니다.")
+        case NSURLErrorCannotFindHost:         return ("주소를 찾을 수 없음 (\(ns.code))", "\(domain)을(를) 찾을 수 없습니다.")
+        case NSURLErrorTimedOut:               return ("연결 시간 초과 (\(ns.code))", "\(domain) 서버 응답이 늦습니다.")
+        case NSURLErrorNotConnectedToInternet: return ("인터넷 연결 없음 (\(ns.code))", "인터넷에 연결되어 있지 않습니다.")
+        case NSURLErrorCannotConnectToHost:    return ("서버 연결 실패 (\(ns.code))", "\(domain) 서버에 연결할 수 없습니다.")
+        case NSURLErrorNetworkConnectionLost:  return ("네트워크 연결 끊김 (\(ns.code))", "네트워크 연결이 끊어졌습니다.")
+        case NSURLErrorDNSLookupFailed:        return ("DNS 조회 실패 (\(ns.code))", "\(domain)의 DNS 조회에 실패했습니다.")
+        case NSURLErrorBadURL:                 return ("잘못된 주소 (\(ns.code))", "입력한 주소 형식이 올바르지 않습니다.")
+        case NSURLErrorUnsupportedURL:         return ("지원하지 않는 주소 (\(ns.code))", "이 주소 형식은 지원하지 않습니다.")
         default: return nil
         }
     }
