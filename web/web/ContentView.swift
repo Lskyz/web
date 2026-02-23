@@ -172,7 +172,7 @@ struct ContentView: View {
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
-    private let addressToToolbarGap: CGFloat = 10
+    private let addressToToolbarGap: CGFloat = 24
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
