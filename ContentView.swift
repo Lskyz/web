@@ -42,6 +42,84 @@ struct WhiteGlassBlur: UIViewRepresentable {
     }
 }
 
+// MARK: - 하단 액션 탭바 (시스템 UITabBar 사용)
+struct BrowserActionTabBar: UIViewRepresentable {
+    enum Item: Int, CaseIterable {
+        case back
+        case forward
+        case history
+        case tabs
+        case debug
+        case pip
+    }
+
+    var canGoBack: Bool
+    var canGoForward: Bool
+    var showsPIPItem: Bool
+    var onSelect: (Item) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    func makeUIView(context: Context) -> UITabBar {
+        let tabBar = UITabBar()
+        tabBar.delegate = context.coordinator
+        tabBar.itemPositioning = .automatic
+        tabBar.isTranslucent = true
+        tabBar.unselectedItemTintColor = UIColor.secondaryLabel
+        return tabBar
+    }
+
+    func updateUIView(_ tabBar: UITabBar, context: Context) {
+        context.coordinator.onSelect = onSelect
+
+        let items = makeItems()
+        tabBar.setItems(items, animated: false)
+        items.first(where: { $0.tag == Item.back.rawValue })?.isEnabled = canGoBack
+        items.first(where: { $0.tag == Item.forward.rawValue })?.isEnabled = canGoForward
+
+        if let fallback = items.first(where: { $0.tag == Item.tabs.rawValue }) {
+            tabBar.selectedItem = fallback
+        }
+    }
+
+    private func makeItems() -> [UITabBarItem] {
+        var items: [UITabBarItem] = [
+            UITabBarItem(title: "뒤로", image: UIImage(systemName: "chevron.left"), tag: Item.back.rawValue),
+            UITabBarItem(title: "앞으로", image: UIImage(systemName: "chevron.right"), tag: Item.forward.rawValue),
+            UITabBarItem(title: "기록", image: UIImage(systemName: "clock.arrow.circlepath"), tag: Item.history.rawValue),
+            UITabBarItem(title: "탭", image: UIImage(systemName: "square.on.square"), tag: Item.tabs.rawValue)
+        ]
+
+        if showsPIPItem {
+            items.append(UITabBarItem(title: "PIP", image: UIImage(systemName: "pip.fill"), tag: Item.pip.rawValue))
+        }
+
+        items.append(UITabBarItem(title: "디버그", image: UIImage(systemName: "ladybug"), tag: Item.debug.rawValue))
+        return items
+    }
+
+    final class Coordinator: NSObject, UITabBarDelegate {
+        var onSelect: (Item) -> Void
+
+        init(onSelect: @escaping (Item) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+            guard let selected = Item(rawValue: item.tag) else { return }
+            onSelect(selected)
+
+            DispatchQueue.main.async {
+                if let fallback = tabBar.items?.first(where: { $0.tag == Item.tabs.rawValue }) {
+                    tabBar.selectedItem = fallback
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 🎬 PIP 보존용 웹뷰 컨테이너
 class PIPWebViewContainer: ObservableObject {
     static let shared = PIPWebViewContainer()
@@ -65,15 +143,6 @@ class PIPWebViewContainer: ObservableObject {
 
 // MARK: - 메인 뷰
 struct ContentView: View {
-    private enum BottomMenuTab: Hashable {
-        case back
-        case forward
-        case history
-        case tabs
-        case pip
-        case debug
-    }
-
     @Binding var tabs: [WebTab]
     @Binding var selectedTabIndex: Int
 
@@ -97,12 +166,14 @@ struct ContentView: View {
 
     @State private var isMenuButtonPressed = false
     @State private var menuButtonPressStartTime: Date? = nil
-    @State private var selectedBottomMenuTab: BottomMenuTab? = nil
 
     // 스타일 수치
     private let outerHorizontalPadding: CGFloat = 22
     private let barCornerRadius: CGFloat = 20
     private let barVPadding: CGFloat = 10
+    private let addressTabBarSpacing: CGFloat = 14
+    private let floatingBarBackgroundOpacity: CGFloat = 0.82
+    private let historyPanelBackgroundOpacity: CGFloat = 0.88
     private let textFont: Font = .system(size: 16, weight: .medium)
     private let whiteGlassMaterial: UIBlurEffect.Style = .extraLight
     private let whiteGlassTintOpacity: CGFloat = 0.1
@@ -299,115 +370,84 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - 🎯 통합된 하단 UI (iOS 26+: TabView 탭바 + Liquid Glass)
+    // MARK: - 🎯 통합된 하단 UI (사파리 스타일 - 배경 통합, 주소창만 테두리 구분)
     @ViewBuilder
     private func bottomUnifiedUIContent() -> some View {
         VStack(spacing: 0) {
+            // 1️⃣ 주소창 관련 콘텐츠 (히스토리/자동완성)
             if showAddressBar && (isTextFieldFocused || inputURL.isEmpty) {
                 addressBarHistoryContent
                     .padding(.horizontal, outerHorizontalPadding)
                     .ignoresSafeArea(.keyboard, edges: .all)
             }
-
-            liquidGlassNavigationTabBar
-        }
-        .background(Color.clear)
-        .ignoresSafeArea(.keyboard, edges: .all)
-    }
-
-    private var bottomSafeAreaPadding: CGFloat {
-        max(20, UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets.bottom ?? 0)
-    }
-
-    private var addressBarContainer: some View {
-        HStack(spacing: 12) {
-            VStack(spacing: 0) {
-                addressBarMainContent
-                if currentState.isLoading { progressBarView }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: barCornerRadius)
-                    .fill(Color(UIColor.systemBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: barCornerRadius)
-                    .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
-            )
-
-            if isTextFieldFocused {
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isTextFieldFocused = false
-                        siteMenuManager.closeSiteMenu()
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
-                    }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.primary)
-                        .frame(width: 44, height: 44)
+            
+            // 2️⃣ 통합 툴바 (사파리 스타일 - 하나의 배경에 주소창만 구분)
+            VStack(spacing: addressTabBarSpacing) {
+                if showAddressBar {
+                    // 주소창 영역 - 별도 테두리로 구분
+                    HStack(spacing: 12) {
+                        VStack(spacing: 0) {
+                            addressBarMainContent
+                            if currentState.isLoading { progressBarView }
+                        }
                         .background(
-                            Circle()
-                                .fill(Color(UIColor.systemBackground))
+                            RoundedRectangle(cornerRadius: barCornerRadius)
+                                .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
                         )
                         .overlay(
-                            Circle()
+                            RoundedRectangle(cornerRadius: barCornerRadius)
                                 .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
                         )
+                        
+                        if isTextFieldFocused {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    isTextFieldFocused = false
+                                    siteMenuManager.closeSiteMenu()
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { showAddressBar = false }
+                                }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .background(
+                                        Circle()
+                                            .fill(Color(UIColor.systemBackground).opacity(floatingBarBackgroundOpacity))
+                                    )
+                                    .overlay(
+                                        Circle()
+                                            .strokeBorder(Color(UIColor.separator).opacity(0.3), lineWidth: 0.5)
+                                    )
+                            }
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            ))
+                        }
+                    }
+                    .padding(.horizontal, outerHorizontalPadding)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
                 }
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .move(edge: .trailing).combined(with: .opacity)
-                ))
+                
+                // 네비게이션 메뉴를 시스템 탭바로 구성
+                BrowserActionTabBar(
+                    canGoBack: currentState.canGoBack,
+                    canGoForward: currentState.canGoForward,
+                    showsPIPItem: pipManager.isPIPActive,
+                    onSelect: { selected in
+                        handleBottomTabSelection(selected)
+                    })
+                    .frame(height: 54)
+                    .padding(.horizontal, 8)
             }
+            .padding(.vertical, barVPadding)
+            .padding(.bottom, 0)
         }
-        .padding(.horizontal, outerHorizontalPadding)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isTextFieldFocused)
-    }
-
-    private var liquidGlassNavigationTabBar: some View {
-        TabView(selection: $selectedBottomMenuTab) {
-            Color.clear
-                .tabItem { Label("뒤로", systemImage: "chevron.left") }
-                .tag(Optional(BottomMenuTab.back))
-                .disabled(!currentState.canGoBack)
-
-            Color.clear
-                .tabItem { Label("앞으로", systemImage: "chevron.right") }
-                .tag(Optional(BottomMenuTab.forward))
-                .disabled(!currentState.canGoForward)
-
-            Color.clear
-                .tabItem { Label("기록", systemImage: "clock.arrow.circlepath") }
-                .tag(Optional(BottomMenuTab.history))
-
-            Color.clear
-                .tabItem { Label("탭", systemImage: "square.on.square") }
-                .tag(Optional(BottomMenuTab.tabs))
-
-            if pipManager.isPIPActive {
-                Color.clear
-                    .tabItem { Label("PIP", systemImage: "pip.fill") }
-                    .tag(Optional(BottomMenuTab.pip))
-            } else {
-                Color.clear
-                    .tabItem { Label("디버그", systemImage: "ladybug") }
-                    .tag(Optional(BottomMenuTab.debug))
-            }
-        }
-        .frame(height: showAddressBar ? 124 : 56)
-        .padding(.bottom, bottomSafeAreaPadding)
-        .tabBarMinimizeBehavior(.onScrollDown)
-        .toolbarGlassEffect(.regularMaterial, for: .tabBar)
-        .tabViewBottomAccessory {
-            if showAddressBar { addressBarContainer }
-        }
-        .onChange(of: selectedBottomMenuTab, perform: handleBottomMenuSelection)
+        .ignoresSafeArea(.keyboard, edges: .all)
     }
     
     // 방문기록/자동완성 (사파리 스타일 - 깔끔한 배경)
@@ -476,7 +516,7 @@ struct ContentView: View {
                 .padding(.bottom, 8)
             }
         }
-        .background(Color(UIColor.systemBackground).opacity(0.95))
+        .background(Color(UIColor.systemBackground).opacity(historyPanelBackgroundOpacity))
         .cornerRadius(barCornerRadius)
         .overlay(
             RoundedRectangle(cornerRadius: barCornerRadius)
@@ -659,7 +699,7 @@ struct ContentView: View {
             .animation(.easeOut(duration: 0.3), value: currentState.loadingProgress)
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
-    
+
     private var whiteGlassBackground: some View {
         ZStack {
             WhiteGlassBlur(blurStyle: whiteGlassMaterial, cornerRadius: 0, intensity: whiteGlassIntensity)
@@ -840,37 +880,41 @@ struct ContentView: View {
         }
         isTextFieldFocused = false
     }
-    private func handleBottomMenuSelection(_ selectedTab: BottomMenuTab?) {
-        guard let selectedTab else { return }
-
-        switch selectedTab {
+    private func handleBottomTabSelection(_ item: BrowserActionTabBar.Item) {
+        switch item {
         case .back:
-            guard currentState.canGoBack else { break }
+            guard currentState.canGoBack else { return }
             currentState.goBack()
-            TabPersistenceManager.debugMessages.append("🔮 탭바 뒤로가기")
+            TabPersistenceManager.debugMessages.append("🎯 탭바 뒤로가기")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .forward:
-            guard currentState.canGoForward else { break }
+            guard currentState.canGoForward else { return }
             currentState.goForward()
-            TabPersistenceManager.debugMessages.append("🔮 탭바 앞으로가기")
+            TabPersistenceManager.debugMessages.append("🎯 탭바 앞으로가기")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .history:
             showHistorySheet = true
-            TabPersistenceManager.debugMessages.append("🔮 탭바 방문기록 열기")
+            TabPersistenceManager.debugMessages.append("🎯 탭바 방문기록")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .tabs:
             showTabManager = true
-            TabPersistenceManager.debugMessages.append("🔮 탭바 탭매니저 열기")
-        case .pip:
-            pipManager.stopPIP()
-            TabPersistenceManager.debugMessages.append("🔮 탭바 PIP 종료")
+            TabPersistenceManager.debugMessages.append("🎯 탭바 탭관리")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .debug:
             showDebugView = true
-            TabPersistenceManager.debugMessages.append("🔮 탭바 디버그 열기")
+            TabPersistenceManager.debugMessages.append("🎯 탭바 디버그")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case .pip:
+            pipManager.stopPIP()
+            TabPersistenceManager.debugMessages.append("🎯 탭바 PIP 종료")
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
         }
 
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        DispatchQueue.main.async {
-            selectedBottomMenuTab = nil
+        if !showAddressBar {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) { showAddressBar = true }
         }
     }
+
     private func handleDashboardNavigation(_ selectedURL: URL) {
         if tabs.indices.contains(selectedTabIndex) {
             tabs[selectedTabIndex].stateModel.currentURL = selectedURL
