@@ -1,4 +1,3 @@
-//
 //  BFCacheJS.swift
 //  🎯 BFCache JavaScript 생성 코드 (Step 1~4 스크립트 생성)
 
@@ -329,6 +328,7 @@ extension BFCacheSnapshot {
                 let observer = null;
                 let timeoutNudgeTried = false;
 
+                // 센티널: 스크롤 끝에 배치
                 const fallbackSentinel = document.createElement('div');
                 fallbackSentinel.style.cssText = 'position:absolute;bottom:0;height:1px;pointer-events:none;';
                 scrollRoot.appendChild(fallbackSentinel);
@@ -402,6 +402,7 @@ extension BFCacheSnapshot {
 
                 rafId = requestAnimationFrame(checkProgress);
 
+                // 타임아웃
                 timeoutId = setTimeout(() => {
                     if (!resolved) {
                         if (!timeoutNudgeTried && isElementValid(observedSentinel)) {
@@ -592,7 +593,7 @@ extension BFCacheSnapshot {
             }
         }
 
-        // 🔍 무한 스크롤 메커니즘 감지
+        // 🔍 무한 스크롤 메커니즘 감지 (디버깅용)
         function installInfiniteScrollDetector(logs, options = {}) {
             if (window.__infiniteScrollDetectorInstalled) return;
             window.__infiniteScrollDetectorInstalled = true;
@@ -617,6 +618,7 @@ extension BFCacheSnapshot {
                 state.lastEnd = Date.now();
             };
 
+            // 3. XHR/fetch 감지
             const openOrig = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url) {
                 if (verbose) {
@@ -686,11 +688,10 @@ extension BFCacheSnapshot {
         })();
         """
     }
-
-    // MARK: - Step 1: 콘텐츠 복원 (무한스크롤 트리거)
     func generateStep1_ContentRestoreScript() -> String {
         let savedHeight = self.restorationConfig.savedContentHeight
 
+        // 🛡️ **값 검증**
         guard savedHeight.isFinite && savedHeight >= 0 else {
             TabPersistenceManager.debugMessages.append("⚠️ [Step 1] savedHeight 비정상: \(savedHeight)")
             return """
@@ -744,25 +745,60 @@ extension BFCacheSnapshot {
 
                 logs.push('동적 사이트 - 콘텐츠 로드 시도');
 
+                // 🔍 무한 스크롤 메커니즘 감지 설치
                 installInfiniteScrollDetector(logs, { verbose: false });
                 logs.push('🔍 무한 스크롤 감지기 설치 완료');
 
                 const isSafeToClick = (el) => {
                     if (!el) return false;
                     if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+
+                    // 1st guard: block anchors with real targets
                     if (el.tagName && el.tagName.toLowerCase() === 'a') {
-                        const href = el.getAttribute('href') || '';
-                        if (href && href !== '#' && !href.startsWith('javascript:')) return false;
+                        const href = (el.getAttribute('href') || '').trim();
+                        // only allow empty or plain '#'
+                        if (href !== '' && href !== '#') {
+                            return false;
+                        }
                     }
+
+                    // 2nd guard: block click bubbling into navigational anchors
+                    let parent = el.parentElement;
+                    let depth = 0;
+                    while (parent && depth < 3) {
+                        if (parent.tagName && parent.tagName.toLowerCase() === 'a') {
+                            const parentHref = (parent.getAttribute('href') || '').trim();
+                            if (parentHref !== '' && parentHref !== '#') return false;
+                        }
+                        parent = parent.parentElement;
+                        depth += 1;
+                    }
+
+                    const text = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+
+                    // 3rd guard: exclude tab/navigation-like controls
+                    if (/개념글|추천글|베스트|전체글|갤러리|게시판|이동|목록|홈|home|login|로그인/i.test(text)) {
+                        return false;
+                    }
+
                     return true;
                 };
 
+                // 🔍 더보기 전용 탐색 함수 (isSafeToClick 우회 — href 있는 a도 더보기 패턴이면 허용)
                 const findLoadMoreButton = () => {
-                    const candidates = document.querySelectorAll('button, [role="button"], a');
-                    for (const el of candidates) {
-                        if (!isSafeToClick(el)) continue;
-                        const txt = (el.textContent || '').trim().toLowerCase();
-                        if (/load.?more|show.?more/i.test(txt)) return el;
+                    // 1순위: id 기반 명시 패턴 (구글 #pnnext 등)
+                    const byId = document.querySelector(
+                        '#pnnext, #load-more, #loadMore, [id*="load-more"], [id*="loadmore"], [id*="pnnext"]'
+                    );
+                    if (byId && !byId.disabled && byId.getAttribute('aria-disabled') !== 'true') return byId;
+                    // 2순위: 텍스트/클래스 기반 (button + a + role=button, href 있어도 허용)
+                    const all = document.querySelectorAll('button, [role="button"], a');
+                    for (const el of all) {
+                        if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+                        const txt = ((el.textContent || '') + (el.getAttribute('aria-label') || '')).trim();
+                        // 탭/네비게이션 제외 (isSafeToClick 3rd guard 동일 적용)
+                        if (/개념글|추천글|베스트|전체글|갤러리|게시판|이동|목록|홈|home|login|로그인/i.test(txt)) continue;
+                        if (/더보기|more.?results|load.?more|show.?more|view.?more/i.test(txt)) return el;
                         const cls = (el.className || '').toString();
                         if (/load.?more|show.?more|infinite/i.test(cls)) return el;
                     }
@@ -787,13 +823,16 @@ extension BFCacheSnapshot {
                     await delay(160);
                 }
 
-                // 🚀 워밍업 패스
+                // 🚀 워밍업 패스: 배치 루프 전 더보기 버튼+스크롤을 빠르게 2회 선제 실행
+                // (제스처 감지~Step 1 실행 사이의 공백 시간을 활용)
                 {
                     const warmRoot = document.scrollingElement || document.documentElement;
                     const warmH0 = warmRoot.scrollHeight;
+                    // 1차 선제 트리거
                     const wb1 = findLoadMoreButton(); if (wb1) wb1.click();
                     warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
                     await delay(80);
+                    // 2차 선제 트리거
                     const wb2 = findLoadMoreButton(); if (wb2) wb2.click();
                     warmRoot.scrollTo({ top: 99999, behavior: 'instant' });
                     await delay(80);
@@ -816,6 +855,7 @@ extension BFCacheSnapshot {
                     timeout: 0
                 };
 
+                // 🚀 **Observer 기반 이벤트 드리븐 감지**
                 for (let containerIndex = 0; containerIndex < containers.length; containerIndex++) {
                     const scrollRoot = containers[containerIndex];
                     logs.push('[Step 1] 컨테이너 ' + (containerIndex + 1) + '/' + containers.length + ' 체크');
@@ -835,7 +875,7 @@ extension BFCacheSnapshot {
                     let containerGrew = false;
                     let batchCount = 0;
                     const maxAttempts = isVirtualList ? 36 : 16;
-                    const maxWait = isVirtualList ? 450 : 400;
+                    const maxWait = isVirtualList ? 450 : 400; // 일반 DOM: API 응답 ~400ms 커버
                     const scrollsPerBatch = isVirtualList ? 4 : 3;
                     const maxSignalOnlyBatches = isVirtualList ? 4 : 1;
                     let stagnantProgressBatches = 0;
@@ -846,6 +886,7 @@ extension BFCacheSnapshot {
                         const currentScrollHeight = scrollRoot.scrollHeight;
                         const maxScrollY = currentScrollHeight - viewportHeight;
 
+                        // 🛡️ **목표 높이 도달 시 중단 (가상리스트는 scrollY 기준)**
                         if (isVirtualList) {
                             if (maxScrollY >= savedContentHeight) {
                                 logs.push('[Step 1] 가상리스트 목표 scrollY 도달 (배치: ' + batchCount + ')');
@@ -862,6 +903,7 @@ extension BFCacheSnapshot {
                             }
                         }
 
+                        // 🛡️ **과도한 성장 방지**
                         if (currentScrollHeight >= savedContentHeight * 1.0) {
                             logs.push('[Step 1] 100% 초과 (배치: ' + batchCount + ')');
                             grew = true;
@@ -879,6 +921,7 @@ extension BFCacheSnapshot {
                         let fingerprintBaseline = '';
                         const batchStartTime = Date.now();
 
+                        // [배치마다] 더보기/로드더보기 버튼 범용 탐색 및 클릭 (스크롤과 이중 트리거)
                         const findAndClickLoadMore = () => {
                             const btn = findLoadMoreButton();
                             if (btn && typeof btn.click === 'function') {
@@ -902,6 +945,7 @@ extension BFCacheSnapshot {
                                 fingerprintBaseline = getListTailFingerprint(scrollRoot);
                             }
 
+                            // 목표 도달 시 중단
                             if (beforeHeight >= savedContentHeight) {
                                 batchSuccess = true;
                                 break;
@@ -932,7 +976,7 @@ extension BFCacheSnapshot {
                                 observedSentinel: observedSentinel,
                                 allowNetworkStart: isVirtualList,
                                 allowScrollApplied: isVirtualList,
-                                allowSentinelIntersect: isVirtualList
+                                allowSentinelIntersect: isVirtualList // 일반 DOM 방식 사이트에서 sentinel 허탕 배치 제거
                             });
 
                             if (!isElementValid(scrollRoot)) break;
@@ -951,8 +995,9 @@ extension BFCacheSnapshot {
                                     batchHadProgressSignal = true;
                                     batchProgressOnly = true;
 
+                                    // 진행 신호는 최대 1회만 후속 확인하여 과도한 대기 누적 방지
                                     batchSignalCount += 1;
-                                    const shouldProbeProgress = false; // sentinel_intersect 후 waitForProgressSignal 대기 제거
+                                    const shouldProbeProgress = false; // sentinel_intersect 후 waitForProgressSignal 대기 제거 (fingerprint=0 사이트에서 100ms×N 낭비)
 
                                     if (shouldProbeProgress) {
                                         const progressSignal = await waitForProgressSignal(scrollRoot, {
@@ -994,8 +1039,9 @@ extension BFCacheSnapshot {
                                 lastHeight = result.height;
                                 batchMeaningfulProgress = true;
                                 batchSuccess = true;
-                                break;
+                                break; // height_growth 확인 즉시 다음 배치로 (남은 스크롤 불필요)
                             } else {
+                                // 더 이상 성장 안 함
                                 break;
                             }
                         }
@@ -1120,8 +1166,6 @@ extension BFCacheSnapshot {
         }
         """
     }
-
-    // MARK: - Step 2: 상대좌표 기반 스크롤 복원
     func generateStep2_PercentScrollScript() -> String {
         let targetPercentX = self.scrollPositionPercent.x
         let targetPercentY = self.scrollPositionPercent.y
@@ -1198,8 +1242,6 @@ extension BFCacheSnapshot {
         }
         """
     }
-
-    // MARK: - Step 3: 무한스크롤 전용 앵커 복원
     func generateStep3_InfiniteScrollAnchorRestoreScript(anchorDataJSON: String) -> String {
         let targetX = self.scrollPosition.x
         let targetY = self.scrollPosition.y
@@ -1221,6 +1263,8 @@ extension BFCacheSnapshot {
 
                 await waitForStableLayoutAsync({ frames: 4, timeout: 1000 });
 
+                
+                // 앵커 데이터 확인
                 if (!infiniteScrollAnchorData || !infiniteScrollAnchorData.anchors || infiniteScrollAnchorData.anchors.length === 0) {
                     logs.push('무한스크롤 앵커 데이터 없음 - 스킵');
                     return serializeForJSON({
@@ -1229,10 +1273,11 @@ extension BFCacheSnapshot {
                         logs: logs
                     });
                 }
-
+                
                 const anchors = infiniteScrollAnchorData.anchors;
                 logs.push('사용 가능한 앵커: ' + anchors.length + '개');
 
+                // 무한스크롤 앵커 타입별 필터링
                 const vueComponentAnchors = anchors.filter(function(anchor) {
                     return anchor.anchorType === 'vueComponent' && anchor.vueComponent;
                 });
@@ -1250,6 +1295,7 @@ extension BFCacheSnapshot {
                 // 🎯 **새 방식: 모든 앵커 매칭 → 목표 위치와 거리 계산 → 가장 가까운 것 선택**
                 const allMatchedCandidates = [];
 
+                // className 처리 함수
                 function getClassNameString(element) {
                     if (typeof element.className === 'string') {
                         return element.className;
@@ -1261,7 +1307,7 @@ extension BFCacheSnapshot {
 
                 logs.push('🔍 거리 기반 매칭 시작 (목표: Y=' + targetY.toFixed(0) + 'px)');
 
-                // 1. ID 기반 매칭
+                // 1. ID 기반 매칭 시도
                 for (let i = 0; i < anchors.length; i++) {
                     const anchor = anchors[i];
                     if (anchor.elementId) {
@@ -1282,7 +1328,7 @@ extension BFCacheSnapshot {
                     }
                 }
 
-                // 2. data-* 속성 매칭
+                // 2. data-* 속성 매칭 시도
                 for (let i = 0; i < anchors.length; i++) {
                     const anchor = anchors[i];
                     if (anchor.dataAttributes) {
@@ -1396,6 +1442,7 @@ extension BFCacheSnapshot {
 
                     if (virtualIndex.offsetInPage !== undefined) {
                         const estimatedY = virtualIndex.offsetInPage;
+                        // 저장된 위치와 목표 위치가 가까우면 후보로 추가
                         if (Math.abs(estimatedY - targetY) < 500) {
                             const selector = anchor.tagName || '*';
                             const candidateElements = document.querySelectorAll(selector);
@@ -1444,12 +1491,13 @@ extension BFCacheSnapshot {
                 }
 
                 if (foundElement && matchedAnchor) {
+                    // 🎯 **수정: scrollIntoView 대신 직접 계산 + 헤더 보정**
                     const ROOT = getROOT();
                     const rect = foundElement.getBoundingClientRect();
                     const absY = ROOT.scrollTop + rect.top;
                     let headerHeightPx = fixedHeaderHeight();
                     const finalY = Math.max(0, absY - headerHeightPx);
-
+                    
                     const offsetTop = (typeof matchedAnchor.offsetFromTop === 'number') ? matchedAnchor.offsetFromTop : 0;
                     let adjustedY = Math.max(0, finalY - Math.max(0, offsetTop));
 
@@ -1505,7 +1553,7 @@ extension BFCacheSnapshot {
                     anchorCount: anchors.length,
                     logs: logs
                 });
-
+                
         } catch(e) {
             return serializeForJSON({
                 success: false,
@@ -1516,7 +1564,6 @@ extension BFCacheSnapshot {
         """
     }
 
-    // MARK: - Step 4: 최종 검증 및 미세 보정
     func generateStep4_FinalVerificationScript() -> String {
         let targetX = self.scrollPosition.x
         let targetY = self.scrollPosition.y
@@ -1537,7 +1584,7 @@ extension BFCacheSnapshot {
                 logs.push('저장 시점 높이: ' + savedContentHeight.toFixed(0) + 'px');
 
                 await waitForStableLayoutAsync({ frames: 3, timeout: 900 });
-
+                
                 const root = getROOT();
                 if (!root) {
                     logs.push('스크롤 루트를 찾을 수 없음');
@@ -1552,34 +1599,33 @@ extension BFCacheSnapshot {
                         logs: logs
                     });
                 }
-
+                
                 let currentX = root.scrollLeft || 0;
                 let currentY = root.scrollTop || 0;
                 let diffX = Math.abs(currentX - targetX);
                 let diffY = Math.abs(currentY - targetY);
                 let correctionApplied = false;
-
+                
                 logs.push('현재 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
-                logs.push('현재 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-
+                logs.push('위치 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
+                
                 const preciseAdjust = async () => {
-                    const preciseResult = await preciseScrollToAsync(targetX, targetY);
-                    await waitForStableLayoutAsync({ frames: 2, timeout: 600 });
-                    const updatedRoot = getROOT();
-                    currentX = updatedRoot ? (updatedRoot.scrollLeft || 0) : preciseResult.x || 0;
-                    currentY = updatedRoot ? (updatedRoot.scrollTop || 0) : preciseResult.y || 0;
+                    const precise = await preciseScrollToAsync(targetX, targetY);
+                    await waitForStableLayoutAsync({ frames: 2, timeout: 500 });
+                    currentX = root.scrollLeft || precise.x || 0;
+                    currentY = root.scrollTop || precise.y || 0;
                     diffX = Math.abs(currentX - targetX);
                     diffY = Math.abs(currentY - targetY);
                 };
-
+                
                 if (diffX > tolerance || diffY > tolerance) {
                     logs.push('허용 오차 초과 - rAF 기반 정밀 보정 시작');
                     correctionApplied = true;
-
+                    
                     for (let attempt = 0; attempt < 3 && (diffX > tolerance || diffY > tolerance); attempt++) {
                         await preciseAdjust();
                     }
-
+                    
                     let microAdjust = 0;
                     while (diffY > 20 && microAdjust < 3) {
                         const delta = targetY > currentY ? 12 : -12;
@@ -1592,12 +1638,12 @@ extension BFCacheSnapshot {
                         microAdjust += 1;
                     }
                 }
-
+                
                 ensureOverflowAnchorState(false);
-
+                
                 logs.push('최종 위치: X=' + currentX.toFixed(1) + 'px, Y=' + currentY.toFixed(1) + 'px');
                 logs.push('최종 차이: X=' + diffX.toFixed(1) + 'px, Y=' + diffY.toFixed(1) + 'px');
-
+                
                 return serializeForJSON({
                     success: diffY <= 50,
                     targetPosition: { x: targetX, y: targetY },
@@ -1607,7 +1653,7 @@ extension BFCacheSnapshot {
                     correctionApplied: correctionApplied,
                     logs: logs
                 });
-
+                
         } catch(e) {
             ensureOverflowAnchorState(false);
             return serializeForJSON({
