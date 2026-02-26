@@ -653,16 +653,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
 
-            function enforceManualScrollRestoration() {
-                try {
-                    if ('scrollRestoration' in history && history.scrollRestoration !== 'manual') {
-                        history.scrollRestoration = 'manual';
-                    }
-                } catch (_) {}
-            }
-
-            enforceManualScrollRestoration();
-
             // ===== 스크롤 점프 원인 추적/차단 =====
             const SCROLL_TRACE_WINDOW_MS = 1200;
             const TOP_Y_THRESHOLD = 2;
@@ -1184,7 +1174,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // ===== popstate / hashchange 감지 =====
             installScrollTraceHooks();
             window.addEventListener('popstate', () => {
-                enforceManualScrollRestoration();
                 scrollTraceUntil = Date.now() + SCROLL_TRACE_WINDOW_MS;
                 topJumpLogCount = 0;
                 sendScrollDebug('popstate_start', { details: `trace window opened|protecting=${isProtecting()}` });
