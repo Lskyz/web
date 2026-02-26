@@ -663,19 +663,18 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
             enforceManualScrollRestoration();
 
-            // ===== 스크롤 점프 원인 추적 =====
+            // ===== 스크롤 점프 원인 추적/차단 =====
             const SCROLL_TRACE_WINDOW_MS = 1200;
             const TOP_Y_THRESHOLD = 2;
-            const POP_TOP_BLOCK_WINDOW_MS = 400;
-            const POP_TOP_BLOCK_MIN_BASE_Y = 60;
+            const PROTECT_TRIGGER_Y = 50;
+            const PROTECT_MS = 400;
             let scrollTraceUntil = 0;
             let lastObservedScrollY = window.pageYOffset || 0;
             let topJumpLogCount = 0;
             let scrollTraceHooksInstalled = false;
-            let popTopBlockUntil = 0;
-            let popTopBlockBaseY = 0;
-            let popTopBlockCount = 0;
-            let isCorrectingTopJump = false;
+            let protectUntil = 0;
+            let protectStartY = 0;
+            let protectBlockCount = 0;
 
             function currentScrollY() {
                 return window.pageYOffset ||
@@ -718,12 +717,32 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 } catch (_) {}
             }
 
+            function isRootScroller(el) {
+                return el === document.scrollingElement
+                    || el === document.documentElement
+                    || el === document.body;
+            }
+
+            function startProtect(triggerY, source) {
+                const y = Number.isFinite(triggerY) ? triggerY : currentScrollY();
+                protectStartY = Math.max(currentScrollY(), y, protectStartY);
+                protectUntil = Date.now() + PROTECT_MS;
+                protectBlockCount = 0;
+                sendScrollDebug('protect_start', {
+                    targetY: y,
+                    details: `source=${source}|startY=${Math.round(protectStartY)}`
+                });
+            }
+
+            function isProtecting() {
+                return Date.now() < protectUntil && protectStartY > PROTECT_TRIGGER_Y;
+            }
+
             function shouldBlockTopJump(targetY) {
                 if (!Number.isFinite(targetY)) return false;
                 if (targetY > TOP_Y_THRESHOLD) return false;
-                if (Date.now() > popTopBlockUntil) return false;
-                if (popTopBlockBaseY <= POP_TOP_BLOCK_MIN_BASE_Y) return false;
-                if (popTopBlockCount >= 12) return false;
+                if (!isProtecting()) return false;
+                if (protectBlockCount >= 16) return false;
                 return true;
             }
 
@@ -736,11 +755,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 window.scrollTo = function(...args) {
                     const targetY = parseTargetY(args);
+                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                        startProtect(targetY, 'window.scrollTo');
+                    }
                     if (shouldBlockTopJump(targetY)) {
-                        popTopBlockCount += 1;
+                        protectBlockCount += 1;
                         sendScrollDebug('scrollTo_top_blocked', {
                             targetY: targetY,
-                            details: `baseY=${Math.round(popTopBlockBaseY)}`,
+                            details: `startY=${Math.round(protectStartY)}`,
                             stack: captureShortStack()
                         });
                         return;
@@ -758,11 +780,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 window.scroll = function(...args) {
                     const targetY = parseTargetY(args);
+                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                        startProtect(targetY, 'window.scroll');
+                    }
                     if (shouldBlockTopJump(targetY)) {
-                        popTopBlockCount += 1;
+                        protectBlockCount += 1;
                         sendScrollDebug('scroll_top_blocked', {
                             targetY: targetY,
-                            details: `baseY=${Math.round(popTopBlockBaseY)}`,
+                            details: `startY=${Math.round(protectStartY)}`,
                             stack: captureShortStack()
                         });
                         return;
@@ -778,6 +803,63 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     return originalWindowScroll(...args);
                 };
 
+                const originalElementScrollTo = Element.prototype.scrollTo;
+                if (typeof originalElementScrollTo === 'function') {
+                    Element.prototype.scrollTo = function(...args) {
+                        if (isRootScroller(this)) {
+                            const targetY = parseTargetY(args);
+                            if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                                startProtect(targetY, 'element.scrollTo');
+                            }
+                            if (shouldBlockTopJump(targetY)) {
+                                protectBlockCount += 1;
+                                sendScrollDebug('element_scrollTo_top_blocked', {
+                                    targetY: targetY,
+                                    details: `startY=${Math.round(protectStartY)}`,
+                                    stack: captureShortStack()
+                                });
+                                return;
+                            }
+                        }
+                        return originalElementScrollTo.apply(this, args);
+                    };
+                }
+
+                const scrollTopDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+                    || Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTop');
+                const rootCandidates = [document.scrollingElement, document.documentElement, document.body]
+                    .filter(Boolean)
+                    .filter((el, idx, arr) => arr.indexOf(el) === idx);
+
+                if (scrollTopDesc && scrollTopDesc.get && scrollTopDesc.set) {
+                    rootCandidates.forEach((el) => {
+                        try {
+                            Object.defineProperty(el, 'scrollTop', {
+                                configurable: true,
+                                get: function() {
+                                    return scrollTopDesc.get.call(this);
+                                },
+                                set: function(v) {
+                                    const targetY = toFiniteNumber(v);
+                                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                                        startProtect(targetY, 'root.scrollTop');
+                                    }
+                                    if (shouldBlockTopJump(targetY)) {
+                                        protectBlockCount += 1;
+                                        sendScrollDebug('scrollTop_top_blocked', {
+                                            targetY: targetY,
+                                            details: `startY=${Math.round(protectStartY)}`,
+                                            stack: captureShortStack()
+                                        });
+                                        return;
+                                    }
+                                    scrollTopDesc.set.call(this, v);
+                                }
+                            });
+                        } catch (_) {}
+                    });
+                }
+
                 window.addEventListener('scroll', function() {
                     const y = currentScrollY();
                     if (Date.now() <= scrollTraceUntil && lastObservedScrollY > 40 && y <= TOP_Y_THRESHOLD && topJumpLogCount < 12) {
@@ -785,17 +867,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                         sendScrollDebug('top_jump_observed', {
                             details: `from=${Math.round(lastObservedScrollY)} to=${Math.round(y)}`
                         });
-                    }
-
-                    if (!isCorrectingTopJump && shouldBlockTopJump(y)) {
-                        isCorrectingTopJump = true;
-                        popTopBlockCount += 1;
-                        sendScrollDebug('top_jump_correcting', {
-                            targetY: y,
-                            details: `restore=${Math.round(popTopBlockBaseY)}`
-                        });
-                        originalWindowScrollTo(0, popTopBlockBaseY);
-                        requestAnimationFrame(() => { isCorrectingTopJump = false; });
                     }
 
                     lastObservedScrollY = currentScrollY();
@@ -994,10 +1065,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 enforceManualScrollRestoration();
                 scrollTraceUntil = Date.now() + SCROLL_TRACE_WINDOW_MS;
                 topJumpLogCount = 0;
-                popTopBlockBaseY = currentScrollY();
-                popTopBlockUntil = Date.now() + POP_TOP_BLOCK_WINDOW_MS;
-                popTopBlockCount = 0;
-                sendScrollDebug('popstate_start', { details: 'trace window opened' });
+                sendScrollDebug('popstate_start', { details: `trace window opened|protecting=${isProtecting()}` });
                 setTimeout(() => sendScrollDebug('popstate_probe_120ms'), 120);
                 setTimeout(() => sendScrollDebug('popstate_probe_320ms'), 320);
                 setTimeout(() => sendScrollDebug('popstate_probe_700ms'), 700);
