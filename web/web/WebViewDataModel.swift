@@ -666,7 +666,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // ===== 스크롤 점프 원인 추적 =====
             const SCROLL_TRACE_WINDOW_MS = 1200;
             const TOP_Y_THRESHOLD = 2;
-            const POP_TOP_BLOCK_WINDOW_MS = 700;
+            const POP_TOP_BLOCK_WINDOW_MS = 400;
             const POP_TOP_BLOCK_MIN_BASE_Y = 60;
             let scrollTraceUntil = 0;
             let lastObservedScrollY = window.pageYOffset || 0;
@@ -675,6 +675,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let popTopBlockUntil = 0;
             let popTopBlockBaseY = 0;
             let popTopBlockCount = 0;
+            let isCorrectingTopJump = false;
 
             function currentScrollY() {
                 return window.pageYOffset ||
@@ -785,7 +786,19 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                             details: `from=${Math.round(lastObservedScrollY)} to=${Math.round(y)}`
                         });
                     }
-                    lastObservedScrollY = y;
+
+                    if (!isCorrectingTopJump && shouldBlockTopJump(y)) {
+                        isCorrectingTopJump = true;
+                        popTopBlockCount += 1;
+                        sendScrollDebug('top_jump_correcting', {
+                            targetY: y,
+                            details: `restore=${Math.round(popTopBlockBaseY)}`
+                        });
+                        originalWindowScrollTo(0, popTopBlockBaseY);
+                        requestAnimationFrame(() => { isCorrectingTopJump = false; });
+                    }
+
+                    lastObservedScrollY = currentScrollY();
                 }, { passive: true });
             }
 
