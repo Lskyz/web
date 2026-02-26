@@ -401,6 +401,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             return nil
         }
         let delta = index - currentPageIndex
+        if delta == 0 {
+            let record = pageHistory[index]
+            dbg("🤫 navigateToIndex 동일 인덱스 - URL 로드 스킵: \(index)")
+            return record
+        }
         if delta == -1 { return navigateBack() }
         if delta == 1  { return navigateForward() }
         // 멀티스텝 or SPA pop: URL 로드 방식 유지 (interactionState 비해당)
@@ -495,6 +500,27 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                let u = lastProvisionalURL, !(u.path == "/" || u.path.isEmpty) {
                 // 검색/상세로 가는 비루트 네비를 막 시작했는데, 중간에 튄 루트 pop은 잡음으로 간주
                 dbg("🔕 pop 무시 - 비루트 네비 직후의 전이성 루트 pop (\(String(format: "%.3f", Date().timeIntervalSince(t)))s) from \(u.absoluteString)")
+                return
+            }
+
+            // 🎯 네이티브 goBack()/goForward() 진행 중 pop은 로드 없이 상태만 동기화
+            if isHistoryNavigationActive() {
+                if let existingIndex = findPageIndex(for: url), existingIndex != currentPageIndex {
+                    currentPageIndex = existingIndex
+                    updateNavigationState()
+                    dbg("🔄 SPA pop - 복원 중 인덱스 동기화: \(existingIndex)")
+                } else {
+                    dbg("🤫 SPA pop - 복원 중 재로드 스킵: \(url.absoluteString)")
+                }
+
+                updatePageTitle(for: url, title: title)
+                if stateModel?.isLoading == true {
+                    dbg("⌛ SPA pop - 복원 로딩 진행 중, 완료는 didFinish 대기")
+                } else {
+                    isBackForwardNavigating = false
+                    stateModel?.triggerNavigationFinished()
+                    dbg("✅ SPA pop 복원 완료 (네트워크 로드 없음)")
+                }
                 return
             }
 
