@@ -400,6 +400,11 @@ enum TabPersistenceManager {
                 tab.stateModel.tabID = tab.id
                 debugMessages.append("저장 전 정렬: \(String(tab.id.uuidString.prefix(8)))")
             }
+            // 🎯 interactionState 디스크 저장 (스크롤/페이지 상태 보존)
+            if let webView = tab.stateModel.webView {
+                BFCacheTransitionSystem.shared.saveInteractionState(webView.interactionState, for: tab.id)
+                debugMessages.append("💾 interactionState 저장: 탭 \(String(tab.id.uuidString.prefix(8)))")
+            }
         }
 
         let snapshots = tabs.map { $0.toSnapshot() }
@@ -442,8 +447,14 @@ enum TabPersistenceManager {
                 if WebViewPool.shared.reuseWebView(for: rid) != nil {
                     debugMessages.append("♻️ 웹뷰 재사용됨: \(String(rid.uuidString.prefix(8)))")
                 }
-                
-                return WebTab(restoredID: rid, pageRecords: pageRecords, currentIndex: idx)
+
+                let tab = WebTab(restoredID: rid, pageRecords: pageRecords, currentIndex: idx)
+                // 🎯 interactionState 로드 → makeUIView에서 적용
+                if let interactionData = BFCacheTransitionSystem.shared.loadInteractionState(for: rid) {
+                    tab.stateModel.pendingInteractionStateData = interactionData
+                    debugMessages.append("📥 interactionState 로드: 탭 \(String(rid.uuidString.prefix(8)))")
+                }
+                return tab
             }
             
             let restoredCounts = tabs.map { "\($0.historyURLs.count)페이지" }

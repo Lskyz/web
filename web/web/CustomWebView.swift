@@ -120,8 +120,13 @@ struct CustomWebView: UIViewRepresentable {
         // ✨ 로딩 상태 동기화를 위한 KVO 옵저버 추가
         context.coordinator.setupLoadingObservers(for: finalWebView)
 
-        // 초기 로드
-        if let url = stateModel.currentURL {
+        // 🎯 초기 로드: interactionState 우선, 없으면 URL 로드
+        if let tabID = stateModel.tabID,
+           let interactionData = stateModel.pendingInteractionStateData ?? BFCacheTransitionSystem.shared.loadInteractionState(for: tabID) {
+            finalWebView.interactionState = interactionData
+            stateModel.pendingInteractionStateData = nil
+            TabPersistenceManager.debugMessages.append("🔄 interactionState 복원: 탭 \(String(tabID.uuidString.prefix(8)))")
+        } else if let url = stateModel.currentURL {
             finalWebView.load(URLRequest(url: url))
         } else {
             finalWebView.load(URLRequest(url: URL(string: "about:blank")!))

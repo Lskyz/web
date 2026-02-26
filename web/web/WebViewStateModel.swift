@@ -34,17 +34,20 @@ final class WebViewStateModel: NSObject, ObservableObject {
     
     let navigationDidFinish = PassthroughSubject<Void, Never>()
 
+    // 🎯 interactionState 기반 세션 복원용 임시 저장소
+    var pendingInteractionStateData: Data?
+
     @Published var currentURL: URL? {
         didSet {
             guard let url = currentURL else { return }
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
 
-            // ✅ 웹뷰 로드 조건 단순화
-            let shouldLoad = url != oldValue && 
-                           !dataModel.restoreState.isActive &&
+            // ✅ 뒤로/앞으로(isBackForwardNavigating) 또는 내부 플래그 중에는 로드하지 않음
+            let shouldLoad = url != oldValue &&
+                           !dataModel.isBackForwardNavigating &&
                            !isNavigatingFromWebView
-            
+
             if shouldLoad {
                 if let webView = webView {
                     webView.load(URLRequest(url: url))
@@ -276,25 +279,20 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     func restoreSession(_ session: WebViewSession) {
         dbg("🔄 === 세션 복원 시작 ===")
-        
+
         dataModel.restoreSession(session)
-        
+
         if let currentRecord = dataModel.currentPageRecord {
             isNavigatingFromWebView = true
             currentURL = currentRecord.url
             isNavigatingFromWebView = false
-            
             dbg("🔄 세션 복원: \(dataModel.pageHistory.count)개 페이지, 현재 '\(currentRecord.title)'")
         } else {
             currentURL = nil
             dbg("🔄 세션 복원 실패: 유효한 페이지 없음")
         }
-        
-        if let webView = webView, let url = currentURL {
-            // 🎯 새 URLRequest로 완전히 새로 로드
-            webView.load(URLRequest(url: url))
-        }
-        
+
+        // 🎯 실제 웹뷰 로드는 CustomWebView.makeUIView에서 pendingInteractionStateData 또는 currentURL로 처리
         dataModel.finishSessionRestore()
     }
 
@@ -442,9 +440,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
         // 🎯 네비게이션 상태도 함께 로깅
         let navState = "B:\(dataModel.canGoBack ? "✅" : "❌") F:\(dataModel.canGoForward ? "✅" : "❌")"
         let flagState = isNavigatingFromWebView ? "[🚩FLAG]" : ""
-        let restoreState = dataModel.restoreState.isActive ? "[\(dataModel.restoreState)]" : ""
-        let queueState = dataModel.queueCount > 0 ? "[Q:\(dataModel.queueCount)]" : ""
-        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(restoreState)\(queueState) \(msg)")
+        let bfFlag = dataModel.isBackForwardNavigating ? "[BF]" : ""
+        TabPersistenceManager.debugMessages.append("[\(ts())][\(id)][\(navState)]\(flagState)\(bfFlag) \(msg)")
     }
     
     // MARK: - 메모리 정리

@@ -892,28 +892,10 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     private func tryBrowserBlockingBFCacheRestore(stateModel: WebViewStateModel, direction: NavigationDirection, completion: @escaping (Bool) -> Void) {
-        guard let webView = stateModel.webView,
-              let currentRecord = stateModel.dataModel.currentPageRecord else {
-            completion(false)
-            return
-        }
-        
-        if let snapshot = retrieveSnapshot(for: currentRecord.id) {
-            snapshot.restore(to: webView) { [weak self] success in
-                if success {
-                    self?.dbg("✅ BFCache 복원 성공")
-                } else {
-                    self?.dbg("⚠️ BFCache 복원 실패")
-                }
-                completion(success)
-            }
-        } else {
-            dbg("❌ BFCache 미스")
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                completion(false)
-            }
-        }
+        // webView.goBack()/goForward()가 WebKit BFCache로 스크롤 자동 복원
+        // 여기서는 즉시 완료 통보만
+        dbg("✅ interactionState 기반 복원 - WebKit 자동 처리")
+        completion(true)
     }
     
     private func cancelGestureTransition(tabID: UUID) {
@@ -974,11 +956,11 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
-        if stateModel.dataModel.isHistoryNavigationActive() {
-            TabPersistenceManager.debugMessages.append("🤫 복원 중 스와이프 무시")
+        if stateModel.dataModel.isBackForwardNavigating {
+            TabPersistenceManager.debugMessages.append("🤫 뒤로/앞으로 중 스와이프 무시")
             return
         }
-        
+
         stateModel.dataModel.addNewPage(url: url, title: "")
         stateModel.syncCurrentURL(url)
         TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지 추가")
@@ -1030,6 +1012,39 @@ extension BFCacheTransitionSystem {
     
     static func goForward(stateModel: WebViewStateModel) {
         shared.navigateForward(stateModel: stateModel)
+    }
+}
+
+// MARK: - interactionState 디스크 저장 (탭 세션 복원용)
+extension BFCacheTransitionSystem {
+
+    private var interactionStateDirectory: URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        return caches.appendingPathComponent("\(bundleID)/webview-interaction", isDirectory: true)
+    }
+
+    func saveInteractionState(_ state: Any?, for tabID: UUID) {
+        guard let data = state as? Data,
+              let dir = interactionStateDirectory else { return }
+        createDirectoryIfNeeded(at: dir)
+        let fileURL = dir.appendingPathComponent(tabID.uuidString)
+        try? data.write(to: fileURL, options: .atomic)
+        dbg("💾 interactionState 저장: 탭 \(String(tabID.uuidString.prefix(8)))")
+    }
+
+    func loadInteractionState(for tabID: UUID) -> Data? {
+        guard let dir = interactionStateDirectory else { return nil }
+        let fileURL = dir.appendingPathComponent(tabID.uuidString)
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        dbg("💾 interactionState 로드: 탭 \(String(tabID.uuidString.prefix(8)))")
+        return data
+    }
+
+    func removeInteractionState(for tabID: UUID) {
+        guard let dir = interactionStateDirectory else { return }
+        let fileURL = dir.appendingPathComponent(tabID.uuidString)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 }
 
