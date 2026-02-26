@@ -66,6 +66,7 @@ struct CustomWebView: UIViewRepresentable {
             controller.add(context.coordinator, name: "setZoom")
             controller.add(context.coordinator, name: "spaNavigation")
             controller.add(context.coordinator, name: "saveImage")
+            controller.add(context.coordinator, name: "scrollDebug")
             config.userContentController = controller
 
             // WKWebView 생성
@@ -246,6 +247,7 @@ struct CustomWebView: UIViewRepresentable {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "saveImage")
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "scrollDebug")
 
         // 모든 옵저버 제거
         NotificationCenter.default.removeObserver(coordinator)
@@ -418,6 +420,27 @@ struct CustomWebView: UIViewRepresentable {
                             siteType: siteType
                         )
                     }
+                }
+            } else if message.name == "scrollDebug" {
+                if let data = message.body as? [String: Any] {
+                    let event = data["event"] as? String ?? "unknown"
+                    let url = data["url"] as? String ?? (self.webView?.url?.absoluteString ?? "nil")
+                    let y = data["y"] as? Double
+                    let targetY = data["targetY"] as? Double
+                    let stack = data["stack"] as? String ?? ""
+                    let details = data["details"] as? String ?? ""
+
+                    var parts: [String] = ["[SCROLLDBG] \(event)", "url=\(url)"]
+                    if let y = y { parts.append("y=\(String(format: "%.1f", y))") }
+                    if let targetY = targetY { parts.append("targetY=\(String(format: "%.1f", targetY))") }
+                    if !details.isEmpty { parts.append(details) }
+                    TabPersistenceManager.debugMessages.append(parts.joined(separator: " | "))
+
+                    if !stack.isEmpty {
+                        TabPersistenceManager.debugMessages.append("[SCROLLDBG] stack: \(stack)")
+                    }
+                } else if let text = message.body as? String {
+                    TabPersistenceManager.debugMessages.append("[SCROLLDBG] \(text)")
                 }
             } else if message.name == "saveImage" {
                 if let data = message.body as? [String: Any],

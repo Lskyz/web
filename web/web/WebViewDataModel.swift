@@ -653,6 +653,100 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
 
+            // ===== 스크롤 점프 원인 추적 =====
+            const SCROLL_TRACE_WINDOW_MS = 1200;
+            const TOP_Y_THRESHOLD = 2;
+            let scrollTraceUntil = 0;
+            let lastObservedScrollY = window.pageYOffset || 0;
+            let topJumpLogCount = 0;
+            let scrollTraceHooksInstalled = false;
+
+            function currentScrollY() {
+                return window.pageYOffset ||
+                       document.documentElement.scrollTop ||
+                       document.body.scrollTop ||
+                       0;
+            }
+
+            function toFiniteNumber(v) {
+                const n = Number(v);
+                return Number.isFinite(n) ? n : null;
+            }
+
+            function parseTargetY(args) {
+                if (!args || args.length === 0) return null;
+                if (typeof args[0] === 'object' && args[0] !== null) {
+                    return toFiniteNumber(args[0].top);
+                }
+                return toFiniteNumber(args[1]);
+            }
+
+            function captureShortStack() {
+                try {
+                    const stack = (new Error().stack || '').split('\\n').slice(1, 5).join(' | ');
+                    return stack;
+                } catch (_) {
+                    return '';
+                }
+            }
+
+            function sendScrollDebug(event, payload) {
+                try {
+                    if (!window.webkit?.messageHandlers?.scrollDebug) return;
+                    window.webkit.messageHandlers.scrollDebug.postMessage(Object.assign({
+                        event: event,
+                        url: window.location.href,
+                        y: currentScrollY(),
+                        ts: Date.now()
+                    }, payload || {}));
+                } catch (_) {}
+            }
+
+            function installScrollTraceHooks() {
+                if (scrollTraceHooksInstalled) return;
+                scrollTraceHooksInstalled = true;
+
+                const originalWindowScrollTo = window.scrollTo.bind(window);
+                const originalWindowScroll = (window.scroll || window.scrollTo).bind(window);
+
+                window.scrollTo = function(...args) {
+                    const targetY = parseTargetY(args);
+                    if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
+                        topJumpLogCount += 1;
+                        sendScrollDebug('scrollTo_top_call', {
+                            targetY: targetY,
+                            details: 'window.scrollTo top-detect',
+                            stack: captureShortStack()
+                        });
+                    }
+                    return originalWindowScrollTo(...args);
+                };
+
+                window.scroll = function(...args) {
+                    const targetY = parseTargetY(args);
+                    if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
+                        topJumpLogCount += 1;
+                        sendScrollDebug('scroll_top_call', {
+                            targetY: targetY,
+                            details: 'window.scroll top-detect',
+                            stack: captureShortStack()
+                        });
+                    }
+                    return originalWindowScroll(...args);
+                };
+
+                window.addEventListener('scroll', function() {
+                    const y = currentScrollY();
+                    if (Date.now() <= scrollTraceUntil && lastObservedScrollY > 40 && y <= TOP_Y_THRESHOLD && topJumpLogCount < 12) {
+                        topJumpLogCount += 1;
+                        sendScrollDebug('top_jump_observed', {
+                            details: `from=${Math.round(lastObservedScrollY)} to=${Math.round(y)}`
+                        });
+                    }
+                    lastObservedScrollY = y;
+                }, { passive: true });
+            }
+
             // 🏠 **홈(로고) 클릭 식별 리스너**
             document.addEventListener('click', (e) => {
                 const a = e.target.closest && e.target.closest('a[href="/"], a[data-home], a[role="home"]');
@@ -840,7 +934,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
 
             // ===== popstate / hashchange 감지 =====
-            window.addEventListener('popstate', () => handleUrlChange('pop', window.location.href, document.title, history.state));
+            installScrollTraceHooks();
+            window.addEventListener('popstate', () => {
+                scrollTraceUntil = Date.now() + SCROLL_TRACE_WINDOW_MS;
+                topJumpLogCount = 0;
+                sendScrollDebug('popstate_start', { details: 'trace window opened' });
+                setTimeout(() => sendScrollDebug('popstate_probe_120ms'), 120);
+                setTimeout(() => sendScrollDebug('popstate_probe_320ms'), 320);
+                setTimeout(() => sendScrollDebug('popstate_probe_700ms'), 700);
+                handleUrlChange('pop', window.location.href, document.title, history.state);
+            });
             window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
 
             // ===== 🎯 **범용 SPA 네비게이션 감지 시스템** =====
