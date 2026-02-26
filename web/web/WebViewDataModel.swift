@@ -653,13 +653,28 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return EXCLUDE_PATTERNS.some(pattern => pattern.test(url));
             }
 
+            function enforceManualScrollRestoration() {
+                try {
+                    if ('scrollRestoration' in history && history.scrollRestoration !== 'manual') {
+                        history.scrollRestoration = 'manual';
+                    }
+                } catch (_) {}
+            }
+
+            enforceManualScrollRestoration();
+
             // ===== 스크롤 점프 원인 추적 =====
             const SCROLL_TRACE_WINDOW_MS = 1200;
             const TOP_Y_THRESHOLD = 2;
+            const POP_TOP_BLOCK_WINDOW_MS = 700;
+            const POP_TOP_BLOCK_MIN_BASE_Y = 60;
             let scrollTraceUntil = 0;
             let lastObservedScrollY = window.pageYOffset || 0;
             let topJumpLogCount = 0;
             let scrollTraceHooksInstalled = false;
+            let popTopBlockUntil = 0;
+            let popTopBlockBaseY = 0;
+            let popTopBlockCount = 0;
 
             function currentScrollY() {
                 return window.pageYOffset ||
@@ -702,6 +717,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 } catch (_) {}
             }
 
+            function shouldBlockTopJump(targetY) {
+                if (!Number.isFinite(targetY)) return false;
+                if (targetY > TOP_Y_THRESHOLD) return false;
+                if (Date.now() > popTopBlockUntil) return false;
+                if (popTopBlockBaseY <= POP_TOP_BLOCK_MIN_BASE_Y) return false;
+                if (popTopBlockCount >= 12) return false;
+                return true;
+            }
+
             function installScrollTraceHooks() {
                 if (scrollTraceHooksInstalled) return;
                 scrollTraceHooksInstalled = true;
@@ -711,6 +735,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 window.scrollTo = function(...args) {
                     const targetY = parseTargetY(args);
+                    if (shouldBlockTopJump(targetY)) {
+                        popTopBlockCount += 1;
+                        sendScrollDebug('scrollTo_top_blocked', {
+                            targetY: targetY,
+                            details: `baseY=${Math.round(popTopBlockBaseY)}`,
+                            stack: captureShortStack()
+                        });
+                        return;
+                    }
                     if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
                         topJumpLogCount += 1;
                         sendScrollDebug('scrollTo_top_call', {
@@ -724,6 +757,15 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 window.scroll = function(...args) {
                     const targetY = parseTargetY(args);
+                    if (shouldBlockTopJump(targetY)) {
+                        popTopBlockCount += 1;
+                        sendScrollDebug('scroll_top_blocked', {
+                            targetY: targetY,
+                            details: `baseY=${Math.round(popTopBlockBaseY)}`,
+                            stack: captureShortStack()
+                        });
+                        return;
+                    }
                     if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
                         topJumpLogCount += 1;
                         sendScrollDebug('scroll_top_call', {
@@ -936,8 +978,12 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // ===== popstate / hashchange 감지 =====
             installScrollTraceHooks();
             window.addEventListener('popstate', () => {
+                enforceManualScrollRestoration();
                 scrollTraceUntil = Date.now() + SCROLL_TRACE_WINDOW_MS;
                 topJumpLogCount = 0;
+                popTopBlockBaseY = currentScrollY();
+                popTopBlockUntil = Date.now() + POP_TOP_BLOCK_WINDOW_MS;
+                popTopBlockCount = 0;
                 sendScrollDebug('popstate_start', { details: 'trace window opened' });
                 setTimeout(() => sendScrollDebug('popstate_probe_120ms'), 120);
                 setTimeout(() => sendScrollDebug('popstate_probe_320ms'), 320);
