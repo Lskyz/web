@@ -654,13 +654,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             }
 
             // ===== 스크롤 점프 원인 추적/차단 =====
-            const SCROLL_TRACE_WINDOW_MS = 1200;
             const TOP_Y_THRESHOLD = 2;
             const PROTECT_TRIGGER_Y = 50;
-            const PROTECT_MS = 400;
-            let scrollTraceUntil = 0;
-            let lastObservedScrollY = window.pageYOffset || 0;
-            let topJumpLogCount = 0;
+            const PROTECT_MS = 260;
             let scrollTraceHooksInstalled = false;
             let protectUntil = 0;
             let protectStartY = 0;
@@ -695,27 +691,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return toFiniteNumber(args[1]);
             }
 
-            function captureShortStack() {
-                try {
-                    const stack = (new Error().stack || '').split('\\n').slice(1, 5).join(' | ');
-                    return stack;
-                } catch (_) {
-                    return '';
-                }
-            }
-
-            function sendScrollDebug(event, payload) {
-                try {
-                    if (!window.webkit?.messageHandlers?.scrollDebug) return;
-                    window.webkit.messageHandlers.scrollDebug.postMessage(Object.assign({
-                        event: event,
-                        url: window.location.href,
-                        y: currentScrollY(),
-                        ts: Date.now()
-                    }, payload || {}));
-                } catch (_) {}
-            }
-
             function isRootScroller(el) {
                 return el === document.scrollingElement
                     || el === document.documentElement
@@ -739,7 +714,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 protectUntil = Date.now() + PROTECT_MS;
                 protectBlockCount = 0;
                 pendingRestoreY = Math.max(pendingRestoreY, y);
-                pendingRestoreUntil = Date.now() + 1200;
+                pendingRestoreUntil = Date.now() + 700;
 
                 if (sourceEl && isScrollableElement(sourceEl)) {
                     const elementY = Math.max(getElementScrollY(sourceEl), y);
@@ -750,10 +725,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     pendingRestoreElementY = Math.max(pendingRestoreElementY, lastActiveScrollableY);
                 }
 
-                sendScrollDebug('protect_start', {
-                    targetY: y,
-                    details: `source=${source}|startY=${Math.round(protectStartY)}|elemY=${Math.round(pendingRestoreElementY)}`
-                });
             }
 
             function isProtecting() {
@@ -807,10 +778,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                                 pendingRestoreElement.scrollTop = elementTargetY;
                             }
                         }
-                        sendScrollDebug('restore_reapply', {
-                            targetY: rootTargetY,
-                            details: `reason=${reason}|elemY=${Math.round(elementTargetY)}`
-                        });
                     } catch (_) {
                         if (rootTargetY > PROTECT_TRIGGER_Y) {
                             originalWindowScrollTo(0, rootTargetY);
@@ -823,7 +790,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 function scheduleRestoreRetry() {
                     if (restoreTaskActive) return;
                     restoreTaskActive = true;
-                    const attempts = [90, 220, 420];
+                    const attempts = [24, 72, 160, 280];
                     attempts.forEach((delay, idx) => {
                         setTimeout(() => {
                             if (Date.now() > pendingRestoreUntil) return;
@@ -839,7 +806,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     });
                     setTimeout(() => {
                         restoreTaskActive = false;
-                    }, 500);
+                    }, 360);
                 }
 
                 window.scrollTo = function(...args) {
@@ -850,20 +817,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                     if (shouldBlockTopJump(targetY)) {
                         protectBlockCount += 1;
-                        sendScrollDebug('scrollTo_top_blocked', {
-                            targetY: targetY,
-                            details: `startY=${Math.round(protectStartY)}`,
-                            stack: captureShortStack()
-                        });
                         return;
-                    }
-                    if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
-                        topJumpLogCount += 1;
-                        sendScrollDebug('scrollTo_top_call', {
-                            targetY: targetY,
-                            details: 'window.scrollTo top-detect',
-                            stack: captureShortStack()
-                        });
                     }
                     return originalWindowScrollTo(...args);
                 };
@@ -876,20 +830,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                     if (shouldBlockTopJump(targetY)) {
                         protectBlockCount += 1;
-                        sendScrollDebug('scroll_top_blocked', {
-                            targetY: targetY,
-                            details: `startY=${Math.round(protectStartY)}`,
-                            stack: captureShortStack()
-                        });
                         return;
-                    }
-                    if (Date.now() <= scrollTraceUntil && targetY !== null && targetY <= TOP_Y_THRESHOLD && topJumpLogCount < 8) {
-                        topJumpLogCount += 1;
-                        sendScrollDebug('scroll_top_call', {
-                            targetY: targetY,
-                            details: 'window.scroll top-detect',
-                            stack: captureShortStack()
-                        });
                     }
                     return originalWindowScroll(...args);
                 };
@@ -904,11 +845,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                             }
                             if (shouldBlockTopJumpOnElement(this, targetY)) {
                                 protectBlockCount += 1;
-                                sendScrollDebug('element_scrollTo_top_blocked', {
-                                    targetY: targetY,
-                                    details: `startY=${Math.round(protectStartY)}`,
-                                    stack: captureShortStack()
-                                });
                                 return;
                             }
                         }
@@ -939,11 +875,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                                 }
                                 if (shouldBlockTopJumpOnElement(this, targetY)) {
                                     protectBlockCount += 1;
-                                    sendScrollDebug('element_scrollTop_top_blocked', {
-                                        targetY: targetY,
-                                        details: `startY=${Math.round(protectStartY)}|hook=${reason}`,
-                                        stack: captureShortStack()
-                                    });
                                     return;
                                 }
                                 scrollTopDesc.set.call(this, v);
@@ -972,17 +903,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     }
                 }, { capture: true, passive: true });
 
-                window.addEventListener('scroll', function() {
-                    const y = currentScrollY();
-                    if (Date.now() <= scrollTraceUntil && lastObservedScrollY > 40 && y <= TOP_Y_THRESHOLD && topJumpLogCount < 12) {
-                        topJumpLogCount += 1;
-                        sendScrollDebug('top_jump_observed', {
-                            details: `from=${Math.round(lastObservedScrollY)} to=${Math.round(y)}`
-                        });
-                    }
-
-                    lastObservedScrollY = currentScrollY();
-                }, { passive: true });
             }
 
             // 🏠 **홈(로고) 클릭 식별 리스너**
@@ -1174,12 +1094,6 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             // ===== popstate / hashchange 감지 =====
             installScrollTraceHooks();
             window.addEventListener('popstate', () => {
-                scrollTraceUntil = Date.now() + SCROLL_TRACE_WINDOW_MS;
-                topJumpLogCount = 0;
-                sendScrollDebug('popstate_start', { details: `trace window opened|protecting=${isProtecting()}` });
-                setTimeout(() => sendScrollDebug('popstate_probe_120ms'), 120);
-                setTimeout(() => sendScrollDebug('popstate_probe_320ms'), 320);
-                setTimeout(() => sendScrollDebug('popstate_probe_700ms'), 700);
                 handleUrlChange('pop', window.location.href, document.title, history.state);
             });
             window.addEventListener('hashchange', () => handleUrlChange('hash', window.location.href, document.title, history.state));
