@@ -675,6 +675,10 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let protectUntil = 0;
             let protectStartY = 0;
             let protectBlockCount = 0;
+            let pendingRestoreY = 0;
+            let pendingRestoreUntil = 0;
+            let restoreTaskActive = false;
+            let isInternalRestoreApply = false;
 
             function currentScrollY() {
                 return window.pageYOffset ||
@@ -728,6 +732,8 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 protectStartY = Math.max(currentScrollY(), y, protectStartY);
                 protectUntil = Date.now() + PROTECT_MS;
                 protectBlockCount = 0;
+                pendingRestoreY = Math.max(pendingRestoreY, y);
+                pendingRestoreUntil = Date.now() + 1200;
                 sendScrollDebug('protect_start', {
                     targetY: y,
                     details: `source=${source}|startY=${Math.round(protectStartY)}`
@@ -752,11 +758,52 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 const originalWindowScrollTo = window.scrollTo.bind(window);
                 const originalWindowScroll = (window.scroll || window.scrollTo).bind(window);
+                const originalElementScrollTo = Element.prototype.scrollTo;
+
+                function applyRestoreScroll(targetY, reason) {
+                    if (!Number.isFinite(targetY) || targetY <= PROTECT_TRIGGER_Y) return;
+                    isInternalRestoreApply = true;
+                    try {
+                        const root = document.scrollingElement || document.documentElement || document.body;
+                        if (root && typeof originalElementScrollTo === 'function') {
+                            originalElementScrollTo.call(root, 0, targetY);
+                        } else {
+                            originalWindowScrollTo(0, targetY);
+                        }
+                        sendScrollDebug('restore_reapply', {
+                            targetY: targetY,
+                            details: `reason=${reason}`
+                        });
+                    } catch (_) {
+                        originalWindowScrollTo(0, targetY);
+                    } finally {
+                        requestAnimationFrame(() => { isInternalRestoreApply = false; });
+                    }
+                }
+
+                function scheduleRestoreRetry() {
+                    if (restoreTaskActive) return;
+                    restoreTaskActive = true;
+                    const attempts = [90, 220, 420];
+                    attempts.forEach((delay, idx) => {
+                        setTimeout(() => {
+                            if (Date.now() > pendingRestoreUntil) return;
+                            const y = currentScrollY();
+                            if (y <= TOP_Y_THRESHOLD && pendingRestoreY > PROTECT_TRIGGER_Y) {
+                                applyRestoreScroll(pendingRestoreY, `retry_${idx + 1}_${delay}ms`);
+                            }
+                        }, delay);
+                    });
+                    setTimeout(() => {
+                        restoreTaskActive = false;
+                    }, 500);
+                }
 
                 window.scrollTo = function(...args) {
                     const targetY = parseTargetY(args);
-                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                    if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
                         startProtect(targetY, 'window.scrollTo');
+                        scheduleRestoreRetry();
                     }
                     if (shouldBlockTopJump(targetY)) {
                         protectBlockCount += 1;
@@ -780,8 +827,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 window.scroll = function(...args) {
                     const targetY = parseTargetY(args);
-                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                    if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
                         startProtect(targetY, 'window.scroll');
+                        scheduleRestoreRetry();
                     }
                     if (shouldBlockTopJump(targetY)) {
                         protectBlockCount += 1;
@@ -803,13 +851,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     return originalWindowScroll(...args);
                 };
 
-                const originalElementScrollTo = Element.prototype.scrollTo;
                 if (typeof originalElementScrollTo === 'function') {
                     Element.prototype.scrollTo = function(...args) {
                         if (isRootScroller(this)) {
                             const targetY = parseTargetY(args);
-                            if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                            if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
                                 startProtect(targetY, 'element.scrollTo');
+                                scheduleRestoreRetry();
                             }
                             if (shouldBlockTopJump(targetY)) {
                                 protectBlockCount += 1;
@@ -841,8 +889,9 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                                 },
                                 set: function(v) {
                                     const targetY = toFiniteNumber(v);
-                                    if (targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                                    if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
                                         startProtect(targetY, 'root.scrollTop');
+                                        scheduleRestoreRetry();
                                     }
                                     if (shouldBlockTopJump(targetY)) {
                                         protectBlockCount += 1;
