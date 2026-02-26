@@ -679,6 +679,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             let pendingRestoreUntil = 0;
             let restoreTaskActive = false;
             let isInternalRestoreApply = false;
+            let pendingRestoreElement = null;
+            let pendingRestoreElementY = 0;
+            let lastActiveScrollableElement = null;
+            let lastActiveScrollableY = 0;
+            let lastActiveScrollableAt = 0;
 
             function currentScrollY() {
                 return window.pageYOffset ||
@@ -727,16 +732,37 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     || el === document.body;
             }
 
-            function startProtect(triggerY, source) {
+            function isScrollableElement(el) {
+                if (!el || !(el instanceof Element)) return false;
+                const h = (el.scrollHeight || 0) - (el.clientHeight || 0);
+                return h > 40;
+            }
+
+            function getElementScrollY(el) {
+                if (!el || !(el instanceof Element)) return 0;
+                return toFiniteNumber(el.scrollTop) || 0;
+            }
+
+            function startProtect(triggerY, source, sourceEl) {
                 const y = Number.isFinite(triggerY) ? triggerY : currentScrollY();
                 protectStartY = Math.max(currentScrollY(), y, protectStartY);
                 protectUntil = Date.now() + PROTECT_MS;
                 protectBlockCount = 0;
                 pendingRestoreY = Math.max(pendingRestoreY, y);
                 pendingRestoreUntil = Date.now() + 1200;
+
+                if (sourceEl && isScrollableElement(sourceEl)) {
+                    const elementY = Math.max(getElementScrollY(sourceEl), y);
+                    pendingRestoreElement = sourceEl;
+                    pendingRestoreElementY = Math.max(pendingRestoreElementY, elementY);
+                } else if (lastActiveScrollableElement && Date.now() - lastActiveScrollableAt < 1500) {
+                    pendingRestoreElement = lastActiveScrollableElement;
+                    pendingRestoreElementY = Math.max(pendingRestoreElementY, lastActiveScrollableY);
+                }
+
                 sendScrollDebug('protect_start', {
                     targetY: y,
-                    details: `source=${source}|startY=${Math.round(protectStartY)}`
+                    details: `source=${source}|startY=${Math.round(protectStartY)}|elemY=${Math.round(pendingRestoreElementY)}`
                 });
             }
 
@@ -752,6 +778,14 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 return true;
             }
 
+            function shouldBlockTopJumpOnElement(el, targetY) {
+                if (!shouldBlockTopJump(targetY)) return false;
+                if (isRootScroller(el)) return true;
+                if (pendingRestoreElement && el === pendingRestoreElement) return true;
+                if (lastActiveScrollableElement && el === lastActiveScrollableElement) return true;
+                return false;
+            }
+
             function installScrollTraceHooks() {
                 if (scrollTraceHooksInstalled) return;
                 scrollTraceHooksInstalled = true;
@@ -759,23 +793,38 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 const originalWindowScrollTo = window.scrollTo.bind(window);
                 const originalWindowScroll = (window.scroll || window.scrollTo).bind(window);
                 const originalElementScrollTo = Element.prototype.scrollTo;
+                const patchedElementScrollTop = new WeakSet();
 
                 function applyRestoreScroll(targetY, reason) {
-                    if (!Number.isFinite(targetY) || targetY <= PROTECT_TRIGGER_Y) return;
+                    const rootTargetY = Number.isFinite(targetY) ? targetY : 0;
+                    const elementTargetY = Number.isFinite(pendingRestoreElementY) ? pendingRestoreElementY : 0;
+                    if (rootTargetY <= PROTECT_TRIGGER_Y && elementTargetY <= PROTECT_TRIGGER_Y) return;
                     isInternalRestoreApply = true;
                     try {
                         const root = document.scrollingElement || document.documentElement || document.body;
-                        if (root && typeof originalElementScrollTo === 'function') {
-                            originalElementScrollTo.call(root, 0, targetY);
-                        } else {
-                            originalWindowScrollTo(0, targetY);
+                        if (rootTargetY > PROTECT_TRIGGER_Y) {
+                            if (root && typeof originalElementScrollTo === 'function') {
+                                originalElementScrollTo.call(root, 0, rootTargetY);
+                            } else {
+                                originalWindowScrollTo(0, rootTargetY);
+                            }
+                        }
+
+                        if (pendingRestoreElement && isScrollableElement(pendingRestoreElement) && elementTargetY > PROTECT_TRIGGER_Y) {
+                            if (typeof originalElementScrollTo === 'function') {
+                                originalElementScrollTo.call(pendingRestoreElement, 0, elementTargetY);
+                            } else {
+                                pendingRestoreElement.scrollTop = elementTargetY;
+                            }
                         }
                         sendScrollDebug('restore_reapply', {
-                            targetY: targetY,
-                            details: `reason=${reason}`
+                            targetY: rootTargetY,
+                            details: `reason=${reason}|elemY=${Math.round(elementTargetY)}`
                         });
                     } catch (_) {
-                        originalWindowScrollTo(0, targetY);
+                        if (rootTargetY > PROTECT_TRIGGER_Y) {
+                            originalWindowScrollTo(0, rootTargetY);
+                        }
                     } finally {
                         requestAnimationFrame(() => { isInternalRestoreApply = false; });
                     }
@@ -789,7 +838,11 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                         setTimeout(() => {
                             if (Date.now() > pendingRestoreUntil) return;
                             const y = currentScrollY();
-                            if (y <= TOP_Y_THRESHOLD && pendingRestoreY > PROTECT_TRIGGER_Y) {
+                            const elementY = pendingRestoreElement ? getElementScrollY(pendingRestoreElement) : 0;
+                            const needRootRestore = y <= TOP_Y_THRESHOLD && pendingRestoreY > PROTECT_TRIGGER_Y;
+                            const needElementRestore = pendingRestoreElement && elementY <= TOP_Y_THRESHOLD && pendingRestoreElementY > PROTECT_TRIGGER_Y;
+
+                            if (needRootRestore || needElementRestore) {
                                 applyRestoreScroll(pendingRestoreY, `retry_${idx + 1}_${delay}ms`);
                             }
                         }, delay);
@@ -802,7 +855,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 window.scrollTo = function(...args) {
                     const targetY = parseTargetY(args);
                     if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
-                        startProtect(targetY, 'window.scrollTo');
+                        startProtect(targetY, 'window.scrollTo', null);
                         scheduleRestoreRetry();
                     }
                     if (shouldBlockTopJump(targetY)) {
@@ -828,7 +881,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                 window.scroll = function(...args) {
                     const targetY = parseTargetY(args);
                     if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
-                        startProtect(targetY, 'window.scroll');
+                        startProtect(targetY, 'window.scroll', null);
                         scheduleRestoreRetry();
                     }
                     if (shouldBlockTopJump(targetY)) {
@@ -853,13 +906,13 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
 
                 if (typeof originalElementScrollTo === 'function') {
                     Element.prototype.scrollTo = function(...args) {
-                        if (isRootScroller(this)) {
+                        if (isRootScroller(this) || isScrollableElement(this)) {
                             const targetY = parseTargetY(args);
                             if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
-                                startProtect(targetY, 'element.scrollTo');
+                                startProtect(targetY, 'element.scrollTo', this);
                                 scheduleRestoreRetry();
                             }
-                            if (shouldBlockTopJump(targetY)) {
+                            if (shouldBlockTopJumpOnElement(this, targetY)) {
                                 protectBlockCount += 1;
                                 sendScrollDebug('element_scrollTo_top_blocked', {
                                     targetY: targetY,
@@ -879,35 +932,55 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
                     .filter(Boolean)
                     .filter((el, idx, arr) => arr.indexOf(el) === idx);
 
+                function patchScrollTopForElement(el, reason) {
+                    if (!el || !isScrollableElement(el) || patchedElementScrollTop.has(el)) return;
+                    if (!scrollTopDesc || !scrollTopDesc.get || !scrollTopDesc.set) return;
+                    try {
+                        Object.defineProperty(el, 'scrollTop', {
+                            configurable: true,
+                            get: function() {
+                                return scrollTopDesc.get.call(this);
+                            },
+                            set: function(v) {
+                                const targetY = toFiniteNumber(v);
+                                if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
+                                    startProtect(targetY, 'element.scrollTop', this);
+                                    scheduleRestoreRetry();
+                                }
+                                if (shouldBlockTopJumpOnElement(this, targetY)) {
+                                    protectBlockCount += 1;
+                                    sendScrollDebug('element_scrollTop_top_blocked', {
+                                        targetY: targetY,
+                                        details: `startY=${Math.round(protectStartY)}|hook=${reason}`,
+                                        stack: captureShortStack()
+                                    });
+                                    return;
+                                }
+                                scrollTopDesc.set.call(this, v);
+                            }
+                        });
+                        patchedElementScrollTop.add(el);
+                    } catch (_) {}
+                }
+
                 if (scrollTopDesc && scrollTopDesc.get && scrollTopDesc.set) {
                     rootCandidates.forEach((el) => {
-                        try {
-                            Object.defineProperty(el, 'scrollTop', {
-                                configurable: true,
-                                get: function() {
-                                    return scrollTopDesc.get.call(this);
-                                },
-                                set: function(v) {
-                                    const targetY = toFiniteNumber(v);
-                                    if (!isInternalRestoreApply && targetY !== null && targetY > PROTECT_TRIGGER_Y) {
-                                        startProtect(targetY, 'root.scrollTop');
-                                        scheduleRestoreRetry();
-                                    }
-                                    if (shouldBlockTopJump(targetY)) {
-                                        protectBlockCount += 1;
-                                        sendScrollDebug('scrollTop_top_blocked', {
-                                            targetY: targetY,
-                                            details: `startY=${Math.round(protectStartY)}`,
-                                            stack: captureShortStack()
-                                        });
-                                        return;
-                                    }
-                                    scrollTopDesc.set.call(this, v);
-                                }
-                            });
-                        } catch (_) {}
+                        patchScrollTopForElement(el, 'root');
                     });
                 }
+
+                document.addEventListener('scroll', function(event) {
+                    const target = event && event.target;
+                    if (target && target instanceof Element && isScrollableElement(target)) {
+                        const y = getElementScrollY(target);
+                        if (y > PROTECT_TRIGGER_Y) {
+                            lastActiveScrollableElement = target;
+                            lastActiveScrollableY = y;
+                            lastActiveScrollableAt = Date.now();
+                            patchScrollTopForElement(target, 'event');
+                        }
+                    }
+                }, { capture: true, passive: true });
 
                 window.addEventListener('scroll', function() {
                     const y = currentScrollY();
