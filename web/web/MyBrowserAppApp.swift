@@ -1,6 +1,28 @@
 // MyBrowserAppApp.swift
 //  앱 진입점: 탭 배열과 선택된 탭 인덱스를 관리하고, 백그라운드 진입 시 탭 저장
 import SwiftUI
+import UIKit
+
+// MARK: - 낮/밤 아이콘 전환
+private func updateAppIconForTime() {
+    let hour = Calendar.current.component(.hour, from: Date())
+    // 20시(오후 8시) ~ 06시: 밤하늘 아이콘, 그 외: 낮 아이콘
+    let isNight = hour >= 20 || hour < 6
+    let targetIcon: String? = isNight ? "AppIcon-Night" : nil  // nil = 기본(낮) 아이콘
+
+    guard UIApplication.shared.supportsAlternateIcons else { return }
+
+    let currentIcon = UIApplication.shared.alternateIconName
+    guard currentIcon != targetIcon else { return }  // 이미 맞으면 생략
+
+    UIApplication.shared.setAlternateIconName(targetIcon) { error in
+        if let error = error {
+            print("아이콘 전환 실패: \(error.localizedDescription)")
+        } else {
+            print("아이콘 전환 완료: \(isNight ? "밤하늘" : "낮")")
+        }
+    }
+}
 
 @main
 struct MyBrowserAppApp: App {
@@ -40,6 +62,9 @@ struct MyBrowserAppApp: App {
                 TabPersistenceManager.saveTabs(tabs)
                 TabPersistenceManager.debugMessages.append("앱 백그라운드 진입: 탭 저장")
                 // @AppStorage인 selectedTabIndex는 자동 저장됩니다.
+            } else if newPhase == .active {
+                // 🌙 포어그라운드 진입 시 시간에 맞는 아이콘으로 전환
+                updateAppIconForTime()
             }
         }
     }

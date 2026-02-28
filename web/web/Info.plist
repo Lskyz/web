@@ -99,5 +99,22 @@
 	<!-- 🔄 네트워크 연결 허용 -->
 	<key>NSAllowsArbitraryLoadsInWebContent</key>
 	<true/>
+
+	<!-- 🌙 낮/밤 앱 아이콘 전환 설정 (기본 낮 아이콘은 xcassets AppIcon) -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>AppIcon-Night</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array>
+					<string>AppIcon-Night</string>
+				</array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>

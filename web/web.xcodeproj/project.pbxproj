@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		3322308E2E3B73F100EB7526 /* exportOptions.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3322308C2E3B71DB00EB7526 /* exportOptions.plist */; };
 		332230902E3D85B600EB7526 /* web.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 3322308F2E3D85B600EB7526 /* web.mp3 */; };
+		33AA11012F8C000000AA1101 /* AppIcon-Night.png in Resources */ = {isa = PBXBuildFile; fileRef = 33AA11002F8C000000AA1100 /* AppIcon-Night.png */; };
 		332230922E3D88F700EB7526 /* avp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332230912E3D88F700EB7526 /* avp.swift */; };
 		3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */; };
 		3364241E2E3B6D5500A5963D /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3364241D2E3B6D5500A5963D /* ContentView.swift */; };
@@ -49,6 +50,7 @@
 		3322308A2E3B717B00EB7526 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3322308C2E3B71DB00EB7526 /* exportOptions.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = exportOptions.plist; sourceTree = "<group>"; };
 		3322308F2E3D85B600EB7526 /* web.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = web.mp3; sourceTree = "<group>"; };
+		33AA11002F8C000000AA1100 /* AppIcon-Night.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon-Night.png"; sourceTree = "<group>"; };
 		332230912E3D88F700EB7526 /* avp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = avp.swift; sourceTree = "<group>"; };
 		336424182E3B6D5500A5963D /* web.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = web.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3364241B2E3B6D5500A5963D /* WebViewStateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewStateModel.swift; sourceTree = "<group>"; };
@@ -130,6 +132,7 @@
 				33F100132F7B100000A1B2C3 /* BFCacheJS.swift */,
 				3322308A2E3B717B00EB7526 /* Info.plist */,
 				3322308F2E3D85B600EB7526 /* web.mp3 */,
+				33AA11002F8C000000AA1100 /* AppIcon-Night.png */,
 				332230912E3D88F700EB7526 /* avp.swift */,
 				33C8EF7A2E3EFBC100A48206 /* tabview.swift */,
 				33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */,
@@ -254,6 +257,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				332230902E3D85B600EB7526 /* web.mp3 in Resources */,
+				33AA11012F8C000000AA1101 /* AppIcon-Night.png in Resources */,
 				336424232E3B6D5700A5963D /* Preview Assets.xcassets in Resources */,
 				336424202E3B6D5700A5963D /* Assets.xcassets in Resources */,
 			);
