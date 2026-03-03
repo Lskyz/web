@@ -31,6 +31,27 @@ private func updateAppIconForTime(now: Date = Date()) {
     }
 }
 
+private struct AppRootView: View {
+    @Binding var tabs: [WebTab]
+    @Binding var selectedTabIndex: Int
+    @Environment(\.scenePhase) private var scenePhase
+
+    private let iconRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        NavigationStack {
+            ContentView(
+                tabs: $tabs,
+                selectedTabIndex: $selectedTabIndex
+            )
+        }
+        .onReceive(iconRefreshTimer) { now in
+            guard scenePhase == .active else { return }
+            updateAppIconForTime(now: now)
+        }
+    }
+}
+
 @main
 struct MyBrowserAppApp: App {
     // 🌟 앱 재실행 시 마지막 보던 탭 복원
@@ -42,7 +63,6 @@ struct MyBrowserAppApp: App {
 
     // 앱 생명주기 감지 (백그라운드 진입 시 저장)
     @Environment(\.scenePhase) private var scenePhase
-    private let iconRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     init() {
         // AV 오디오 세션 미리 활성화
@@ -56,13 +76,10 @@ struct MyBrowserAppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                // ContentView에 Binding으로 전달
-                ContentView(
-                    tabs: $tabs,
-                    selectedTabIndex: $selectedTabIndex
-                )
-            }
+            AppRootView(
+                tabs: $tabs,
+                selectedTabIndex: $selectedTabIndex
+            )
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
@@ -74,10 +91,6 @@ struct MyBrowserAppApp: App {
                 // 🌙 포어그라운드 진입 시 시간에 맞는 아이콘으로 전환
                 updateAppIconForTime()
             }
-        }
-        .onReceive(iconRefreshTimer) { now in
-            guard scenePhase == .active else { return }
-            updateAppIconForTime(now: now)
         }
     }
 }
