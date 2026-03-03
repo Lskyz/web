@@ -6,8 +6,8 @@ import UIKit
 // MARK: - 낮/밤 아이콘 전환
 private func updateAppIconForTime() {
     let hour = Calendar.current.component(.hour, from: Date())
-    // 20시(오후 8시) ~ 06시: 밤하늘 아이콘, 그 외: 낮 아이콘
-    let isNight = hour >= 20 || hour < 6
+    // 18시(오후 6시) ~ 06시: 밤하늘 아이콘, 그 외: 낮 아이콘
+    let isNight = hour >= 18 || hour < 6
     let targetIcon: String? = isNight ? "AppIcon-Night" : nil  // nil = 기본(낮) 아이콘
 
     guard UIApplication.shared.supportsAlternateIcons else { return }
@@ -54,6 +54,9 @@ struct MyBrowserAppApp: App {
                     tabs: $tabs,
                     selectedTabIndex: $selectedTabIndex
                 )
+            }
+            .onAppear {
+                updateAppIconForTime()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
