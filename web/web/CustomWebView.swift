@@ -59,12 +59,11 @@ struct CustomWebView: UIViewRepresentable {
             let controller = WKUserContentController()
             controller.addUserScript(makeVideoScript())
             controller.addUserScript(makeDesktopModeScript())
-            controller.addUserScript(WebViewDataModel.makeSPANavigationScript())
+            controller.addUserScript(WebViewDataModel.makeScrollProtectionScript()) // SPA 감지는 WebKit private API로 처리
             controller.addUserScript(makeImageSaveScript())
-            controller.addUserScript(BFCacheTransitionSystem.makeBFCacheScript()) // 🎯 BFCache 스크립트 추가
+            controller.addUserScript(BFCacheTransitionSystem.makeBFCacheScript())
             controller.add(context.coordinator, name: "playVideo")
             controller.add(context.coordinator, name: "setZoom")
-            controller.add(context.coordinator, name: "spaNavigation")
             controller.add(context.coordinator, name: "saveImage")
             config.userContentController = controller
 
@@ -244,7 +243,6 @@ struct CustomWebView: UIViewRepresentable {
         // 메시지 핸들러 제거
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "playVideo")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "setZoom")
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "spaNavigation")
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "saveImage")
 
         // 모든 옵저버 제거
@@ -392,31 +390,6 @@ struct CustomWebView: UIViewRepresentable {
                    let zoom = data["zoom"] as? Double {
                     DispatchQueue.main.async {
                         self.parent.stateModel.currentZoomLevel = zoom
-                    }
-                }
-            } else if message.name == "spaNavigation" {
-                if let data = message.body as? [String: Any],
-                   let type = data["type"] as? String,
-                   let urlString = data["url"] as? String,
-                   let url = URL(string: urlString) {
-                    
-                    let title = data["title"] as? String ?? ""
-                    let timestamp = data["timestamp"] as? Double ?? Date().timeIntervalSince1970 * 1000
-                    let shouldExclude = data["shouldExclude"] as? Bool ?? false
-                    let siteType = data["siteType"] as? String ?? "unknown"
-                    
-                    DispatchQueue.main.async {
-                        if shouldExclude {
-                            return
-                        }
-                        
-                        self.parent.stateModel.dataModel.handleSPANavigation(
-                            type: type,
-                            url: url,
-                            title: title,
-                            timestamp: timestamp,
-                            siteType: siteType
-                        )
                     }
                 }
             } else if message.name == "saveImage" {

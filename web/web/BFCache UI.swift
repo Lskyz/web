@@ -721,26 +721,26 @@ final class BFCacheTransitionSystem: NSObject {
         
         container.addSubview(currentView)
         
-        let targetIndex = direction == .back ?
-            stateModel.dataModel.currentPageIndex - 1 :
-            stateModel.dataModel.currentPageIndex + 1
-        
+        // WebKit backForwardList로 대상 URL 결정
+        let targetURL = direction == .back ?
+            webView.backForwardList.backItem?.url :
+            webView.backForwardList.forwardItem?.url
+
         var targetView: UIView
-        
-        if targetIndex >= 0, targetIndex < stateModel.dataModel.pageHistory.count {
-            let targetRecord = stateModel.dataModel.pageHistory[targetIndex]
-            
-            if let snapshot = retrieveSnapshot(for: targetRecord.id),
-               let targetImage = snapshot.loadImage() {
-                let imageView = UIImageView(image: targetImage)
-                imageView.contentMode = .scaleAspectFill
-                imageView.clipsToBounds = true
-                targetView = imageView
-                dbg("📸 BFCache 스냅샷 사용")
-            } else {
-                targetView = createInfoCard(for: targetRecord, in: webView.bounds)
-                dbg("ℹ️ 정보 카드 생성")
-            }
+
+        if let targetURL = targetURL,
+           let targetRecord = stateModel.dataModel.findMetadataRecord(for: targetURL),
+           let snapshot = retrieveSnapshot(for: targetRecord.id),
+           let targetImage = snapshot.loadImage() {
+            let imageView = UIImageView(image: targetImage)
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
+            targetView = imageView
+            dbg("📸 BFCache 스냅샷 사용")
+        } else if let targetURL = targetURL,
+                  let targetRecord = stateModel.dataModel.findMetadataRecord(for: targetURL) {
+            targetView = createInfoCard(for: targetRecord, in: webView.bounds)
+            dbg("ℹ️ 정보 카드 생성")
         } else {
             targetView = UIView()
             targetView.backgroundColor = .systemBackground
@@ -956,14 +956,9 @@ final class BFCacheTransitionSystem: NSObject {
     }
     
     static func handleSwipeGestureDetected(to url: URL, stateModel: WebViewStateModel) {
-        if stateModel.dataModel.isBackForwardNavigating {
-            TabPersistenceManager.debugMessages.append("🤫 뒤로/앞으로 중 스와이프 무시")
-            return
-        }
-
-        stateModel.dataModel.addNewPage(url: url, title: "")
+        stateModel.dataModel.addMetadataEntry(url: url, title: "")
         stateModel.syncCurrentURL(url)
-        TabPersistenceManager.debugMessages.append("👆 스와이프 - 새 페이지 추가")
+        TabPersistenceManager.debugMessages.append("👆 스와이프 - 메타데이터 추가")
     }
     
     private func dbg(_ msg: String) {
