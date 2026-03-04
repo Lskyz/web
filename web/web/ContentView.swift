@@ -157,6 +157,7 @@ struct ContentView: View {
     @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
     @State private var webViewBootstrapToken = 0
+    @State private var historyTitleRefreshTick = 0
     
     // 상태
     @State private var showErrorAlert = false
@@ -203,6 +204,9 @@ struct ContentView: View {
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
+        .onReceive(currentState.dataModel.$pageHistory) { _ in
+            historyTitleRefreshTick &+= 1
+        }
         .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
         .onReceive(errorNotificationPublisher, perform: onErrorReceived)
         .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
@@ -465,6 +469,7 @@ struct ContentView: View {
     }
 
     private var compactPageInfoView: some View {
+        let _ = historyTitleRefreshTick
         let rawTitle = currentState.currentPageRecord?.title
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let host = currentState.currentURL?.host ?? ""
