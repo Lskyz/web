@@ -29,8 +29,9 @@ extension WebViewDataModel {
             dbg("🌐 SPA push: \(url.absoluteString)")
 
         case .sessionStateReplace:
-            // 현재 항목 교체 → 메타데이터만 갱신
-            replaceCurrentMetadata(url: url, title: title, siteType: "spa_replace")
+            // BFCache/back 직후 replace는 이전 페이지 title이 남아 있을 수 있음
+            let stableTitle = currentPageRecord?.title ?? findMetadataRecord(for: url)?.title ?? title
+            replaceCurrentMetadata(url: url, title: stableTitle, siteType: "spa_replace")
             stateModel?.syncCurrentURL(url)
             dbg("🌐 SPA replace: \(url.absoluteString)")
 
