@@ -27,6 +27,13 @@
 		33C8EF7B2E3EFBC100A48206 /* tabview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C8EF7A2E3EFBC100A48206 /* tabview.swift */; };
 		33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */; };
 		33E837BB2E4B0952006C75EA /* WebViewDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */; };
+		AA11000230000000000001AA /* NavigationTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000001AA /* NavigationTypes.swift */; };
+		AA11000230000000000002AA /* PageRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000002AA /* PageRecord.swift */; };
+		AA11000230000000000003AA /* NavigationHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000003AA /* NavigationHistory.swift */; };
+		AA11000230000000000004AA /* SPANavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000004AA /* SPANavigation.swift */; };
+		AA11000230000000000005AA /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000005AA /* SessionManager.swift */; };
+		AA11000230000000000006AA /* ScrollScript.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000006AA /* ScrollScript.swift */; };
+		AA11000230000000000007AA /* HistoryUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11000130000000000007AA /* HistoryUI.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +78,13 @@
 		33C8EF7A2E3EFBC100A48206 /* tabview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = tabview.swift; sourceTree = "<group>"; };
 		33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHelper.swift; sourceTree = "<group>"; };
 		33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewDataModel.swift; sourceTree = "<group>"; };
+		AA11000130000000000001AA /* NavigationTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationTypes.swift; sourceTree = "<group>"; };
+		AA11000130000000000002AA /* PageRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRecord.swift; sourceTree = "<group>"; };
+		AA11000130000000000003AA /* NavigationHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationHistory.swift; sourceTree = "<group>"; };
+		AA11000130000000000004AA /* SPANavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SPANavigation.swift; sourceTree = "<group>"; };
+		AA11000130000000000005AA /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
+		AA11000130000000000006AA /* ScrollScript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollScript.swift; sourceTree = "<group>"; };
+		AA11000130000000000007AA /* HistoryUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryUI.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,6 +151,13 @@
 				33C8EF7A2E3EFBC100A48206 /* tabview.swift */,
 				33E837BA2E4B0952006C75EA /* WebViewDataModel.swift */,
 				33D227072E4EBF6600FF7E6F /* WebViewHelper.swift */,
+				AA11000130000000000001AA /* NavigationTypes.swift */,
+				AA11000130000000000002AA /* PageRecord.swift */,
+				AA11000130000000000003AA /* NavigationHistory.swift */,
+				AA11000130000000000004AA /* SPANavigation.swift */,
+				AA11000130000000000005AA /* SessionManager.swift */,
+				AA11000130000000000006AA /* ScrollScript.swift */,
+				AA11000130000000000007AA /* HistoryUI.swift */,
 				3322308C2E3B71DB00EB7526 /* exportOptions.plist */,
 				3364241F2E3B6D5700A5963D /* Assets.xcassets */,
 				336424212E3B6D5700A5963D /* Preview Content */,
@@ -300,6 +321,13 @@
 				33BF79EE2E62DE35007250B7 /* BFCacheSwipeTransition.swift in Sources */,
 				3364241C2E3B6D5500A5963D /* WebViewStateModel.swift in Sources */,
 				33D227082E4EBF6600FF7E6F /* WebViewHelper.swift in Sources */,
+				AA11000230000000000001AA /* NavigationTypes.swift in Sources */,
+				AA11000230000000000002AA /* PageRecord.swift in Sources */,
+				AA11000230000000000003AA /* NavigationHistory.swift in Sources */,
+				AA11000230000000000004AA /* SPANavigation.swift in Sources */,
+				AA11000230000000000005AA /* SessionManager.swift in Sources */,
+				AA11000230000000000006AA /* ScrollScript.swift in Sources */,
+				AA11000230000000000007AA /* HistoryUI.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
