@@ -1049,9 +1049,38 @@ extension BFCacheTransitionSystem {
     func storeLeavingSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {
         guard let rec = stateModel.dataModel.currentPageRecord,
               let tabID = stateModel.tabID else { return }
-        
+
         captureSnapshot(pageRecord: rec, webView: webView, type: .forceUpdate, tabID: tabID)
         dbg("📸 떠나기 스냅샷 캡처")
+    }
+
+    // SPA pushState 전용: 동기 캡처
+    // - sessionStatePush 시점엔 backForwardList.currentItem이 이미 새 URL → currentPageRecord가 nil
+    // - backItem?.url로 실제 떠나는 페이지를 찾고, layer.render로 React 렌더 전에 동기 캡처
+    func captureSyncLeavingSnapshot(webView: WKWebView, stateModel: WebViewStateModel) {
+        guard !isRestoring,
+              let leavingURL = webView.backForwardList.backItem?.url,
+              let leavingRecord = stateModel.dataModel.findMetadataRecord(for: leavingURL),
+              let tabID = stateModel.tabID,
+              webView.window != nil else { return }
+
+        // 동기 캡처: React DOM 변경 전 현재 CALayer 상태
+        let image = renderWebViewToImage(webView)
+
+        let version: Int = cacheAccessQueue.sync(flags: .barrier) {
+            let v = (_cacheVersion[leavingRecord.id] ?? 0) + 1
+            _cacheVersion[leavingRecord.id] = v
+            return v
+        }
+
+        let snapshot = BFCacheSnapshot(
+            pageRecord: leavingRecord,
+            timestamp: Date(),
+            captureStatus: image != nil ? .visualOnly : .failed,
+            version: version
+        )
+        saveToDisk(snapshot: (snapshot, image), tabID: tabID)
+        dbg("📸 SPA 동기 leaving 스냅샷: \(leavingRecord.title)")
     }
 
     func storeArrivalSnapshotIfPossible(webView: WKWebView, stateModel: WebViewStateModel) {

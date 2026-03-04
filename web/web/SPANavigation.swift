@@ -17,9 +17,9 @@ extension WebViewDataModel {
         switch WKSameDocumentNavigationType(rawValue: wkNavigationType) {
 
         case .sessionStatePush:
-            // 새 SPA 페이지 → 떠나기 전 스냅샷 캡처 후 메타데이터 추가
+            // 새 SPA 페이지 → 동기 캡처 (backItem = 실제 떠나는 페이지, React 렌더 전)
             if let stateModel = stateModel {
-                BFCacheTransitionSystem.shared.storeLeavingSnapshotIfPossible(
+                BFCacheTransitionSystem.shared.captureSyncLeavingSnapshot(
                     webView: webView, stateModel: stateModel
                 )
             }

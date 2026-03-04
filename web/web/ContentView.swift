@@ -856,11 +856,7 @@ struct ContentView: View {
             WebViewDataModel.HistoryPage(
                 dataModel: currentState.dataModel,
                 onNavigateToPage: { record in
-                    if let index = currentState.dataModel.findPageIndex(for: record.url),
-                       let nav = currentState.dataModel.navigateToIndex(index) {
-                        currentState.currentURL = nav.url
-                        if let webView = currentState.webView { webView.load(URLRequest(url: nav.url)) }
-                    }
+                    currentState.navigateToHistoryRecord(record)
                 },
                 onNavigateToURL: { url in currentState.currentURL = url }
             )

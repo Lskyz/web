@@ -1122,14 +1122,7 @@ struct TabManager: View {
             WebViewDataModel.HistoryPage(
                 dataModel: initialStateModel.dataModel,
                 onNavigateToPage: { record in
-                    if let index = initialStateModel.dataModel.findPageIndex(for: record.url) {
-                        if let navigatedRecord = initialStateModel.dataModel.navigateToIndex(index) {
-                            initialStateModel.currentURL = navigatedRecord.url
-                            if let webView = initialStateModel.webView {
-                                webView.load(URLRequest(url: navigatedRecord.url))
-                            }
-                        }
-                    }
+                    initialStateModel.navigateToHistoryRecord(record)
                 },
                 onNavigateToURL: { url in
                     initialStateModel.currentURL = url

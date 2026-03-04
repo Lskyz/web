@@ -205,6 +205,20 @@ final class WebViewStateModel: NSObject, ObservableObject {
         webView.evaluateJavaScript("if (window.setPageZoom) { window.setPageZoom(\(currentZoomLevel)); }")
     }
 
+    // MARK: - 히스토리 점프 (WKBackForwardList 우선, fallback URL 로드)
+
+    func navigateToHistoryRecord(_ record: PageRecord) {
+        guard let webView = webView else { return }
+        let allItems = webView.backForwardList.backList + webView.backForwardList.forwardList
+        if let item = allItems.first(where: { $0.url == record.url }) {
+            webView.go(to: item)
+            dbg("⏪ 히스토리 점프 (BF): \(record.url.absoluteString)")
+        } else {
+            webView.load(URLRequest(url: record.url))
+            dbg("⏪ 히스토리 점프 (URL fallback): \(record.url.absoluteString)")
+        }
+    }
+
     // MARK: - 히스토리 패스스루
 
     func updateCurrentPageTitle(_ title: String) { dataModel.updateCurrentPageTitle(title) }
