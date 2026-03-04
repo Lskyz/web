@@ -623,6 +623,16 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
             const originalPushState = history.pushState;
             const originalReplaceState = history.replaceState;
 
+            try {
+                Object.defineProperty(history, 'scrollRestoration', {
+                    get: () => 'auto',
+                    set: () => {},
+                    configurable: true
+                });
+            } catch (error) {
+                console.log('⚠️ scrollRestoration override failed:', error);
+            }
+
             // 🏠 **루트 Replace 디바운싱 설정**
             const SPA_BOOT_SUPPRESS_MS = 500;  // 초기 부트 중 루트 replace 무시
             const ROOT_REPLACE_DELAY_MS = 250; // 루트 replace 지연 후 전송
