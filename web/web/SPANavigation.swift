@@ -35,8 +35,8 @@ extension WebViewDataModel {
             dbg("🌐 SPA replace: \(url.absoluteString)")
 
         case .sessionStatePop:
-            // WebKit이 이미 내비게이션 처리 완료 → 표시만 동기화
-            updatePageTitle(for: url, title: title)
+            // WebKit이 이미 내비게이션 처리 완료 → URL만 동기화
+            // webView.title은 React 렌더 전이라 이전 페이지 타이틀일 수 있음 → 기존 저장된 타이틀 유지
             stateModel?.syncCurrentURL(url)
             stateModel?.triggerNavigationFinished()
             dbg("🌐 SPA pop: \(url.absoluteString)")
