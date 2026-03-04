@@ -17,6 +17,7 @@ private var kvoContext = 0
 final class WebViewStateModel: NSObject, ObservableObject {
     var tabID: UUID?
     @Published var dataModel = WebViewDataModel()
+    private var dataModelCancellable: AnyCancellable?
 
     @Published var isLoading: Bool = false
     @Published var loadingProgress: Double = 0.0
@@ -86,6 +87,9 @@ final class WebViewStateModel: NSObject, ObservableObject {
         super.init()
         dataModel.tabID = tabID
         dataModel.stateModel = self
+        dataModelCancellable = dataModel.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     // MARK: - 로딩 상태
