@@ -157,6 +157,7 @@ struct ContentView: View {
     @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
     @State private var webViewBootstrapToken = 0
+    @State private var pageTitleRefreshTick = 0
     
     // 상태
     @State private var showErrorAlert = false
@@ -203,6 +204,7 @@ struct ContentView: View {
 
         .onAppear(perform: onAppearHandler)
         .onReceive(currentState.$currentURL, perform: onURLChange)
+        .onReceive(currentState.$currentPageTitle, perform: onCurrentPageTitleChange)
         .onReceive(currentState.navigationDidFinish, perform: onNavigationFinish)
         .onReceive(errorNotificationPublisher, perform: onErrorReceived)
         .alert(errorTitle, isPresented: $showErrorAlert, actions: alertActions, message: alertMessage)
@@ -465,8 +467,8 @@ struct ContentView: View {
     }
 
     private var compactPageInfoView: some View {
-        let rawTitle = currentState.currentPageRecord?.title
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let _ = pageTitleRefreshTick
+        let rawTitle = resolvedCurrentPageTitle
         let host = currentState.currentURL?.host ?? ""
         let fallback = currentState.currentURL?.absoluteString ?? "페이지 정보"
         let primaryText = rawTitle.isEmpty ? (host.isEmpty ? fallback : host) : rawTitle
@@ -520,7 +522,9 @@ struct ContentView: View {
                 Label("URL 복사", systemImage: "doc.on.doc")
             }
             Button(action: {
-                UIPasteboard.general.string = currentState.currentPageRecord?.title ?? currentState.currentURL?.host ?? ""
+                UIPasteboard.general.string = resolvedCurrentPageTitle.isEmpty
+                    ? (currentState.currentURL?.host ?? "")
+                    : resolvedCurrentPageTitle
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             }) {
                 Label("제목 복사", systemImage: "text.quote")
@@ -800,6 +804,7 @@ struct ContentView: View {
         siteMenuManager.refreshDownloads()
     }
     private func onURLChange(url: URL?) { if let url = url { inputURL = url.absoluteString } }
+    private func onCurrentPageTitleChange(_: String) { pageTitleRefreshTick &+= 1 }
     private func onNavigationFinish(_: Void) {
         if let r = currentState.currentPageRecord {
             let back = currentState.canGoBack ? "가능" : "불가"
@@ -820,6 +825,11 @@ struct ContentView: View {
                 }
             }
         }
+    }
+    private var resolvedCurrentPageTitle: String {
+        let liveTitle = currentState.currentPageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !liveTitle.isEmpty { return liveTitle }
+        return currentState.currentPageRecord?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
     private var errorNotificationPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: .webViewDidFailLoad)

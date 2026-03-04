@@ -21,6 +21,7 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     @Published var isLoading: Bool = false
     @Published var loadingProgress: Double = 0.0
+    @Published var currentPageTitle: String = ""
 
     let navigationDidFinish = PassthroughSubject<Void, Never>()
     var pendingInteractionStateData: Data?
@@ -110,9 +111,24 @@ final class WebViewStateModel: NSObject, ObservableObject {
         isNavigatingFromWebView = true
         currentURL = url
         isNavigatingFromWebView = false
+
+        if let record = dataModel.findMetadataRecord(for: url) {
+            syncCurrentPageTitle(record.title, fallbackURL: url)
+        } else {
+            syncCurrentPageTitle(nil, fallbackURL: url)
+        }
     }
 
     func triggerNavigationFinished() { navigationDidFinish.send(()) }
+
+    func syncCurrentPageTitle(_ title: String?, fallbackURL: URL? = nil) {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let resolvedURL = fallbackURL ?? webView?.url ?? currentURL
+        let safeTitle = trimmed.isEmpty ? (resolvedURL?.host ?? "제목 없음") : trimmed
+
+        guard currentPageTitle != safeTitle else { return }
+        currentPageTitle = safeTitle
+    }
 
     // MARK: - 에러 알림
 
@@ -225,7 +241,10 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     // MARK: - 히스토리 패스스루
 
-    func updateCurrentPageTitle(_ title: String) { dataModel.updateCurrentPageTitle(title) }
+    func updateCurrentPageTitle(_ title: String) {
+        dataModel.updateCurrentPageTitle(title)
+        syncCurrentPageTitle(title)
+    }
     func clearHistory() { dataModel.clearHistory() }
 
     var currentPageRecord: PageRecord? { dataModel.currentPageRecord }

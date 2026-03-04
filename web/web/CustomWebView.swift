@@ -352,10 +352,10 @@ struct CustomWebView: UIViewRepresentable {
                       let title = change.newValue,
                       let title = title,
                       !title.isEmpty,
-                      let currentURL = webView.url else { return }
+                      webView.url != nil else { return }
 
                 DispatchQueue.main.async {
-                    self.parent.stateModel.dataModel.updatePageTitle(for: currentURL, title: title)
+                    self.parent.stateModel.updateCurrentPageTitle(title)
                 }
             }
         }
