@@ -16,7 +16,7 @@ final class WebViewDataModel: NSObject, ObservableObject, WKNavigationDelegate {
     weak var stateModel: WebViewStateModel?
 
     // 메타데이터 전용 — 네비게이션 소스 아님
-    @Published private(set) var pageHistory: [PageRecord] = []
+    @Published var pageHistory: [PageRecord] = []
 
     override init() {
         super.init()
