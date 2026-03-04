@@ -126,8 +126,8 @@ struct CustomWebView: UIViewRepresentable {
             finalWebView.interactionState = interactionData
             stateModel.pendingInteractionStateData = nil
             TabPersistenceManager.debugMessages.append("🔄 interactionState 복원: 탭 \(String(tabID.uuidString.prefix(8)))")
-        } else if let url = stateModel.currentURL {
-            finalWebView.load(URLRequest(url: url))
+        } else if stateModel.currentURL != nil {
+            stateModel.loadURLIfReady()
         } else {
             finalWebView.load(URLRequest(url: URL(string: "about:blank")!))
         }

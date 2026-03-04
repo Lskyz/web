@@ -156,6 +156,7 @@ struct ContentView: View {
     @State private var showBottomChrome = true
     @State private var previousOffset: CGFloat = 0
     @State private var lastWebContentOffsetY: CGFloat = 0
+    @State private var webViewBootstrapToken = 0
     
     // 상태
     @State private var showErrorAlert = false
@@ -356,7 +357,7 @@ struct ContentView: View {
             ),
             onScroll: { y in handleWebViewScroll(yOffset: y) }
         )
-        .id(state.tabID)
+        .id("\(state.tabID?.uuidString ?? "no-tab")-\(webViewBootstrapToken)")
         .ignoresSafeArea(.keyboard, edges: .all)
     }
     
@@ -1023,18 +1024,55 @@ struct ContentView: View {
 
     private func handleDashboardNavigation(_ selectedURL: URL) {
         if tabs.indices.contains(selectedTabIndex) {
-            tabs[selectedTabIndex].stateModel.currentURL = selectedURL
-            tabs[selectedTabIndex].stateModel.loadURLIfReady()
+            let currentIndex = selectedTabIndex
+            let stateModel = tabs[currentIndex].stateModel
+
+            stateModel.currentURL = selectedURL
+
+            if stateModel.webView == nil {
+                TabPersistenceManager.debugMessages.append("⚠️ 대시보드 북마크 클릭: 웹뷰 없음, 생성 대기")
+                ensureWebViewReadyAndLoad(for: currentIndex, url: selectedURL)
+            } else {
+                stateModel.loadURLIfReady()
+            }
+
+            TabPersistenceManager.saveTabs(tabs)
             TabPersistenceManager.debugMessages.append("🌐 대시보드 네비게이션: \(selectedURL.absoluteString)")
         } else {
             let newTab = WebTab(url: selectedURL)
             tabs.append(newTab)
             selectedTabIndex = tabs.count - 1
-            newTab.stateModel.loadURLIfReady()
+            ensureWebViewReadyAndLoad(for: selectedTabIndex, url: selectedURL)
             TabPersistenceManager.saveTabs(tabs)
             TabPersistenceManager.debugMessages.append("🌐 새 탭 네비게이션: \(selectedURL.absoluteString)")
         }
     }
+
+    private func ensureWebViewReadyAndLoad(for tabIndex: Int, url: URL, attempt: Int = 0) {
+        guard tabs.indices.contains(tabIndex) else { return }
+
+        let stateModel = tabs[tabIndex].stateModel
+        guard stateModel.currentURL == url else { return }
+
+        if stateModel.webView != nil {
+            stateModel.loadURLIfReady()
+            return
+        }
+
+        guard attempt < 20 else {
+            TabPersistenceManager.debugMessages.append("❌ 웹뷰 생성 실패: \(url.absoluteString)")
+            return
+        }
+
+        if attempt == 0 {
+            webViewBootstrapToken += 1
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            ensureWebViewReadyAndLoad(for: tabIndex, url: url, attempt: attempt + 1)
+        }
+    }
+
     private func handleWebViewScroll(yOffset: CGFloat) {
         if isTextFieldFocused || isMenuButtonPressed || siteMenuManager.showSiteMenu { lastWebContentOffsetY = yOffset; return }
         let delta = yOffset - lastWebContentOffsetY

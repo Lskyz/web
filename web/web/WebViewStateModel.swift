@@ -36,10 +36,14 @@ final class WebViewStateModel: NSObject, ObservableObject {
 
     // 🎯 interactionState 기반 세션 복원용 임시 저장소
     var pendingInteractionStateData: Data?
+    private var pendingURLToLoad: URL?
 
     @Published var currentURL: URL? {
         didSet {
-            guard let url = currentURL else { return }
+            guard let url = currentURL else {
+                pendingURLToLoad = nil
+                return
+            }
 
             UserDefaults.standard.set(url.absoluteString, forKey: "lastURL")
 
@@ -49,11 +53,8 @@ final class WebViewStateModel: NSObject, ObservableObject {
                            !isNavigatingFromWebView
 
             if shouldLoad {
-                if let webView = webView {
-                    webView.load(URLRequest(url: url))
-                } else {
-                    dbg("⚠️ 웹뷰가 없어서 로드 불가")
-                }
+                pendingURLToLoad = url
+                loadURLIfReady()
             }
         }
     }
@@ -414,9 +415,22 @@ final class WebViewStateModel: NSObject, ObservableObject {
     }
     
     func loadURLIfReady() {
-        if let url = currentURL, let webView = webView {
-            webView.load(URLRequest(url: url))
+        guard let targetURL = pendingURLToLoad ?? currentURL else { return }
+
+        guard let webView = webView else {
+            dbg("⚠️ 웹뷰 없음 - 로드 대기 유지")
+            return
         }
+
+        if webView.url == targetURL && !webView.isLoading {
+            pendingURLToLoad = nil
+            dbg("ℹ️ 동일 URL 이미 표시 중 - 추가 로드 스킵")
+            return
+        }
+
+        pendingURLToLoad = nil
+        webView.load(URLRequest(url: targetURL))
+        dbg("🌐 로드 요청 연결: \(targetURL.absoluteString)")
     }
 
     // MARK: - ID 정렬
